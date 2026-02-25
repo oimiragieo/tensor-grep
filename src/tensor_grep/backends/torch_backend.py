@@ -5,11 +5,11 @@ from typing import Iterator, List, Tuple
 from pathlib import Path
 
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import SearchResult, Match
+from tensor_grep.core.result import SearchResult, MatchLine
 from tensor_grep.io.reader_fallback import FallbackReader
 from tensor_grep.gpu.device_detect import DeviceDetector
 
-def _process_chunk_on_device(device_id: int, file_path: str, offset: int, size: int, pattern: str, config: SearchConfig) -> List[Match]:
+def _process_chunk_on_device(device_id: int, file_path: str, offset: int, size: int, pattern: str, config: SearchConfig) -> List[MatchLine]:
     """
     Worker function to process a specific chunk of the file on a specific GPU.
     Because tensors are not easily picklable across process boundaries, 
@@ -20,6 +20,10 @@ def _process_chunk_on_device(device_id: int, file_path: str, offset: int, size: 
     # Isolate the worker to the specific GPU
     target_device = torch.device(f"cuda:{device_id}")
     
+    # DEBUG: Print to stdout so we can trace what is actually spinning up
+    if config.debug:
+        print(f"[TorchBackend Worker] PID {os.getpid()} assigning chunk offset {offset} to {target_device}")
+        
     # Read the bytes
     with open(file_path, 'rb') as f:
         f.seek(offset)
@@ -54,10 +58,10 @@ def _process_chunk_on_device(device_id: int, file_path: str, offset: int, size: 
         is_match = pattern in compare_line
         
         if (is_match and not config.invert_match) or (not is_match and config.invert_match):
-            matches.append(Match(
+            matches.append(MatchLine(
                 line_number=i,  # This will be offset relative to the chunk later
-                content=line,
-                byte_offset=offset
+                text=line,
+                file=file_path
             ))
             
     return matches
@@ -76,8 +80,8 @@ class TorchBackend:
         if not torch.cuda.is_available():
             return False
             
-        device_info = self.device_detector.get_gpu_info()
-        return len(device_info) > 0
+        device_count = self.device_detector.get_device_count()
+        return device_count > 0
 
     def search(self, file_path: str, pattern: str, config: SearchConfig) -> SearchResult:
         """
