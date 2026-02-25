@@ -21,7 +21,7 @@ class CybertBackend:
         self.url = url
         self.labels = ["info", "warn", "error"]
 
-    def classify(self, lines: list[str]) -> list[dict[str, Any]]:
+    def classify(self, lines: list[str], config: Any = None) -> list[dict[str, Any]]:
         try:
             import tritonclient.http as httpclient
             import numpy as np
@@ -46,12 +46,17 @@ class CybertBackend:
             # If triton server is not there or mocked error, fallback
             probs = np.array([[0.1, 0.8, 0.1]] * len(lines))
             
+        threshold = getattr(config, "nlp_threshold", 0.0) if config else 0.0
+            
         results = []
         for prob in probs:
             idx = int(np.argmax(prob))
-            results.append({
-                "label": self.labels[idx],
-                "confidence": float(prob[idx])
-            })
+            confidence = float(prob[idx])
+            
+            if confidence >= threshold:
+                results.append({
+                    "label": self.labels[idx],
+                    "confidence": confidence
+                })
             
         return results

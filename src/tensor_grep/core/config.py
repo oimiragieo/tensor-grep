@@ -118,3 +118,4 @@ class SearchConfig:
     # TENSOR-GREP SPECIFIC
     force_cpu: bool = False
     format_type: str = "rg"
+    nlp_threshold: float = 0.0

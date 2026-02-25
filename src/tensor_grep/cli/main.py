@@ -251,12 +251,24 @@ def search_command(
         format_type=format_type
     )
     
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+    from tensor_grep.core.result import SearchResult
+    
+    scanner = DirectoryScanner(config)
     backend = CPUBackend()
-    result = backend.search(path_to_search, pattern, config=config)
+    
+    all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    
+    for current_file in scanner.walk(path_to_search):
+        result = backend.search(current_file, pattern, config=config)
+        all_results.matches.extend(result.matches)
+        all_results.total_matches += result.total_matches
+        if result.total_matches > 0:
+            all_results.total_files += 1
 
-    if result.is_empty and not quiet:
+    if all_results.is_empty and not quiet:
         sys.exit(1)
-    elif result.is_empty and quiet:
+    elif all_results.is_empty and quiet:
         sys.exit(1)
 
     if quiet:
@@ -276,7 +288,7 @@ def search_command(
     else:
         formatter = RipgrepFormatter()
         
-    print(formatter.format(result))
+    print(formatter.format(all_results))
 
 @app.command()
 def classify(

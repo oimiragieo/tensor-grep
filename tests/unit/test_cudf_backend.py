@@ -39,6 +39,45 @@ class TestCuDFBackend:
 
         mock_series.str.contains.assert_called_once()
         
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_ignoreCase_when_usingCudfBackend(self, mock_getsize):
+        import cudf
+        import re
+        mock_series = MagicMock()
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.config import SearchConfig
+        
+        backend = CuDFBackend()
+        config = SearchConfig(ignore_case=True)
+        backend.search("test.log", r"error", config=config)
+
+        mock_series.str.contains.assert_called_with(r"error", regex=True, flags=re.IGNORECASE)
+        
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_invertMatch_when_usingCudfBackend(self, mock_getsize):
+        import cudf
+        mock_series = MagicMock()
+        
+        # We need to mock the ~ operator for the mask
+        mock_mask = MagicMock()
+        mock_inverted_mask = MagicMock()
+        mock_mask.__invert__.return_value = mock_inverted_mask
+        mock_series.str.contains.return_value = mock_mask
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.config import SearchConfig
+        
+        backend = CuDFBackend()
+        config = SearchConfig(invert_match=True)
+        backend.search("test.log", r"error", config=config)
+
+        mock_series.__getitem__.assert_called_with(mock_inverted_mask)
+        
     @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
     @patch("os.path.getsize", return_value=1024 * 1024 * 10) # 10 MB file
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")

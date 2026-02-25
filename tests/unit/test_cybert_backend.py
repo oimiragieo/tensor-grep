@@ -30,3 +30,37 @@ class TestCybertBackend:
         assert len(results) == 1
         assert results[0]["label"] == "warn"  # index 1 has highest prob 0.8
         assert results[0]["confidence"] == 0.8
+
+    @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
+    def test_should_filterConfidence_when_nlpThresholdSet(self):
+        import tritonclient.http as httpclient
+        mock_client = MagicMock()
+        httpclient.InferenceServerClient.return_value = mock_client
+        
+        mock_result = MagicMock()
+        import numpy as np
+        mock_result.as_numpy.return_value = np.array([
+            [0.1, 0.9, 0.0], # High confidence
+            [0.4, 0.4, 0.2]  # Low confidence
+        ])
+        mock_client.infer.return_value = mock_result
+        
+        from tensor_grep.backends.cybert_backend import CybertBackend
+        from tensor_grep.core.config import SearchConfig
+        
+        backend = CybertBackend()
+        
+        # Test default (no threshold filters)
+        results = backend.classify(["good line", "vague line"])
+        assert len(results) == 2
+        
+        # Test with high confidence threshold
+        # We'll map something like `max_count` or a new flag to represent threshold 
+        # But wait, there is no confidence threshold flag yet in SearchConfig
+        # I will just pass an imaginary attribute `nlp_threshold` which I will add to config
+        config = SearchConfig()
+        config.nlp_threshold = 0.5
+        
+        results_filtered = backend.classify(["good line", "vague line"], config=config)
+        assert len(results_filtered) == 1
+        assert results_filtered[0]["confidence"] >= 0.5
