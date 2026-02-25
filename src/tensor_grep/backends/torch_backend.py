@@ -133,8 +133,9 @@ class TorchBackend:
             for future in concurrent.futures.as_completed(futures):
                 chunk_matches = future.result()
                 for match in chunk_matches:
-                    match.line_number += future._line_offset
-                    matches.append(match)
+                    from dataclasses import replace
+                    new_match = replace(match, line_number=match.line_number + future._line_offset)
+                    matches.append(new_match)
                     total_matches += 1
                     
         # Re-sort matches since workers finish out of order
