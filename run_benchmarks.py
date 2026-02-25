@@ -130,7 +130,7 @@ def compare_results(rg_out, tg_out, scenario_name):
 
 def main():
     bench_dir = "bench_data"
-    generate_test_data(bench_dir, num_files=10, lines_per_file=100000) # ~1M lines total
+    generate_test_data(bench_dir, num_files=2, lines_per_file=2_000_000) # ~240MB total, triggers 50MB GPU chunking bypass
     
     print("\nStarting Benchmarks: ripgrep vs tensor-grep")
     print("-" * 75)
@@ -142,8 +142,11 @@ def main():
     
     for scenario in SCENARIOS:
         rg_cmd = scenario["rg_args"]
-        # Replace 'tg search' with the actual python module call to avoid PATH issues
-        actual_tg_cmd = tg_cmd + scenario["tg_args"][2:]
+        
+        # When running inside `uv run python run_benchmarks.py`, invoking `python` via subprocess 
+        # escapes the uv environment. We MUST use sys.executable to stay inside the PyTorch env.
+        import sys
+        actual_tg_cmd = [sys.executable, "-m", "tensor_grep.cli.main", "search"] + scenario["tg_args"][2:]
         
         # Warmup caches
         run_cmd_capture(rg_cmd)

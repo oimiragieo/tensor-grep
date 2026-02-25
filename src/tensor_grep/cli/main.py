@@ -293,7 +293,8 @@ def search_command(
         from tensor_grep.formatters.csv_fmt import CsvFormatter
         formatter = CsvFormatter()
     else:
-        formatter = RipgrepFormatter()
+        from tensor_grep.formatters.ripgrep_fmt import RipgrepFormatter
+        formatter = RipgrepFormatter(config=config)
         
     print(formatter.format(all_results))
 

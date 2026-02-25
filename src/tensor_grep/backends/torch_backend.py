@@ -102,7 +102,13 @@ class TorchBackend:
         total_matches = 0
         
         # Calculate how many bytes to send to each GPU (chunking)
-        chunk_size = max(1024 * 1024, file_size // gpu_count) # minimum 1MB chunk
+        # Process spawning in PyTorch Windows is extremely slow. We shouldn't chunk too small.
+        # Fall back to single processing for files < 50MB to bypass the 30s process creation overhead.
+        if file_size < 50 * 1024 * 1024:
+            from tensor_grep.backends.cpu_backend import CPUBackend
+            return CPUBackend().search(file_path, pattern, config)
+            
+        chunk_size = max(1024 * 1024 * 50, file_size // gpu_count) # minimum 50MB chunk
         
         # Distribute workload across GPUs using ProcessPoolExecutor
         with concurrent.futures.ProcessPoolExecutor(max_workers=gpu_count) as executor:
@@ -130,7 +136,7 @@ class TorchBackend:
                 offset += size
                 device_idx += 1
                 
-            for future in concurrent.futures.as_completed(futures):
+            for future in futures:
                 chunk_matches = future.result()
                 for match in chunk_matches:
                     from dataclasses import replace
