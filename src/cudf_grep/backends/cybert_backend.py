@@ -5,21 +5,23 @@ try:
 except ImportError:
     pass
 
-def tokenize(lines: list[str]) -> dict:
+from typing import Any
+
+def tokenize(lines: list[str]) -> dict[str, Any]:
     try:
         from transformers import AutoTokenizer
     except ImportError:
         return {"input_ids": [[1, 2, 3]]}
     
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-    return tokenizer(lines, padding=True, truncation=True, return_tensors="np")
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")  # type: ignore
+    return dict(tokenizer(lines, padding=True, truncation=True, return_tensors="np"))
 
 class CybertBackend:
     def __init__(self, url: str = "localhost:8000"):
         self.url = url
         self.labels = ["info", "warn", "error"]
 
-    def classify(self, lines: list[str]) -> list[dict]:
+    def classify(self, lines: list[str]) -> list[dict[str, Any]]:
         try:
             import tritonclient.http as httpclient
             import numpy as np

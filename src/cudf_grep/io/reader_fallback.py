@@ -15,8 +15,8 @@ class FallbackReader(IOBackend):
         try:
             with open_func(file_path, mode, encoding="utf-8") as f:
                 for line in f:
-                    yield line
+                    yield str(line)
         except UnicodeDecodeError:
             with open_func(file_path, mode, encoding="latin-1") as f:
                 for line in f:
-                    yield line
+                    yield str(line)

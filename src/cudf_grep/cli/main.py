@@ -20,6 +20,9 @@ def search_command(
     if result.is_empty:
         sys.exit(1)
 
+    from cudf_grep.formatters.base import OutputFormatter
+    formatter: OutputFormatter
+
     if format_type == "json":
         from cudf_grep.formatters.json_fmt import JsonFormatter
         formatter = JsonFormatter()
@@ -30,6 +33,7 @@ def search_command(
         from cudf_grep.formatters.csv_fmt import CsvFormatter
         formatter = CsvFormatter()
     else:
+        from cudf_grep.formatters.ripgrep_fmt import RipgrepFormatter
         formatter = RipgrepFormatter()
         
     print(formatter.format(result))

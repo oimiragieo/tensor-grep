@@ -1,0 +1,4 @@
+# file: C:\dev\projects\cudf-grep\src\cudf_grep\io\reader_cudf.py
+# hypothesis_version: 6.151.9
+
+['cudf.Series']

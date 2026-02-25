@@ -9,7 +9,7 @@ class DStorageReader:
         except ImportError:
             return False
 
-    def read_to_gpu(self, file_path: str):
+    def read_to_gpu(self, file_path: str) -> "dstorage_gpu.Tensor":  # type: ignore
         import dstorage_gpu
         loader = dstorage_gpu.DirectStorageLoader()
         return loader.load_tensor(file_path)

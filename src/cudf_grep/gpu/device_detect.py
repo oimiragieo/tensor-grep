@@ -31,7 +31,7 @@ class DeviceDetector:
         try:
             from kvikio import DriverProperties
             props = DriverProperties()
-            return props.is_gds_available
+            return bool(props.is_gds_available)
         except Exception:
             return False
 

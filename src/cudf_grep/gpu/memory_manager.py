@@ -1,7 +1,7 @@
 from cudf_grep.gpu.device_detect import DeviceDetector
 
 class MemoryManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.detector = DeviceDetector()
 
     def get_vram_budget_mb(self) -> int:
