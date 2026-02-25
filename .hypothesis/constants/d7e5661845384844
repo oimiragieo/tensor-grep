@@ -1,0 +1,4 @@
+# file: C:\dev\projects\cudf-grep\src\cudf_grep\formatters\csv_fmt.py
+# hypothesis_version: 6.151.9
+
+['file', 'line_number', 'text']
