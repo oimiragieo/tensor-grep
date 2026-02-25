@@ -13,7 +13,23 @@
 
 ---
 
-## 🚀 GPU Acceleration Requirements (CRITICAL)
+## 💻 Hardware & Software Requirements
+
+`tensor-grep` runs on any machine with Python 3.11+ using its highly-optimized CPU fallback. However, to unlock its 3x-10x GPU-accelerated speeds, your system must meet these requirements:
+
+* **Hardware:**
+  * NVIDIA GPU (GTX 10-Series or newer, RTX 30/40/50 series recommended)
+  * Minimum 4GB VRAM (8GB+ recommended for massive logs)
+* **Software / Drivers:**
+  * **NVIDIA Display Drivers:** v535.xx or newer
+  * **CUDA Toolkit:** 12.0 or newer (CUDA 12.4 highly recommended)
+* **Python Environments:**
+  * **Linux / WSL2:** Requires NVIDIA RAPIDS `cuDF` (`cudf-cu12`) for maximum throughput via instant `fork()` process spanning.
+  * **Windows Native:** Requires PyTorch with CUDA 12 support (`torch==2.5.1+cu124`). Note that PyTorch `spawn()` on Windows adds a ~10-second initial overhead, so for files <50MB, `tg` intelligently routes to the CPU backend instead.
+
+---
+
+## 🚀 GPU Acceleration Setup (CRITICAL)
 
 To achieve the 3x-10x performance gains over traditional CPU tools, `tensor-grep` utilizes NVIDIA's RAPIDS suite (`cuDF`) on Linux/WSL2, and falls back to an optimized native **PyTorch Tensor** pipeline when running natively on Windows.
 
