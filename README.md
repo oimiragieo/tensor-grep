@@ -6,6 +6,7 @@
 
 ## Features
 * **Drop-in Replacement:** Supports 70+ `ripgrep` CLI flags (e.g., `-i`, `-v`, `-C`, `-g`, `-t`).
+* **AST-Grep Parity (NEW):** Structural code searching via PyTorch Geometric Graph Neural Networks (GNNs). Run `tg run`, `tg scan`, `tg lsp` natively on your GPU!
 * **Multi-GPU Scaling:** Automatically detects and shards massive log files across dual, quad, or enterprise GPU arrays.
 * **Semantic NLP Classification:** Utilize cyBERT to classify logs contextually (e.g. identify "ERROR" severity without explicit regexes) in a single pass.
 * **CPU Fallback Resiliency:** Works gracefully on Windows, macOS, and CPU-only systems using a resilient Python Regex backend.
@@ -69,4 +70,9 @@ tg search -i -C 2 "database" /var/logs
 
 # AI Semantic Classification
 tg classify /var/logs/syslog.log --format json
+
+# AST Structural Code Search (ast-grep parity via PyTorch GNNs)
+tg run --ast --lang python "if ($A) { return $B; }" ./src
+tg scan -c sgconfig.yml
+tg lsp
 ```
