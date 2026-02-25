@@ -10,4 +10,14 @@ class TestBackendContract:
         assert hasattr(result, 'is_empty')
 
     def test_cpu_backend_satisfies_contract(self, sample_log_file):
+        from cudf_grep.backends.cpu_backend import CPUBackend
         self._check_contract(CPUBackend(), sample_log_file, "ERROR")
+
+    def test_cudf_backend_satisfies_contract(self, sample_log_file):
+        from cudf_grep.backends.cudf_backend import CuDFBackend
+        try:
+            import cudf
+        except ImportError:
+            import pytest
+            pytest.skip("cuDF not available")
+        self._check_contract(CuDFBackend(), sample_log_file, "ERROR")
