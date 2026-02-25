@@ -1,0 +1,22 @@
+# Winget Manifest for tensor-grep v1.0.0-rc1
+# Submit this to the microsoft/winget-pkgs repository
+
+PackageIdentifier: oimiragieo.tensor-grep
+PackageVersion: 1.0.0-rc1
+PackageName: tensor-grep
+Publisher: oimiragieo
+License: MIT
+ShortDescription: GPU-Accelerated Semantic Log Parsing CLI combining raw regex speed with cyBERT
+Moniker: tg
+
+Installers:
+  - Architecture: x64
+    InstallerType: portable
+    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.0.0-rc1/tg-windows.exe
+    # Update this with the sha256 checksum once the GitHub Action run completes
+    # InstallerSha256: PLACEHOLDER_WINDOWS_SHA256
+    Commands:
+      - tg
+
+ManifestType: singleton
+ManifestVersion: 1.1.0
