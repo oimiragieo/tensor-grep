@@ -28,7 +28,7 @@ Professional projects require professional documentation.
   - `installation.md`: Showing `npm`, `pip`, and direct binary downloads.
   - `benchmarks.md`: Detailing the 3x speedup vs Ripgrep on semantic parsing.
   - `architecture.md`: Explaining the Multi-Pass Query Analyzer and dual CPU/GPU paths.
-- [ ] Set up a `.github/workflows/docs.yml` to automatically publish to GitHub Pages on pushes to `master`.
+- [ ] Set up a `.github/workflows/docs.yml` to automatically publish to GitHub Pages on pushes to `main`.
 
 ## Phase 4: Automated CI/CD Release Pipelines
 The release process must be fully automated to ensure consistency.
