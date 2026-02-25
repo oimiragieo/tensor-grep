@@ -22,7 +22,15 @@ class Pipeline:
                 if cudf_backend.is_available():
                     self.backend = cudf_backend
                 else:
-                    self.backend = CPUBackend()
+                    try:
+                        from tensor_grep.backends.torch_backend import TorchBackend
+                        torch_backend = TorchBackend()
+                        if torch_backend.is_available():
+                            self.backend = torch_backend
+                        else:
+                            self.backend = CPUBackend()
+                    except ImportError:
+                        self.backend = CPUBackend()
 
     def get_backend(self) -> ComputeBackend:
         return self.backend

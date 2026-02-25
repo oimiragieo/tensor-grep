@@ -14,18 +14,18 @@
 
 ## 🚀 GPU Acceleration Requirements (CRITICAL)
 
-To achieve the 3x-10x performance gains over traditional CPU tools, `tensor-grep` requires an NVIDIA GPU and the **NVIDIA RAPIDS** suite (`cuDF`).
+To achieve the 3x-10x performance gains over traditional CPU tools, `tensor-grep` utilizes NVIDIA's RAPIDS suite (`cuDF`) on Linux/WSL2, and falls back to an optimized native **PyTorch Tensor** pipeline when running natively on Windows.
 
-**RAPIDS `cuDF` requires a Linux environment (or Windows WSL2).**
-
-### 1. Install WSL2 (If on Windows)
-If you are on Windows, you must run `tensor-grep` inside WSL2 to access the native C++ CUDA bindings:
+### Windows Native GPU Support (No WSL2 Required)
+If you do not want to use WSL2 and want to run `tensor-grep` natively from PowerShell/CMD while still utilizing your GPU:
 ```powershell
-wsl --install
+# Install PyTorch with CUDA 12.1 or 12.4 support
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
+`tensor-grep` will automatically detect Windows + PyTorch and dispatch workloads to the `TorchBackend`, which converts strings into CUDA Tensors to process parallel 1D match convolutions natively on your local GPU.
 
-### 2. Install NVIDIA RAPIDS `cuDF`
-Inside your Linux/WSL2 terminal, install the RAPIDS dependencies:
+### Linux / Windows WSL2 (Maximum Enterprise Performance)
+For absolute maximum performance using raw CUDA C++ string bindings (`cuDF`):
 ```bash
 pip install cudf-cu12 dask-cudf-cu12 --extra-index-url=https://pypi.nvidia.com
 ```
