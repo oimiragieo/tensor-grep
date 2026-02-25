@@ -2,13 +2,25 @@ from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.backends.cudf_backend import CuDFBackend
 from tensor_grep.gpu.memory_manager import MemoryManager
+from tensor_grep.core.config import SearchConfig
 
 class Pipeline:
-    def __init__(self, force_cpu: bool = False):
+    def __init__(self, force_cpu: bool = False, config: SearchConfig = None):
         self.backend: ComputeBackend
+        self.config = config
         
         if force_cpu:
             self.backend = CPUBackend()
+        elif config and config.ast:
+            try:
+                from tensor_grep.backends.ast_backend import AstBackend
+                ast_backend = AstBackend()
+                if ast_backend.is_available():
+                    self.backend = ast_backend
+                else:
+                    self.backend = CPUBackend()
+            except ImportError:
+                self.backend = CPUBackend()
         else:
             # Inject memory manager to get chunk sizes across all available GPUs
             memory_manager = MemoryManager()

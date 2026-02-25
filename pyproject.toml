@@ -9,9 +9,10 @@ requires-python = ">=3.11"
 dependencies = ["typer[all]>=0.12", "rich>=13.0"]
 
 [project.optional-dependencies]
-gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0"]
-gpu-win = ["dstorage-gpu>=1.0", "torch>=2.0"]
+gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "torch_geometric>=2.5.0"]
+gpu-win = ["dstorage-gpu>=1.0", "torch>=2.0", "torch_geometric>=2.5.0"]
 nlp = ["transformers>=4.40", "tritonclient[all]"]
+ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript"]
 dev = [
   "pytest>=8.0", "pytest-cov>=5.0", "pytest-mock>=3.14",
   "pytest-asyncio>=0.24", "pytest-snapshot>=0.9",

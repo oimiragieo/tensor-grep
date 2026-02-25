@@ -119,3 +119,5 @@ class SearchConfig:
     force_cpu: bool = False
     format_type: str = "rg"
     nlp_threshold: float = 0.0
+    ast: bool = False
+    lang: Optional[str] = None

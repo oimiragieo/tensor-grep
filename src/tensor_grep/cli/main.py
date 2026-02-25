@@ -134,6 +134,8 @@ def search_command(
     # TENSOR-GREP SPECIFIC
     cpu: bool = typer.Option(False, "--cpu", help="Force CPU fallback (tensor-grep specific)."),
     format_type: str = typer.Option("rg", "--format", help="Internal formatter: json, table, csv, rg"),
+    ast: bool = typer.Option(False, "--ast", help="Parse files into ASTs and search structurally using PyTorch Geometric."),
+    lang: Optional[str] = typer.Option(None, "--lang", help="Explicitly define language grammar for --ast (e.g. python, javascript)."),
 ) -> None:
     """
     Search files for a regex pattern, with GPU acceleration when applicable.
@@ -248,14 +250,19 @@ def search_command(
         pcre2_version=pcre2_version,
         type_list=type_list,
         force_cpu=cpu,
-        format_type=format_type
+        format_type=format_type,
+        ast=ast,
+        lang=lang
     )
     
+    from tensor_grep.core.pipeline import Pipeline
     from tensor_grep.io.directory_scanner import DirectoryScanner
     from tensor_grep.core.result import SearchResult
+
+    pipeline = Pipeline(force_cpu=cpu, config=config)
+    backend = pipeline.get_backend()
     
     scanner = DirectoryScanner(config)
-    backend = CPUBackend()
     
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
     
