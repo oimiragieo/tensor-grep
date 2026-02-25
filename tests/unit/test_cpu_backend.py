@@ -1,5 +1,5 @@
 from tensor_grep.backends.cpu_backend import CPUBackend
-import pytest
+
 
 class TestCPUBackend:
     def test_should_find_simple_pattern(self, sample_log_file):
@@ -30,7 +30,7 @@ class TestCPUBackend:
         log1.write_text("ERROR 1\n")
         log2.write_text("ERROR 2\n")
         backend = CPUBackend()
-        
+
         # Test individual file
         assert backend.search(str(log1), "ERROR").total_matches == 1
 
@@ -67,13 +67,14 @@ class TestCPUBackend:
 
     def test_should_includeAfterContext_when_dashA_isProvided(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
+
         log = tmp_path / "context.log"
         log.write_text("line 1\nERROR MATCH\nline 3\nline 4\nline 5\n")
-        
+
         backend = CPUBackend()
         config = SearchConfig(after_context=2)
         result = backend.search(str(log), "ERROR", config=config)
-        
+
         # Should return 3 lines total: The match itself, plus 2 after
         assert len(result.matches) == 3
         assert result.matches[0].line_number == 2
@@ -85,13 +86,14 @@ class TestCPUBackend:
 
     def test_should_includeBeforeContext_when_dashB_isProvided(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
+
         log = tmp_path / "context_before.log"
         log.write_text("line 1\nline 2\nERROR MATCH\nline 4\n")
-        
+
         backend = CPUBackend()
         config = SearchConfig(before_context=2)
         result = backend.search(str(log), "ERROR", config=config)
-        
+
         # Should return 3 lines total: 2 before, plus the match itself
         assert len(result.matches) == 3
         assert result.matches[0].line_number == 1

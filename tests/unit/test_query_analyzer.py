@@ -1,5 +1,6 @@
 from tensor_grep.core.query_analyzer import QueryAnalyzer, QueryType
 
+
 class TestQueryAnalyzer:
     def test_simple_string_is_fast_path(self):
         qa = QueryAnalyzer()

@@ -1,19 +1,21 @@
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.backends.cudf_backend import CuDFBackend
-from tensor_grep.gpu.memory_manager import MemoryManager
 from tensor_grep.core.config import SearchConfig
+from tensor_grep.gpu.memory_manager import MemoryManager
+
 
 class Pipeline:
     def __init__(self, force_cpu: bool = False, config: SearchConfig = None):
         self.backend: ComputeBackend
         self.config = config
-        
+
         if force_cpu:
             self.backend = CPUBackend()
         elif config and config.ast:
             try:
                 from tensor_grep.backends.ast_backend import AstBackend
+
                 ast_backend = AstBackend()
                 if ast_backend.is_available():
                     self.backend = ast_backend
@@ -25,7 +27,7 @@ class Pipeline:
             # Inject memory manager to get chunk sizes across all available GPUs
             memory_manager = MemoryManager()
             chunk_sizes = memory_manager.get_all_device_chunk_sizes_mb()
-            
+
             # If no chunk sizes were returned but we didn't force CPU, something is wrong with CUDA, fallback
             if not chunk_sizes:
                 self.backend = CPUBackend()
@@ -36,6 +38,7 @@ class Pipeline:
                 else:
                     try:
                         from tensor_grep.backends.torch_backend import TorchBackend
+
                         torch_backend = TorchBackend()
                         if torch_backend.is_available():
                             self.backend = torch_backend

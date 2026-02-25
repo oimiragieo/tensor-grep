@@ -1,7 +1,9 @@
-from tensor_grep.formatters.base import OutputFormatter
-from tensor_grep.core.result import SearchResult
 import csv
 import io
+
+from tensor_grep.core.result import SearchResult
+from tensor_grep.formatters.base import OutputFormatter
+
 
 class CsvFormatter(OutputFormatter):
     def format(self, result: SearchResult) -> str:

@@ -1,7 +1,9 @@
 import gzip
 import os
-from typing import Iterator
+from collections.abc import Iterator
+
 from tensor_grep.io.base import IOBackend
+
 
 class FallbackReader(IOBackend):
     def read_lines(self, file_path: str) -> Iterator[str]:

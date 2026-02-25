@@ -1,8 +1,10 @@
 from tensor_grep.io.base import IOBackend
 from tensor_grep.io.reader_fallback import FallbackReader
 
+
 class TestIOContract:
     """Every IOBackend must satisfy these contracts."""
+
     def _check_contract(self, reader: IOBackend, file_path):
         lines = list(reader.read_lines(str(file_path)))
         assert len(lines) > 0

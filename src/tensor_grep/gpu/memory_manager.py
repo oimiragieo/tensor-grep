@@ -1,5 +1,5 @@
 from tensor_grep.gpu.device_detect import DeviceDetector
-from typing import List
+
 
 class MemoryManager:
     def __init__(self) -> None:
@@ -16,15 +16,15 @@ class MemoryManager:
         if budget == 0:
             return 0
         return int(budget / 2)
-        
-    def get_all_device_chunk_sizes_mb(self) -> List[int]:
+
+    def get_all_device_chunk_sizes_mb(self) -> list[int]:
         if not self.detector.has_gpu():
             return []
-            
+
         count = self.detector.get_device_count()
         if count == 0:
             return []
-            
+
         return [self.get_recommended_chunk_size_mb(i) for i in range(count)]
 
     def should_use_pinned_memory(self) -> bool:

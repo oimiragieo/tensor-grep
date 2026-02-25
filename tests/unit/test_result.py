@@ -1,4 +1,5 @@
-from tensor_grep.core.result import SearchResult, MatchLine
+from tensor_grep.core.result import MatchLine, SearchResult
+
 
 class TestSearchResult:
     def test_should_create_result_with_matches(self):

@@ -1,13 +1,16 @@
 from enum import Enum, auto
 
+
 class QueryType(Enum):
     FAST = auto()
     NLP = auto()
     AST = auto()
 
+
 class QueryAnalysisResult:
     def __init__(self, query_type: QueryType):
         self.query_type = query_type
+
 
 class QueryAnalyzer:
     def analyze(self, query: str) -> QueryAnalysisResult:

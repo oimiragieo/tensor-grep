@@ -1,6 +1,10 @@
-import subprocess, time, pytest
+import subprocess
+import time
+
+import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.performance]
+
 
 class TestVsRipgrep:
     def test_semantic_classification_faster_than_multi_rg(self, tmp_path, rg_path):
@@ -10,11 +14,11 @@ class TestVsRipgrep:
         lines = []
         for i in range(10_000):
             if i % 3 == 0:
-                lines.append(f"2026-02-24 ERROR Connection timeout from 10.0.0.{i%256}\n")
+                lines.append(f"2026-02-24 ERROR Connection timeout from 10.0.0.{i % 256}\n")
             elif i % 3 == 1:
-                lines.append(f"2026-02-24 WARN Disk usage at {60+i%40}%\n")
+                lines.append(f"2026-02-24 WARN Disk usage at {60 + i % 40}%\n")
             else:
-                lines.append(f"2026-02-24 INFO Request processed in {i%100}ms\n")
+                lines.append(f"2026-02-24 INFO Request processed in {i % 100}ms\n")
         log.write_text("".join(lines))
 
         patterns = ["ERROR", "WARN", "INFO", r"\d+\.\d+\.\d+\.\d+", "timeout", "Disk usage"]

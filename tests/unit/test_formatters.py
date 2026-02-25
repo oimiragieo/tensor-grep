@@ -1,11 +1,13 @@
-from tensor_grep.formatters.ripgrep_fmt import RipgrepFormatter
-from tensor_grep.formatters.json_fmt import JsonFormatter
-from tensor_grep.formatters.table_fmt import TableFormatter
-from tensor_grep.formatters.csv_fmt import CsvFormatter
-from tensor_grep.core.result import SearchResult, MatchLine
-import json
 import csv
 import io
+import json
+
+from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.formatters.csv_fmt import CsvFormatter
+from tensor_grep.formatters.json_fmt import JsonFormatter
+from tensor_grep.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.formatters.table_fmt import TableFormatter
+
 
 class TestFormatters:
     def setup_method(self):

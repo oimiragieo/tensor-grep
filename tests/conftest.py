@@ -1,21 +1,26 @@
-import pytest
 import shutil
+
+import pytest
+
 
 def pytest_configure(config):
     try:
         import torch
+
         if not torch.cuda.is_available():
             raise ImportError
         config._gpu_available = True
     except ImportError:
         config._gpu_available = False
 
+
 def pytest_collection_modifyitems(config, items):
-    if not getattr(config, '_gpu_available', False):
+    if not getattr(config, "_gpu_available", False):
         skip_gpu = pytest.mark.skip(reason="CUDA GPU not available")
         for item in items:
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)
+
 
 @pytest.fixture
 def sample_log_file(tmp_path):
@@ -28,6 +33,7 @@ def sample_log_file(tmp_path):
         "2026-02-24 10:00:15 INFO Request GET /api/users 200 12ms\n"
     )
     return log
+
 
 @pytest.fixture
 def rg_path():

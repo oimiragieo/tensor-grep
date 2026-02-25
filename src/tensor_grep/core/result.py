@@ -1,10 +1,12 @@
 from dataclasses import dataclass, field
 
+
 @dataclass(frozen=True)
 class MatchLine:
     line_number: int
     text: str
     file: str
+
 
 @dataclass
 class SearchResult:

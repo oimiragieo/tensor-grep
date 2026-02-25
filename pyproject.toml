@@ -58,7 +58,27 @@ runner = "python -m pytest tests/unit/ -x --no-header -q"
 target-version = "py311"
 line-length = 100
 
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+    "RUF" # Ruff-specific rules
+]
+ignore = [
+    "E501", # line too long, handled by black
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tensor_grep"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
+warn_unused_configs = true
+disallow_untyped_defs = true
