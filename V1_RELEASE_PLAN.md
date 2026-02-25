@@ -45,19 +45,30 @@ Ripgrep is famous for its context awareness and advanced file filtering. We need
   - **TDD:** Write `test_should_filterGlob_when_dashG_provided` and `test_should_filterType_when_dashT_provided`.
   - **Implementation:** Currently `tensor-grep` expects a single file path. We need to implement a directory traversal engine in `Pipeline` or a new `io/directory_scanner.py` that utilizes `config.glob` and `config.file_type` to yield matching file paths before handing them off to the IO readers.
 
-## Phase 3: Test and Trigger CI/CD Pipeline
+## Phase 3: Multi-GPU Distribution and Scaling
+
+Currently `tensor-grep` defaults to `cuda:0` (a single GPU). To truly leverage enterprise hardware, we need to distribute the parsing workload across multiple available GPUs.
+
+- [ ] **Step 3.1: Hardware Discovery**
+  - **TDD:** Write `test_should_detectMultipleGPUs_when_available`.
+  - **Implementation:** Update `src/tensor_grep/gpu/device_detect.py` to return a list of available device IDs (e.g., `[0, 1]`) instead of just checking device 0.
+- [ ] **Step 3.2: Workload Sharding (cuDF & cyBERT)**
+  - **TDD:** Write `test_should_shardDataAcrossGPUs_when_multiGpuDetected`.
+  - **Implementation:** Modify the `Pipeline` or `MemoryManager` to chunk incoming files not just by VRAM limits, but to distribute those chunks evenly across a multiprocessing pool or CUDA streams spanning multiple GPUs concurrently.
+
+## Phase 4: Test and Trigger CI/CD Pipeline
 
 With the software complete, we need to ensure the enterprise GitHub Actions build process works for the standalone Nuitka binaries.
 
-- [ ] **Step 3.1: Final Integration Test Pass**
+- [ ] **Step 4.1: Final Integration Test Pass**
   - Run the full suite (`pytest tests/ -v`) to guarantee the advanced features didn't break baseline ripgrep parity. Ensure code coverage remains above 75%.
-- [ ] **Step 3.2: Tag and Trigger**
+- [ ] **Step 4.2: Tag and Trigger**
   - Create a git tag `v1.0.0-rc1` (Release Candidate 1).
   - Push the tag to GitHub (`git push origin v1.0.0-rc1`) to trigger `.github/workflows/release.yml`.
-- [ ] **Step 3.3: Verify Artifacts**
+- [ ] **Step 4.3: Verify Artifacts**
   - Monitor the GitHub Actions run to ensure the Windows, macOS, and Linux standalone binaries compile successfully via Nuitka.
 
-## Phase 4: Native Package Managers (Homebrew & Winget)
+## Phase 5: Native Package Managers (Homebrew & Winget)
 
 To act like a true enterprise CLI tool, `tg` must be installable via native system package managers.
 
