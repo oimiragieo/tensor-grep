@@ -14,9 +14,30 @@ class TestDeviceDetect:
     def test_should_report_vram_capacity(self):
         import torch
         torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.return_value = 1
         torch.cuda.get_device_properties.return_value = MagicMock(total_memory=12884901888)
         detector = DeviceDetector()
         assert detector.get_vram_capacity_mb() == 12288
+
+    @patch.dict("sys.modules", {"torch": MagicMock()})
+    def test_should_detect_multiple_gpus_when_available(self):
+        import torch
+        torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.return_value = 2
+        mock_props_0 = MagicMock(total_memory=12884901888) # 12 GB
+        mock_props_1 = MagicMock(total_memory=25769803776) # 24 GB
+        
+        def mock_get_properties(device_id):
+            if device_id == 0:
+                return mock_props_0
+            return mock_props_1
+            
+        torch.cuda.get_device_properties.side_effect = mock_get_properties
+        
+        detector = DeviceDetector()
+        assert detector.get_device_count() == 2
+        assert detector.get_vram_capacity_mb(0) == 12288
+        assert detector.get_vram_capacity_mb(1) == 24576
 
     @patch.dict("sys.modules", {"torch": MagicMock(), "kvikio": MagicMock()})
     def test_should_detect_gds_support(self):

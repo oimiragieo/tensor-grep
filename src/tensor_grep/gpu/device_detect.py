@@ -15,12 +15,21 @@ class DeviceDetector:
         except ImportError:
             return False
 
-    def get_vram_capacity_mb(self) -> int:
+    def get_device_count(self) -> int:
         if not self.has_gpu():
             return 0
         try:
             import torch
-            props = torch.cuda.get_device_properties(0)
+            return torch.cuda.device_count()
+        except Exception:
+            return 0
+
+    def get_vram_capacity_mb(self, device_id: int = 0) -> int:
+        if not self.has_gpu():
+            return 0
+        try:
+            import torch
+            props = torch.cuda.get_device_properties(device_id)
             return props.total_memory // (1024 * 1024)
         except Exception:
             return 0

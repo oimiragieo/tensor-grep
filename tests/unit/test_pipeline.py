@@ -1,16 +1,28 @@
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from tensor_grep.core.pipeline import Pipeline
 
 class TestPipeline:
-    def test_should_select_cudf_when_available(self):
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    def test_should_select_cudf_when_available(self, mock_mem):
+        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
         with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
             mock.return_value.is_available.return_value = True
             pipeline = Pipeline(force_cpu=False)
             assert pipeline.backend.__class__.__name__ == "MagicMock"
 
-    def test_should_fallback_to_cpu_when_no_gpu(self):
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    def test_should_fallback_to_cpu_when_no_gpu(self, mock_mem):
+        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
         with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
             mock.return_value.is_available.return_value = False
+            pipeline = Pipeline(force_cpu=False)
+            assert pipeline.backend.__class__.__name__ == "CPUBackend"
+            
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    def test_should_fallback_to_cpu_when_no_vram(self, mock_mem):
+        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = []
+        with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
+            mock.return_value.is_available.return_value = True
             pipeline = Pipeline(force_cpu=False)
             assert pipeline.backend.__class__.__name__ == "CPUBackend"
             
