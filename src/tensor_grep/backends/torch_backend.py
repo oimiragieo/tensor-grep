@@ -45,7 +45,7 @@ def _process_chunk_on_device(
     if config.ignore_case:
         pattern = pattern.lower()
 
-    pattern_bytes = pattern.encode("utf-8")
+    pattern.encode("utf-8")
     # Move to GPU VRAM
     # pattern_tensor = torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=target_device)
 

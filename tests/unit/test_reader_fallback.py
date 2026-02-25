@@ -12,7 +12,7 @@ class TestFallbackReader:
     def test_should_read_file_in_chunks(self, sample_log_file):
         # By iterating, it effectively reads line by line
         reader = FallbackReader()
-        for i, line in enumerate(reader.read_lines(str(sample_log_file))):
+        for _i, line in enumerate(reader.read_lines(str(sample_log_file))):
             assert "2026" in line
 
     def test_should_handle_compressed_gzip(self, tmp_path):

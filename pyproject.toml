@@ -71,6 +71,7 @@ select = [
 ]
 ignore = [
     "E501", # line too long, handled by black
+    "B008", # Do not perform function call in argument defaults (normal for Typer CLI commands)
 ]
 
 [tool.ruff.lint.isort]

@@ -178,7 +178,6 @@ def main():
     print("-" * 75)
 
     # Ensure tg resolves to python module
-    tg_cmd = ["python", "-m", "tensor_grep.cli.main", "search"]
 
     for scenario in SCENARIOS:
         rg_cmd = scenario["rg_args"]
@@ -187,9 +186,13 @@ def main():
         # escapes the uv environment. We MUST use sys.executable to stay inside the PyTorch env.
         import sys
 
-        actual_tg_cmd = [sys.executable, "-m", "tensor_grep.cli.main", "search"] + scenario[
-            "tg_args"
-        ][2:]
+        actual_tg_cmd = [
+            sys.executable,
+            "-m",
+            "tensor_grep.cli.main",
+            "search",
+            *scenario["tg_args"][2:],
+        ]
 
         # Warmup caches
         run_cmd_capture(rg_cmd)

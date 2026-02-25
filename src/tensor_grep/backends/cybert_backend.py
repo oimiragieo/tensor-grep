@@ -1,11 +1,11 @@
-try:
-    import numpy as np
-    import tritonclient.http as httpclient
-    from transformers import AutoTokenizer
-except ImportError:
-    pass
-
+import importlib.util
 from typing import Any
+
+HAS_CYBERT_DEPS = (
+    importlib.util.find_spec("numpy") is not None
+    and importlib.util.find_spec("tritonclient.http") is not None
+    and importlib.util.find_spec("transformers") is not None
+)
 
 
 def tokenize(lines: list[str]) -> dict[str, Any]:
@@ -14,6 +14,7 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
     except ImportError:
         try:
             import numpy as np
+
             return {"input_ids": np.array([[1, 2, 3]])}
         except ImportError:
             return {"input_ids": [[1, 2, 3]]}

@@ -45,7 +45,7 @@ def _process_chunk_on_device(
     matched = series[mask]
 
     matches = []
-    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas()):
+    for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
         matches.append(
             MatchLine(
                 line_number=int(idx) + 1,
@@ -63,8 +63,10 @@ class CuDFBackend(ComputeBackend):
 
     def is_available(self) -> bool:
         try:
-            import cudf as _cudf
+            import importlib.util
 
+            if not importlib.util.find_spec("cudf"):
+                return False
             return True
         except ImportError:
             return False
@@ -92,7 +94,7 @@ class CuDFBackend(ComputeBackend):
             if config and config.invert_match:
                 mask = ~mask
             matched = series[mask]
-            for idx, text in zip(matched.index.to_pandas(), matched.to_pandas()):
+            for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
                 matches.append(MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path))
         else:
             offset = 0

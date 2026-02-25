@@ -1,7 +1,10 @@
 class KvikIOReader:
     def is_available(self) -> bool:
         try:
-            import kvikio
+            import importlib.util
+
+            if not importlib.util.find_spec("kvikio"):
+                return False
 
             return True
         except ImportError:

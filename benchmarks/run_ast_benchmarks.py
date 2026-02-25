@@ -37,7 +37,7 @@ def generate_ast_data(directory: str, num_files: int = 10, funcs_per_file: int =
 class DataProcessor_{idx}:
     def __init__(self):
         self.data = []
-        
+
     def process_{func_idx}(self):
         try:
             x = {func_idx} * 2
@@ -45,7 +45,7 @@ class DataProcessor_{idx}:
                 return x
         except Exception as e:
             print(f"Error: {{e}}")
-            
+
     def validate_{func_idx}(self):
         return True
 """
@@ -82,8 +82,8 @@ def run_cmd_capture(cmd):
 def compare_results(ast_out, tg_out, scenario_name):
     # Both ast-grep and tg will print matches, but formatting differs heavily (ast-grep has color highlighting by default, tg outputs rg style)
     # Just checking if both found matches
-    ast_lines = len([l for l in ast_out.splitlines() if l.strip()])
-    tg_lines = len([l for l in tg_out.splitlines() if l.strip()])
+    ast_lines = len([line for line in ast_out.splitlines() if line.strip()])
+    tg_lines = len([line for line in tg_out.splitlines() if line.strip()])
 
     if (ast_lines > 0 and tg_lines == 0) or (ast_lines == 0 and tg_lines > 0):
         print(

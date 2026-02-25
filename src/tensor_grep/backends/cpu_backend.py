@@ -49,6 +49,7 @@ class CPUBackend(ComputeBackend):
 
         try:
             from collections import deque
+
             before_queue = deque(maxlen=before_lines)
             context_after_remaining = 0
 
@@ -64,7 +65,9 @@ class CPUBackend(ComputeBackend):
                         # Flush before context
                         while before_queue:
                             b_idx, b_text = before_queue.popleft()
-                            matches.append(MatchLine(line_number=b_idx, text=b_text, file=file_path))
+                            matches.append(
+                                MatchLine(line_number=b_idx, text=b_text, file=file_path)
+                            )
 
                         matches.append(
                             MatchLine(line_number=line_idx, text=line_text, file=file_path)
@@ -75,7 +78,9 @@ class CPUBackend(ComputeBackend):
                         if config.max_count and total_matches_count >= config.max_count:
                             break
                     elif context_after_remaining > 0:
-                        matches.append(MatchLine(line_number=line_idx, text=line_text, file=file_path))
+                        matches.append(
+                            MatchLine(line_number=line_idx, text=line_text, file=file_path)
+                        )
                         context_after_remaining -= 1
                     else:
                         if before_lines > 0:

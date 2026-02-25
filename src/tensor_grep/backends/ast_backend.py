@@ -18,8 +18,12 @@ class AstBackend(ComputeBackend):
     def is_available(self) -> bool:
         """Check if torch-geometric and tree-sitter are installed."""
         try:
-            import torch_geometric
-            import tree_sitter
+            import importlib.util
+
+            if not importlib.util.find_spec("torch_geometric") or not importlib.util.find_spec(
+                "tree_sitter"
+            ):
+                return False
 
             return torch.cuda.is_available()
         except ImportError:
@@ -46,7 +50,7 @@ class AstBackend(ComputeBackend):
             else:
                 raise ValueError(f"Language '{lang}' is not yet supported by the AstBackend.")
         except Exception as e:
-            raise RuntimeError(f"Failed to load tree-sitter grammar for {lang}: {e}")
+            raise RuntimeError(f"Failed to load tree-sitter grammar for {lang}: {e}") from e
 
         self._parsers[lang] = parser
         return parser

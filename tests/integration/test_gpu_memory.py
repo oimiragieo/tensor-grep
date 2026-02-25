@@ -1,4 +1,3 @@
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +8,7 @@ pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 class TestGpuMemoryIntegration:
     @patch("tensor_grep.gpu.memory_manager.DeviceDetector")
     def test_should_process_file_larger_than_vram(self, mock_detect, tmp_path):
-        cudf = pytest.importorskip("cudf")
+        pytest.importorskip("cudf")
 
         # We simulate a file size of 200MB, but set VRAM budget to 100MB
         mock_instance = MagicMock()
