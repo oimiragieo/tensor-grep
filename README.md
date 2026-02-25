@@ -11,6 +11,20 @@
 * **Semantic NLP Classification:** Utilize cyBERT to classify logs contextually (e.g. identify "ERROR" severity without explicit regexes) in a single pass.
 * **CPU Fallback Resiliency:** Works gracefully on Windows, macOS, and CPU-only systems using a resilient Python Regex backend.
 
+## 📦 Installation
+
+`tensor-grep` is published on PyPI. You can install it globally via `pip` or run it directly using `uvx`.
+
+```bash
+# Install globally via pip
+pip install tensor-grep
+
+# Or run directly without installing using uv
+uvx tensor-grep search "pattern" /var/logs
+```
+
+Once installed, the CLI command is mapped to `tg`.
+
 ---
 
 ## 💻 Hardware & Software Requirements
@@ -60,13 +74,6 @@ uv run --python 3.12 --extra-index-url https://pypi.nvidia.com --with "cudf-cu12
 ```
 
 Once installed, `tensor-grep` will automatically detect `cuDF`, discover your GPUs, and route all regex and string operations directly to your video cards' VRAM using the `CuDFBackend`.
-
-### 3. Install tensor-grep
-```bash
-pip install tensor-grep
-```
-
-Once installed, `tensor-grep` will automatically detect `cuDF`, discover your GPUs, and route all regex and string operations directly to your video cards' VRAM.
 
 ## Usage
 
