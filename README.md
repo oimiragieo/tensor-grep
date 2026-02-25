@@ -19,7 +19,8 @@ To achieve the 3x-10x performance gains over traditional CPU tools, `tensor-grep
 ### Windows Native GPU Support (No WSL2 Required)
 If you do not want to use WSL2 and want to run `tensor-grep` natively from PowerShell/CMD while still utilizing your GPU:
 ```powershell
-# Install PyTorch with CUDA 12.1 or 12.4 support
+# Note: PyTorch currently only provides pre-compiled CUDA wheels for Python <= 3.12.
+# You must be running Python 3.11 or 3.12 for this to work!
 pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 `tensor-grep` will automatically detect Windows + PyTorch and dispatch workloads to the `TorchBackend`, which converts strings into CUDA Tensors to process parallel 1D match convolutions natively on your local GPU.
