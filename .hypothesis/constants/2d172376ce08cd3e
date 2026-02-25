@@ -1,0 +1,4 @@
+# file: C:\dev\projects\cudf-grep\src\cudf_grep\backends\cybert_backend.py
+# hypothesis_version: 6.151.9
+
+[0.1, 0.8, 0.9, 'INT64', 'bert-base-uncased', 'confidence', 'cybert', 'error', 'info', 'input_ids', 'label', 'localhost:8000', 'logits', 'np', 'warn']

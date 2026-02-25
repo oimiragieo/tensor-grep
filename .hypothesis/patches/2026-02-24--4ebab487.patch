@@ -1,0 +1,16 @@
+From HEAD Mon Sep 17 00:00:00 2001
+From: Hypothesis 6.151.9 <no-reply@hypothesis.works>
+Date: Wed, 25 Feb 2026 04:56:08
+Subject: [PATCH] Hypothesis: add explicit examples
+
+---
+--- ./tests\property\test_tokenizer_props.py
++++ ./tests\property\test_tokenizer_props.py
+@@ -4,6 +4,7 @@
+ pytestmark = pytest.mark.property
+ 
+ @given(st.text(min_size=1, max_size=10000, alphabet=st.characters(blacklist_categories=("Cs",))))
++@example(text="0").via("discovered failure")
+ def test_tokenizer_never_crashes_on_valid_text(text):
+     from cudf_grep.backends.cybert_backend import tokenize
+     tokens = tokenize([text])

@@ -39,7 +39,25 @@ def classify(
     file_path: str,
     format_type: str = typer.Option("json", "--format", help="Output format")
 ) -> None:
-    pass
+    from cudf_grep.backends.cybert_backend import CybertBackend
+    from cudf_grep.io.reader_fallback import FallbackReader
+    import json
+    import sys
+    
+    reader = FallbackReader()
+    lines = list(reader.read_lines(file_path))
+    if not lines:
+        sys.exit(1)
+        
+    backend = CybertBackend()
+    results = backend.classify(lines)
+    
+    if format_type == "json":
+        data = {"classifications": results}
+        print(json.dumps(data))
+    else:
+        for r in results:
+            print(f"{r['label']} ({r['confidence']:.2f})")
 
 if __name__ == "__main__":
     app()
