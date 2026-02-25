@@ -32,6 +32,7 @@ markers = [
   "property: hypothesis property-based tests",
   "characterization: ripgrep parity tests",
   "snapshot: output format regression tests",
+  "performance: performance benchmarks",
 ]
 addopts = [
   "--import-mode=importlib",
