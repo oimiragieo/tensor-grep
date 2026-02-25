@@ -1,0 +1,32 @@
+{
+  "name": "tensor-grep",
+  "version": "0.1.0",
+  "description": "GPU-Accelerated Semantic Log Parsing CLI",
+  "main": "index.js",
+  "bin": {
+    "tensor-grep": "bin/tg",
+    "tg": "bin/tg"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tensor-grep/tensor-grep.git"
+  },
+  "keywords": [
+    "grep",
+    "ripgrep",
+    "gpu",
+    "logs",
+    "ai",
+    "cuda",
+    "cli"
+  ],
+  "author": "tensor-grep team",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "tar": "^6.2.0"
+  }
+}
