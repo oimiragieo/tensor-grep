@@ -1,5 +1,5 @@
-from cudf_grep.backends.base import ComputeBackend
-from cudf_grep.backends.cpu_backend import CPUBackend
+from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.cpu_backend import CPUBackend
 
 class TestBackendContract:
     """Every ComputeBackend must satisfy these contracts."""
@@ -10,11 +10,11 @@ class TestBackendContract:
         assert hasattr(result, 'is_empty')
 
     def test_cpu_backend_satisfies_contract(self, sample_log_file):
-        from cudf_grep.backends.cpu_backend import CPUBackend
+        from tensor_grep.backends.cpu_backend import CPUBackend
         self._check_contract(CPUBackend(), sample_log_file, "ERROR")
 
     def test_cudf_backend_satisfies_contract(self, sample_log_file):
-        from cudf_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.backends.cudf_backend import CuDFBackend
         try:
             import cudf
         except ImportError:

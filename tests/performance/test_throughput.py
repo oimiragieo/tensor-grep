@@ -9,7 +9,7 @@ class TestThroughput:
         lines = "2026-02-24 ERROR test line content here\n" * 100_000
         large.write_text(lines)
 
-        from cudf_grep.backends.cpu_backend import CPUBackend
+        from tensor_grep.backends.cpu_backend import CPUBackend
         start = time.perf_counter()
         CPUBackend().search(str(large), "ERROR")
         elapsed = time.perf_counter() - start

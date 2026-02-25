@@ -1,5 +1,5 @@
 from typing import Iterator
-from cudf_grep.io.base import IOBackend
+from tensor_grep.io.base import IOBackend
 
 class CuDFReader(IOBackend):
     def read_lines(self, file_path: str) -> Iterator[str]:

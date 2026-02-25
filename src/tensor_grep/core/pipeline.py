@@ -1,6 +1,6 @@
-from cudf_grep.backends.base import ComputeBackend
-from cudf_grep.backends.cpu_backend import CPUBackend
-from cudf_grep.backends.cudf_backend import CuDFBackend
+from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.cpu_backend import CPUBackend
+from tensor_grep.backends.cudf_backend import CuDFBackend
 
 class Pipeline:
     def __init__(self, force_cpu: bool = False):

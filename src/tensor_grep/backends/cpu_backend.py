@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
-from cudf_grep.backends.base import ComputeBackend
-from cudf_grep.core.result import SearchResult, MatchLine
+from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.core.result import SearchResult, MatchLine
 
 class CPUBackend(ComputeBackend):
     def is_available(self) -> bool:

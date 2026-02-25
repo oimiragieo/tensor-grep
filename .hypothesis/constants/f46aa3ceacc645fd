@@ -1,0 +1,4 @@
+# file: C:\dev\projects\cudf-grep\src\tensor_grep\formatters\table_fmt.py
+# hypothesis_version: 6.151.9
+
+['File\tLine\tMatch']

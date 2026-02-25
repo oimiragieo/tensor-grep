@@ -12,7 +12,7 @@ def test_reader_never_loses_bytes(text):
         f.flush()
         path = f.name
     try:
-        from cudf_grep.io.reader_fallback import FallbackReader
+        from tensor_grep.io.reader_fallback import FallbackReader
         reader = FallbackReader()
         content = "".join(reader.read_lines(path))
         assert len(content.encode('utf-8')) == len(text.encode('utf-8'))
@@ -27,7 +27,7 @@ def test_cpu_backend_never_crashes_on_valid_regex(pattern):
         f.write("test line ERROR something\nanother line\n")
         path = f.name
     try:
-        from cudf_grep.backends.cpu_backend import CPUBackend
+        from tensor_grep.backends.cpu_backend import CPUBackend
         backend = CPUBackend()
         result = backend.search(path, pattern)
         assert result is not None

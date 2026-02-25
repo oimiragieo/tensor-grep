@@ -1,13 +1,13 @@
 from unittest.mock import patch, MagicMock
 
 class TestCybertBackend:
-    @patch("cudf_grep.backends.cybert_backend.AutoTokenizer")
+    @patch("tensor_grep.backends.cybert_backend.AutoTokenizer")
     def test_should_tokenize_log_lines(self, mock_tokenizer):
         mock_instance = MagicMock()
         mock_instance.return_value = {"input_ids": [[1, 2, 3]]}
         mock_tokenizer.from_pretrained.return_value = mock_instance
         
-        from cudf_grep.backends.cybert_backend import tokenize
+        from tensor_grep.backends.cybert_backend import tokenize
         tokens = tokenize(["test line"])
         assert "input_ids" in tokens
         
@@ -23,7 +23,7 @@ class TestCybertBackend:
         mock_result.as_numpy.return_value = np.array([[0.1, 0.8, 0.1]])
         mock_client.infer.return_value = mock_result
         
-        from cudf_grep.backends.cybert_backend import CybertBackend
+        from tensor_grep.backends.cybert_backend import CybertBackend
         backend = CybertBackend()
         results = backend.classify(["test line"])
         

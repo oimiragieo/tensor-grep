@@ -12,7 +12,7 @@ class TestRipgrepParity:
             capture_output=True, text=True,
         )
         ours = subprocess.run(
-            ["cybert-grep", pattern, str(sample_log_file)],
+            ["tg", pattern, str(sample_log_file)],
             capture_output=True, text=True,
         )
         rg_lines = sorted(rg.stdout.strip().splitlines())

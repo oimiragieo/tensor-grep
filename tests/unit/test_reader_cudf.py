@@ -1,9 +1,9 @@
-from cudf_grep.io.reader_cudf import CuDFReader
+from tensor_grep.io.reader_cudf import CuDFReader
 from unittest.mock import MagicMock, patch
 
 import sys
 from unittest.mock import MagicMock, patch
-from cudf_grep.io.reader_cudf import CuDFReader
+from tensor_grep.io.reader_cudf import CuDFReader
 
 class TestCuDFReader:
     @patch.dict("sys.modules", {"cudf": MagicMock()})

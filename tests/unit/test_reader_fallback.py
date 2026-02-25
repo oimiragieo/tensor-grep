@@ -1,4 +1,4 @@
-from cudf_grep.io.reader_fallback import FallbackReader
+from tensor_grep.io.reader_fallback import FallbackReader
 import gzip
 
 class TestFallbackReader:

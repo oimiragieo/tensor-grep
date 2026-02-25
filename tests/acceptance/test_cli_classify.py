@@ -7,7 +7,7 @@ pytestmark = pytest.mark.acceptance
 class TestCLIClassify:
     def test_should_classify_log_lines(self, sample_log_file):
         result = subprocess.run(
-            ["cybert-grep", "classify", "--format", "json", str(sample_log_file)],
+            ["tg", "classify", "--format", "json", str(sample_log_file)],
             capture_output=True, text=True,
         )
         assert result.returncode == 0

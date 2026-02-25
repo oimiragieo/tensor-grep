@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cudf-grep"
+name = "tensor-grep"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = ["typer[all]>=0.12", "rich>=13.0"]
@@ -20,7 +20,7 @@ dev = [
 ]
 
 [project.scripts]
-cybert-grep = "cudf_grep.cli.main:app"
+tg = "tensor_grep.cli.main:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -42,14 +42,14 @@ addopts = [
 ]
 
 [tool.coverage.run]
-source = ["src/cudf_grep"]
+source = ["src/tensor_grep"]
 branch = true
 
 [tool.coverage.report]
 fail_under = 60
 
 [tool.mutmut]
-paths_to_mutate = "src/cudf_grep/"
+paths_to_mutate = "src/tensor_grep/"
 tests_dir = "tests/unit/"
 runner = "python -m pytest tests/unit/ -x --no-header -q"
 

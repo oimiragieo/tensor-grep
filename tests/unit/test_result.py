@@ -1,4 +1,4 @@
-from cudf_grep.core.result import SearchResult, MatchLine
+from tensor_grep.core.result import SearchResult, MatchLine
 
 class TestSearchResult:
     def test_should_create_result_with_matches(self):

@@ -1,4 +1,4 @@
-# cudf-grep: GPU-Accelerated Log Parsing CLI
+# tensor-grep: GPU-Accelerated Log Parsing CLI
 ## Single-Shot TDD Implementation Plan (2026)
 
 ---
@@ -54,7 +54,7 @@ OUTER LOOP (Acceptance)          INNER LOOP (Unit)
 ```
                         ┌──────────────────────┐
                         │   CLI (Typer)         │
-                        │   cybert-grep ...     │
+                        │   tg ...     │
                         └──────────┬───────────┘
                                    │
                         ┌──────────v───────────┐
@@ -133,10 +133,10 @@ Bottleneck is the NVMe SSD, not PCIe or GPU.
 ## Project Structure
 
 ```
-cudf-grep/
+tensor-grep/
 ├── pyproject.toml                  # All config: deps, pytest, mutmut, ruff
 ├── src/
-│   └── cudf_grep/
+│   └── tensor_grep/
 │       ├── __init__.py
 │       ├── cli/
 │       │   ├── __init__.py
@@ -226,7 +226,7 @@ cudf-grep/
 - [ ] Create `pyproject.toml` with project metadata, dependencies, and tool config
   ```toml
   [project]
-  name = "cudf-grep"
+  name = "tensor-grep"
   version = "0.1.0"
   requires-python = ">=3.11"
   dependencies = ["typer[all]>=0.12", "rich>=13.0"]
@@ -243,7 +243,7 @@ cudf-grep/
   ]
 
   [project.scripts]
-  cybert-grep = "cudf_grep.cli.main:app"
+  tg = "tensor_grep.cli.main:app"
 
   [tool.pytest.ini_options]
   testpaths = ["tests"]
@@ -264,14 +264,14 @@ cudf-grep/
   ]
 
   [tool.coverage.run]
-  source = ["src/cudf_grep"]
+  source = ["src/tensor_grep"]
   branch = true
 
   [tool.coverage.report]
   fail_under = 90
 
   [tool.mutmut]
-  paths_to_mutate = "src/cudf_grep/"
+  paths_to_mutate = "src/tensor_grep/"
   tests_dir = "tests/unit/"
   runner = "python -m pytest tests/unit/ -x --no-header -q"
 
@@ -337,7 +337,7 @@ cudf-grep/
       def test_should_find_pattern_in_log_file(self, sample_log_file):
           """OUTER LOOP RED: The simplest possible E2E test."""
           result = subprocess.run(
-              ["cybert-grep", "search", "ERROR", str(sample_log_file)],
+              ["tg", "search", "ERROR", str(sample_log_file)],
               capture_output=True, text=True,
           )
           assert result.returncode == 0
@@ -346,7 +346,7 @@ cudf-grep/
 
       def test_should_exit_1_when_no_matches(self, sample_log_file):
           result = subprocess.run(
-              ["cybert-grep", "search", "NONEXISTENT", str(sample_log_file)],
+              ["tg", "search", "NONEXISTENT", str(sample_log_file)],
               capture_output=True, text=True,
           )
           assert result.returncode == 1
@@ -356,7 +356,7 @@ cudf-grep/
 ### Task 0.3 -- Walking Skeleton: Minimal CLI (GREEN)
 - [ ] Step into inner loop. Write `tests/unit/test_result.py` (RED):
   ```python
-  from cudf_grep.core.result import SearchResult, MatchLine
+  from tensor_grep.core.result import SearchResult, MatchLine
 
   class TestSearchResult:
       def test_should_create_result_with_matches(self):
@@ -369,7 +369,7 @@ cudf-grep/
           result = SearchResult(matches=[], total_files=1, total_matches=0)
           assert result.is_empty is True
   ```
-- [ ] Implement `src/cudf_grep/core/result.py` (GREEN):
+- [ ] Implement `src/tensor_grep/core/result.py` (GREEN):
   ```python
   from dataclasses import dataclass, field
 
@@ -391,7 +391,7 @@ cudf-grep/
   ```
 - [ ] Write `tests/unit/test_cpu_backend.py` (RED):
   ```python
-  from cudf_grep.backends.cpu_backend import CPUBackend
+  from tensor_grep.backends.cpu_backend import CPUBackend
 
   class TestCPUBackend:
       def test_should_find_simple_pattern(self, sample_log_file):
@@ -404,15 +404,15 @@ cudf-grep/
           result = backend.search(str(sample_log_file), "NONEXISTENT")
           assert result.is_empty is True
   ```
-- [ ] Implement `src/cudf_grep/backends/base.py` (protocol) and `cpu_backend.py` (GREEN)
+- [ ] Implement `src/tensor_grep/backends/base.py` (protocol) and `cpu_backend.py` (GREEN)
 - [ ] Write `tests/unit/test_formatters.py` -- test ripgrep_fmt outputs lines (RED)
-- [ ] Implement `src/cudf_grep/formatters/ripgrep_fmt.py` (GREEN)
-- [ ] Implement `src/cudf_grep/cli/main.py` -- minimal Typer app that wires CPU backend + ripgrep formatter (GREEN)
+- [ ] Implement `src/tensor_grep/formatters/ripgrep_fmt.py` (GREEN)
+- [ ] Implement `src/tensor_grep/cli/main.py` -- minimal Typer app that wires CPU backend + ripgrep formatter (GREEN)
 - [ ] Run `pip install -e ".[dev]"` and re-run acceptance test -- confirm GREEN
 - [ ] REFACTOR: Clean up any code smells introduced during skeleton
 
 ### Task 0.4 -- Validate the Skeleton
-- [ ] Run full test suite: `pytest --cov=src/cudf_grep`
+- [ ] Run full test suite: `pytest --cov=src/tensor_grep`
 - [ ] Run type check: `mypy src/`
 - [ ] Run linter: `ruff check src/ tests/`
 - [ ] `git add -A && git commit -m "Walking skeleton: CLI search with CPU backend"`
@@ -426,7 +426,7 @@ cudf-grep/
 ### Task 1.1 -- Query Analyzer (RED -> GREEN -> REFACTOR)
 - [ ] Write `tests/unit/test_query_analyzer.py` (RED):
   ```python
-  from cudf_grep.core.query_analyzer import QueryAnalyzer, QueryType
+  from tensor_grep.core.query_analyzer import QueryAnalyzer, QueryType
 
   class TestQueryAnalyzer:
       def test_simple_string_is_fast_path(self):
@@ -446,7 +446,7 @@ cudf-grep/
           for kw in ["classify", "detect", "extract entities", "anomaly"]:
               assert qa.analyze(kw).query_type == QueryType.NLP
   ```
-- [ ] Implement `src/cudf_grep/core/query_analyzer.py` (GREEN)
+- [ ] Implement `src/tensor_grep/core/query_analyzer.py` (GREEN)
 - [ ] REFACTOR: ensure analyzer is stateless and fast
 
 ### Task 1.2 -- Full CPU Backend with Regex (RED -> GREEN -> REFACTOR)
@@ -469,11 +469,11 @@ cudf-grep/
   - [ ] `test_should_preserve_line_boundaries_across_chunks`
   - [ ] `test_should_handle_compressed_gzip`
   - [ ] `test_should_mmap_large_files`
-- [ ] Implement `src/cudf_grep/io/reader_fallback.py` (GREEN)
+- [ ] Implement `src/tensor_grep/io/reader_fallback.py` (GREEN)
 - [ ] Write `tests/contract/test_io_contracts.py` (RED):
   ```python
-  from cudf_grep.io.base import IOBackend
-  from cudf_grep.io.reader_fallback import FallbackReader
+  from tensor_grep.io.base import IOBackend
+  from tensor_grep.io.reader_fallback import FallbackReader
 
   class TestIOContract:
       """Every IOBackend must satisfy these contracts."""
@@ -502,7 +502,7 @@ cudf-grep/
   ```
 - [ ] Write `tests/contract/test_backend_contracts.py` (RED):
   ```python
-  from cudf_grep.backends.base import ComputeBackend
+  from tensor_grep.backends.base import ComputeBackend
 
   class TestBackendContract:
       """Every ComputeBackend must satisfy these contracts."""
@@ -513,7 +513,7 @@ cudf-grep/
           assert hasattr(result, 'is_empty')
 
       def test_cpu_backend_satisfies_contract(self, sample_log_file):
-          from cudf_grep.backends.cpu_backend import CPUBackend
+          from tensor_grep.backends.cpu_backend import CPUBackend
           self._check_contract(CPUBackend(), sample_log_file, "ERROR")
   ```
 
@@ -534,7 +534,7 @@ cudf-grep/
               capture_output=True, text=True,
           )
           ours = subprocess.run(
-              ["cybert-grep", "search", pattern, str(sample_log_file)],
+              ["tg", "search", pattern, str(sample_log_file)],
               capture_output=True, text=True,
           )
           rg_lines = sorted(rg.stdout.strip().splitlines())
@@ -560,7 +560,7 @@ cudf-grep/
           f.flush()
           path = f.name
       try:
-          from cudf_grep.io.reader_fallback import FallbackReader
+          from tensor_grep.io.reader_fallback import FallbackReader
           reader = FallbackReader()
           content = "".join(reader.read_lines(path))
           assert len(content.encode('utf-8')) == len(text.encode('utf-8'))
@@ -575,7 +575,7 @@ cudf-grep/
           f.write("test line ERROR something\nanother line\n")
           path = f.name
       try:
-          from cudf_grep.backends.cpu_backend import CPUBackend
+          from tensor_grep.backends.cpu_backend import CPUBackend
           backend = CPUBackend()
           result = backend.search(path, pattern)
           assert result is not None
@@ -596,7 +596,7 @@ cudf-grep/
   class TestCLIWithoutGPU:
       def test_should_work_with_cpu_flag(self, sample_log_file):
           result = subprocess.run(
-              ["cybert-grep", "search", "--cpu", "ERROR", str(sample_log_file)],
+              ["tg", "search", "--cpu", "ERROR", str(sample_log_file)],
               capture_output=True, text=True,
           )
           assert result.returncode == 0
@@ -604,7 +604,7 @@ cudf-grep/
 
       def test_should_output_json(self, sample_log_file):
           result = subprocess.run(
-              ["cybert-grep", "search", "--cpu", "--format", "json", "ERROR", str(sample_log_file)],
+              ["tg", "search", "--cpu", "--format", "json", "ERROR", str(sample_log_file)],
               capture_output=True, text=True,
           )
           assert result.returncode == 0
@@ -615,9 +615,9 @@ cudf-grep/
 - [ ] Wire query analyzer into CLI main.py to make these pass (GREEN)
 
 ### Task 1.8 -- Quality Gates: Phase 1 Checkpoint
-- [ ] Run `pytest tests/unit/ tests/property/ tests/contract/ tests/acceptance/ tests/characterization/ tests/snapshot/ --cov=src/cudf_grep`
+- [ ] Run `pytest tests/unit/ tests/property/ tests/contract/ tests/acceptance/ tests/characterization/ tests/snapshot/ --cov=src/tensor_grep`
 - [ ] Verify coverage >= 90%
-- [ ] Run `mutmut run` on `src/cudf_grep/core/` and `src/cudf_grep/backends/cpu_backend.py`
+- [ ] Run `mutmut run` on `src/tensor_grep/core/` and `src/tensor_grep/backends/cpu_backend.py`
 - [ ] Verify < 20% surviving mutants
 - [ ] Run `mypy src/` -- zero errors
 - [ ] Run `ruff check src/ tests/` -- zero errors
@@ -638,30 +638,30 @@ cudf-grep/
   class TestCuDFBackend:
       """Unit tests: mock cuDF so no GPU needed."""
 
-      @patch("cudf_grep.backends.cudf_backend.cudf")
+      @patch("tensor_grep.backends.cudf_backend.cudf")
       def test_should_use_cudf_read_text(self, mock_cudf, sample_log_file):
           mock_series = MagicMock()
           mock_series.str.contains.return_value = MagicMock()
           mock_cudf.read_text.return_value = mock_series
 
-          from cudf_grep.backends.cudf_backend import CuDFBackend
+          from tensor_grep.backends.cudf_backend import CuDFBackend
           backend = CuDFBackend()
           backend.search(str(sample_log_file), "ERROR")
 
           mock_cudf.read_text.assert_called_once()
 
-      @patch("cudf_grep.backends.cudf_backend.cudf")
+      @patch("tensor_grep.backends.cudf_backend.cudf")
       def test_should_use_byte_range_for_large_files(self, mock_cudf, tmp_path):
-          from cudf_grep.backends.cudf_backend import CuDFBackend
+          from tensor_grep.backends.cudf_backend import CuDFBackend
           backend = CuDFBackend(chunk_size_mb=256)
           assert backend.chunk_size_mb == 256
 
-      @patch("cudf_grep.backends.cudf_backend.cudf")
+      @patch("tensor_grep.backends.cudf_backend.cudf")
       def test_should_use_str_contains_for_regex(self, mock_cudf):
           mock_series = MagicMock()
           mock_cudf.read_text.return_value = mock_series
 
-          from cudf_grep.backends.cudf_backend import CuDFBackend
+          from tensor_grep.backends.cudf_backend import CuDFBackend
           backend = CuDFBackend()
           backend.search("test.log", r"ERROR.*timeout")
 
@@ -669,12 +669,12 @@ cudf-grep/
   ```
 
 ### Task 2.2 -- cuDF Backend Implementation (GREEN)
-- [ ] Implement `src/cudf_grep/backends/cudf_backend.py`:
+- [ ] Implement `src/tensor_grep/backends/cudf_backend.py`:
   ```python
   from __future__ import annotations
   from typing import TYPE_CHECKING
-  from cudf_grep.backends.base import ComputeBackend
-  from cudf_grep.core.result import SearchResult, MatchLine
+  from tensor_grep.backends.base import ComputeBackend
+  from tensor_grep.core.result import SearchResult, MatchLine
 
   if TYPE_CHECKING:
       import cudf
@@ -729,7 +729,7 @@ cudf-grep/
 
 ### Task 2.3 -- cuDF IO Reader (RED -> GREEN)
 - [ ] Write `tests/unit/test_reader_cudf.py` (mocked, RED)
-- [ ] Implement `src/cudf_grep/io/reader_cudf.py` (GREEN)
+- [ ] Implement `src/tensor_grep/io/reader_cudf.py` (GREEN)
 - [ ] Add to IO contract tests
 
 ### Task 2.4 -- cuDF Integration Tests (RED -> GREEN)
@@ -764,18 +764,18 @@ cudf-grep/
   ```python
   class TestPipeline:
       def test_should_select_cudf_when_available(self):
-          with patch("cudf_grep.core.pipeline.CuDFBackend") as mock:
+          with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
               mock.return_value.is_available.return_value = True
               pipeline = Pipeline(force_cpu=False)
               assert pipeline.backend.__class__.__name__ == "CuDFBackend"
 
       def test_should_fallback_to_cpu_when_no_gpu(self):
-          with patch("cudf_grep.core.pipeline.CuDFBackend") as mock:
+          with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
               mock.return_value.is_available.return_value = False
               pipeline = Pipeline(force_cpu=False)
               assert pipeline.backend.__class__.__name__ == "CPUBackend"
   ```
-- [ ] Implement `src/cudf_grep/core/pipeline.py` (GREEN)
+- [ ] Implement `src/tensor_grep/core/pipeline.py` (GREEN)
 - [ ] REFACTOR: clean dependency injection
 
 ### Task 2.6 -- Phase 2 Quality Gates
@@ -796,7 +796,7 @@ cudf-grep/
   - [ ] `test_should_report_vram_capacity` (mocked)
   - [ ] `test_should_detect_gds_support` (mocked)
   - [ ] `test_should_detect_platform` (linux/win32/wsl2)
-- [ ] Implement `src/cudf_grep/gpu/device_detect.py` (GREEN)
+- [ ] Implement `src/tensor_grep/gpu/device_detect.py` (GREEN)
 
 ### Task 3.2 -- Memory Manager (RED -> GREEN -> REFACTOR)
 - [ ] Write `tests/unit/test_memory_manager.py`:
@@ -805,7 +805,7 @@ cudf-grep/
   - [ ] `test_should_recommend_pinned_memory_for_geforce`
   - [ ] `test_should_recommend_gds_for_datacenter_gpu`
   - [ ] `test_should_handle_zero_vram_gracefully` (no GPU fallback)
-- [ ] Implement `src/cudf_grep/gpu/memory_manager.py` (GREEN)
+- [ ] Implement `src/tensor_grep/gpu/memory_manager.py` (GREEN)
 - [ ] REFACTOR: integrate into CuDFBackend for chunk size auto-tuning
 
 ### Task 3.3 -- Integration: Large File Processing (RED -> GREEN)
@@ -829,9 +829,9 @@ cudf-grep/
   - [ ] `test_should_load_tensor_via_directstorage` (mock dstorage_gpu)
   - [ ] `test_should_fallback_when_dstorage_unavailable`
   - [ ] `test_should_report_dstorage_available_on_windows`
-- [ ] Implement `src/cudf_grep/io/reader_dstorage.py`:
+- [ ] Implement `src/tensor_grep/io/reader_dstorage.py`:
   ```python
-  from cudf_grep.io.base import IOBackend
+  from tensor_grep.io.base import IOBackend
 
   class DStorageReader(IOBackend):
       def is_available(self) -> bool:
@@ -852,7 +852,7 @@ cudf-grep/
 - [ ] Write `tests/unit/test_reader_kvikio.py` (mocked):
   - [ ] `test_should_read_via_gds_when_available`
   - [ ] `test_should_fallback_to_compat_mode`
-- [ ] Implement `src/cudf_grep/io/reader_kvikio.py`
+- [ ] Implement `src/tensor_grep/io/reader_kvikio.py`
 - [ ] Add both to IO contract tests
 
 ### Task 4.3 -- Phase 4 Quality Gates
@@ -875,7 +875,7 @@ cudf-grep/
   class TestCLIClassify:
       def test_should_classify_log_lines(self, sample_log_file):
           result = subprocess.run(
-              ["cybert-grep", "classify", "--format", "json", str(sample_log_file)],
+              ["tg", "classify", "--format", "json", str(sample_log_file)],
               capture_output=True, text=True,
           )
           assert result.returncode == 0
@@ -894,7 +894,7 @@ cudf-grep/
   - [ ] `test_should_report_confidence_scores`
 
 ### Task 5.3 -- cyBERT Backend Implementation (GREEN)
-- [ ] Implement `src/cudf_grep/backends/cybert_backend.py`:
+- [ ] Implement `src/tensor_grep/backends/cybert_backend.py`:
   - [ ] Tokenizer wrapper (HuggingFace AutoTokenizer)
   - [ ] Triton client for inference
   - [ ] Postprocessing: labels + entities + confidence
@@ -913,7 +913,7 @@ cudf-grep/
 
   @given(st.text(min_size=1, max_size=10000, alphabet=st.characters(blacklist_categories=("Cs",))))
   def test_tokenizer_never_crashes_on_valid_text(text):
-      from cudf_grep.backends.cybert_backend import tokenize
+      from tensor_grep.backends.cybert_backend import tokenize
       tokens = tokenize([text])
       assert tokens is not None
       assert len(tokens) > 0
@@ -948,7 +948,7 @@ cudf-grep/
           lines = "2026-02-24 ERROR test line content here\n" * 100_000
           large.write_text(lines)
 
-          from cudf_grep.backends.cpu_backend import CPUBackend
+          from tensor_grep.backends.cpu_backend import CPUBackend
           start = time.perf_counter()
           CPUBackend().search(str(large), "ERROR")
           elapsed = time.perf_counter() - start
@@ -989,13 +989,13 @@ cudf-grep/
           # Our tool: classify does all at once (when GPU available)
           start = time.perf_counter()
           subprocess.run(
-              ["cybert-grep", "search", "--cpu", "ERROR|WARN|INFO", str(log)],
+              ["tg", "search", "--cpu", "ERROR|WARN|INFO", str(log)],
               capture_output=True,
           )
           our_total = time.perf_counter() - start
 
           print(f"ripgrep {len(patterns)} passes: {rg_total:.3f}s")
-          print(f"cybert-grep single pass: {our_total:.3f}s")
+          print(f"tg single pass: {our_total:.3f}s")
   ```
 
 ### Task 6.3 -- CI Benchmark Workflow
@@ -1032,14 +1032,14 @@ cudf-grep/
 - [ ] Fix any remaining failures
 
 ### Task 7.2 -- Final Quality Gates
-- [ ] `pytest --cov=src/cudf_grep -v` -- all pass, coverage >= 90%
+- [ ] `pytest --cov=src/tensor_grep -v` -- all pass, coverage >= 90%
 - [ ] `mutmut run` -- < 20% surviving mutants on critical paths
 - [ ] `mypy src/` -- zero errors
 - [ ] `ruff check src/ tests/` -- zero errors
-- [ ] `pip install -e .` and run `cybert-grep search ERROR tests/test_data/small_sample.log`
+- [ ] `pip install -e .` and run `tg search ERROR tests/test_data/small_sample.log`
 
 ### Task 7.3 -- Commit and Tag
-- [ ] `git add -A && git commit -m "v0.1.0: cudf-grep with TDD-driven CPU+GPU dual path"`
+- [ ] `git add -A && git commit -m "v0.1.0: tensor-grep with TDD-driven CPU+GPU dual path"`
 - [ ] `git tag v0.1.0`
 
 ---

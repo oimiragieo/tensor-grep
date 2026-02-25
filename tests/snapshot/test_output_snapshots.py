@@ -1,5 +1,5 @@
-from cudf_grep.backends.cpu_backend import CPUBackend
-from cudf_grep.formatters.json_fmt import JsonFormatter
+from tensor_grep.backends.cpu_backend import CPUBackend
+from tensor_grep.formatters.json_fmt import JsonFormatter
 
 def test_json_output_snapshot(sample_log_file, snapshot):
     backend = CPUBackend()

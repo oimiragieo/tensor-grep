@@ -26,10 +26,10 @@ class TestVsRipgrep:
         # Our tool: classify does all at once (when GPU available)
         start = time.perf_counter()
         subprocess.run(
-            ["cybert-grep", "search", "--cpu", "ERROR|WARN|INFO", str(log)],
+            ["tg", "search", "--cpu", "ERROR|WARN|INFO", str(log)],
             capture_output=True,
         )
         our_total = time.perf_counter() - start
 
         print(f"ripgrep {len(patterns)} passes: {rg_total:.3f}s")
-        print(f"cybert-grep single pass: {our_total:.3f}s")
+        print(f"tg single pass: {our_total:.3f}s")

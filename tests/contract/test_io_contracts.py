@@ -1,5 +1,5 @@
-from cudf_grep.io.base import IOBackend
-from cudf_grep.io.reader_fallback import FallbackReader
+from tensor_grep.io.base import IOBackend
+from tensor_grep.io.reader_fallback import FallbackReader
 
 class TestIOContract:
     """Every IOBackend must satisfy these contracts."""

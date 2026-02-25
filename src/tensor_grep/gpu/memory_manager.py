@@ -1,4 +1,4 @@
-from cudf_grep.gpu.device_detect import DeviceDetector
+from tensor_grep.gpu.device_detect import DeviceDetector
 
 class MemoryManager:
     def __init__(self) -> None:

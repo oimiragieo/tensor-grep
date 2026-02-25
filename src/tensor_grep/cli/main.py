@@ -1,7 +1,7 @@
 import typer
 import sys
-from cudf_grep.backends.cpu_backend import CPUBackend
-from cudf_grep.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.backends.cpu_backend import CPUBackend
+from tensor_grep.formatters.ripgrep_fmt import RipgrepFormatter
 
 from typing import Optional
 
@@ -20,20 +20,20 @@ def search_command(
     if result.is_empty:
         sys.exit(1)
 
-    from cudf_grep.formatters.base import OutputFormatter
+    from tensor_grep.formatters.base import OutputFormatter
     formatter: OutputFormatter
 
     if format_type == "json":
-        from cudf_grep.formatters.json_fmt import JsonFormatter
+        from tensor_grep.formatters.json_fmt import JsonFormatter
         formatter = JsonFormatter()
     elif format_type == "table":
-        from cudf_grep.formatters.table_fmt import TableFormatter
+        from tensor_grep.formatters.table_fmt import TableFormatter
         formatter = TableFormatter()
     elif format_type == "csv":
-        from cudf_grep.formatters.csv_fmt import CsvFormatter
+        from tensor_grep.formatters.csv_fmt import CsvFormatter
         formatter = CsvFormatter()
     else:
-        from cudf_grep.formatters.ripgrep_fmt import RipgrepFormatter
+        from tensor_grep.formatters.ripgrep_fmt import RipgrepFormatter
         formatter = RipgrepFormatter()
         
     print(formatter.format(result))
@@ -43,8 +43,8 @@ def classify(
     file_path: str,
     format_type: str = typer.Option("json", "--format", help="Output format")
 ) -> None:
-    from cudf_grep.backends.cybert_backend import CybertBackend
-    from cudf_grep.io.reader_fallback import FallbackReader
+    from tensor_grep.backends.cybert_backend import CybertBackend
+    from tensor_grep.io.reader_fallback import FallbackReader
     import json
     import sys
     

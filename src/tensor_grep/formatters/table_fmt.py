@@ -1,5 +1,5 @@
-from cudf_grep.formatters.base import OutputFormatter
-from cudf_grep.core.result import SearchResult
+from tensor_grep.formatters.base import OutputFormatter
+from tensor_grep.core.result import SearchResult
 
 class TableFormatter(OutputFormatter):
     def format(self, result: SearchResult) -> str:

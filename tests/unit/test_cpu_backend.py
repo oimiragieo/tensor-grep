@@ -1,4 +1,4 @@
-from cudf_grep.backends.cpu_backend import CPUBackend
+from tensor_grep.backends.cpu_backend import CPUBackend
 import pytest
 
 class TestCPUBackend:

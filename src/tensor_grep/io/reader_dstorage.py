@@ -1,4 +1,4 @@
-from cudf_grep.io.base import IOBackend
+from tensor_grep.io.base import IOBackend
 import sys
 
 class DStorageReader:

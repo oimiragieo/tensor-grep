@@ -6,7 +6,7 @@ pytestmark = pytest.mark.acceptance
 class TestCLIWithoutGPU:
     def test_should_work_with_cpu_flag(self, sample_log_file):
         result = subprocess.run(
-            ["cybert-grep", "search", "--cpu", "ERROR", str(sample_log_file)],
+            ["tg", "search", "--cpu", "ERROR", str(sample_log_file)],
             capture_output=True, text=True,
         )
         assert result.returncode == 0
@@ -14,7 +14,7 @@ class TestCLIWithoutGPU:
 
     def test_should_output_json(self, sample_log_file):
         result = subprocess.run(
-            ["cybert-grep", "search", "--cpu", "--format", "json", "ERROR", str(sample_log_file)],
+            ["tg", "search", "--cpu", "--format", "json", "ERROR", str(sample_log_file)],
             capture_output=True, text=True,
         )
         assert result.returncode == 0

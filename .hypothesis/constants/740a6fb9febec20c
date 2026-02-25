@@ -1,0 +1,4 @@
+# file: C:\dev\projects\cudf-grep\src\tensor_grep\formatters\json_fmt.py
+# hypothesis_version: 6.151.9
+
+['file', 'line_number', 'matches', 'text', 'total_files', 'total_matches']

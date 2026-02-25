@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from cudf_grep.backends.base import ComputeBackend
-from cudf_grep.core.result import SearchResult, MatchLine
+from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.core.result import SearchResult, MatchLine
 
 if TYPE_CHECKING:
     import cudf

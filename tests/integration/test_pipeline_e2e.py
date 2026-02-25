@@ -4,7 +4,7 @@ pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 
 class TestPipelineE2E:
     def test_full_nlp_pipeline_with_triton(self, sample_log_file):
-        from cudf_grep.backends.cybert_backend import CybertBackend
+        from tensor_grep.backends.cybert_backend import CybertBackend
         backend = CybertBackend()
         
         # Test basic classification mock
@@ -14,7 +14,7 @@ class TestPipelineE2E:
 
     def test_batch_inference_throughput(self):
         lines = ["INFO test"] * 100
-        from cudf_grep.backends.cybert_backend import CybertBackend
+        from tensor_grep.backends.cybert_backend import CybertBackend
         backend = CybertBackend()
         results = backend.classify(lines)
         assert len(results) == 100

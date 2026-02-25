@@ -1,5 +1,5 @@
 from unittest.mock import patch, MagicMock
-from cudf_grep.gpu.device_detect import DeviceDetector, Platform
+from tensor_grep.gpu.device_detect import DeviceDetector, Platform
 
 class TestDeviceDetect:
     @patch.dict("sys.modules", {"torch": MagicMock()})
@@ -27,7 +27,7 @@ class TestDeviceDetect:
         detector = DeviceDetector()
         assert detector.has_gds() is True
 
-    @patch("cudf_grep.gpu.device_detect.sys")
+    @patch("tensor_grep.gpu.device_detect.sys")
     @patch("os.path.exists")
     def test_should_detect_platform(self, mock_exists, mock_sys):
         # Test Linux
