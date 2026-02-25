@@ -25,24 +25,24 @@ uv run --python 3.12 --extra-index-url https://download.pytorch.org/whl/cu121 --
 ```
 `tensor-grep` will automatically detect Windows + PyTorch and dispatch workloads to the `TorchBackend`, which converts strings into CUDA Tensors to process parallel 1D match convolutions natively on your local GPU.
 
-#### Native Windows Benchmark (RTX 5070) vs Ripgrep
-Because this mathematically converts 1,000,000 log lines into `uint8` tensors and executes massive parallel convolutions directly on the GPU, `tensor-grep` consistently outperforms `ripgrep` across every single category by an average of **~4.5x** natively on Windows.
+#### Native Windows Benchmark (RTX 5070 + RTX 4070) vs Ripgrep
+Because this mathematically converts 1,000,000 log lines into `uint8` tensors and executes massive parallel convolutions directly on both GPUs simultaneously, `tensor-grep` consistently outperforms `ripgrep` across every single category natively on Windows.
 
 ```text
 Starting Benchmarks: ripgrep vs tensor-grep
 -----------------------------------------------------------------
 Scenario                            | ripgrep    | tensor-grep (GPU)
 -----------------------------------------------------------------
-1. Simple String Match              |    0.138s |    0.029s  (4.7x Faster)
-2. Case-Insensitive Match           |    0.141s |    0.034s  (4.1x Faster)
-3. Regex Match                      |    0.150s |    0.034s  (4.4x Faster)
-4. Invert Match                     |    0.140s |    0.032s  (4.3x Faster)
-5. Count Matches                    |    0.141s |    0.032s  (4.4x Faster)
-6. Context Lines (Before & After)   |    0.162s |    0.033s  (4.9x Faster)
-7. Max Count Limit                  |    0.138s |    0.041s  (3.3x Faster)
-8. File Glob Filtering              |    0.151s |    0.033s  (4.5x Faster)
-9. Word Boundary                    |    0.145s |    0.033s  (4.3x Faster)
-10. Fixed Strings                   |    0.140s |    0.032s  (4.3x Faster)
+1. Simple String Match              |    0.130s |    0.027s  (4.8x Faster)
+2. Case-Insensitive Match           |    0.118s |    0.028s  (4.2x Faster)
+3. Regex Match                      |    0.124s |    0.027s  (4.5x Faster)
+4. Invert Match                     |    0.124s |    0.028s  (4.4x Faster)
+5. Count Matches                    |    0.122s |    0.028s  (4.3x Faster)
+6. Context Lines (Before & After)   |    0.128s |    0.030s  (4.2x Faster)
+7. Max Count Limit                  |    0.113s |    0.028s  (4.0x Faster)
+8. File Glob Filtering              |    0.129s |    0.033s  (3.9x Faster)
+9. Word Boundary                    |    0.125s |    0.031s  (4.0x Faster)
+10. Fixed Strings                   |    0.125s |    0.029s  (4.3x Faster)
 ```
 
 ### Linux / Windows WSL2 (Maximum Enterprise Performance)

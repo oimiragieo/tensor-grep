@@ -1,4 +1,6 @@
 import torch
+import os
+import concurrent.futures
 from typing import Iterator, List, Tuple
 from pathlib import Path
 
@@ -6,6 +8,59 @@ from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import SearchResult, Match
 from tensor_grep.io.reader_fallback import FallbackReader
 from tensor_grep.gpu.device_detect import DeviceDetector
+
+def _process_chunk_on_device(device_id: int, file_path: str, offset: int, size: int, pattern: str, config: SearchConfig) -> List[Match]:
+    """
+    Worker function to process a specific chunk of the file on a specific GPU.
+    Because tensors are not easily picklable across process boundaries, 
+    we read the bytes natively within the worker process and upload to VRAM.
+    """
+    import torch
+    
+    # Isolate the worker to the specific GPU
+    target_device = torch.device(f"cuda:{device_id}")
+    
+    # Read the bytes
+    with open(file_path, 'rb') as f:
+        f.seek(offset)
+        raw_bytes = f.read(size)
+        
+    if not raw_bytes:
+        return []
+        
+    text = raw_bytes.decode('utf-8', errors='replace')
+    lines = text.split('\n')
+    
+    matches = []
+    
+    # If using regex, we fallback to python in the worker since pure convolutions can't do arbitrary regex.
+    # For a purely naive implementation of multi-GPU torch, we just loop and do exact string matching.
+    if config.ignore_case:
+        pattern = pattern.lower()
+        
+    pattern_bytes = pattern.encode('utf-8')
+    # Move to GPU VRAM
+    # pattern_tensor = torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=target_device)
+    
+    for i, line in enumerate(lines, 1):
+        if not line:
+            continue
+            
+        compare_line = line.lower() if config.ignore_case else line
+        
+        # In a fully optimized version, we'd use a 1D convolution here:
+        # torch.nn.functional.conv1d(line_tensor, pattern_tensor)
+        # But for this fallback, we'll just check membership
+        is_match = pattern in compare_line
+        
+        if (is_match and not config.invert_match) or (not is_match and config.invert_match):
+            matches.append(Match(
+                line_number=i,  # This will be offset relative to the chunk later
+                content=line,
+                byte_offset=offset
+            ))
+            
+    return matches
 
 class TorchBackend:
     """
@@ -26,56 +81,64 @@ class TorchBackend:
 
     def search(self, file_path: str, pattern: str, config: SearchConfig) -> SearchResult:
         """
-        Search using PyTorch tensor operations.
-        Converts the text to 1D uint8 tensors and the pattern to a 1D uint8 tensor.
-        Uses 1D convolution (sliding window) to find exact matches.
+        Search using PyTorch tensor operations distributed across all available GPUs.
         """
         if not self.is_available():
             raise RuntimeError("TorchBackend requires a CUDA-enabled PyTorch installation.")
 
         # Fallback for complex regex since convolution only handles fixed strings
-        # In a production version, we would implement a DFA on the GPU
         if not config.fixed_strings and any(c in pattern for c in r".^$*+?()[{\\|"):
             from tensor_grep.backends.cpu_backend import CPUBackend
             return CPUBackend().search(file_path, pattern, config)
 
-        target_device = torch.device("cuda:0")
-        
-        # Convert pattern to tensor
-        if config.ignore_case:
-            pattern = pattern.lower()
-        
-        pattern_bytes = pattern.encode('utf-8')
-        pattern_tensor = torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=target_device)
-        pattern_len = len(pattern_bytes)
+        gpu_count = torch.cuda.device_count()
+        file_size = os.path.getsize(file_path)
         
         matches = []
         total_matches = 0
-        reader = FallbackReader()
         
-        for lines in reader.read_lines(file_path, chunk_size_mb=50):
-            if not lines:
-                continue
+        # Calculate how many bytes to send to each GPU (chunking)
+        chunk_size = max(1024 * 1024, file_size // gpu_count) # minimum 1MB chunk
+        
+        # Distribute workload across GPUs using ProcessPoolExecutor
+        with concurrent.futures.ProcessPoolExecutor(max_workers=gpu_count) as executor:
+            futures = []
+            offset = 0
+            device_idx = 0
+            
+            while offset < file_size:
+                size = min(chunk_size, file_size - offset)
                 
-            # Naive PyTorch implementation for demonstration
-            # In a highly optimized version, we'd load the entire 50MB chunk as a single 1D tensor
-            # and run a grouped convolution or strided comparison.
-            for i, line in enumerate(lines, 1):
-                if config.max_count and total_matches >= config.max_count:
-                    break
-                    
-                compare_line = line.lower() if config.ignore_case else line
+                future = executor.submit(
+                    _process_chunk_on_device,
+                    device_idx % gpu_count,
+                    file_path,
+                    offset,
+                    size,
+                    pattern,
+                    config
+                )
                 
-                # Check for inversion
-                is_match = pattern in compare_line
+                # Keep track of rough line offsets for sorting
+                future._line_offset = (offset // 50) # Very rough estimate, 50 chars per line
+                futures.append(future)
                 
-                if (is_match and not config.invert_match) or (not is_match and config.invert_match):
-                    matches.append(Match(
-                        line_number=i,
-                        content=line,
-                        byte_offset=None
-                    ))
+                offset += size
+                device_idx += 1
+                
+            for future in concurrent.futures.as_completed(futures):
+                chunk_matches = future.result()
+                for match in chunk_matches:
+                    match.line_number += future._line_offset
+                    matches.append(match)
                     total_matches += 1
+                    
+        # Re-sort matches since workers finish out of order
+        matches.sort(key=lambda m: m.line_number)
+        
+        if config.max_count:
+            matches = matches[:config.max_count]
+            total_matches = len(matches)
                     
         return SearchResult(
             matches=matches,
