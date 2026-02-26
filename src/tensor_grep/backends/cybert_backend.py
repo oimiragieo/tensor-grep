@@ -3,7 +3,6 @@ from typing import Any
 
 HAS_CYBERT_DEPS = (
     importlib.util.find_spec("numpy") is not None
-    and importlib.util.find_spec("tritonclient.http") is not None
     and importlib.util.find_spec("transformers") is not None
 )
 

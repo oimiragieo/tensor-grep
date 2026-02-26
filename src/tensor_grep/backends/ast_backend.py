@@ -39,14 +39,10 @@ class AstBackend(ComputeBackend):
         try:
             if lang == "python":
                 import tree_sitter_python
-
-                parser.set_language(tree_sitter.Language(tree_sitter_python.language(), "python"))
+                parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_python.language()))
             elif lang == "javascript" or lang == "js":
                 import tree_sitter_javascript
-
-                parser.set_language(
-                    tree_sitter.Language(tree_sitter_javascript.language(), "javascript")
-                )
+                parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_javascript.language()))
             else:
                 raise ValueError(f"Language '{lang}' is not yet supported by the AstBackend.")
         except Exception as e:

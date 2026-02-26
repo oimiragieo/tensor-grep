@@ -1,6 +1,12 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "src"
+module-name = "tensor_grep.rust_core"
+manifest-path = "rust_core/Cargo.toml"
 
 [project]
 name = "tensor-grep"
@@ -10,7 +16,7 @@ dependencies = ["typer[all]>=0.12", "rich>=13.0"]
 
 [project.optional-dependencies]
 gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "torch_geometric>=2.5.0"]
-gpu-win = ["dstorage-gpu>=1.0", "torch>=2.0", "torch_geometric>=2.5.0"]
+gpu-win = ["torch>=2.0", "torch_geometric>=2.5.0"]
 nlp = ["transformers>=4.40", "tritonclient[all]"]
 ast = ["tree-sitter>=0.22", "tree-sitter-python", "tree-sitter-javascript"]
 dev = [
