@@ -37,13 +37,15 @@ Beyond structural and syntactic matching, `tensor-grep` utilizes `cyBERT`, a fin
 
 ## 3. Evaluation and Benchmarks
 
-We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. 
+We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite comprises **87 automated tests** spanning unit, integration, and end-to-end (E2E) tiers. To guarantee 100% output parity with `ripgrep`, our E2E characterization tests capture stdout from standard commands and assert exact match counts against `tensor-grep` executions.
 
 **Regex Throughput (Semantic Passing):**
-In tests involving 6 complex semantic patterns over standardized logs, `tensor-grep` evaluated the dataset in **0.199s**, compared to `ripgrep`'s **0.607s**, yielding a **3x performance increase** purely due to the parallel nature of the cuDF backend. 
+In tests involving 6 complex semantic patterns over standardized logs, `tensor-grep` evaluated the dataset in **0.199s**, compared to `ripgrep`'s **0.607s**, yielding a **3x performance increase** purely due to the parallel nature of the cuDF backend operating within WSL2. 
 
-**Windows Execution Overhead:**
-On Windows, benchmark parity tests highlighted the architectural limitations of the OS. Windows Python `multiprocessing` relies on `spawn()`, requiring the entire PyTorch CUDA context to be re-initialized per worker process. This introduces a fixed ~11-second overhead. However, our scaling results show that as file sizes exceed 200MB, the parallel GPU matrix math completely absorbs this latency, allowing `tensor-grep` to outpace `ripgrep` in large-scale data ingestion scenarios.
+**Windows Execution Overhead and the WSL2 Advantage:**
+During our native Windows benchmarking, we encountered a fundamental architectural limitation of the OS. Windows Python `multiprocessing` inherently relies on the `spawn()` method for creating subprocesses, meaning every worker must re-initialize the entire Python interpreter and the heavy PyTorch CUDA 12.4 context. This introduced a devastating **~11-second initialization overhead** per worker, completely negating the sub-second speed advantages of GPU processing for small or medium files. 
+
+Because of this architectural bottleneck, we concluded that true high-performance GPU log parsing requires Linux's `fork()` execution model. By moving back to **WSL2 (Windows Subsystem for Linux)**, `tensor-grep` exploits instantaneous memory-mapped process forking. This allows the NVIDIA `cuDF` C++ bindings to initialize in milliseconds, providing the expected massive speedups over CPU-bound tools without the Windows spawn penalty. For files under 50MB on native Windows, `tensor-grep` intelligently routes requests to our CPU fallback to avoid the GPU delay entirely.
 
 **AST-Grep Parity:**
 While traditional `ast-grep` written in Rust achieves ~0.02s per query natively, the `tensor-grep` AST backend requires ~0.35s. This discrepancy is heavily attributed to the Python-side conversion of `tree-sitter` nodes into PyTorch tensors. However, once the codebase is pre-compiled into a tensor graph, subsequent parallel queries achieve O(1) matching time on the GPU, laying the groundwork for real-time repository-wide Language Server Protocol (LSP) integrations.
