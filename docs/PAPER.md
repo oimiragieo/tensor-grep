@@ -17,6 +17,20 @@ Simultaneously, the demand for semantic code retrieval has evolved beyond simple
 
 `tensor-grep` orchestrates three primary third-party ecosystems—RAPIDS `cuDF`, PyTorch/cyBERT, and Tree-sitter/PyTorch Geometric—to circumvent traditional CPU bottlenecks such as DFA state explosion. By mapping string operations and syntax trees directly to GPU VRAM, `tensor-grep` scales line-rate processing independently of CPU core counts.
 
+```mermaid
+flowchart TD
+    A[CLI Request] --> B{Query Analyzer}
+    B -->|Exact String| C[CPU Backend / Rust memmap2]
+    B -->|Complex Regex| D[cuDF GPU Backend]
+    B -->|Semantic / NLP| E[PyTorch cyBERT Backend]
+    B -->|Structural Code| F[Tree-sitter AST Backend]
+    
+    C --> G((Output Matches))
+    D --> G
+    E --> G
+    F --> G
+```
+
 ### 2.1 Circumventing DFA State Explosion with RAPIDS cuDF
 Traditional regex engines like `ripgrep` compile patterns into Deterministic Finite Automata (DFA) or Non-deterministic Finite Automata (NFA). As the complexity of the regex pattern or the size of the target text increases, CPU-bound parsers suffer from "state explosion," where the transition tables become too large to fit in fast L1/L2 CPU caches, resulting in severe cache-miss penalties and throttled throughput.
 
@@ -54,11 +68,24 @@ We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` 
 **Complex Regex Throughput (The GPU Advantage):**
 When evaluating complex regular expressions (involving lookaheads, semantic boundaries, and multi-wildcards) over standardized logs, traditional CPU-bound tools suffer from DFA state explosion and severe CPU cache-miss degradation. In these scenarios, `tensor-grep` dynamically routed the query to the GPU. Testing against 6 complex semantic patterns, `tensor-grep` evaluated the dataset in **0.199s**, compared to `ripgrep`'s **0.607s**. This yields a **~3x performance increase**, empirically proving that VRAM-mapped parallel execution outperforms CPU caching limits for complex state machines.
 
+| Tool / Architecture | Workload Type | Execution Time (Seconds) | Hardware Used |
+|---------------------|---------------|--------------------------|---------------|
+| `ripgrep` (Native C) | Complex Regex | 0.607s | CPU (DFA execution) |
+| `tensor-grep` (cuDF) | Complex Regex | 0.199s | GPU (Massive Parallel) |
+| **Speedup Factor** | | **~3.05x** | |
+
 **Exact String Matching (The CPU/Rust Advantage):**
 Conversely, exact literal string matching (e.g., searching for `"ERROR"`) does not utilize DFA; CPUs utilize heavily optimized Aho-Corasick or SIMD vectorization to scan memory at the physical limits of RAM bandwidth. We generated a synthetic 5,000,000-line log file (~150MB) to test this boundary. 
 - Native C `ripgrep` evaluated the file in **~0.17s**.
 - Our native Rust implementation (`tensor-grep-rs` using `memmap2` and `rayon`) evaluated the file in **~0.21s**.
 - Attempting to force the GPU `cuDF` backend to perform this exact match via WSL resulted in a **~14.4s** execution time. This massive discrepancy isolates the exact cost of the PCIe bus transfer and PyTorch/CUDA C++ initialization overhead across the WSL boundary, proving that GPUs must only be utilized for complex queries where the compute density outweighs the PCIe transfer penalty.
+
+| Tool / Architecture | Workload Type | Execution Time | Primary Bottleneck |
+|---------------------|---------------|----------------|--------------------|
+| `ripgrep` (Native C)| Exact String | ~0.17s | RAM Bandwidth limit |
+| `tensor-grep-rs` (Rust)| Exact String | ~0.21s | RAM Bandwidth limit |
+| Python Fallback (WSL) | Exact String | ~5.17s | Python Interpreter iteration |
+| `tensor-grep` (cuDF via WSL)| Exact String | ~14.40s | PCIe Bus Transfer & Initialization |
 
 **Windows Execution Overhead and the WSL2 Advantage:**
 During our native Windows benchmarking, we encountered a fundamental architectural limitation of the OS. Windows Python `multiprocessing` inherently relies on the `spawn()` method for creating subprocesses, meaning every worker must re-initialize the entire Python interpreter and the heavy PyTorch CUDA 12.4 context. This introduced a devastating **~11-second initialization overhead** per worker, completely negating the sub-second speed advantages of GPU processing for small or medium files. 
