@@ -77,13 +77,15 @@ When evaluating complex regular expressions (involving lookaheads, semantic boun
 **Exact String Matching (The CPU/Rust Advantage):**
 Conversely, exact literal string matching (e.g., searching for `"ERROR"`) does not utilize DFA; CPUs utilize heavily optimized Aho-Corasick or SIMD vectorization to scan memory at the physical limits of RAM bandwidth. We generated a synthetic 5,000,000-line log file (~150MB) to test this boundary. 
 - Native C `ripgrep` evaluated the file in **~0.17s**.
-- Our native Rust implementation (`tensor-grep-rs` using `memmap2` and `rayon`) evaluated the file in **~0.21s**.
+- Our native Rust implementation (`tensor-grep-rs` using `memmap2` and `rayon`) evaluated the file natively on Windows in **~0.21s**.
+- Executing the exact same Rust binary inside WSL2 against the same file on the mounted `/mnt/c` drive took **~1.28s**, and moving the file to the native Linux EXT4 filesystem yielded **~0.71s**. This proves that cross-OS filesystem translation (9P protocol) heavily penalizes zero-copy `memmap` operations, reinforcing the need for native Windows tooling when running standard text searches on Windows architectures.
 - Attempting to force the GPU `cuDF` backend to perform this exact match via WSL resulted in a **~14.4s** execution time. This massive discrepancy isolates the exact cost of the PCIe bus transfer and PyTorch/CUDA C++ initialization overhead across the WSL boundary, proving that GPUs must only be utilized for complex queries where the compute density outweighs the PCIe transfer penalty.
 
 | Tool / Architecture | Workload Type | Execution Time | Primary Bottleneck |
 |---------------------|---------------|----------------|--------------------|
 | `ripgrep` (Native C)| Exact String | ~0.17s | RAM Bandwidth limit |
-| `tensor-grep-rs` (Rust)| Exact String | ~0.21s | RAM Bandwidth limit |
+| `tensor-grep-rs` (Native Windows)| Exact String | ~0.21s | RAM Bandwidth limit |
+| `tensor-grep-rs` (WSL Native FS)| Exact String | ~0.71s | 9P Protocol / VHD Overhead |
 | Python Fallback (WSL) | Exact String | ~5.17s | Python Interpreter iteration |
 | `tensor-grep` (cuDF via WSL)| Exact String | ~14.40s | PCIe Bus Transfer & Initialization |
 
