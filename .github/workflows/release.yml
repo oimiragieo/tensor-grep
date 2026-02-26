@@ -26,7 +26,7 @@ jobs:
           pip install nuitka
           
       - name: Build Binary
-        run: python build_binaries.py
+        run: python scripts/build_binaries.py
         
       - name: Rename Artifact (Windows)
         if: runner.os == 'Windows'
