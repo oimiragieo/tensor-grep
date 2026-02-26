@@ -6,18 +6,18 @@ import time
 SCENARIOS = [
     {
         "name": "1. Simple String Match",
-        "rg_args": ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", "ERROR", "bench_data"],
+        "rg_args": ["rg", "ERROR", "bench_data"],
         "tg_args": ["tg", "search", "ERROR", "bench_data"],
     },
     {
         "name": "2. Case-Insensitive Match",
-        "rg_args": ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", "-i", "warning", "bench_data"],
+        "rg_args": ["rg", "-i", "warning", "bench_data"],
         "tg_args": ["tg", "search", "-i", "warning", "bench_data"],
     },
     {
         "name": "3. Regex Match",
         "rg_args": [
-            "ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe",
+            "rg",
             r"ERROR.*timeout",
             "bench_data",
         ],
@@ -25,18 +25,18 @@ SCENARIOS = [
     },
     {
         "name": "4. Invert Match",
-        "rg_args": ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", "-v", "INFO", "bench_data"],
+        "rg_args": ["rg", "-v", "INFO", "bench_data"],
         "tg_args": ["tg", "search", "-v", "INFO", "bench_data"],
     },
     {
         "name": "5. Count Matches",
-        "rg_args": ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", "-c", "ERROR", "bench_data"],
+        "rg_args": ["rg", "-c", "ERROR", "bench_data"],
         "tg_args": ["tg", "search", "-c", "ERROR", "bench_data"],
     },
     {
         "name": "6. Context Lines (Before & After)",
         "rg_args": [
-            "ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe",
+            "rg",
             "-C",
             "2",
             "CRITICAL",
@@ -47,7 +47,7 @@ SCENARIOS = [
     {
         "name": "7. Max Count Limit",
         "rg_args": [
-            "ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe",
+            "rg",
             "-m",
             "5",
             "ERROR",
@@ -58,7 +58,7 @@ SCENARIOS = [
     {
         "name": "8. File Glob Filtering",
         "rg_args": [
-            "ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe",
+            "rg",
             "-g",
             "*.log",
             "ERROR",
@@ -68,12 +68,12 @@ SCENARIOS = [
     },
     {
         "name": "9. Word Boundary",
-        "rg_args": ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", "-w", "timeout", "bench_data"],
+        "rg_args": ["rg", "-w", "timeout", "bench_data"],
         "tg_args": ["tg", "search", "-w", "timeout", "bench_data"],
     },
     {
         "name": "10. Fixed Strings",
-        "rg_args": ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", "-F", "[ERROR]", "bench_data"],
+        "rg_args": ["rg", "-F", "[ERROR]", "bench_data"],
         "tg_args": ["tg", "search", "-F", "[ERROR]", "bench_data"],
     },
 ]
@@ -180,7 +180,7 @@ def main():
     # Ensure tg resolves to python module
 
     for scenario in SCENARIOS:
-        rg_cmd = scenario["rg_args"]
+        rg_cmd = ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe"] + scenario["rg_args"][1:]
 
         # When running inside `uv run python run_benchmarks.py`, invoking `python` via subprocess
         # escapes the uv environment. We MUST use sys.executable to stay inside the PyTorch env.

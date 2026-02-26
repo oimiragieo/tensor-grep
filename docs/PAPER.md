@@ -85,11 +85,13 @@ Conversely, exact literal string matching (e.g., searching for `"ERROR"`) does n
 |---------------------|---------------|----------------|--------------------|
 | `ripgrep` (Native C)| Exact String | ~0.17s | RAM Bandwidth limit |
 | `tensor-grep-rs` (Native Windows)| Exact String | ~0.21s | RAM Bandwidth limit |
-| `tensor-grep-rs` (WSL Native FS)| Exact String | ~0.71s | 9P Protocol / VHD Overhead |
-| Python Fallback (WSL) | Exact String | ~5.17s | Python Interpreter iteration |
+| `tensor-grep` (Rust PyO3 Fallback)| Exact String | ~1.9s | FFI Boundary & Python GIL Overhead |
+| Python Fallback (pure `re`) | Exact String | ~5.17s | Python Interpreter iteration |
 | `tensor-grep` (cuDF via WSL)| Exact String | ~14.40s | PCIe Bus Transfer & Initialization |
 
-**Windows Execution Overhead and the WSL2 Advantage:**
+**The PyO3 Native Extension Resolution:**
+To mitigate the severe ~5-second penalty of falling back to pure Python when GPUs were unavailable or WSL contexts corrupted, we successfully bridged the `tensor-grep-rs` codebase back into the main Python package using a **PyO3 / Maturin** native extension.
+By rewriting the Rust execution core to yield `Vec<(usize, String)>` across the Foreign Function Interface (FFI) boundary and immediately mapping it into Python's native `SearchResult` representation, the integrated CPU fallback path dropped from ~5.17s down to **~1.9s** per 150MB chunk. While the ~1.9s execution time introduces a measurable penalty over the bare-metal ~0.21s (attributed to PyO3 serialization overhead and the Python Global Interpreter Lock mapping tuples into Python objects), it still represents an extraordinary multi-factor performance improvement over pure Python `re` execution, allowing `tensor-grep` to guarantee sub-2-second resilience on standard developer hardware without invoking heavy CUDA contexts.
 During our native Windows benchmarking, we encountered a fundamental architectural limitation of the OS. Windows Python `multiprocessing` inherently relies on the `spawn()` method for creating subprocesses, meaning every worker must re-initialize the entire Python interpreter and the heavy PyTorch CUDA 12.4 context. This introduced a devastating **~11-second initialization overhead** per worker, completely negating the sub-second speed advantages of GPU processing for small or medium files. 
 
 Because of this architectural bottleneck, we concluded that true high-performance GPU log parsing requires Linux's `fork()` execution model. By moving back to **WSL2 (Windows Subsystem for Linux)**, `tensor-grep` exploits instantaneous memory-mapped process forking. This allows the NVIDIA `cuDF` C++ bindings to initialize in milliseconds.
