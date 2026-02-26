@@ -9,21 +9,34 @@
 * **AST-Grep Parity (NEW):** Structural code searching via PyTorch Geometric Graph Neural Networks (GNNs). Run `tg run`, `tg scan`, `tg lsp` natively on your GPU!
 * **Multi-GPU Scaling:** Automatically detects and shards massive log files across dual, quad, or enterprise GPU arrays.
 * **Semantic NLP Classification:** Utilize cyBERT to classify logs contextually (e.g. identify "ERROR" severity without explicit regexes) in a single pass.
-* **CPU Fallback Resiliency:** Works gracefully on Windows, macOS, and CPU-only systems using a resilient Python Regex backend.
+* **CPU Fallback Resiliency:** Works gracefully on Windows, macOS, and CPU-only systems using a highly-optimized Rust/PyO3 `memmap2` CPU backend.
 
-## 📦 Installation
+## 📦 Zero-Dependency Installation (Recommended)
 
-`tensor-grep` is published on PyPI. You can install it globally via `pip` or run it directly using `uvx`.
+To ensure PyTorch bindings and CUDA/ROCm versions exactly match your hardware without conflicting with your system Python, we recommend using our automated install scripts. These scripts use `uv` to intelligently probe your GPU and build a highly isolated Python 3.12 environment in the background.
 
-```bash
-# Install globally via pip
-pip install tensor-grep
-
-# Or run directly without installing using uv
-uvx tensor-grep search "pattern" /var/logs
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
 ```
 
-Once installed, the CLI command is mapped to `tg`.
+**Linux & macOS (Bash):**
+```bash
+curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+```
+Once complete, the script permanently aliases `tg` to the isolated GPU environment. 
+
+### 🏗️ Standalone Binaries (For IT/SecOps)
+If you cannot run scripts or prefer not to use `uv`, download the monolithic standalone executables from the [GitHub Releases](#) page. These `~3GB` files are built via Nuitka and contain Python, PyTorch, and the CUDA drivers completely bundled together:
+* `tg-windows-amd64-nvidia.exe` (Windows + CUDA)
+* `tg-linux-amd64-nvidia.bin` (Linux + CUDA)
+* `tg-macos-amd64-cpu.bin` (Apple Silicon/Intel)
+
+### 🐳 Docker (For CI/CD)
+To completely avoid local driver setup, execute `tensor-grep` via Docker:
+```bash
+docker run --gpus all -v $(pwd):/workspace factory/tensor-grep:latest-cuda search "ERROR" /workspace/logs
+```
 
 ---
 

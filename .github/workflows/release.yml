@@ -6,44 +6,59 @@ on:
 
 jobs:
   build-binaries:
-    name: Build on ${{ matrix.os }}
+    name: Build on ${{ matrix.os }} - ${{ matrix.gpu }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-latest, windows-latest]
+        gpu: [cpu, nvidia]
+        include:
+          - os: macos-latest
+            gpu: cpu
     
     steps:
       - uses: actions/checkout@v4
       
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+        run: uv python install 3.12
           
-      - name: Install dependencies
+      - name: Install dependencies (CPU)
+        if: matrix.gpu == 'cpu'
         run: |
-          pip install -e ".[dev]"
-          pip install nuitka
+          uv venv
+          uv pip install -e ".[dev]"
+          uv pip install nuitka
+          
+      - name: Install dependencies (NVIDIA)
+        if: matrix.gpu == 'nvidia'
+        run: |
+          uv venv
+          uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+          uv pip install -e ".[gpu-win,nlp,ast,dev]"
+          uv pip install nuitka
           
       - name: Build Binary
-        run: python scripts/build_binaries.py
+        run: uv run python scripts/build_binaries.py
         
       - name: Rename Artifact (Windows)
         if: runner.os == 'Windows'
-        run: mv tg.exe tg-windows-amd64.exe
+        run: mv tg.exe tg-windows-amd64-${{ matrix.gpu }}.exe
         
       - name: Rename Artifact (Linux)
         if: runner.os == 'Linux'
-        run: mv tg.bin tg-linux-amd64
+        run: mv tg.bin tg-linux-amd64-${{ matrix.gpu }}
         
       - name: Rename Artifact (macOS)
         if: runner.os == 'macOS'
-        run: mv tg.bin tg-macos-amd64
+        run: mv tg.bin tg-macos-amd64-${{ matrix.gpu }}
         
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ runner.os }}
+          name: binary-${{ runner.os }}-${{ matrix.gpu }}
           path: tg-*
 
   create-release:
