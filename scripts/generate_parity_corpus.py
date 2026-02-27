@@ -1,8 +1,8 @@
 import os
-import random
 import shutil
 
 CORPUS_DIR = "benchmarks/corpus"
+
 
 def generate_corpus():
     if os.path.exists(CORPUS_DIR):
@@ -39,6 +39,7 @@ def generate_corpus():
         f.write("console.error('An error occurred');\n")
 
     print(f"Test corpus generated at {CORPUS_DIR}")
+
 
 if __name__ == "__main__":
     generate_corpus()
