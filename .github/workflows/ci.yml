@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  UV_SYSTEM_PYTHON: 1
+
+jobs:
+  static-analysis:
+    name: Formatting & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          
+      - name: Check Rust Formatting
+        working-directory: rust_core
+        run: cargo fmt -- --check
+        
+      - name: Check Rust Clippy
+        working-directory: rust_core
+        run: cargo clippy -- -D warnings
+        
+      - name: Python Ruff Linter
+        run: uv run ruff check .
+        
+      - name: Python Ruff Formatter
+        run: uv run ruff format --check .
+        
+      - name: Python Mypy Typecheck
+        run: |
+          uv pip install -e ".[dev]"
+          uv run mypy src/tensor_grep
+
+  test-python:
+    name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        
+      - name: Setup Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+        
+      - name: Install Rust dependencies (for PyO3 fallback)
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Install Dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev,ast]"
+          
+      - name: Run Pytest
+        run: uv run pytest tests -v --tb=short
+
+  test-rust-core:
+    name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust_channel: [stable, nightly]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust ${{ matrix.rust_channel }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_channel }}
+          
+      - name: Cargo Test
+        working-directory: rust_core
+        run: cargo test --verbose
+
+  test-gpu-linux:
+    name: test-gpu-nvidia (ubuntu-latest, cuDF)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        
+      - name: Setup Python
+        run: uv python install 3.12
+        
+      - name: Verify cuDF / RAPIDS Configuration
+        run: |
+          uv venv
+          uv pip install cudf-cu12 kvikio-cu12 --extra-index-url https://pypi.nvidia.com
+          uv pip install -e ".[dev,nlp,ast]"
+          
+      # Since standard GitHub Action runners don't have physical GPUs,
+      # we run pytest but rely on our test suites dynamic `@pytest.mark.skipif`
+      # to successfully parse the fallback architecture cleanly without crashing.
+      - name: Run Pytest with GPU Hooks
+        run: uv run pytest tests -v -m "not slow"
