@@ -592,9 +592,9 @@ def main_entry():
     # Typer requires an explicit subcommand (like `tg search pattern`).
     # To act exactly like ripgrep (`rg pattern`), we dynamically inject the `search`
     # subcommand into sys.argv if the user didn't provide any recognized subcommand.
-    
+
     known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp"}
-    
+
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]
         if first_arg in ("--help", "-h"):
@@ -605,6 +605,7 @@ def main_entry():
         sys.argv.extend(["search", "--help"])
 
     app()
+
 
 if __name__ == "__main__":
     main_entry()

@@ -6,6 +6,7 @@ import pytest
 def test_rust_core_import():
     """Verify that the pyo3 native extension compiles and can be imported."""
     import importlib.util
+
     if not importlib.util.find_spec("tensor_grep.rust_core"):
         pytest.fail("Failed to import tensor_grep.rust_core")
 
