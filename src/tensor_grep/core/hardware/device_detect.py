@@ -14,7 +14,7 @@ class DeviceDetector:
         try:
             import torch
 
-            return torch.cuda.is_available()
+            return bool(torch.cuda.is_available())
         except ImportError:
             return False
 
@@ -24,7 +24,7 @@ class DeviceDetector:
         try:
             import torch
 
-            return torch.cuda.device_count()
+            return int(torch.cuda.device_count())
         except Exception:
             return 0
 
@@ -35,7 +35,7 @@ class DeviceDetector:
             import torch
 
             props = torch.cuda.get_device_properties(device_id)
-            return props.total_memory // (1024 * 1024)
+            return int(props.total_memory // (1024 * 1024))
         except Exception:
             return 0
 

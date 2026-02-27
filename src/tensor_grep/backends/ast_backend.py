@@ -30,7 +30,7 @@ class AstBackend(ComputeBackend):
             ):
                 return False
 
-            return torch.cuda.is_available()
+            return bool(torch.cuda.is_available())
         except ImportError:
             return False
 
