@@ -141,7 +141,7 @@ class TorchBackend:
                 )
 
                 # Keep track of rough line offsets for sorting
-                setattr(future, "_line_offset", offset // 50)  # Very rough estimate, 50 chars per line
+                future._line_offset = offset // 50  # type: ignore # Very rough estimate, 50 chars per line
                 futures.append(future)
 
                 offset += size

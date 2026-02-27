@@ -19,7 +19,9 @@ class TestKvikIOReader:
         data = reader.read_to_gpu("test.log")
         assert data == b"data"
 
-    def test_should_fallback_to_compat_mode(self):
+    @patch("importlib.util.find_spec")
+    def test_should_fallback_to_compat_mode(self, mock_find_spec):
+        mock_find_spec.return_value = None
         from tensor_grep.io.reader_kvikio import KvikIOReader
 
         reader = KvikIOReader()

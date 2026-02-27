@@ -133,7 +133,7 @@ class CuDFBackend(ComputeBackend):
                             _process_chunk_on_device, i, file_path, offset, size, pattern, config
                         )
                         # We attach the line_offset to the future for correct numbering later
-                        setattr(future, "_line_offset", line_offset)
+                        future._line_offset = line_offset  # type: ignore
                         futures.append(future)
 
                         offset += size

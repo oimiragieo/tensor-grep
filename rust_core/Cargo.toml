@@ -16,5 +16,9 @@ regex = "1.12.3"
 tree-sitter = "0.26.6"
 tree-sitter-python = "0.25.0"
 walkdir = "2.5.0"
-pyo3 = { version = "0.24.1", features = ["extension-module", "anyhow"] }
+pyo3 = { version = "0.24.1", features = ["anyhow"] }
 memchr = "2.7.1"
+
+[features]
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]

@@ -113,7 +113,7 @@ jobs:
           
       - name: Cargo Test
         working-directory: rust_core
-        run: cargo test --verbose
+        run: cargo test --verbose --no-default-features
 
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
