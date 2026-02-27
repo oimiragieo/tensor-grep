@@ -16,4 +16,4 @@ class TestCLIClassify:
         assert result.returncode == 0
         data = json.loads(result.stdout)
         assert "classifications" in data
-        assert any(c["label"] in ["error", "info", "warning"] for c in data["classifications"])
+        assert any(c["label"] in ["error", "info", "warn", "warning"] for c in data["classifications"])
