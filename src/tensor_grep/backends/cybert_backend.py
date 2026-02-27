@@ -4,10 +4,17 @@ import re
 import urllib.parse
 from typing import Any
 
-HAS_CYBERT_DEPS = (
-    importlib.util.find_spec("numpy") is not None
-    and importlib.util.find_spec("transformers") is not None
-)
+HAS_CYBERT_DEPS = False
+try:
+    if importlib.util.find_spec("numpy") is not None:
+        try:
+            if importlib.util.find_spec("transformers") is not None:
+                HAS_CYBERT_DEPS = True
+        except ValueError:
+            # Handle ValueError: transformers.__spec__ is not set
+            pass
+except Exception:
+    pass
 
 
 def deobfuscate_payload(line: str) -> str:
