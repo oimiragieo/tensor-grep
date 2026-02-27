@@ -85,6 +85,7 @@ ignore = [
 known-first-party = ["tensor_grep"]
 
 [tool.mypy]
+warn_unused_ignores = false
 python_version = "3.11"
 strict = true
 ignore_missing_imports = true
