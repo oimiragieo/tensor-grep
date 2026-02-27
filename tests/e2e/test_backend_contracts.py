@@ -15,12 +15,11 @@ class TestBackendContract:
         self._check_contract(CPUBackend(), sample_log_file, "ERROR")
 
     def test_cudf_backend_satisfies_contract(self, sample_log_file):
-        import importlib.util
-
         from tensor_grep.backends.cudf_backend import CuDFBackend
 
-        if not importlib.util.find_spec("cudf"):
+        backend = CuDFBackend()
+        if not backend.is_available():
             import pytest
 
-            pytest.skip("cuDF not available")
-        self._check_contract(CuDFBackend(), sample_log_file, "ERROR")
+            pytest.skip("cuDF not available or insufficient driver")
+        self._check_contract(backend, sample_log_file, "ERROR")

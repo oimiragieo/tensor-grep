@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
   static-analysis:
@@ -37,6 +38,11 @@ jobs:
         working-directory: rust_core
         run: cargo clippy -- -D warnings
         
+      - name: Install Python Dev Dependencies
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
+        
       - name: Python Ruff Linter
         run: uv run ruff check .
         
@@ -44,9 +50,7 @@ jobs:
         run: uv run ruff format --check .
         
       - name: Python Mypy Typecheck
-        run: |
-          uv pip install -e ".[dev]"
-          uv run mypy src/tensor_grep
+        run: uv run mypy src/tensor_grep
 
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -71,7 +75,7 @@ jobs:
       - name: Install Dependencies
         run: |
           uv venv
-          uv pip install -e ".[dev,ast]"
+          uv pip install -e ".[dev,ast,nlp]"
           
       - name: Run Pytest
         run: uv run pytest tests -v --tb=short
