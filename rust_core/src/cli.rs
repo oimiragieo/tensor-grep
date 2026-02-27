@@ -23,6 +23,10 @@ pub enum Commands {
         #[arg(short = 'i', long)]
         ignore_case: bool,
 
+        /// Treat pattern as a literal string
+        #[arg(short = 'F', long)]
+        fixed_strings: bool,
+
         /// Number of context lines
         #[arg(short = 'C', long)]
         context: Option<usize>,

@@ -16,10 +16,11 @@ fn main() -> anyhow::Result<()> {
             pattern,
             path,
             ignore_case,
+            fixed_strings,
             context: _,
         } => {
             let backend = CpuBackend::new();
-            backend.search(&pattern, &path, ignore_case)?;
+            backend.search(&pattern, &path, ignore_case, fixed_strings)?;
         }
         Commands::Classify { file } => {
             println!("Classify stub: {}", file);
