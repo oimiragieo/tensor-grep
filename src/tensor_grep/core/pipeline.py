@@ -13,23 +13,34 @@ class Pipeline:
 
         # The rust backend is our fallback now because it's 30x faster than pure python
         rust_backend = RustCoreBackend()
-        
+
         # Check if config has complex flags that the Rust core doesn't support yet
         needs_python_cpu = False
         if config:
-            if config.invert_match or config.context or config.before_context or config.after_context:
+            if (
+                config.invert_match
+                or config.context
+                or config.before_context
+                or config.after_context
+            ):
                 needs_python_cpu = True
             if config.line_regexp or config.word_regexp:
                 needs_python_cpu = True
 
         if needs_python_cpu or not rust_backend.is_available():
-            fallback_backend = CPUBackend()
+            fallback_backend: ComputeBackend = CPUBackend()
         else:
             fallback_backend = rust_backend
 
         if force_cpu:
             self.backend = fallback_backend
-        elif config and (config.context or config.before_context or config.after_context or config.line_regexp or config.word_regexp):
+        elif config and (
+            config.context
+            or config.before_context
+            or config.after_context
+            or config.line_regexp
+            or config.word_regexp
+        ):
             # Complex flags currently require the pure python CPU backend to handle line queues and boundaries perfectly
             self.backend = CPUBackend()
         elif config and config.ast:

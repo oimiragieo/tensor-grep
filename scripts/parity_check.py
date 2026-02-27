@@ -1,6 +1,6 @@
+import os
 import subprocess
 import sys
-import os
 
 # We will test tg against hardcoded expected line match counts
 # based on the synthetic corpus we generated in generate_parity_corpus.py
@@ -15,12 +15,14 @@ SCENARIOS = [
     {"name": "Fixed string (-F)", "args": ["-F", "system is down", "."], "expected": 1},
 ]
 
+
 def run_command(cmd_list):
     try:
         result = subprocess.run(cmd_list, capture_output=True, text=True, cwd="benchmarks/corpus")
-        return result.stdout.strip().split('\n'), result.returncode
+        return result.stdout.strip().split("\n"), result.returncode
     except FileNotFoundError:
         return None, -1
+
 
 def run_parity_check():
     corpus_dir = "benchmarks/corpus"
@@ -41,12 +43,12 @@ def run_parity_check():
         print(f"Testing: {sc['name']}")
         tg_cmd = tg_cmd_base + sc["args"]
 
-        tg_lines, tg_code = run_command(tg_cmd)
+        tg_lines, _tg_code = run_command(tg_cmd)
 
         # Filter out empty lines and context separators
-        tg_matches = [line for line in tg_lines if line and not line.startswith('--')]
+        tg_matches = [line for line in tg_lines if line and not line.startswith("--")]
         tg_count = len(tg_matches)
-        
+
         expected = sc["expected"]
 
         if tg_count >= expected:
@@ -55,12 +57,13 @@ def run_parity_check():
         else:
             print(f"FAIL | Expected: {expected} lines, tg found: {tg_count} lines")
             print("--- TG Output ---")
-            print('\\n'.join(tg_matches[:5]))
+            print("\\n".join(tg_matches[:5]))
             failed += 1
-            
+
         print("-" * 60)
 
     print(f"Parity Check Complete: {passed} PASSED, {failed} FAILED")
+
 
 if __name__ == "__main__":
     run_parity_check()
