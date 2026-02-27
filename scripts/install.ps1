@@ -29,11 +29,13 @@ $indexUrl = ""
 if ($gpuQuery.Name -match "NVIDIA") {
     Write-Host "      Detected NVIDIA GPU. Configuring for CUDA 12.4."
     $hardwareFlag = "nvidia"
-    $indexUrl = "--index-url https://download.pytorch.org/whl/cu124"
+    $indexArg = "--index-url"
+    $indexUrl = "https://download.pytorch.org/whl/cu124"
 } elseif ($gpuQuery.Name -match "AMD" -or $gpuQuery.Name -match "Radeon") {
     Write-Host "      Detected AMD GPU. Configuring for ROCm."
     $hardwareFlag = "amd"
-    $indexUrl = "--index-url https://download.pytorch.org/whl/rocm6.0"
+    $indexArg = "--index-url"
+    $indexUrl = "https://download.pytorch.org/whl/rocm6.0"
 } else {
     Write-Host "      No compatible GPU detected. Configuring for CPU-only execution."
 }
@@ -53,7 +55,7 @@ Set-Location $installDir
 Write-Host "[4/4] Installing tensor-grep and ML bindings (this may take a few minutes for CUDA)..."
 if ($hardwareFlag -ne "cpu") {
     # Install PyTorch with specific index first to ensure correct wheel resolution
-    & $uvPath pip install torch torchvision torchaudio $indexUrl --python "$installDir\.venv\Scripts\python.exe"
+    & $uvPath pip install torch torchvision torchaudio $indexArg $indexUrl --python "$installDir\.venv\Scripts\python.exe"
     & $uvPath pip install "tensor-grep[gpu-win,nlp,ast]" --python "$installDir\.venv\Scripts\python.exe"
 } else {
     & $uvPath pip install "tensor-grep[ast,nlp]" --python "$installDir\.venv\Scripts\python.exe"
