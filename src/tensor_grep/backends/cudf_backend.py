@@ -78,6 +78,10 @@ class CuDFBackend(ComputeBackend):
             # Attempt a physical import to catch cudaErrorInsufficientDriver on systems
             # where the library is installed but the physical GPU drivers are missing.
             import cudf  # noqa: F401
+            
+            # Actually allocate a GPU tensor to force the RMM initialization hook.
+            # If the driver is missing, this will throw CUDARuntimeError.
+            cudf.Series([1])
             return True
         except Exception:
             return False
