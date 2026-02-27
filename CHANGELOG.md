@@ -1,6 +1,7 @@
 TBD
 ===
-Unreleased changes. Release notes have not yet been written.
+- **Features**
+  - Integrated full Model Context Protocol (MCP) server support (`tg mcp`) utilizing the FastMCP SDK, allowing AI assistants (like Claude Desktop and Cursor) to directly utilize GPU-accelerated ripgrep searching, AST parsing, and cyBERT log classification within their context windows.
 
 0.1.4
 ===
