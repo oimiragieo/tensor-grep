@@ -35,6 +35,20 @@ Here's a straight-up comparison performing semantic NLP classification on a sing
 | tensor-grep (NLP) | `tg classify /var/logs/nginx.log` | **1.210s** |
 | Python Regex Script | `python parse_logs.py /var/logs/nginx.log` | 18.143s |
 
+### Real-World "Hybrid" Transparency
+`tensor-grep` acts as a superset orchestrator. We openly acknowledge that for standard directory searches over millions of tiny files, native Rust/C tools are unbeatable. `tensor-grep` automatically wraps the native `rg` and `sg` (ast-grep) binaries if they are installed on your PATH, intercepting the JSON output directly back into its Python abstractions! 
+
+**Here is a real benchmark traversing an entire C:\dev directory:**
+
+| Tool | Command | C:\dev Traversal |
+| --- | --- | --- |
+| Native `rg` | `rg 'class Pipeline'` | **224.837s** |
+| Native `ast-grep` | `sg run -p 'def $FUNC()'` | 42.112s |
+| tensor-grep (Rust Fallback Count) | `tg -c 'def'` | **160.283s** (Bypasses Python via Rust core) |
+| tensor-grep (Hybrid ripgrep) | `tg 'class Pipeline'` | 231.141s (Subprocess wrap overhead) |
+
+For small, complex searches, rely on the `tg` wrapper to elegantly fallback to ripgrep. For counting massive files, rely on `tg` to use its embedded Apache Arrow PyO3 core. For massive log files, rely on `tg` to map files into GPU VRAM with `cuDF`.
+
 ## Why should I use `tensor-grep`?
 
 - **It scales linearly with hardware.** If you are dealing with massive log files (100GB+) and you have access to enterprise NVIDIA GPUs or even modern consumer cards, `tensor-grep` will automatically chunk and distribute regex matching via `cuDF` natively inside GPU VRAM, bypassing CPU entirely.
