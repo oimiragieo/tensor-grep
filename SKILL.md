@@ -9,7 +9,15 @@ description: Use when searching text in files, codebases, logs, or documents at 
 
 `tensor-grep` (tg) is a line-oriented search tool that scales regex operations across multi-GPU VRAM arrays via NVIDIA RAPIDS cuDF, providing **3x-10x faster** throughput than standard ripgrep on massive datasets. In addition to lightning-fast text search, it provides AST-based structural code searching and cyBERT NLP log classification.
 
-**Core principle:** When you need to find text in files natively, parse code without whitespace dependencies, or understand the semantic threat level of a log entry, use `tensor-grep`. 
+Because of its hybrid routing architecture, `tensor-grep` acts as a superset orchestrator. For small queries or single files, it automatically wraps the ultra-fast C/Rust binaries (`ripgrep` and `ast-grep`) locally. For exact literal counts, it drops into a native Arrow/Rust zero-copy engine. For massive data or semantic operations, it routes to PyTorch and `cuDF`.
+
+## Core MCP Capabilities Exposed to AI
+
+When using `tensor-grep` via the Model Context Protocol, you have access to three primary tools:
+
+1. **`tg_search`**: The primary regex and text extraction tool. Supports case-insensitivity, fixed string matching, word boundaries, context lines (`-C`), file globs (`-g`), file types (`-t`), and match counting (`-c`).
+2. **`tg_ast_search`**: The structural code search tool. Feed it AST patterns like `if ($A) { return $B; }` to locate complex logical bounds across massive monorepos instantly using GNN VRAM tensors.
+3. **`tg_classify_logs`**: The cybersecurity and semantic log tool. Pass unstructured server logs through the CyBERT model to identify hidden anomalies, malicious payloads, and severity levels.
 
 ## When to Use
 

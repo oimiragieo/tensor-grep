@@ -13,20 +13,44 @@ mcp = FastMCP("tensor-grep")
 
 @mcp.tool()
 def tg_search(
-    pattern: str, path: str = ".", case_sensitive: bool = False, ignore_case: bool = False
+    pattern: str, 
+    path: str = ".", 
+    case_sensitive: bool = False, 
+    ignore_case: bool = False,
+    fixed_strings: bool = False,
+    word_regexp: bool = False,
+    context: int | None = None,
+    max_count: int | None = None,
+    count_matches: bool = False,
+    glob: str | None = None,
+    type_filter: str | None = None
 ) -> str:
     """
     Search files for a regex pattern using tensor-grep's high-speed GPU or CPU engine.
 
     Args:
-        pattern: A regular expression used for searching.
+        pattern: A regular expression or exact string used for searching.
         path: A file or directory to search. Defaults to current directory.
         case_sensitive: Execute the search case sensitively.
-        ignore_case: Search case insensitively.
+        ignore_case: Search case insensitively (-i).
+        fixed_strings: Treat pattern as a literal string instead of regex (-F).
+        word_regexp: Only show matches surrounded by word boundaries (-w).
+        context: Show NUM lines before and after each match (-C).
+        max_count: Limit the number of matching lines per file (-m).
+        count_matches: Just count the matches using ultra-fast Rust backend (-c).
+        glob: Include/exclude files matching glob (e.g. '*.py').
+        type_filter: Only search files matching TYPE (e.g. 'py', 'js').
     """
     config = SearchConfig(
         case_sensitive=case_sensitive,
         ignore_case=ignore_case,
+        fixed_strings=fixed_strings,
+        word_regexp=word_regexp,
+        context=context,
+        max_count=max_count,
+        count=count_matches,
+        glob=[glob] if glob else None,
+        file_type=[type_filter] if type_filter else None,
         no_messages=True,
     )
 
@@ -46,6 +70,9 @@ def tg_search(
 
         if all_results.is_empty:
             return f"No matches found for '{pattern}' in {path}."
+            
+        if count_matches:
+            return f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}."
 
         # Format the results into a readable string for the LLM
         output = [
