@@ -137,7 +137,7 @@ jobs:
           path: dist
 
   publish-pypi:
-    needs: [build-wheels, build-sdist, create-release]
+    needs: [build-wheels, build-sdist]
     name: Publish to PyPI
     runs-on: ubuntu-latest
     environment:
