@@ -125,8 +125,9 @@ class CuDFBackend(ComputeBackend):
                     matches.append(
                         MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
                     )
-            except ImportError:
+            except (ImportError, Exception):
                 # Fallback to cuDF's native text reader if the rust bridge isn't compiled
+                # or if the PyCapsule conversion fails during testing environments
                 series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
                 mask = series.str.contains(pattern, regex=True, flags=flags)
                 if config and config.invert_match:
