@@ -135,9 +135,9 @@ Our research indicates that while specific components of `tensor-grep` have been
 
 While the current tripartite routing structure defines a new paradigm for regex processing, scaling `tensor-grep` into massive enterprise clusters and cybersecurity defense platforms requires several upcoming optimizations:
 
-1. **Zero-Copy IPC via Apache Arrow C++ Data Interface:**
-   Currently, our Rust CPU fallback extension (`tensor-grep-rs`) yields `Vec<(usize, String)>` across the PyO3 Foreign Function Interface (FFI) boundary. This enforces a Python Global Interpreter Lock (GIL) mapping overhead that spikes execution from the bare-metal 0.21s to ~1.9s. By substituting Python serialization with the Apache Arrow C++ Data Interface, the Rust extension can allocate matched string chunks as Arrow Arrays, passing memory pointers directly to Python—and subsequently into `cuDF` if downstream classification is needed—at strictly zero serialization cost.
-   
+1. **Zero-Copy IPC via Apache Arrow C++ Data Interface (Implemented):**
+   Our initial PyO3 FFI boundary enforced a Python Global Interpreter Lock (GIL) mapping overhead that spiked execution times. By substituting Python serialization with the Apache Arrow PyCapsule interface via `pyo3-arrow`, the Rust extension now maps log files directly into `memmap2` buffers and yields zero-copy Arrow `StringArray` slices directly into Python. These chunks are natively ingested by `cuDF` into GPU VRAM across the PCIe bus, entirely bypassing Python heap allocation.
+
 2. **Replacing ProcessPoolExecutor with Distributed Contexts (Ray/Dask-cuDF):**
    Relying on standard Python multiprocessing to handle GPU sharding and VRAM budgeting across massive enterprise hardware (e.g., dual RTX 4070/5070 matrices) remains notoriously brittle, primarily manifesting in `cudaErrorInitializationError` crashes when child processes fork the main CUDA context. Integrating a distributed framework like Ray or Dask-cuDF will manage distributed worker context, GPU memory pinning, and network fault tolerance organically.
 
@@ -149,7 +149,7 @@ While the current tripartite routing structure defines a new paradigm for regex 
 
 ## 6. Conclusion
 
-`tensor-grep` represents a significant leap forward in bridging the gap between DevOps CLI utilities and modern GPU-accelerated Machine Learning frameworks. By dynamically routing workloads between highly optimized CPU paths for small files or exact strings, and `cuDF` or PyTorch backends for massive complex logs and AST graphs, it provides a resilient, enterprise-grade solution capable of true line-rate analytics. Future work will focus on optimizing the Python AST-to-Tensor serialization pipeline and further reducing the PyTorch initialization latency on Windows via DirectStorage (GDS) APIs.
+`tensor-grep` represents a significant leap forward in bridging the gap between DevOps CLI utilities and modern GPU-accelerated Machine Learning frameworks. By dynamically routing workloads between highly optimized CPU paths for small files or exact strings, and `cuDF` or PyTorch backends for massive complex logs and AST graphs, it provides a resilient, enterprise-grade solution capable of true line-rate analytics. Future work will focus on optimizing the Python AST-to-Tensor serialization pipeline and completely bypassing the CPU memory bounce-buffer via NVIDIA GPUDirect Storage (GDS) APIs to map NVMe drives directly into GPU VRAM.
 
 ## References
 1. Zhong, J., Chen, S., & Yu, C. (2024). *XAV: A High-Performance Regular Expression Matching Engine for Packet Processing*. arXiv:2403.16533.

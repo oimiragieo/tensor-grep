@@ -2,6 +2,16 @@ TBD
 ===
 Unreleased changes. Release notes have not yet been written.
 
+0.2.0
+===
+- **Features (The Enterprise Arrow Architecture update)**
+  - Replaced high-overhead Python PyO3 String bindings with a true End-to-End Zero-Copy **Apache Arrow PyCapsule** integration. 
+  - `tensor-grep-rs` now maps OS files via `memmap2` and constructs Arrow StringArrays without copying the payload into RAM.
+  - Implemented dynamic **VRAM Chunking**, yielding Arrow slices to cuDF to prevent Out-Of-Memory (OOM) exceptions when mapping multi-gigabyte log files to GPU VRAM limits.
+  - Replaced CPU-bound HuggingFace cyBERT tokenization with native `cudf.core.subword_tokenize()`. Logs stay entirely in VRAM while being mapped to Transformer tensors.
+- **Fixes**
+  - Updated Pipeline to automatically map complex `ripgrep` regex configurations (like invert-match, boundaries, context cues) directly to the CPU fallback if they exceed Rust's core capabilities.
+
 0.1.5
 ===
 - **Features**

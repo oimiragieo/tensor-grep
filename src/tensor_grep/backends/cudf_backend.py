@@ -141,6 +141,7 @@ class CuDFBackend(ComputeBackend):
             # PHASE 3.1: VRAM Chunking for Large Files
             try:
                 import pyarrow as pa
+
                 from tensor_grep.rust_core import read_mmap_to_arrow_chunked
 
                 # Assume chunks are split across multiple GPUs or just chunked for one GPU.
