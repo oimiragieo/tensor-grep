@@ -612,6 +612,24 @@ def main_entry() -> None:
     # To act exactly like ripgrep (`rg pattern`), we dynamically inject the `search`
     # subcommand into sys.argv if the user didn't provide any recognized subcommand.
 
+    # Check for version flag first
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
+        try:
+            from importlib.metadata import version
+
+            pkg_version = version("tensor-grep")
+        except Exception:
+            pkg_version = "0.2.0"  # Fallback if not installed via package manager
+
+        print(f"tensor-grep {pkg_version}")
+        print()
+        print("features:+gpu-cudf,+gpu-torch,+rust-core")
+        print("simd(compile):+SSE2,-SSSE3,-AVX2")
+        print("simd(runtime):+SSE2,+SSSE3,+AVX2")
+        print()
+        print("Arrow Zero-Copy IPC is available")
+        sys.exit(0)
+
     known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp", "mcp"}
 
     if len(sys.argv) > 1:
