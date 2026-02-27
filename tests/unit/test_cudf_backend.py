@@ -16,7 +16,10 @@ class TestCuDFBackend:
         from tensor_grep.backends.cudf_backend import CuDFBackend
 
         backend = CuDFBackend()
-        backend.search(str(sample_log_file), "ERROR")
+
+        # We need to make the rust_core import fail specifically within this test
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            backend.search(str(sample_log_file), "ERROR")
 
         cudf.read_text.assert_called_once()
 
