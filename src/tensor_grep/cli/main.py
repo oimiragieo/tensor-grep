@@ -20,7 +20,9 @@ Combines raw regex speed with semantic understanding (cyBERT) while maintaining 
 )
 
 
-@app.command(name="search", help="""Search files for a regex pattern, with GPU acceleration when applicable.
+@app.command(
+    name="search",
+    help="""Search files for a regex pattern, with GPU acceleration when applicable.
 Supports almost all ripgrep (rg) flags for drop-in compatibility.
 
 **Other Available Subcommands:**
@@ -28,7 +30,8 @@ Supports almost all ripgrep (rg) flags for drop-in compatibility.
 - `tg classify`: Run semantic NLP threat classification on logs via cyBERT
 - `tg run`: Run GPU-accelerated AST structural queries (ast-grep parity)
 - `tg scan` / `tg test` / `tg lsp`: Auxiliary AST-GNN workflows
-""")
+""",
+)
 def search_command(
     # POSITIONAL ARGUMENTS
     pattern: str = typer.Argument(..., help="A regular expression used for searching."),

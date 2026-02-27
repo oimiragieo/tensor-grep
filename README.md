@@ -140,6 +140,9 @@ To use it with Claude Desktop, just add this to your `claude_desktop_config.json
 }
 ```
 
+**AI Prompt Configuration:**
+If you are building custom AI agents or bots, we provide an optimized prompt template explicitly outlining when and how AI models should use `tensor-grep`. Check out the [`SKILL.md`](SKILL.md) file to seamlessly inject our capabilities into your agent's system prompt!
+
 ### AST / Structural Searching
 Run semantic code structure searches that ignore formatting, whitespace, and comments:
 
