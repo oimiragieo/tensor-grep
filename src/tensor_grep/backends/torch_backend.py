@@ -9,7 +9,12 @@ from tensor_grep.core.result import MatchLine, SearchResult
 
 
 def _process_chunk_on_device(
-    device_id: int, file_path: str, offset: int, size: int, pattern: str, config: SearchConfig | None = None
+    device_id: int,
+    file_path: str,
+    offset: int,
+    size: int,
+    pattern: str,
+    config: SearchConfig | None = None,
 ) -> list[MatchLine]:
     """
     Worker function to process a specific chunk of the file on a specific GPU.
@@ -92,7 +97,9 @@ class TorchBackend:
         device_count = self.device_detector.get_device_count()
         return device_count > 0
 
-    def search(self, file_path: str, pattern: str, config: SearchConfig | None = None) -> SearchResult:
+    def search(
+        self, file_path: str, pattern: str, config: SearchConfig | None = None
+    ) -> SearchResult:
         """
         Search using PyTorch tensor operations distributed across all available GPUs.
         """

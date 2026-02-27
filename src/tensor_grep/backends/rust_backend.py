@@ -22,7 +22,9 @@ class RustCoreBackend(ComputeBackend):
     def is_available(self) -> bool:
         return HAVE_RUST
 
-    def search(self, file_path: str, pattern: str, config: SearchConfig | None = None) -> SearchResult:
+    def search(
+        self, file_path: str, pattern: str, config: SearchConfig | None = None
+    ) -> SearchResult:
         if not self.inner:
             return SearchResult(matches=[], total_files=0, total_matches=0)
 
