@@ -17,17 +17,21 @@ class RipgrepBackend(ComputeBackend):
 
     def _get_binary_name(self) -> str | None:
         import shutil
+
         if shutil.which("rg"):
             return "rg"
         if shutil.which("rg.exe"):
             return "rg.exe"
-        
+
         # Check standard ripgrep windows paths if in dev env
         import os
-        dev_path = os.path.join(os.getcwd(), "benchmarks", "ripgrep-14.1.0-x86_64-pc-windows-msvc", "rg.exe")
+
+        dev_path = os.path.join(
+            os.getcwd(), "benchmarks", "ripgrep-14.1.0-x86_64-pc-windows-msvc", "rg.exe"
+        )
         if os.path.exists(dev_path):
             return dev_path
-            
+
         return None
 
     def search(
