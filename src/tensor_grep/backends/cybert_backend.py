@@ -1,4 +1,7 @@
+import base64
 import importlib.util
+import re
+import urllib.parse
 from typing import Any
 
 HAS_CYBERT_DEPS = (
@@ -7,7 +10,30 @@ HAS_CYBERT_DEPS = (
 )
 
 
+def deobfuscate_payload(line: str) -> str:
+    """
+    Attempts to decode common cybersecurity obfuscation techniques (Base64, URL encoding)
+    before vectorization to increase transformer confidence against payloads.
+    """
+    decoded = urllib.parse.unquote(line)
+
+    # Simple heuristic to extract Base64 payloads (length > 16, valid characters)
+    b64_pattern = re.compile(r"(?:[A-Za-z0-9+/]{4}){4,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?")
+    for match in b64_pattern.findall(decoded):
+        try:
+            b64_decoded = base64.b64decode(match).decode("utf-8")
+            if all(32 <= ord(c) < 127 or c in "\r\n\t" for c in b64_decoded):
+                decoded = decoded.replace(match, f" [DECODED_B64: {b64_decoded}] ")
+        except Exception:
+            pass
+
+    return decoded
+
+
 def tokenize(lines: list[str]) -> dict[str, Any]:
+    # Pre-process for cybersecurity telemetry context
+    cleaned_lines = [deobfuscate_payload(line) for line in lines]
+
     try:
         from transformers import AutoTokenizer
     except ImportError:
@@ -19,7 +45,7 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
             return {"input_ids": [[1, 2, 3]]}
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")  # type: ignore
-    return dict(tokenizer(lines, padding=True, truncation=True, return_tensors="np"))
+    return dict(tokenizer(cleaned_lines, padding=True, truncation=True, return_tensors="np"))
 
 
 class CybertBackend:
