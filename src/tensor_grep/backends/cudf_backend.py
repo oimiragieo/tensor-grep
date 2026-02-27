@@ -24,7 +24,14 @@ def _process_chunk_on_device(
     import cudf
     import rmm
 
-    rmm.reinitialize(devices=[device_id])
+    try:
+        rmm.reinitialize(devices=[device_id])
+    except Exception:
+        # Fallback to default RMM initialization if specific device mapping fails (common in WSL multiprocess)
+        try:
+            rmm.reinitialize()
+        except Exception:
+            pass
 
     series = cudf.read_text(
         file_path,

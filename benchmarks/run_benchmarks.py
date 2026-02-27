@@ -196,10 +196,10 @@ def main():
 
         # Actual benchmark
         rg_time, rg_out = run_cmd_capture(rg_cmd)
-        
-        from tensor_grep.core.config import SearchConfig
+
         from tensor_grep.backends.rust_backend import RustCoreBackend
-        
+        from tensor_grep.core.config import SearchConfig
+
         # We need to test the raw backend speed to avoid Python's ~0.2s interpreter startup time
         # which skews the 0.1s benchmarks heavily.
         if "Count Matches" in scenario["name"]:
@@ -208,7 +208,7 @@ def main():
             start_tg = time.time()
             backend.search("bench_data", "ERROR", cfg)
             tg_time = time.time() - start_tg
-            _, tg_out = run_cmd_capture(actual_tg_cmd) # run again just for parity check
+            _, tg_out = run_cmd_capture(actual_tg_cmd)  # run again just for parity check
         else:
             tg_time, tg_out = run_cmd_capture(actual_tg_cmd)
 
