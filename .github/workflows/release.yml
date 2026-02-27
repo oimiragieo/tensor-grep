@@ -49,11 +49,11 @@ jobs:
         
       - name: Rename Artifact (Linux)
         if: runner.os == 'Linux'
-        run: mv tg.bin tg-linux-amd64-${{ matrix.gpu }}
+        run: mv tg tg-linux-amd64-${{ matrix.gpu }}
         
       - name: Rename Artifact (macOS)
         if: runner.os == 'macOS'
-        run: mv tg.bin tg-macos-amd64-${{ matrix.gpu }}
+        run: mv tg tg-macos-amd64-${{ matrix.gpu }}
         
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

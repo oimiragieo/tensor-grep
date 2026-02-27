@@ -36,7 +36,9 @@ def build_binary():
             if os.path.exists("tg.exe"):
                 print("Found: tg.exe")
         else:
-            if os.path.exists("tg.bin"):
+            if os.path.exists("tg"):
+                print("Found: tg")
+            elif os.path.exists("tg.bin"):
                 print("Found: tg.bin")
     else:
         print(f"\nBuild failed with exit code: {result.returncode}")
