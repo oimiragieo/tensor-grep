@@ -1,6 +1,7 @@
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.backends.cudf_backend import CuDFBackend
+from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.backends.rust_backend import RustCoreBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.memory_manager import MemoryManager
@@ -11,8 +12,11 @@ class Pipeline:
         self.backend: ComputeBackend
         self.config = config
 
-        # The rust backend is our fallback now because it's 30x faster than pure python
+        # The rust backend is our fallback now because it's 30x faster than pure python for counts/simple strings
         rust_backend = RustCoreBackend()
+
+        # Native ripgrep backend for standard regex parsing (if installed)
+        rg_backend = RipgrepBackend()
 
         # Check if config has complex flags that the Rust core doesn't support yet
         needs_python_cpu = False
@@ -27,13 +31,18 @@ class Pipeline:
             if config.line_regexp or config.word_regexp:
                 needs_python_cpu = True
 
-        if needs_python_cpu or not rust_backend.is_available():
-            fallback_backend: ComputeBackend = CPUBackend()
+        if rg_backend.is_available():
+            fallback_backend: ComputeBackend = rg_backend
+        elif needs_python_cpu or not rust_backend.is_available():
+            fallback_backend = CPUBackend()
         else:
             fallback_backend = rust_backend
 
         if force_cpu:
             self.backend = fallback_backend
+        elif config and config.count and rust_backend.is_available():
+            # For pure counting, our Rust backend beats rg and everything else
+            self.backend = rust_backend
         elif config and (
             config.context
             or config.before_context
@@ -41,17 +50,28 @@ class Pipeline:
             or config.line_regexp
             or config.word_regexp
         ):
-            # Complex flags currently require the pure python CPU backend to handle line queues and boundaries perfectly
-            self.backend = CPUBackend()
+            # Complex flags require ripgrep or pure python CPU backend
+            if rg_backend.is_available():
+                self.backend = rg_backend
+            else:
+                self.backend = CPUBackend()
         elif config and config.ast:
             try:
-                from tensor_grep.backends.ast_backend import AstBackend
+                from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
 
-                ast_backend = AstBackend()
-                if ast_backend.is_available():
-                    self.backend = ast_backend
+                ast_wrapper = AstGrepWrapperBackend()
+
+                # Check for one-off CLI queries, prefer native ast-grep if installed for instant resolution
+                if ast_wrapper.is_available():
+                    self.backend = ast_wrapper
                 else:
-                    self.backend = fallback_backend
+                    from tensor_grep.backends.ast_backend import AstBackend
+
+                    ast_backend = AstBackend()
+                    if ast_backend.is_available():
+                        self.backend = ast_backend
+                    else:
+                        self.backend = fallback_backend
             except ImportError:
                 self.backend = fallback_backend
         else:
