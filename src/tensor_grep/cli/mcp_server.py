@@ -13,9 +13,9 @@ mcp = FastMCP("tensor-grep")
 
 @mcp.tool()
 def tg_search(
-    pattern: str, 
-    path: str = ".", 
-    case_sensitive: bool = False, 
+    pattern: str,
+    path: str = ".",
+    case_sensitive: bool = False,
     ignore_case: bool = False,
     fixed_strings: bool = False,
     word_regexp: bool = False,
@@ -23,7 +23,7 @@ def tg_search(
     max_count: int | None = None,
     count_matches: bool = False,
     glob: str | None = None,
-    type_filter: str | None = None
+    type_filter: str | None = None,
 ) -> str:
     """
     Search files for a regex pattern using tensor-grep's high-speed GPU or CPU engine.
@@ -70,7 +70,7 @@ def tg_search(
 
         if all_results.is_empty:
             return f"No matches found for '{pattern}' in {path}."
-            
+
         if count_matches:
             return f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}."
 

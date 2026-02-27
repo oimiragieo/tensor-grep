@@ -121,3 +121,4 @@ class SearchConfig:
     nlp_threshold: float = 0.0
     ast: bool = False
     lang: str | None = None
+    use_jit: bool = False

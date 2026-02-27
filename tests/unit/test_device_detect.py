@@ -5,7 +5,8 @@ from tensor_grep.core.hardware.device_detect import DeviceDetector, Platform
 
 class TestDeviceDetect:
     @patch.dict("sys.modules", {"torch": MagicMock()})
-    def test_should_detect_no_gpu_when_cuda_unavailable(self):
+    @patch("os.path.exists", return_value=False)
+    def test_should_detect_no_gpu_when_cuda_unavailable(self, mock_exists):
         import torch
 
         torch.cuda.is_available.return_value = False
@@ -13,19 +14,26 @@ class TestDeviceDetect:
         assert detector.has_gpu() is False
         assert detector.get_vram_capacity_mb() == 0
 
-    @patch.dict("sys.modules", {"torch": MagicMock()})
-    def test_should_report_vram_capacity(self):
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
+    def test_should_report_vram_capacity(self, mock_exists, mock_sys):
         import torch
 
+        mock_sys.platform = "linux"
         torch.cuda.is_available.return_value = True
         torch.cuda.device_count.return_value = 1
         torch.cuda.get_device_properties.return_value = MagicMock(total_memory=12884901888)
         detector = DeviceDetector()
         assert detector.get_vram_capacity_mb() == 12288
 
-    @patch.dict("sys.modules", {"torch": MagicMock()})
-    def test_should_detect_multiple_gpus_when_available(self):
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
+    def test_should_detect_multiple_gpus_when_available(self, mock_exists, mock_sys):
         import torch
+
+        mock_sys.platform = "linux"
 
         torch.cuda.is_available.return_value = True
         torch.cuda.device_count.return_value = 2

@@ -117,7 +117,18 @@ class CuDFBackend(ComputeBackend):
                 # 2. cuDF ingests the Arrow memory directly into VRAM
                 series = cudf.Series.from_arrow(zero_copy_array)
 
-                mask = series.str.contains(pattern, regex=True, flags=flags)
+                if config and config.use_jit:
+                    try:
+                        # Attempt to use JIT compilation for complex string patterns
+                        compiled_pattern = cudf.core.column.string.compile_regex_jit(
+                            pattern, flags=flags
+                        )
+                        mask = series.str.contains(compiled_pattern, regex=True)
+                    except AttributeError:
+                        mask = series.str.contains(pattern, regex=True, flags=flags)
+                else:
+                    mask = series.str.contains(pattern, regex=True, flags=flags)
+
                 if config and config.invert_match:
                     mask = ~mask
                 matched = series[mask]

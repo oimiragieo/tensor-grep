@@ -3,6 +3,7 @@ from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.backends.cudf_backend import CuDFBackend
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.backends.rust_backend import RustCoreBackend
+from tensor_grep.backends.stringzilla_backend import StringZillaBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 
@@ -17,6 +18,9 @@ class Pipeline:
 
         # Native ripgrep backend for standard regex parsing (if installed)
         rg_backend = RipgrepBackend()
+
+        # StringZilla backend for ultra-fast fixed string SIMD matching
+        sz_backend = StringZillaBackend()
 
         # Check if config has complex flags that the Rust core doesn't support yet
         needs_python_cpu = False
@@ -43,6 +47,9 @@ class Pipeline:
         elif config and config.count and rust_backend.is_available():
             # For pure counting, our Rust backend beats rg and everything else
             self.backend = rust_backend
+        elif config and config.fixed_strings and sz_backend.is_available() and not needs_python_cpu:
+            # For literal string searches without context boundaries, StringZilla's SIMD destroys C
+            self.backend = sz_backend
         elif config and (
             config.context
             or config.before_context

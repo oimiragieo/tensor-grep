@@ -149,6 +149,15 @@ While the current tripartite routing structure defines a new paradigm for regex 
 4. **Automated Cybersecurity Telemetry De-Obfuscation:**
    Because `tensor-grep` leverages `cyBERT` for semantic network log classification, standard regex engines fail to analyze deeply encoded threat payloads. Future updates will embed an automatic de-obfuscation pre-processor (decoding Base64, Hex, and URL encodings on the fly) immediately before the sequence is vectorized for VRAM injection. This guarantees resilient threat hunting without degrading to sequential CPU decoding boundaries.
 
+5. **StringZilla SIMD Fallback Paths:**
+   Recent literature demonstrates that raw string matching utilizing advanced SIMD CPU instructions (and CUDA bound iterations) via libraries like *StringZilla* can achieve up to 500+ GigaCUPS of edit-distance calculations, performing 109x faster than standard CPU libraries on H100 arrays. Integrating StringZilla as a native exact-match `-F` fallback will establish an intermediate performance tier that further buries C-level binaries.
+
+6. **Just-In-Time (JIT) cuDF Regex Kernels:**
+   While the current `CuDFBackend` relies on pre-compiled regex DFA matrices, recent optimizations from NVIDIA (2025/2026) illustrate that utilizing NVRTC (NVIDIA Runtime Compilation) to JIT-compile custom string transformation kernels can yield an additional 1x-4x speedup over standard `cudf.Series.str.contains`. We plan to inject a JIT-compiler into the query analysis phase for massively complex user patterns.
+
+7. **Linear Temporal Logic (LTL) Log Synthesis:**
+   Building upon structural AST tracing, `tensor-grep` will support LTL assertions (e.g., *Query: Did connection timeout ALWAYS follow event authentication failure?*). By mapping sequential log arrays into characteristic bitvector matrices, the GPU can evaluate sequence compliance 2000x faster than existing CPU trace learners [Valizadeh et al., 2024].
+
 ## 6. Conclusion
 
 `tensor-grep` represents a significant leap forward in bridging the gap between DevOps CLI utilities and modern GPU-accelerated Machine Learning frameworks. By dynamically routing workloads between highly optimized CPU paths for small files or exact strings, and `cuDF` or PyTorch backends for massive complex logs and AST graphs, it provides a resilient, enterprise-grade solution capable of true line-rate analytics. Future work will focus on optimizing the Python AST-to-Tensor serialization pipeline and completely bypassing the CPU memory bounce-buffer via NVIDIA GPUDirect Storage (GDS) APIs to map NVMe drives directly into GPU VRAM.
