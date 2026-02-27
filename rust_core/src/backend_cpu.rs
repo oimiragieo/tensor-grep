@@ -45,10 +45,10 @@ impl CpuBackend {
             }
         } else if path_obj.is_dir() {
             for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
-                if entry.file_type().is_file() {
-                    if let Ok(file_results) = self.search_file(&re, &entry.path().to_path_buf()) {
-                        results.extend(file_results);
-                    }
+                if entry.file_type().is_file()
+                    && let Ok(file_results) = self.search_file(&re, &entry.path().to_path_buf())
+                {
+                    results.extend(file_results);
                 }
             }
         }
@@ -112,12 +112,11 @@ impl CpuBackend {
                 }
             } else if path_obj.is_dir() {
                 for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
-                    if entry.file_type().is_file() {
-                        if let Ok(count) =
+                    if entry.file_type().is_file()
+                        && let Ok(count) =
                             self.count_file_memmem(pat_bytes, &entry.path().to_path_buf())
-                        {
-                            total_count += count;
-                        }
+                    {
+                        total_count += count;
                     }
                 }
             }
@@ -140,10 +139,10 @@ impl CpuBackend {
             }
         } else if path_obj.is_dir() {
             for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
-                if entry.file_type().is_file() {
-                    if let Ok(count) = self.count_file_regex(&re, &entry.path().to_path_buf()) {
-                        total_count += count;
-                    }
+                if entry.file_type().is_file()
+                    && let Ok(count) = self.count_file_regex(&re, &entry.path().to_path_buf())
+                {
+                    total_count += count;
                 }
             }
         }
