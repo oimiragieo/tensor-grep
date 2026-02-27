@@ -104,7 +104,22 @@ class CuDFBackend(ComputeBackend):
             flags |= re.IGNORECASE
 
         if file_size <= total_capacity_bytes and len(self.chunk_sizes_mb) == 1:
-            series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
+            # PHASE 3: Zero-Copy ingestion via PyCapsule if tensor-grep rust core is available
+            try:
+                import pyarrow as pa
+
+                from tensor_grep.rust_core import read_mmap_to_arrow
+
+                # 1. Rust memory maps the file and returns an Arrow PyCapsule
+                pycapsule = read_mmap_to_arrow(file_path)
+                zero_copy_array = pa.array(pycapsule)
+
+                # 2. cuDF ingests the Arrow memory directly into VRAM
+                series = cudf.Series.from_arrow(zero_copy_array)
+            except ImportError:
+                # Fallback to cuDF's native text reader if the rust bridge isn't compiled
+                series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
+
             mask = series.str.contains(pattern, regex=True, flags=flags)
             if config and config.invert_match:
                 mask = ~mask
