@@ -2,6 +2,14 @@ TBD
 ===
 Unreleased changes. Release notes have not yet been written.
 
+0.1.4
+===
+- **Features**
+  - Completely rewrote README.md documentation matching ripgrep's exhaustive structure.
+  - Improved cross-platform environment testing (Ruff/Mypy Strict) using custom pyproject.toml flag `warn_unused_ignores = false`.
+- **Fixes**
+  - Fixed Windows PowerShell installation script by splitting `--index-url` flags so that `uv pip install` parses the arguments correctly.
+
 0.1.3
 ===
 - **Fixes**
