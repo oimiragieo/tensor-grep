@@ -10,6 +10,7 @@ use pyo3::prelude::*;
 use pyo3_arrow::error::PyArrowResult;
 use pyo3_arrow::PyArray;
 use std::sync::Arc;
+use arrow_array::Array;
 
 /// Reads a file into a zero-copy Arrow StringArray and exports it as a PyCapsule
 #[pyfunction]
@@ -28,6 +29,59 @@ fn read_mmap_to_arrow(py: Python<'_>, filepath: &str) -> PyArrowResult<PyObject>
 
     // 3. Export to a Python Arrow object (returns a PyCapsule wrapping the C Data Interface)
     py_array.to_pyarrow(py)
+}
+
+/// Reads a file into a zero-copy Arrow StringArray and yields it in chunks (slices)
+/// to prevent GPU Out-Of-Memory errors when the file exceeds available VRAM.
+#[pyfunction]
+#[pyo3(signature = (filepath, max_bytes))]
+fn read_mmap_to_arrow_chunked(
+    py: Python<'_>,
+    filepath: &str,
+    max_bytes: usize,
+) -> PyArrowResult<Vec<PyObject>> {
+    // 1. Map the entire file and build offsets (zero-copy)
+    let string_array = py.allow_threads(|| {
+        create_arrow_string_array_from_mmap(filepath)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("mmap failed: {}", e)))
+    })?;
+
+    let mut py_chunks = Vec::new();
+    let total_len = string_array.len();
+    let mut current_idx = 0;
+
+    // 2. Slice the Arrow array based on the byte capacity
+    // Slicing an Arrow array is zero-copy (it just adjusts the offset/length metadata)
+    while current_idx < total_len {
+        let mut slice_len = 0;
+        let mut current_bytes = 0;
+
+        // Find how many strings fit into `max_bytes`
+        while current_idx + slice_len < total_len {
+            // Note: In a highly optimized version, we could binary search the offsets
+            // array directly instead of iterating string by string.
+            let str_len = string_array.value_length(current_idx + slice_len) as usize;
+            if current_bytes + str_len > max_bytes && slice_len > 0 {
+                break; // Limit reached
+            }
+            current_bytes += str_len;
+            slice_len += 1;
+        }
+
+        // Create a zero-copy slice of the StringArray
+        let sliced_array = string_array.slice(current_idx, slice_len);
+        
+        let py_array = PyArray::new(
+            Arc::new(sliced_array),
+            py.get_type::<pyo3::types::PyCapsule>(),
+        );
+        
+        py_chunks.push(py_array.to_pyarrow(py)?);
+        
+        current_idx += slice_len;
+    }
+
+    Ok(py_chunks)
 }
 
 /// Python bindings for the Rust CPU backend
@@ -85,6 +139,8 @@ impl RustBackend {
 fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustBackend>()?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow, m)?)?;
+    m.add_function(wrap_pyfunction!(read_mmap_to_arrow_chunked, m)?)?;
     Ok(())
 }
+
 

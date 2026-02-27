@@ -116,18 +116,71 @@ class CuDFBackend(ComputeBackend):
 
                 # 2. cuDF ingests the Arrow memory directly into VRAM
                 series = cudf.Series.from_arrow(zero_copy_array)
+
+                mask = series.str.contains(pattern, regex=True, flags=flags)
+                if config and config.invert_match:
+                    mask = ~mask
+                matched = series[mask]
+                for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                    matches.append(
+                        MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                    )
             except ImportError:
                 # Fallback to cuDF's native text reader if the rust bridge isn't compiled
                 series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
+                mask = series.str.contains(pattern, regex=True, flags=flags)
+                if config and config.invert_match:
+                    mask = ~mask
+                matched = series[mask]
+                for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                    matches.append(
+                        MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                    )
 
-            mask = series.str.contains(pattern, regex=True, flags=flags)
-            if config and config.invert_match:
-                mask = ~mask
-            matched = series[mask]
-            for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
-                matches.append(MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path))
         else:
-            offset = 0
+            # PHASE 3.1: VRAM Chunking for Large Files
+            try:
+                import pyarrow as pa
+                from tensor_grep.rust_core import read_mmap_to_arrow_chunked
+
+                # Assume chunks are split across multiple GPUs or just chunked for one GPU.
+                # If we have multiple GPUs, we can use ProcessPoolExecutor.
+                # If it's a single GPU but chunked to prevent OOM, we can process sequentially or parallelly.
+
+                # Since we already have the rust core returning a list of PyCapsules mapped cleanly:
+                chunk_bytes = self.chunk_sizes_mb[0] * 1024 * 1024
+                if chunk_bytes == 0:
+                    chunk_bytes = 1024 * 1024
+
+                pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
+
+                line_offset = 0
+                for capsule in pycapsule_chunks:
+                    zero_copy_array = pa.array(capsule)
+                    series = cudf.Series.from_arrow(zero_copy_array)
+
+                    mask = series.str.contains(pattern, regex=True, flags=flags)
+                    if config and config.invert_match:
+                        mask = ~mask
+                    matched = series[mask]
+
+                    chunk_lines_count = len(series)
+                    for idx, text in zip(
+                        matched.index.to_pandas(), matched.to_pandas(), strict=False
+                    ):
+                        matches.append(
+                            MatchLine(
+                                line_number=int(idx) + 1 + line_offset,
+                                text=str(text),
+                                file=file_path,
+                            )
+                        )
+
+                    line_offset += chunk_lines_count
+
+            except ImportError:
+                # Fallback to pure Python multi-processing CPU mapping
+                offset = 0
             line_offset = 0
 
             with ProcessPoolExecutor(max_workers=len(self.chunk_sizes_mb)) as executor:

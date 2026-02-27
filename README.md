@@ -189,6 +189,14 @@ To unlock its 3x-10x GPU-accelerated speeds, your system must meet these require
   * **Linux / WSL2:** Requires NVIDIA RAPIDS `cuDF` (`cudf-cu12`) for maximum throughput.
   * **Windows Native:** Requires PyTorch with CUDA 12 support.
 
+## Enterprise Roadmap: GPUDirect Storage (GDS)
+
+The absolute theoretical limit of local hardware parsing is bounded by the PCIe bus. Currently, `tensor-grep` uses Apache Arrow via `memmap2` to achieve end-to-end zero-copy routing:
+
+**NVMe Disk -> OS Page Cache (CPU RAM via mmap) -> PCIe Bus -> GPU VRAM**
+
+For multi-terabyte log repositories, the CPU RAM bounce-buffer becomes the limiting factor. The next frontier for `tensor-grep v2.0` is the integration of **NVIDIA cuFile (GPUDirect Storage)**. By replacing the Rust mmap with a Rust C++ FFI call to `cuFileRead()`, we can instruct the NVMe controller to bypass the CPU entirely and DMA (Direct Memory Access) the bytes straight from the SSD into the GPU VRAM.
+
 ## Tips
 
 ### Windows PyTorch Spawn Overhead

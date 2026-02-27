@@ -34,6 +34,45 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
     # Pre-process for cybersecurity telemetry context
     cleaned_lines = [deobfuscate_payload(line) for line in lines]
 
+    # -------------------------------------------------------------
+    # PHASE 3.2: GPU-Accelerated Tokenization (Zero-Copy cuDF Handoff)
+    # If the environment has cuDF installed, we can tokenize directly in VRAM
+    # using the highly optimized C++ subword tokenizer instead of transferring
+    # strings back to the CPU for HuggingFace Transformers.
+    # -------------------------------------------------------------
+    try:
+        import cudf
+        from cudf.core.subword_tokenize import subword_tokenize
+
+        # In a fully integrated pipeline, `cleaned_lines` would already be a cuDF Series
+        # But for compatibility, we map it to the GPU here.
+        gpu_series = cudf.Series(cleaned_lines)
+
+        # We need an explicit path to the vocab file for cuDF's tokenizer
+        # In an enterprise environment, this is cached locally.
+        vocab_path = "vocab.txt"
+
+        import os
+
+        if os.path.exists(vocab_path):
+            tokens = subword_tokenize(
+                gpu_series,
+                vocab_path,
+                max_length=128,
+                stride=0,
+                do_lower_case=True,
+                do_truncate=True,
+            )
+
+            # Convert cuDF tensors to numpy arrays (or torch via DLPack)
+            # dlpack is preferred: torch.from_dlpack(tokens.input_ids.to_dlpack())
+            return {"input_ids": tokens.input_ids.values_host}
+    except ImportError:
+        pass
+    except Exception:
+        # Fallback if vocab is missing or other cuDF error
+        pass
+
     try:
         from transformers import AutoTokenizer
     except ImportError:
