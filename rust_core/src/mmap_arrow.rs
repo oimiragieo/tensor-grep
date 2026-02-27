@@ -1,5 +1,5 @@
+use arrow_array::StringArray;
 use arrow_array::builder::Int32BufferBuilder;
-use arrow_array::{GenericStringArray, StringArray};
 use arrow_buffer::{Buffer, OffsetBuffer};
 use memchr::memchr_iter;
 use memmap2::Mmap;

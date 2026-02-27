@@ -6,9 +6,9 @@ pub mod mmap_arrow;
 
 use crate::backend_cpu::CpuBackend;
 use arrow_array::Array;
+use arrow_array::StringArray;
 use mmap_arrow::create_arrow_string_array_from_mmap;
 use pyo3::prelude::*;
-use pyo3_arrow::PyArray;
 use pyo3_arrow::error::PyArrowResult;
 use std::sync::Arc;
 
@@ -22,13 +22,10 @@ fn read_mmap_to_arrow(py: Python<'_>, filepath: &str) -> PyArrowResult<PyObject>
     })?;
 
     // 2. Wrap the zero-copy StringArray into a PyO3-Arrow PyArray
-    let py_array = PyArray::new(
-        Arc::new(string_array),
-        py.get_type::<pyo3::types::PyCapsule>(),
-    );
+    let py_array = pyo3_arrow::PyArray::from_array_ref(Arc::new(string_array));
 
     // 3. Export to a Python Arrow object (returns a PyCapsule wrapping the C Data Interface)
-    py_array.to_pyarrow(py)
+    Ok(py_array.to_pyarrow(py)?.into())
 }
 
 /// Reads a file into a zero-copy Arrow StringArray and yields it in chunks (slices)
@@ -69,14 +66,12 @@ fn read_mmap_to_arrow_chunked(
         }
 
         // Create a zero-copy slice of the StringArray
-        let sliced_array = string_array.slice(current_idx, slice_len);
+        let sliced_array =
+            StringArray::from(string_array.slice(current_idx, slice_len).into_data());
 
-        let py_array = PyArray::new(
-            Arc::new(sliced_array),
-            py.get_type::<pyo3::types::PyCapsule>(),
-        );
+        let py_array = pyo3_arrow::PyArray::from_array_ref(Arc::new(sliced_array));
 
-        py_chunks.push(py_array.to_pyarrow(py)?);
+        py_chunks.push(py_array.to_pyarrow(py)?.into());
 
         current_idx += slice_len;
     }
