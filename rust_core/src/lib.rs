@@ -5,12 +5,12 @@ pub mod cli;
 pub mod mmap_arrow;
 
 use crate::backend_cpu::CpuBackend;
+use arrow_array::Array;
 use mmap_arrow::create_arrow_string_array_from_mmap;
 use pyo3::prelude::*;
-use pyo3_arrow::error::PyArrowResult;
 use pyo3_arrow::PyArray;
+use pyo3_arrow::error::PyArrowResult;
 use std::sync::Arc;
-use arrow_array::Array;
 
 /// Reads a file into a zero-copy Arrow StringArray and exports it as a PyCapsule
 #[pyfunction]
@@ -70,14 +70,14 @@ fn read_mmap_to_arrow_chunked(
 
         // Create a zero-copy slice of the StringArray
         let sliced_array = string_array.slice(current_idx, slice_len);
-        
+
         let py_array = PyArray::new(
             Arc::new(sliced_array),
             py.get_type::<pyo3::types::PyCapsule>(),
         );
-        
+
         py_chunks.push(py_array.to_pyarrow(py)?);
-        
+
         current_idx += slice_len;
     }
 
@@ -142,5 +142,3 @@ fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow_chunked, m)?)?;
     Ok(())
 }
-
-

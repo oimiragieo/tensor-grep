@@ -26,7 +26,9 @@ pub fn create_arrow_string_array_from_mmap(filepath: &str) -> anyhow::Result<Str
     // Ensure we don't exceed i32::MAX for StringArray offsets
     // For files > 2GB, we would need to use LargeStringArray (Int64 offsets)
     if mmap_len > i32::MAX as usize {
-        anyhow::bail!("File is too large for standard StringArray (exceeds 2GB). Use LargeStringArray.");
+        anyhow::bail!(
+            "File is too large for standard StringArray (exceeds 2GB). Use LargeStringArray."
+        );
     }
 
     // 2. Scan for newline boundaries to construct the offset array
@@ -34,7 +36,7 @@ pub fn create_arrow_string_array_from_mmap(filepath: &str) -> anyhow::Result<Str
     // Assume average line length of 80 bytes
     let estimated_lines = (mmap_len / 80) + 2;
     let mut offset_builder = Int32BufferBuilder::new(estimated_lines);
-    
+
     // First offset is always 0
     offset_builder.append(0);
 
@@ -49,7 +51,7 @@ pub fn create_arrow_string_array_from_mmap(filepath: &str) -> anyhow::Result<Str
         // Arrow offsets track the end of the string
         offset_builder.append((idx + 1) as i32);
     }
-    
+
     // If the file doesn't end with a newline, we add the final offset
     if mmap_ref.last() != Some(&b'\n') {
         offset_builder.append(mmap_len as i32);
