@@ -2,10 +2,11 @@ from unittest.mock import MagicMock, patch
 
 
 class TestDStorageReader:
-    @patch.dict("sys.modules", {"dstorage_gpu": MagicMock()})
+    @patch("importlib.util.find_spec")
     @patch("tensor_grep.io.reader_dstorage.sys")
-    def test_should_report_dstorage_available_on_windows(self, mock_sys):
+    def test_should_report_dstorage_available_on_windows(self, mock_sys, mock_find_spec):
         mock_sys.platform = "win32"
+        mock_find_spec.return_value = True
         from tensor_grep.io.reader_dstorage import DStorageReader
 
         reader = DStorageReader()

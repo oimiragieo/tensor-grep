@@ -3,7 +3,7 @@ from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.backends.cudf_backend import CuDFBackend
 from tensor_grep.backends.rust_backend import RustCoreBackend
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.gpu.memory_manager import MemoryManager
+from tensor_grep.core.hardware.memory_manager import MemoryManager
 
 
 class Pipeline:

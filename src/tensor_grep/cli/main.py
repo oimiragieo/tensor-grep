@@ -2,8 +2,8 @@ import sys
 
 import typer
 
-from tensor_grep.formatters.base import OutputFormatter
-from tensor_grep.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
 app = typer.Typer(
     help="tensor-grep (tg) - The GPU-Accelerated Semantic Log Parsing CLI\n\n"
@@ -458,19 +458,19 @@ def search_command(
     formatter: OutputFormatter
 
     if json or format_type == "json":
-        from tensor_grep.formatters.json_fmt import JsonFormatter
+        from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
         formatter = JsonFormatter()
     elif format_type == "table":
-        from tensor_grep.formatters.table_fmt import TableFormatter
+        from tensor_grep.cli.formatters.table_fmt import TableFormatter
 
         formatter = TableFormatter()
     elif format_type == "csv":
-        from tensor_grep.formatters.csv_fmt import CsvFormatter
+        from tensor_grep.cli.formatters.csv_fmt import CsvFormatter
 
         formatter = CsvFormatter()
     else:
-        from tensor_grep.formatters.ripgrep_fmt import RipgrepFormatter
+        from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
         formatter = RipgrepFormatter(config=config)
 

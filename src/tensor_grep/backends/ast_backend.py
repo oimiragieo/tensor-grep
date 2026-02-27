@@ -1,4 +1,7 @@
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None  # type: ignore
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig

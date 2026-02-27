@@ -6,7 +6,7 @@ pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 
 
 class TestGpuMemoryIntegration:
-    @patch("tensor_grep.gpu.memory_manager.DeviceDetector")
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
     def test_should_process_file_larger_than_vram(self, mock_detect, tmp_path):
         pytest.importorskip("cudf")
 
@@ -16,7 +16,7 @@ class TestGpuMemoryIntegration:
         mock_instance.get_vram_capacity_mb.return_value = 100
         mock_detect.return_value = mock_instance
 
-        from tensor_grep.gpu.memory_manager import MemoryManager
+        from tensor_grep.core.hardware.memory_manager import MemoryManager
 
         manager = MemoryManager()
         chunk_size = manager.get_recommended_chunk_size_mb()
@@ -41,7 +41,7 @@ class TestGpuMemoryIntegration:
             # Should be called multiple times due to chunking
             assert mock_cudf_read_text.call_count > 1
 
-    @patch("tensor_grep.gpu.memory_manager.DeviceDetector")
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
     def test_peak_vram_should_stay_within_budget(self, mock_detect):
         # Difficult to test without real GPU and real cudf tracking,
         # but we can test the memory manager calculates the budget correctly.
@@ -50,7 +50,7 @@ class TestGpuMemoryIntegration:
         mock_instance.get_vram_capacity_mb.return_value = 8192
         mock_detect.return_value = mock_instance
 
-        from tensor_grep.gpu.memory_manager import MemoryManager
+        from tensor_grep.core.hardware.memory_manager import MemoryManager
 
         manager = MemoryManager()
         budget = manager.get_vram_budget_mb()

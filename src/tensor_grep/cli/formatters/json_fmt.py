@@ -1,7 +1,7 @@
 import json
 
+from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.core.result import SearchResult
-from tensor_grep.formatters.base import OutputFormatter
 
 
 class JsonFormatter(OutputFormatter):

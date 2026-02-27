@@ -4,8 +4,8 @@ import os
 import torch
 
 from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.hardware.device_detect import DeviceDetector
 from tensor_grep.core.result import MatchLine, SearchResult
-from tensor_grep.gpu.device_detect import DeviceDetector
 
 
 def _process_chunk_on_device(

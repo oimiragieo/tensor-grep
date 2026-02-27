@@ -2,8 +2,10 @@ from unittest.mock import MagicMock, patch
 
 
 class TestKvikIOReader:
+    @patch("importlib.util.find_spec")
     @patch.dict("sys.modules", {"kvikio": MagicMock()})
-    def test_should_read_via_gds_when_available(self):
+    def test_should_read_via_gds_when_available(self, mock_find_spec):
+        mock_find_spec.return_value = True
         import kvikio
 
         mock_file = MagicMock()

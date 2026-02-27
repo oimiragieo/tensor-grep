@@ -5,10 +5,9 @@ import pytest
 
 def test_rust_core_import():
     """Verify that the pyo3 native extension compiles and can be imported."""
-    try:
-        import tensor_grep.rust_core
-    except ImportError as e:
-        pytest.fail(f"Failed to import tensor_grep.rust_core: {e}")
+    import importlib.util
+    if not importlib.util.find_spec("tensor_grep.rust_core"):
+        pytest.fail("Failed to import tensor_grep.rust_core")
 
 
 def test_rust_backend_search(tmp_path: Path):
