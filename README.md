@@ -125,6 +125,21 @@ Search only Python and Javascript files:
 $ tg -tpy -tjs foobar
 ```
 
+### AI Assistant Integration (MCP)
+`tensor-grep` includes a native Model Context Protocol (MCP) server! This allows modern AI assistants (like Claude Desktop or Cursor) to directly utilize our GPU-accelerated regex engine, structural AST parsers, and cyBERT NLP log classifiers right inside their context windows.
+
+To use it with Claude Desktop, just add this to your `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "tensor-grep": {
+      "command": "tg",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
 ### AST / Structural Searching
 Run semantic code structure searches that ignore formatting, whitespace, and comments:
 
