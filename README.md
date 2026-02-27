@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="docs/assets/logo.jpg" alt="tensor-grep logo" width="800"/>
+</div>
+
 # tensor-grep (tg)
 
 **The GPU-Accelerated Semantic Log Parsing CLI**
