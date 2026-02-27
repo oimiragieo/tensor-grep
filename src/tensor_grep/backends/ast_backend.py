@@ -3,6 +3,8 @@ try:
 except ImportError:
     torch = None  # type: ignore
 
+from typing import Any
+
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -15,8 +17,8 @@ class AstBackend(ComputeBackend):
     subgraph isomorphism matching directly in GPU VRAM using PyTorch Geometric.
     """
 
-    def __init__(self):
-        self._parsers: dict[str, object] = {}
+    def __init__(self) -> None:
+        self._parsers: dict[str, Any] = {}
 
     def is_available(self) -> bool:
         """Check if torch-geometric and tree-sitter are installed."""
@@ -32,7 +34,7 @@ class AstBackend(ComputeBackend):
         except ImportError:
             return False
 
-    def _get_parser(self, lang: str):
+    def _get_parser(self, lang: str) -> Any:
         import tree_sitter
 
         if lang in self._parsers:
@@ -57,7 +59,7 @@ class AstBackend(ComputeBackend):
         return parser
 
     def _ast_to_graph(
-        self, root_node, source_bytes: bytes
+        self, root_node: Any, source_bytes: bytes
     ) -> tuple["torch.Tensor", "torch.Tensor", list[int]]:
         """
         Converts a tree-sitter AST into a PyTorch Geometric Graph (edge_index, node_features).
@@ -67,12 +69,12 @@ class AstBackend(ComputeBackend):
             line_numbers: A mapping from node index back to the source code line number.
         """
         edges = []
-        features = []
+        features: list[list[float]] = []
         line_numbers = []
 
         node_type_map = {}  # In a real model, this would be a loaded embedding dictionary
 
-        def traverse(node, parent_idx=-1):
+        def traverse(node: "Any", parent_idx: int = -1) -> None:
             current_idx = len(features)
 
             # Simple feature representation: Hash the node type string to a pseudo-embedding

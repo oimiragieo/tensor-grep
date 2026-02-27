@@ -101,6 +101,16 @@ jobs:
         with:
           python-version: "3.12"
           
+      - name: Create venv for PyO3
+        run: |
+          python -m venv .venv
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            echo "$GITHUB_WORKSPACE\.venv\Scripts" >> $GITHUB_PATH
+          else
+            echo "$GITHUB_WORKSPACE/.venv/bin" >> $GITHUB_PATH
+          fi
+        shell: bash
+          
       - name: Cargo Test
         working-directory: rust_core
         run: cargo test --verbose
@@ -116,6 +126,9 @@ jobs:
         
       - name: Setup Python
         run: uv python install 3.12
+        
+      - name: Install Rust dependencies (for PyO3 fallback)
+        uses: dtolnay/rust-toolchain@stable
         
       - name: Verify cuDF / RAPIDS Configuration
         run: |

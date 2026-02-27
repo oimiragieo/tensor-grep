@@ -50,7 +50,7 @@ class CPUBackend(ComputeBackend):
         try:
             from collections import deque
 
-            before_queue = deque(maxlen=before_lines)
+            before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
             context_after_remaining = 0
 
             with open(path, encoding="utf-8", errors="replace") as f:

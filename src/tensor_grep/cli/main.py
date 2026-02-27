@@ -247,10 +247,10 @@ def search_command(
     replace: str | None = typer.Option(
         None, "-r", "--replace", help="Replace every match with the given text."
     ),
-    sort: str | None = typer.Option(
+    sort: str = typer.Option(
         "none", "--sort", help="Sort results (none, path, modified, accessed, created)."
     ),
-    sortr: str | None = typer.Option("none", "--sortr", help="Sort results in reverse order."),
+    sortr: str = typer.Option("none", "--sortr", help="Sort results in reverse order."),
     trim: bool = typer.Option(False, "--trim", help="Remove leading ASCII whitespace from output."),
     vimgrep: bool = typer.Option(
         False,
@@ -585,7 +585,7 @@ def lsp() -> None:
     typer.echo("Starting tensor-grep LSP server with GPU-acceleration...")
 
 
-def main_entry():
+def main_entry() -> None:
     import sys
 
     # Emulate ripgrep's top-level help behavior and transparent drop-in compatibility.

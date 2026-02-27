@@ -133,7 +133,7 @@ class CuDFBackend(ComputeBackend):
                             _process_chunk_on_device, i, file_path, offset, size, pattern, config
                         )
                         # We attach the line_offset to the future for correct numbering later
-                        future._line_offset = line_offset
+                        setattr(future, "_line_offset", line_offset)
                         futures.append(future)
 
                         offset += size
@@ -143,8 +143,11 @@ class CuDFBackend(ComputeBackend):
 
                 for future in as_completed(futures):
                     chunk_matches = future.result()
+                    offset_val = getattr(future, "_line_offset", 0)
                     for match in chunk_matches:
-                        match.line_number += future._line_offset
+                        # mypy sees line_number as read-only because it's a frozen dataclass maybe?
+                        # Let's recreate the object if necessary, or just setattr.
+                        object.__setattr__(match, "line_number", match.line_number + offset_val)
                         matches.append(match)
 
             # Re-sort matches since they might finish out of order

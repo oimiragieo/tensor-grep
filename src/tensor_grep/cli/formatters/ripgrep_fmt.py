@@ -6,7 +6,7 @@ from tensor_grep.core.result import SearchResult
 
 
 class RipgrepFormatter(OutputFormatter):
-    def __init__(self, config: SearchConfig = None):
+    def __init__(self, config: SearchConfig | None = None):
         self.config = config or SearchConfig()
 
     def format(self, result: SearchResult) -> str:
@@ -15,7 +15,7 @@ class RipgrepFormatter(OutputFormatter):
         if self.config.count:
             if result.total_matches > 0 or self.config.include_zero:
                 # Group counts by file to match ripgrep output
-                counts_by_file = defaultdict(int)
+                counts_by_file: dict[str, int] = defaultdict(int)
                 for match in result.matches:
                     counts_by_file[match.file] += 1
 

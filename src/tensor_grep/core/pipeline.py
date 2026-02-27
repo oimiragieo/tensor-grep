@@ -7,7 +7,7 @@ from tensor_grep.core.hardware.memory_manager import MemoryManager
 
 
 class Pipeline:
-    def __init__(self, force_cpu: bool = False, config: SearchConfig = None):
+    def __init__(self, force_cpu: bool = False, config: SearchConfig | None = None):
         self.backend: ComputeBackend
         self.config = config
 
