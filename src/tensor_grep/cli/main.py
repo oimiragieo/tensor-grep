@@ -604,6 +604,36 @@ def mcp_server() -> None:
     run_mcp_server()
 
 
+@app.command()
+def upgrade() -> None:
+    """Upgrade tensor-grep to the latest version published on PyPI."""
+    import subprocess
+    import sys
+    
+    typer.echo("Upgrading tensor-grep to the latest version...")
+    
+    try:
+        # We use sys.executable to ensure we're upgrading in the current python environment
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Check if actually upgraded or already up to date
+        if "Requirement already satisfied" in result.stdout:
+            typer.echo("tensor-grep is already up to date!")
+        else:
+            typer.echo("Successfully upgraded tensor-grep!")
+            typer.echo(result.stdout)
+            
+    except subprocess.CalledProcessError as e:
+        typer.echo("Error occurred while upgrading tensor-grep.", err=True)
+        typer.echo(e.stderr, err=True)
+        sys.exit(1)
+
+
 def main_entry() -> None:
     import sys
 
@@ -630,7 +660,7 @@ def main_entry() -> None:
         print("Arrow Zero-Copy IPC is available")
         sys.exit(0)
 
-    known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp", "mcp"}
+    known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp", "mcp", "upgrade"}
 
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]

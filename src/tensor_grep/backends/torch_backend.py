@@ -1,8 +1,6 @@
 import concurrent.futures
 import os
 
-import torch
-
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceDetector
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -91,8 +89,13 @@ class TorchBackend:
 
     def is_available(self) -> bool:
         """Check if PyTorch is installed and CUDA is available."""
-        if not torch.cuda.is_available():
-            return False
+        try:
+            import importlib.util
+
+            if not importlib.util.find_spec("torch"):
+                return False
+        except Exception:
+            pass
 
         device_count = self.device_detector.get_device_count()
         return device_count > 0
@@ -112,7 +115,12 @@ class TorchBackend:
 
             return CPUBackend().search(file_path, pattern, config)
 
+        import torch
+
         gpu_count = torch.cuda.device_count()
+        if gpu_count == 0:
+            gpu_count = 1
+
         file_size = os.path.getsize(file_path)
 
         matches = []

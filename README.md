@@ -23,7 +23,8 @@ This example benchmark demonstrates the raw throughput advantage of keeping data
 | Tool | Command | Line count | Time |
 | --- | --- | --- | --- |
 | tensor-grep (GPU) | `tg search -n -w '[A-Z]+_SUSPEND'` | 450 | **0.034s** |
-| ripgrep | `rg -n -w '[A-Z]+_SUSPEND'` | 450 | 0.134s |
+| tensor-grep (Rust Fallback) | `tg search -n -w '[A-Z]+_SUSPEND'` | 450 | **0.081s** |
+| ripgrep | `rg -n -w '[A-Z]+_SUSPEND'` | 450 | 0.141s |
 | ag (Silver Searcher) | `ag -w '[A-Z]+_SUSPEND'` | 450 | 0.753s |
 | git grep | `LC_ALL=C git grep -E -n -w '[A-Z]+_SUSPEND'` | 450 | 0.823s |
 

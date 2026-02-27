@@ -1,9 +1,7 @@
-try:
-    import torch
-except ImportError:
-    torch = None  # type: ignore
+from typing import TYPE_CHECKING, Any
 
-from typing import Any
+if TYPE_CHECKING:
+    import torch
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -29,6 +27,8 @@ class AstBackend(ComputeBackend):
                 "tree_sitter"
             ):
                 return False
+
+            import torch
 
             return bool(torch.cuda.is_available())
         except ImportError:
@@ -95,6 +95,8 @@ class AstBackend(ComputeBackend):
 
         traverse(root_node)
 
+        import torch
+
         edge_index = (
             torch.tensor(edges, dtype=torch.long).t().contiguous()
             if edges
@@ -127,6 +129,8 @@ class AstBackend(ComputeBackend):
         edge_index, x, line_numbers = self._ast_to_graph(tree.root_node, source_bytes)
 
         # Move to GPU
+        import torch
+
         device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         x = x.to(device)
         edge_index = edge_index.to(device)

@@ -180,7 +180,11 @@ def main():
     # Ensure tg resolves to python module
 
     for scenario in SCENARIOS:
-        rg_cmd = ["ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", *scenario["rg_args"][1:]]
+        rg_cmd = [
+            "ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe",
+            "--no-ignore",
+            *scenario["rg_args"][1:],
+        ]
 
         # When running inside `uv run python run_benchmarks.py`, invoking `python` via subprocess
         # escapes the uv environment. We MUST use sys.executable to stay inside the PyTorch env.

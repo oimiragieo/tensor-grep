@@ -97,6 +97,7 @@ gantt
 Conversely, exact literal string matching does not utilize DFA; CPUs utilize heavily optimized Aho-Corasick or SIMD vectorization to scan memory at the physical limits of RAM bandwidth. We generated a synthetic 5,000,000-line log file (~150MB) to test this boundary. 
 - Native C `ripgrep` evaluated the file in **~0.17s**.
 - Our native Rust implementation (`tensor-grep-rs` using `memmap2` and `rayon`) evaluated the file natively on Windows in **~0.21s**.
+- Using our PyO3/Arrow integration layer, the Rust fallback executed a count via the Python CLI in **0.081s** vs Ripgrep's **0.141s**.
 
 ```mermaid
 gantt
