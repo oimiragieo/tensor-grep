@@ -29,3 +29,19 @@ htmlcov/
 # IDEs
 .vscode/
 .idea/
+
+# Rust
+rust_core/target/
+
+# Node
+npm/node_modules/
+
+# Logs and Temp Files
+*.log
+*.patch
+*.txt
+benchmarks/corpus/
+ripgrep-*/
+
+# Tests
+.hypothesis/
