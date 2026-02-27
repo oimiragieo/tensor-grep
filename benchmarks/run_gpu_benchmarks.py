@@ -18,10 +18,10 @@ def process_data(data):
 class DataManager:
     def __init__(self):
         self.items = []
-        
+
     def add(self, item):
         self.items.append(item)
-        
+
     def process_data(self, data):
         return [x * 2 for x in data]
 """)

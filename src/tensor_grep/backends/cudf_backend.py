@@ -74,8 +74,8 @@ class CuDFBackend(ComputeBackend):
 
             if not importlib.util.find_spec("cudf"):
                 return False
-                
-            # Attempt a physical import to catch cudaErrorInsufficientDriver on systems 
+
+            # Attempt a physical import to catch cudaErrorInsufficientDriver on systems
             # where the library is installed but the physical GPU drivers are missing.
             import cudf  # noqa: F401
             return True
