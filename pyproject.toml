@@ -28,7 +28,7 @@ dev = [
 ]
 
 [project.scripts]
-tg = "tensor_grep.cli.main:app"
+tg = "tensor_grep.cli.main:main_entry"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

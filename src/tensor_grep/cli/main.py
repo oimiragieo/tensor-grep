@@ -6,10 +6,17 @@ from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
 app = typer.Typer(
-    help="tensor-grep (tg) - The GPU-Accelerated Semantic Log Parsing CLI\n\n"
-    "Combines raw regex speed with semantic understanding (cyBERT) while maintaining ripgrep parity.",
+    help="""tensor-grep (tg) - The GPU-Accelerated Semantic Log Parsing CLI
+
+Combines raw regex speed with semantic understanding (cyBERT) while maintaining ripgrep parity.
+
+**IMPORTANT: To see all 70+ ripgrep-compatible flags, run:**
+`tg search --help`
+
+(Note: `tg` operates primarily through the `search` subcommand. For drop-in `rg` compatibility, use aliases or `tg search PATTERN PATH`.)""",
     no_args_is_help=True,
     add_completion=False,
+    rich_markup_mode="markdown",
 )
 
 
@@ -578,5 +585,26 @@ def lsp() -> None:
     typer.echo("Starting tensor-grep LSP server with GPU-acceleration...")
 
 
-if __name__ == "__main__":
+def main_entry():
+    import sys
+
+    # Emulate ripgrep's top-level help behavior and transparent drop-in compatibility.
+    # Typer requires an explicit subcommand (like `tg search pattern`).
+    # To act exactly like ripgrep (`rg pattern`), we dynamically inject the `search`
+    # subcommand into sys.argv if the user didn't provide any recognized subcommand.
+    
+    known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp"}
+    
+    if len(sys.argv) > 1:
+        first_arg = sys.argv[1]
+        if first_arg in ("--help", "-h"):
+            sys.argv.insert(1, "search")
+        elif first_arg not in known_commands and not first_arg.startswith("--typer-"):
+            sys.argv.insert(1, "search")
+    elif len(sys.argv) == 1:
+        sys.argv.extend(["search", "--help"])
+
     app()
+
+if __name__ == "__main__":
+    main_entry()
