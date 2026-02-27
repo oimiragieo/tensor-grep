@@ -1,7 +1,12 @@
 TBD
 ===
+Unreleased changes. Release notes have not yet been written.
+
+0.1.5
+===
 - **Features**
   - Integrated full Model Context Protocol (MCP) server support (`tg mcp`) utilizing the FastMCP SDK, allowing AI assistants (like Claude Desktop and Cursor) to directly utilize GPU-accelerated ripgrep searching, AST parsing, and cyBERT log classification within their context windows.
+  - Fully automated cross-platform PyO3 multi-wheel compilation and secure GitHub OIDC PyPI publishing inside the main `.github/workflows/release.yml` pipeline.
 
 0.1.4
 ===
