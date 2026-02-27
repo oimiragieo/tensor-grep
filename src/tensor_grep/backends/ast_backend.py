@@ -58,7 +58,7 @@ class AstBackend(ComputeBackend):
 
     def _ast_to_graph(
         self, root_node, source_bytes: bytes
-    ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
+    ) -> tuple["torch.Tensor", "torch.Tensor", list[int]]:
         """
         Converts a tree-sitter AST into a PyTorch Geometric Graph (edge_index, node_features).
         Returns:
