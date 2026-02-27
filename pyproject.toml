@@ -12,7 +12,7 @@ manifest-path = "rust_core/Cargo.toml"
 name = "tensor-grep"
 version = "0.1.4"
 requires-python = ">=3.11"
-dependencies = ["typer[all]>=0.12", "rich>=13.0"]
+dependencies = ["typer[all]>=0.12", "rich>=13.0", "mcp>=1.2.0"]
 
 [project.optional-dependencies]
 gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "torch_geometric>=2.5.0"]

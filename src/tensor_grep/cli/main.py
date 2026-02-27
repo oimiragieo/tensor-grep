@@ -585,6 +585,14 @@ def lsp() -> None:
     typer.echo("Starting tensor-grep LSP server with GPU-acceleration...")
 
 
+@app.command(name="mcp")
+def mcp_server() -> None:
+    """Start the Model Context Protocol (MCP) server for AI assistants"""
+    from tensor_grep.cli.mcp_server import run_mcp_server
+
+    run_mcp_server()
+
+
 def main_entry() -> None:
     import sys
 
@@ -593,7 +601,7 @@ def main_entry() -> None:
     # To act exactly like ripgrep (`rg pattern`), we dynamically inject the `search`
     # subcommand into sys.argv if the user didn't provide any recognized subcommand.
 
-    known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp"}
+    known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp", "mcp"}
 
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]
