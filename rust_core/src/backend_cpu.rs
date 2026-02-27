@@ -1,10 +1,10 @@
+use memchr::memmem;
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use memchr::memmem;
 
 pub struct CpuBackend;
 
@@ -19,7 +19,13 @@ impl CpuBackend {
         Self
     }
 
-    pub fn search(&self, pattern: &str, path: &str, ignore_case: bool, fixed_strings: bool) -> anyhow::Result<Vec<(usize, String)>> {
+    pub fn search(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+    ) -> anyhow::Result<Vec<(usize, String)>> {
         let re = if fixed_strings {
             RegexBuilder::new(&regex::escape(pattern))
                 .case_insensitive(ignore_case)
@@ -50,7 +56,11 @@ impl CpuBackend {
         Ok(results)
     }
 
-    fn search_file(&self, re: &regex::bytes::Regex, path: &PathBuf) -> anyhow::Result<Vec<(usize, String)>> {
+    fn search_file(
+        &self,
+        re: &regex::bytes::Regex,
+        path: &PathBuf,
+    ) -> anyhow::Result<Vec<(usize, String)>> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
@@ -83,7 +93,13 @@ impl CpuBackend {
         Ok(results)
     }
 
-    pub fn count_matches(&self, pattern: &str, path: &str, ignore_case: bool, fixed_strings: bool) -> anyhow::Result<usize> {
+    pub fn count_matches(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+    ) -> anyhow::Result<usize> {
         let path_obj = Path::new(path);
         let mut total_count = 0;
 
@@ -97,7 +113,9 @@ impl CpuBackend {
             } else if path_obj.is_dir() {
                 for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
                     if entry.file_type().is_file() {
-                        if let Ok(count) = self.count_file_memmem(pat_bytes, &entry.path().to_path_buf()) {
+                        if let Ok(count) =
+                            self.count_file_memmem(pat_bytes, &entry.path().to_path_buf())
+                        {
                             total_count += count;
                         }
                     }
@@ -139,7 +157,8 @@ impl CpuBackend {
 
         // For ripgrep parity on count matches, we count MATCHING LINES, not total occurrences.
         // But for massive speedup without line splitting, we can use par_split
-        let count = mmap.par_split(|&b| b == b'\n')
+        let count = mmap
+            .par_split(|&b| b == b'\n')
             .filter(|line_bytes| memmem::find(line_bytes, pattern).is_some())
             .count();
 
@@ -150,7 +169,8 @@ impl CpuBackend {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
-        let count = mmap.par_split(|&b| b == b'\n')
+        let count = mmap
+            .par_split(|&b| b == b'\n')
             .filter(|line_bytes| re.is_match(line_bytes))
             .count();
 
