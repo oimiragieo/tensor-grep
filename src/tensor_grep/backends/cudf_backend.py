@@ -180,7 +180,7 @@ class CuDFBackend(ComputeBackend):
 
                     line_offset += chunk_lines_count
 
-            except ImportError:
+            except (ImportError, Exception):
                 # Fallback to pure Python multi-processing CPU mapping
                 offset = 0
             line_offset = 0
