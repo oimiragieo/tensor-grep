@@ -132,7 +132,7 @@ class CybertBackend:
             with tracer.start_as_current_span("cybert_classification_inference"):
                 result = client.infer(model_name="cybert", inputs=inputs)
                 probs = result.as_numpy("logits")
-        except ImportError:
+        except Exception:
             result = client.infer(model_name="cybert", inputs=inputs)
             probs = result.as_numpy("logits")
         except Exception:
