@@ -95,7 +95,7 @@ class RipgrepBackend(ComputeBackend):
                         line_number = data_match.get("line_number", 0)
                         # We extract the pure text matched line
                         text = data_match.get("lines", {}).get("text", "").rstrip("\n\r")
-                        
+
                         path_str = data_match.get("path", {}).get("text", "")
                         if not path_str and isinstance(file_path, str):
                             path_str = file_path
@@ -126,4 +126,4 @@ class RipgrepBackend(ComputeBackend):
             )
 
         except Exception as e:
-            raise RuntimeError(f"Ripgrep backend failed: {e}")
+            raise RuntimeError(f"Ripgrep backend failed: {e}") from e

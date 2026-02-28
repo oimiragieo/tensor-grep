@@ -1,5 +1,6 @@
 from typing import Any, cast
 
+import pygls.server
 from lsprotocol.types import (
     TEXT_DOCUMENT_DID_CHANGE,
     TEXT_DOCUMENT_DID_OPEN,
@@ -8,7 +9,6 @@ from lsprotocol.types import (
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
 )
-import pygls.server
 
 
 class TensorGrepLSPServer(pygls.server.LanguageServer):  # type: ignore

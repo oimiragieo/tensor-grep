@@ -11,7 +11,7 @@ from tensor_grep.io.directory_scanner import DirectoryScanner
 mcp = FastMCP("tensor-grep")
 
 
-@mcp.tool()
+@mcp.tool()  # type: ignore
 def tg_search(
     pattern: str,
     path: str = ".",
@@ -103,7 +103,7 @@ def tg_search(
         return f"Search failed: {e!s}\n{traceback.format_exc()}"
 
 
-@mcp.tool()
+@mcp.tool()  # type: ignore
 def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
     """
     Search source code structurally using PyTorch Geometric Graph Neural Networks.
@@ -158,7 +158,7 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
         return f"AST Search failed: {e!s}\n{traceback.format_exc()}"
 
 
-@mcp.tool()
+@mcp.tool()  # type: ignore
 def tg_classify_logs(file_path: str) -> str:
     """
     Analyze a system log file using the CyBERT NLP model to automatically

@@ -80,4 +80,4 @@ class AstGrepWrapperBackend(ComputeBackend):
             )
 
         except Exception as e:
-            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}")
+            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e

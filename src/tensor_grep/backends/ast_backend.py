@@ -144,19 +144,18 @@ class AstBackend(ComputeBackend):
         # In a real system, we'd embed the AST nodes of the query pattern.
         # Since we simulate this, we'll try to find the specific pattern string in the source
         # using the node text from tree-sitter.
-        
+
         matches = []
         seen_lines = set()
-        
+
         lines = source_bytes.decode("utf-8").split("\n")
-        
+
         # We perform actual structural matching using tree-sitter queries instead of naive hash
         # to fix the ast matching accuracy issue
         try:
-            import tree_sitter
             query = parser.language.query(f"({pattern}) @match")
             captures = query.captures(tree.root_node)
-            
+
             for node, _ in captures:
                 line_num = node.start_point[0] + 1
                 if line_num not in seen_lines and line_num <= len(lines):
@@ -167,7 +166,7 @@ class AstBackend(ComputeBackend):
         except Exception:
             # Fallback to simple matching if query fails
             features = [x.item() for x in x.cpu().view(-1)]
-            for idx, feature in enumerate(features):
+            for idx, _feature in enumerate(features):
                 # Placeholder matching for test compatibility if complex query fails
                 line_num = line_numbers[idx]
                 if line_num not in seen_lines and line_num <= len(lines):

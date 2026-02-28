@@ -155,7 +155,7 @@ class TorchBackend:
                 # Keep track of rough line offsets for sorting
                 future._line_offset = line_offset  # type: ignore # Accurate line offset requires a pass
                 futures.append(future)
-                
+
                 # To accurately track line offset, we'd need to count newlines in the bytes.
                 # For this fallback, we'll try to get it closer by counting newlines.
                 with open(file_path, "rb") as f:

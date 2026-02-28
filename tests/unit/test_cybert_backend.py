@@ -1,3 +1,4 @@
+import numpy as np
 from unittest.mock import MagicMock, patch
 
 
@@ -25,7 +26,6 @@ class TestCybertBackend:
         httpclient.InferenceServerClient.return_value = mock_client
 
         mock_result = MagicMock()
-        import numpy as np
 
         # 1 log line, 3 classes (e.g., info, warn, err)
         mock_result.as_numpy.return_value = np.array([[0.1, 0.8, 0.1]])
@@ -48,7 +48,6 @@ class TestCybertBackend:
         httpclient.InferenceServerClient.return_value = mock_client
 
         mock_result = MagicMock()
-        import numpy as np
 
         mock_result.as_numpy.return_value = np.array(
             [

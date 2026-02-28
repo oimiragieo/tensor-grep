@@ -142,6 +142,12 @@ class CybertBackend:
         threshold = getattr(config, "nlp_threshold", 0.0) if config else 0.0
 
         results = []
+        try:
+            import numpy as np
+        except ImportError:
+            # Using mock np if actual np fails here
+            pass
+            
         for prob in probs:
             idx = int(np.argmax(prob))
             confidence = float(prob[idx])

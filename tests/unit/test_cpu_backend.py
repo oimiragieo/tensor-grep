@@ -61,7 +61,7 @@ class TestCPUBackend:
     def test_should_handle_utf8_and_latin1(self, tmp_path):
         latin_file = tmp_path / "latin.log"
         latin_file.write_bytes(b"ERROR line caf\xe9\n")
-            
+
         backend = CPUBackend()
         result = backend.search(str(latin_file), "ERROR")
         assert result.total_matches == 1

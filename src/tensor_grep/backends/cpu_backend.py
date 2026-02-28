@@ -70,10 +70,10 @@ class CPUBackend(ComputeBackend):
                 regex = re.compile(re.escape(pattern).encode("utf-8"), flags)
             elif config.line_regexp:
                 regex_str = re.compile(f"^{pattern}$", flags)
-                regex = re.compile(f"^{pattern}$".encode("utf-8"), flags)
+                regex = re.compile(f"^{pattern}$".encode(), flags)
             elif config.word_regexp:
                 regex_str = re.compile(f"\\b{pattern}\\b", flags)
-                regex = re.compile(f"\\b{pattern}\\b".encode("utf-8"), flags)
+                regex = re.compile(f"\\b{pattern}\\b".encode(), flags)
             else:
                 regex_str = re.compile(pattern, flags)
                 regex = re.compile(pattern.encode("utf-8"), flags)
@@ -102,7 +102,7 @@ class CPUBackend(ComputeBackend):
                         matched = bool(regex.search(line_bytes))
                     except Exception:
                         pass
-                    
+
                     if not matched:
                         try:
                             line_text = line_bytes.decode("utf-8").rstrip("\n\r")
@@ -113,7 +113,7 @@ class CPUBackend(ComputeBackend):
                                 matched = bool(regex_str.search(line_text))
                             except Exception:
                                 pass
-                    
+
                     if config.invert_match:
                         matched = not matched
 
@@ -127,7 +127,7 @@ class CPUBackend(ComputeBackend):
                             except Exception:
                                 line = line_bytes.decode("utf-8", errors="replace")
                         line_text = line.rstrip("\n\r")
-                        
+
                         # Apply python regex search for decoded text to be safe
                         matched = bool(regex_str.search(line_text))
 
