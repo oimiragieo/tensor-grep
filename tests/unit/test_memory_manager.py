@@ -50,7 +50,7 @@ class TestMemoryManager:
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = False
         mock_detect.return_value = mock_instance
-        
+
         mock_cpu_count.return_value = 8
         mock_mem = MagicMock()
         mock_mem.total = 16 * 1024 * 1024 * 1024  # 16 GB

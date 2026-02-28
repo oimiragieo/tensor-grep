@@ -24,7 +24,7 @@ def test_json_output_snapshot(sample_log_file, snapshot):
     # Clean out any backslashes first, before JSON parsing
     # The real issue is that `\r` and `\u` in the absolute paths might get incorrectly treated by regex or json
     # so let's simply load JSON, and clean it up.
-    
+
     try:
         parsed = json.loads(output)
         for match in parsed.get("matches", []):
@@ -37,7 +37,7 @@ def test_json_output_snapshot(sample_log_file, snapshot):
         escaped_file_path = json.dumps(file_path)[1:-1]
         output_stable = output.replace(escaped_file_path, "<FILE>")
         output_stable = output_stable.replace(file_path, "<FILE>")
-        # Sometimes Windows paths have escaped sequences like \r or \u that were literal in the path but got converted 
+        # Sometimes Windows paths have escaped sequences like \r or \u that were literal in the path but got converted
         # to actual escape codes during some string processing. We can just replace the prefix:
         import re
         output_stable = re.sub(r'"[A-Za-z]:\\[^"]+"', '"<FILE>"', output_stable)
