@@ -14,6 +14,8 @@ jobs:
   static-analysis:
     name: Formatting & Linting
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
@@ -55,6 +57,8 @@ jobs:
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -83,6 +87,8 @@ jobs:
   test-rust-core:
     name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -118,6 +124,8 @@ jobs:
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
       
