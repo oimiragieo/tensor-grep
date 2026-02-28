@@ -186,7 +186,7 @@ impl CpuBackend {
         fixed_strings: bool,
     ) -> anyhow::Result<()> {
         let path_obj = Path::new(path);
-        
+
         let re = if fixed_strings {
             RegexBuilder::new(&regex::escape(pattern))
                 .case_insensitive(ignore_case)
@@ -217,19 +217,16 @@ impl CpuBackend {
         path: &PathBuf,
     ) -> anyhow::Result<()> {
         let content = std::fs::read(path)?;
-        
+
         // If there are no matches, don't touch the file
         if !re.is_match(&content) {
             return Ok(());
         }
 
         let replaced = re.replace_all(&content, replacement.as_bytes());
-        
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(path)?;
-            
+
+        let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
+
         file.write_all(&replaced)?;
         Ok(())
     }

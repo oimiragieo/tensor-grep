@@ -1,7 +1,7 @@
-use tensor_grep_rs::backend_cpu::CpuBackend;
 use std::fs::File;
 use std::io::{Read, Write};
 use tempfile::tempdir;
+use tensor_grep_rs::backend_cpu::CpuBackend;
 
 #[test]
 fn test_rust_replace_in_place_literal() {
@@ -12,12 +12,20 @@ fn test_rust_replace_in_place_literal() {
 
     let backend = CpuBackend::new();
     // Replace "Hello" with "Goodbye"
-    backend.replace_in_place("Hello", "Goodbye", file_path.to_str().unwrap(), false, true).unwrap();
+    backend
+        .replace_in_place("Hello", "Goodbye", file_path.to_str().unwrap(), false, true)
+        .unwrap();
 
     let mut new_content = String::new();
-    File::open(&file_path).unwrap().read_to_string(&mut new_content).unwrap();
-    
-    assert_eq!(new_content, "Goodbye world\nThis is a test\nGoodbye again\n");
+    File::open(&file_path)
+        .unwrap()
+        .read_to_string(&mut new_content)
+        .unwrap();
+
+    assert_eq!(
+        new_content,
+        "Goodbye world\nThis is a test\nGoodbye again\n"
+    );
 }
 
 #[test]
@@ -30,12 +38,26 @@ fn test_rust_replace_in_place_regex_capture_groups() {
 
     let backend = CpuBackend::new();
     // Regex looking for function arguments and capturing them.
-    backend.replace_in_place(r"def (\w+)\((\w+), (\w+)\):", "def $1($3, $2):", file_path.to_str().unwrap(), false, false).unwrap();
+    backend
+        .replace_in_place(
+            r"def (\w+)\((\w+), (\w+)\):",
+            "def $1($3, $2):",
+            file_path.to_str().unwrap(),
+            false,
+            false,
+        )
+        .unwrap();
 
     let mut new_content = String::new();
-    File::open(&file_path).unwrap().read_to_string(&mut new_content).unwrap();
-    
-    assert_eq!(new_content, "def foo(b, a):\n    pass\ndef bar(y, x):\n    pass\n");
+    File::open(&file_path)
+        .unwrap()
+        .read_to_string(&mut new_content)
+        .unwrap();
+
+    assert_eq!(
+        new_content,
+        "def foo(b, a):\n    pass\ndef bar(y, x):\n    pass\n"
+    );
 }
 
 #[test]
@@ -47,10 +69,15 @@ fn test_rust_replace_preserves_formatting() {
     write!(file, "{}", original).unwrap();
 
     let backend = CpuBackend::new();
-    backend.replace_in_place("10", "15", file_path.to_str().unwrap(), false, true).unwrap();
+    backend
+        .replace_in_place("10", "15", file_path.to_str().unwrap(), false, true)
+        .unwrap();
 
     let mut new_content = String::new();
-    File::open(&file_path).unwrap().read_to_string(&mut new_content).unwrap();
-    
+    File::open(&file_path)
+        .unwrap()
+        .read_to_string(&mut new_content)
+        .unwrap();
+
     assert_eq!(new_content, "    let x = 15;\n\n\tlet y = 20;\n");
 }

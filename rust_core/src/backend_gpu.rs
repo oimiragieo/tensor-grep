@@ -33,6 +33,24 @@ pub fn should_use_gpu_pipeline() -> bool {
     .unwrap_or(false)
 }
 
+/// Fallback mechanism to invoke specific Python Typer subcommands directly from Rust
+pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyhow::Result<()> {
+    Python::with_gil(|py| -> PyResult<()> {
+        let sys = py.import("sys")?;
+
+        // Emulate sys.argv for the Typer entrypoint
+        let mut sys_argv = vec!["tg".to_string(), command.to_string()];
+        sys_argv.extend(args);
+        sys.setattr("argv", sys_argv)?;
+
+        let main_module = py.import("tensor_grep.cli.main")?;
+        main_module.call_method0("main_entry")?;
+
+        Ok(())
+    })
+    .map_err(|e| anyhow::anyhow!("Subcommand execution failed: {}", e))
+}
+
 /// Executes the cuDF Python Pipeline dynamically from Rust!
 pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> anyhow::Result<()> {
     Python::with_gil(|py| -> PyResult<()> {
