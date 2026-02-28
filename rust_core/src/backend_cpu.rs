@@ -2,7 +2,8 @@ use memchr::memmem;
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -174,6 +175,63 @@ impl CpuBackend {
         }
 
         Ok(results)
+    }
+
+    pub fn replace_in_place(
+        &self,
+        pattern: &str,
+        replacement: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+    ) -> anyhow::Result<()> {
+        let path_obj = Path::new(path);
+        
+        let re = if fixed_strings {
+            RegexBuilder::new(&regex::escape(pattern))
+                .case_insensitive(ignore_case)
+                .build()?
+        } else {
+            RegexBuilder::new(pattern)
+                .case_insensitive(ignore_case)
+                .build()?
+        };
+
+        if path_obj.is_file() {
+            self.replace_file_regex(&re, replacement, &path_obj.to_path_buf())?;
+        } else if path_obj.is_dir() {
+            for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
+                if entry.file_type().is_file() {
+                    let _ = self.replace_file_regex(&re, replacement, &entry.path().to_path_buf());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn replace_file_regex(
+        &self,
+        re: &regex::bytes::Regex,
+        replacement: &str,
+        path: &PathBuf,
+    ) -> anyhow::Result<()> {
+        let content = std::fs::read(path)?;
+        
+        // If there are no matches, don't touch the file
+        if !re.is_match(&content) {
+            return Ok(());
+        }
+
+        let replaced = re.replace_all(&content, replacement.as_bytes());
+        
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+            
+        file.write_all(&replaced)?;
+        Ok(())
     }
 
     pub fn count_matches(

@@ -29,6 +29,10 @@ pub struct Cli {
     #[arg(short = 'i', long)]
     pub ignore_case: bool,
 
+    /// Find and Replace in-place
+    #[arg(long)]
+    pub replace: Option<String>,
+
     /// Force CPU fallback
     #[arg(long)]
     pub force_cpu: bool,
@@ -52,6 +56,18 @@ fn main() -> anyhow::Result<()> {
 
     // Fallback to ultra-fast zero-copy Rust tier
     let backend = CpuBackend::new();
+
+    if let Some(replacement) = cli.replace {
+        backend.replace_in_place(
+            &cli.pattern,
+            &replacement,
+            &cli.path,
+            cli.ignore_case,
+            cli.fixed_strings,
+        )?;
+        println!("Replaced matches with '{}'", replacement);
+        return Ok(());
+    }
 
     if cli.count {
         // The inner CpuBackend supports counting extremely fast via memmap
