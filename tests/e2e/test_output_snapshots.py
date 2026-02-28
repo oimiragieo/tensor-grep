@@ -9,7 +9,7 @@ def test_json_output_snapshot(sample_log_file, snapshot):
     output = fmt.format(result)
 
     # Normalize line endings before assertion to fix cross-platform issues
-    output = output.replace("\r\n", "\n")
+    output = output.replace("\\r\\n", "\\n").replace("\\r", "")
 
     # Replace absolute path with a placeholder for stable snapshot
     # Path format varies by OS, so just do simple replace
