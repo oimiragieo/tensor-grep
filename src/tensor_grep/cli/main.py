@@ -256,7 +256,7 @@ def search_command(
     ),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Do not print anything to stdout."),
     replace: str | None = typer.Option(
-        None, "-r", "--replace", help="Replace every match with the given text."
+        None, "-r", "--replace", help="Replace every match with the given text. Supports capture groups (e.g., $1)."
     ),
     sort: str = typer.Option(
         "none", "--sort", help="Sort results (none, path, modified, accessed, created)."
