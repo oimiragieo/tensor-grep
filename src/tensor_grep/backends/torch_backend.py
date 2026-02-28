@@ -160,7 +160,7 @@ class TorchBackend:
                 # For this fallback, we'll try to get it closer by counting newlines.
                 with open(file_path, "rb") as f:
                     f.seek(offset)
-                    line_offset += f.read(size).count(b'\n')
+                    line_offset += f.read(size).count(b"\n")
 
                 offset += size
                 device_idx += 1

@@ -53,7 +53,9 @@ class RustCoreBackend(ComputeBackend):
 
             # Support older signature and new signature smoothly
             try:
-                results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings, False)
+                results = self.inner.search(
+                    pattern, str(file_path), ignore_case, fixed_strings, False
+                )
             except TypeError:
                 results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings)
         except Exception:

@@ -100,6 +100,7 @@ def tg_search(
 
     except Exception as e:
         import traceback
+
         return f"Search failed: {e!s}\n{traceback.format_exc()}"
 
 
@@ -155,6 +156,7 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
 
     except Exception as e:
         import traceback
+
         return f"AST Search failed: {e!s}\n{traceback.format_exc()}"
 
 
@@ -197,6 +199,7 @@ def tg_classify_logs(file_path: str) -> str:
 
     except Exception as e:
         import traceback
+
         return f"Log Classification failed: {e!s}\n{traceback.format_exc()}"
 
 

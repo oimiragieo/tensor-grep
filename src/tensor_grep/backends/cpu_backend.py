@@ -39,12 +39,21 @@ class CPUBackend(ComputeBackend):
             # Since the Rust backend currently just returns `(line_num, string)`, we need to adapt it
             # context lines (like -C 2) aren't fully implemented in the Rust bridging yet, but we will
             # return the matched lines securely.
-            if getattr(config, "context", False) or getattr(config, "before_context", False) or getattr(config, "after_context", False) or getattr(config, "invert_match", False):
-                raise NotImplementedError("Rust backend does not support context lines or invert_match yet, fallback to python")
+            if (
+                getattr(config, "context", False)
+                or getattr(config, "before_context", False)
+                or getattr(config, "after_context", False)
+                or getattr(config, "invert_match", False)
+            ):
+                raise NotImplementedError(
+                    "Rust backend does not support context lines or invert_match yet, fallback to python"
+                )
 
             # Fallback to python for rust empty responses since sometimes files are encoded in latin-1 and rust regex might fail silently
             if len(rust_results) == 0:
-                raise Exception("Rust backend returned empty result, fallback to python to double check")
+                raise Exception(
+                    "Rust backend returned empty result, fallback to python to double check"
+                )
 
             matches = [MatchLine(line_number=r[0], text=r[1], file=file_path) for r in rust_results]
 

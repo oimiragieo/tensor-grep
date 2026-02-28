@@ -10,7 +10,15 @@ pytestmark = pytest.mark.acceptance
 class TestCLIClassify:
     def test_should_classify_log_lines(self, sample_log_file):
         result = subprocess.run(
-            [sys.executable, "-m", "tensor_grep.cli.main", "classify", "--format", "json", str(sample_log_file)],
+            [
+                sys.executable,
+                "-m",
+                "tensor_grep.cli.main",
+                "classify",
+                "--format",
+                "json",
+                str(sample_log_file),
+            ],
             capture_output=True,
             text=True,
         )

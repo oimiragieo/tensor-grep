@@ -101,9 +101,7 @@ class RipgrepBackend(ComputeBackend):
                             path_str = file_path
 
                         # Note: Ripgrep JSON also outputs absolute offsets, but MatchLine requires line_num/text
-                        matches.append(
-                            MatchLine(line_number=line_number, text=text, file=path_str)
-                        )
+                        matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
                     elif data.get("type") == "context":
                         data_match = data["data"]
                         line_number = data_match.get("line_number", 0)
@@ -111,9 +109,7 @@ class RipgrepBackend(ComputeBackend):
                         path_str = data_match.get("path", {}).get("text", "")
                         if not path_str and isinstance(file_path, str):
                             path_str = file_path
-                        matches.append(
-                            MatchLine(line_number=line_number, text=text, file=path_str)
-                        )
+                        matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
                 except json.JSONDecodeError:
                     pass
 
