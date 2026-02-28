@@ -28,7 +28,7 @@ class MemoryManager:
 
             # Use ~40% of system RAM, divided by number of CPUs to give a sensible chunk
             cpu_chunk = int((system_ram_mb * 0.4) / cpu_count)
-            return max(256, min(cpu_chunk, 1024)) # Bound between 256MB and 1GB per process
+            return max(256, min(cpu_chunk, 1024))  # Bound between 256MB and 1GB per process
 
         return int(budget / 2)
 
