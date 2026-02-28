@@ -110,7 +110,15 @@ class CybertBackend:
         client = httpclient.InferenceServerClient(url=self.url)
 
         # Simplified simulation of triton prepare and request
-        tokens = tokenize(lines)
+        try:
+            from opentelemetry import trace
+
+            tracer = trace.get_tracer(__name__)
+            with tracer.start_as_current_span("cybert_tokenize"):
+                tokens = tokenize(lines)
+        except ImportError:
+            tokens = tokenize(lines)
+
         inputs = []
 
         if "input_ids" in tokens:
@@ -118,8 +126,16 @@ class CybertBackend:
             inputs[0].set_data_from_numpy(tokens["input_ids"])
 
         try:
-            result = client.infer(model_name="cybert", inputs=inputs)
-            probs = result.as_numpy("logits")
+            try:
+                from opentelemetry import trace
+
+                tracer = trace.get_tracer(__name__)
+                with tracer.start_as_current_span("cybert_classification_inference"):
+                    result = client.infer(model_name="cybert", inputs=inputs)
+                    probs = result.as_numpy("logits")
+            except ImportError:
+                result = client.infer(model_name="cybert", inputs=inputs)
+                probs = result.as_numpy("logits")
         except Exception:
             # If triton server is not there or mocked error, fallback
             probs = np.array([[0.1, 0.8, 0.1]] * len(lines))

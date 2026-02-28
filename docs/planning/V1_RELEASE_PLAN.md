@@ -58,14 +58,16 @@ Currently `tensor-grep` defaults to `cuda:0` (a single GPU). To truly leverage e
 
 ## Phase 4: Test and Trigger CI/CD Pipeline
 
-With the software complete, we need to ensure the enterprise GitHub Actions build process works for the standalone Nuitka binaries.
+With the software complete, we need to ensure the enterprise GitHub Actions build process works for the standalone Nuitka binaries and Docker containers.
 
 - [ ] **Step 4.1: Final Integration Test Pass**
   - Run the full suite (`pytest tests/ -v`) to guarantee the advanced features didn't break baseline ripgrep parity. Ensure code coverage remains above 75%.
-- [ ] **Step 4.2: Tag and Trigger**
+- [ ] **Step 4.2: Build Distroless GPU Container**
+  - Ensure `Dockerfile.gpu` builds cleanly and publishes to GitHub Container Registry (ghcr.io).
+- [ ] **Step 4.3: Tag and Trigger**
   - Create a git tag `v1.0.0-rc1` (Release Candidate 1).
   - Push the tag to GitHub (`git push origin v1.0.0-rc1`) to trigger `.github/workflows/release.yml`.
-- [ ] **Step 4.3: Verify Artifacts**
+- [ ] **Step 4.4: Verify Artifacts**
   - Monitor the GitHub Actions run to ensure the Windows, macOS, and Linux standalone binaries compile successfully via Nuitka.
 
 ## Phase 5: Native Package Managers (Homebrew & Winget)

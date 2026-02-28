@@ -12,7 +12,15 @@ manifest-path = "rust_core/Cargo.toml"
 name = "tensor-grep"
 version = "0.2.0"
 requires-python = ">=3.11"
-dependencies = ["typer[all]>=0.12", "rich>=13.0", "mcp>=1.2.0", "pyarrow>=14.0.0"]
+dependencies = [
+    "typer[all]>=0.12",
+    "rich>=13.0",
+    "mcp>=1.2.0",
+    "pyarrow>=14.0.0",
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+]
 
 [project.optional-dependencies]
 gpu = ["cudf-cu12", "kvikio-cu12", "torch>=2.0", "torch_geometric>=2.5.0"]

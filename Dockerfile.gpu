@@ -1,0 +1,77 @@
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS builder
+
+# Set up non-interactive build environment
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Install fundamental system build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    git \
+    python3.11 \
+    python3.11-venv \
+    python3.11-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust toolchain (required for compiling PyO3 bindings)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+
+# Install uv (blazing fast python package manager)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Set up the working directory
+WORKDIR /app
+
+# Copy dependency manifests first to leverage Docker layer caching
+COPY pyproject.toml .
+COPY README.md .
+COPY rust_core/Cargo.toml rust_core/Cargo.toml
+COPY rust_core/src rust_core/src
+
+# Create a virtual environment and compile the Rust extensions
+RUN uv venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN uv pip install maturin pyarrow && \
+    cd rust_core && maturin build --release
+
+# Copy the rest of the python source code
+COPY src/ src/
+
+# Install the Python package and its dependencies including NLP and AST
+# We pull cudf-cu12 explicitly from the NVIDIA pip index to ensure it matches the CUDA 12.4 base image
+RUN uv pip install -e ".[ast,nlp]" \
+    cudf-cu12 \
+    --extra-index-url https://pypi.nvidia.com
+
+# ---------------------------------------------------------
+# STAGE 2: Distroless-inspired Hardened Runtime
+# ---------------------------------------------------------
+FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+
+# Run as non-root user for security
+RUN groupadd -r tguser && useradd -r -g tguser tguser
+
+# Install only minimal runtime dependencies (python3.11)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the completely compiled virtual environment from the builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Ensure the virtual environment is on the PATH
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create a workspace directory for users to mount logs
+WORKDIR /workspace
+RUN chown tguser:tguser /workspace
+
+USER tguser
+
+# Expose the tensor-grep CLI as the default entrypoint
+ENTRYPOINT ["tg"]
+CMD ["--help"]

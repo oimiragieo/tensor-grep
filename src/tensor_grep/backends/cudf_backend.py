@@ -170,14 +170,32 @@ class CuDFBackend(ComputeBackend):
                 if chunk_bytes == 0:
                     chunk_bytes = 1024 * 1024
 
-                pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
+                try:
+                    from opentelemetry import trace
+
+                    tracer = trace.get_tracer(__name__)
+                    with tracer.start_as_current_span("read_mmap_to_arrow_chunked"):
+                        pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
+                except ImportError:
+                    pycapsule_chunks = read_mmap_to_arrow_chunked(file_path, chunk_bytes)
 
                 line_offset = 0
                 for capsule in pycapsule_chunks:
-                    zero_copy_array = pa.array(capsule)
-                    series = cudf.Series.from_arrow(zero_copy_array)
+                    try:
+                        from opentelemetry import trace
 
-                    mask = series.str.contains(pattern, regex=True, flags=flags)
+                        tracer = trace.get_tracer(__name__)
+                        with tracer.start_as_current_span("cudf.Series.from_arrow"):
+                            zero_copy_array = pa.array(capsule)
+                            series = cudf.Series.from_arrow(zero_copy_array)
+
+                            mask = series.str.contains(pattern, regex=True, flags=flags)
+                    except ImportError:
+                        zero_copy_array = pa.array(capsule)
+                        series = cudf.Series.from_arrow(zero_copy_array)
+
+                        mask = series.str.contains(pattern, regex=True, flags=flags)
+
                     if config and config.invert_match:
                         mask = ~mask
                     matched = series[mask]
