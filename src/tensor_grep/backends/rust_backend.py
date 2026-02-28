@@ -51,7 +51,11 @@ class RustCoreBackend(ComputeBackend):
                     total_matches=total_count,
                 )
 
-            results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings)
+            # Support older signature and new signature smoothly
+            try:
+                results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings, False)
+            except TypeError:
+                results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings)
         except Exception:
             return SearchResult(matches=[], total_files=0, total_matches=0)
 
