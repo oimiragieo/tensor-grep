@@ -133,11 +133,12 @@ class CybertBackend:
                 result = client.infer(model_name="cybert", inputs=inputs)
                 probs = result.as_numpy("logits")
         except Exception:
-            result = client.infer(model_name="cybert", inputs=inputs)
-            probs = result.as_numpy("logits")
-        except Exception:
-            # If triton server is not there or mocked error, fallback
-            probs = np.array([[0.1, 0.8, 0.1]] * len(lines))
+            try:
+                result = client.infer(model_name="cybert", inputs=inputs)
+                probs = result.as_numpy("logits")
+            except Exception:
+                # If triton server is not there or mocked error, fallback
+                probs = np.array([[0.1, 0.8, 0.1]] * len(lines))
 
         threshold = getattr(config, "nlp_threshold", 0.0) if config else 0.0
 
