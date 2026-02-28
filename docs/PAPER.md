@@ -42,7 +42,8 @@ Traditional regex engines like `ripgrep` compile patterns into Deterministic Fin
 Standard regex matching fails when log formatting changes or when a user wants to find "errors" that aren't explicitly tagged with the word "ERROR" (e.g., "Connection refused by peer"). 
 
 - **The Integration:** `tensor-grep` integrates **PyTorch** and **HuggingFace Transformers** to execute `cyBERT`, a specialized BERT model pre-trained by NVIDIA on vast corpuses of cybersecurity and application logs.
-- **The Speedup:** Rather than writing hundreds of brittle regex rules, logs are tokenized and passed through the Transformer network in large VRAM batches. The `TorchBackend` executes matrix multiplications to emit confidence logits, classifying thousands of log lines into severities (INFO, WARN, ERROR) in a single pass.
+- **GPU-Accelerated Tokenization:** To prevent massive PCIe bottlenecking when classifying logs, we utilize RAPIDS `cudf.core.subword_tokenize` to tokenize the log payload directly in VRAM rather than pulling strings back to the CPU for the HuggingFace tokenizer. The generated `input_ids` and `attention_mask` tensors are then mapped natively to PyTorch tensors via `__dlpack__` with zero CPU intervention.
+- **The Speedup:** By keeping tokenization completely hardware-bound, logs are directly passed through the Transformer network in massive VRAM batches. The `TorchBackend` executes matrix multiplications to emit confidence logits, classifying thousands of log lines into severities (INFO, WARN, ERROR) in a single pass at line rate speeds.
 
 ### 2.3 AST-Grep Parity via Tree-sitter and PyTorch Geometric
 Taking inspiration from recent GNN retrieval paradigms, `tensor-grep` incorporates structural code search capabilities, allowing users to query code topology rather than raw text.
@@ -59,8 +60,8 @@ To maximize hardware utilization while preserving cross-platform stability, `ten
 4. **Ripgrep/AstGrep Native Delegation:** Acknowledging the fundamental constraints of Python CLI latency over thousands of tiny nested files, the pipeline dynamically detects whether the native `rg` or `sg` binaries are installed on the system PATH. For highly context-dependent queries (e.g. `-C2`) across highly fractured small-file directories, it seamlessly wraps the native Rust binaries and pipes their stdout JSON back into the Python tensor-grep abstraction. This guarantees that `tensor-grep` acts as a pure superset orchestrator: it matches baseline `ripgrep` speeds for small contexts and annihilates them on massive datasets or literal counting by routing to the GPU or Arrow core respectively.
 
 `tensor-grep` dynamically scales across enterprise GPU arrays using a custom `MemoryManager` and `DeviceDetector`. 
-- **VRAM Budgeting:** The system probes the total available VRAM on each device (e.g., `cuda:0`, `cuda:1`). 
-- **Chunk Sharding:** Massive log files (>10GB) are partitioned into optimal chunk sizes calculated as a safe percentage of available VRAM. A `ProcessPoolExecutor` distributes these chunks asynchronously to individual GPUs, ensuring memory boundaries are strictly respected to prevent Out-Of-Memory (OOM) faults.
+- **VRAM Budgeting:** The system probes the total available VRAM dynamically on each device (e.g., `cuda:0`, `cuda:1`) utilizing `pynvml` (NVIDIA Management Library) hooks to compute free memory limits at runtime.
+- **Dynamic Chunk Sharding (OOM Protection):** Massive log files (>10GB) are partitioned into PyCapsule chunks explicitly calculated against 80% of the active VRAM budget. To prevent CUDA Out-Of-Memory (OOM) exceptions when processing sequential arrays, the cuDF backend executes explicit garbage collection and re-acquires spill locks (`cudf.core.buffer.acquire_spill_lock()`) after every iteration, mathematically guaranteeing stable execution on any GPU regardless of its size limit.
 
 ## 3. Evaluation and Benchmarks
 
