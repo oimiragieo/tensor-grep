@@ -50,7 +50,8 @@ fn main() -> anyhow::Result<()> {
     };
 
     // Check if we should execute in Python/GPU land
-    if !cli.force_cpu && should_use_gpu_pipeline() {
+    // We strictly force CPU execution if a replacement query is passed, since the Python GPU bindings don't support file mutability yet
+    if !cli.force_cpu && cli.replace.is_none() && should_use_gpu_pipeline() {
         return execute_gpu_pipeline(&cli.pattern, &cli.path, &flags);
     }
 
