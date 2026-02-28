@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 from lsprotocol.types import (
     TEXT_DOCUMENT_DID_CHANGE,
@@ -8,10 +8,10 @@ from lsprotocol.types import (
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
 )
-from pygls.server import LanguageServer
+import pygls.server
 
 
-class TensorGrepLSPServer(LanguageServer):
+class TensorGrepLSPServer(pygls.server.LanguageServer):  # type: ignore
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.documents_cache: dict[str, str] = {}
@@ -22,7 +22,7 @@ class TensorGrepLSPServer(LanguageServer):
 server = TensorGrepLSPServer("tensor-grep-lsp", "v0.2.0")
 
 
-@server.feature(TEXT_DOCUMENT_DID_OPEN)
+@server.feature(TEXT_DOCUMENT_DID_OPEN)  # type: ignore
 def did_open(ls: TensorGrepLSPServer, params: DidOpenTextDocumentParams) -> None:
     """Document opened."""
     ls.documents_cache[params.text_document.uri] = params.text_document.text
@@ -30,16 +30,16 @@ def did_open(ls: TensorGrepLSPServer, params: DidOpenTextDocumentParams) -> None
     _update_ast_tensor(ls, params.text_document.uri, params.text_document.text)
 
 
-@server.feature(TEXT_DOCUMENT_DID_CHANGE)
+@server.feature(TEXT_DOCUMENT_DID_CHANGE)  # type: ignore
 def did_change(ls: TensorGrepLSPServer, params: DidChangeTextDocumentParams) -> None:
     """Document changed."""
     # Simplified change tracking; full sync
     if params.content_changes:
-        new_text = params.content_changes[0].text
+        new_text = cast(Any, params.content_changes[0]).text
         ls.documents_cache[params.text_document.uri] = new_text
 
 
-@server.feature(TEXT_DOCUMENT_DID_SAVE)
+@server.feature(TEXT_DOCUMENT_DID_SAVE)  # type: ignore
 def did_save(ls: TensorGrepLSPServer, params: DidSaveTextDocumentParams) -> None:
     """Document saved."""
     text = ls.documents_cache.get(params.text_document.uri, "")

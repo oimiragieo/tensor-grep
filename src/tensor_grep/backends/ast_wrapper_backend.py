@@ -79,5 +79,5 @@ class AstGrepWrapperBackend(ComputeBackend):
                 total_matches=len(matches),
             )
 
-        except Exception:
-            return SearchResult(matches=[], total_files=0, total_matches=0)
+        except Exception as e:
+            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}")

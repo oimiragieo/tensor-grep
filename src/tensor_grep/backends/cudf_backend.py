@@ -222,7 +222,9 @@ class CuDFBackend(ComputeBackend):
 
             except (ImportError, Exception):
                 # Fallback to pure Python multi-processing CPU mapping
-                offset = 0
+                pass
+
+            offset = 0
             line_offset = 0
 
             with ProcessPoolExecutor(max_workers=len(self.chunk_sizes_mb)) as executor:

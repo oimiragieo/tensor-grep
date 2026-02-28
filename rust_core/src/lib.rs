@@ -101,10 +101,11 @@ impl RustBackend {
         path: &str,
         ignore_case: bool,
         fixed_strings: bool,
+        invert_match: bool,
     ) -> PyResult<Vec<(usize, String)>> {
         let results = self
             .inner
-            .search(pattern, path, ignore_case, fixed_strings, false)
+            .search(pattern, path, ignore_case, fixed_strings, invert_match)
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Rust search failed: {}", e))
             })?;

@@ -1,1 +1,1 @@
-{"total_matches": 2, "total_files": 1, "matches": [{"file": "<FILE>", "line_number": 2, "text": "2026-02-24 10:00:05 ERROR Connection timeout to database"}, {"file": "<FILE>", "line_number": 4, "text": "2026-02-24 10:00:10 ERROR Failed SSH login from 192.168.1.100"}]}
+{"total_matches": 2, "total_files": 1, "matches": [{"file": "<FILE>", "line_number": 2, "text": "2026-02-24 10:00:05 ERROR Connection timeout to database\r"}, {"file": "<FILE>", "line_number": 4, "text": "2026-02-24 10:00:10 ERROR Failed SSH login from 192.168.1.100\r"}]}

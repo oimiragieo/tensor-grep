@@ -35,12 +35,13 @@ class RipgrepBackend(ComputeBackend):
         return None
 
     def search(
-        self, file_path: str, pattern: str, config: SearchConfig | None = None
+        self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
-        if not self.is_available():
+        binary_name = self._get_binary_name()
+        if binary_name is None:
             raise RuntimeError("RipgrepBackend requires the 'rg' binary to be installed.")
 
-        cmd = [self._get_binary_name(), "--json"]
+        cmd: list[str] = [binary_name, "--json"]
 
         # We enforce JSON output so we can seamlessly parse it back into our SearchResult dataclasses
         if config:
@@ -69,7 +70,10 @@ class RipgrepBackend(ComputeBackend):
 
         # The pattern
         cmd.append(pattern)
-        cmd.append(file_path)
+        if isinstance(file_path, list):
+            cmd.extend(file_path)
+        else:
+            cmd.append(file_path)
 
         try:
             # We use check=False because rg exits with 1 if no matches are found
@@ -91,20 +95,35 @@ class RipgrepBackend(ComputeBackend):
                         line_number = data_match.get("line_number", 0)
                         # We extract the pure text matched line
                         text = data_match.get("lines", {}).get("text", "").rstrip("\n\r")
+                        
+                        path_str = data_match.get("path", {}).get("text", "")
+                        if not path_str and isinstance(file_path, str):
+                            path_str = file_path
 
                         # Note: Ripgrep JSON also outputs absolute offsets, but MatchLine requires line_num/text
                         matches.append(
-                            MatchLine(line_number=line_number, text=text, file=file_path)
+                            MatchLine(line_number=line_number, text=text, file=path_str)
+                        )
+                    elif data.get("type") == "context":
+                        data_match = data["data"]
+                        line_number = data_match.get("line_number", 0)
+                        text = data_match.get("lines", {}).get("text", "").rstrip("\n\r")
+                        path_str = data_match.get("path", {}).get("text", "")
+                        if not path_str and isinstance(file_path, str):
+                            path_str = file_path
+                        matches.append(
+                            MatchLine(line_number=line_number, text=text, file=path_str)
                         )
                 except json.JSONDecodeError:
                     pass
 
+            files_set = {m.file for m in matches}
+
             return SearchResult(
                 matches=matches,
-                total_files=1 if matches else 0,
+                total_files=len(files_set),
                 total_matches=len(matches),
             )
 
-        except Exception:
-            # If ripgrep completely fails, we fall back to returning 0 matches gracefully
-            return SearchResult(matches=[], total_files=0, total_matches=0)
+        except Exception as e:
+            raise RuntimeError(f"Ripgrep backend failed: {e}")

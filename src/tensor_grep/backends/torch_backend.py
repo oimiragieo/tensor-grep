@@ -129,18 +129,15 @@ class TorchBackend:
         # Calculate how many bytes to send to each GPU (chunking)
         # Process spawning in PyTorch Windows is extremely slow. We shouldn't chunk too small.
         # Fall back to single processing for files < 50MB to bypass the 30s process creation overhead.
-        if file_size < 50 * 1024 * 1024:
-            from tensor_grep.backends.cpu_backend import CPUBackend
-
-            return CPUBackend().search(file_path, pattern, config)
-
-        chunk_size = max(1024 * 1024 * 50, file_size // gpu_count)  # minimum 50MB chunk
+        # Removing this forced bypass for smaller files for true GPU utilization as requested by audit.
+        chunk_size = max(1024 * 1024 * 5, file_size // gpu_count)  # minimum 5MB chunk
 
         # Distribute workload across GPUs using ProcessPoolExecutor
         with concurrent.futures.ProcessPoolExecutor(max_workers=gpu_count) as executor:
             futures = []
             offset = 0
             device_idx = 0
+            line_offset = 0
 
             while offset < file_size:
                 size = min(chunk_size, file_size - offset)
@@ -156,8 +153,14 @@ class TorchBackend:
                 )
 
                 # Keep track of rough line offsets for sorting
-                future._line_offset = offset // 50  # type: ignore # Very rough estimate, 50 chars per line
+                future._line_offset = line_offset  # type: ignore # Accurate line offset requires a pass
                 futures.append(future)
+                
+                # To accurately track line offset, we'd need to count newlines in the bytes.
+                # For this fallback, we'll try to get it closer by counting newlines.
+                with open(file_path, "rb") as f:
+                    f.seek(offset)
+                    line_offset += f.read(size).count(b'\n')
 
                 offset += size
                 device_idx += 1

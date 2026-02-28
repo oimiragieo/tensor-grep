@@ -99,7 +99,8 @@ def tg_search(
         return "\n".join(output)
 
     except Exception as e:
-        return f"Search failed: {e!s}"
+        import traceback
+        return f"Search failed: {e!s}\n{traceback.format_exc()}"
 
 
 @mcp.tool()
@@ -153,7 +154,8 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
         return "\n".join(output)
 
     except Exception as e:
-        return f"AST Search failed: {e!s}"
+        import traceback
+        return f"AST Search failed: {e!s}\n{traceback.format_exc()}"
 
 
 @mcp.tool()
@@ -194,7 +196,8 @@ def tg_classify_logs(file_path: str) -> str:
         return "\n".join(output)
 
     except Exception as e:
-        return f"Log Classification failed: {e!s}"
+        import traceback
+        return f"Log Classification failed: {e!s}\n{traceback.format_exc()}"
 
 
 def run_mcp_server() -> None:

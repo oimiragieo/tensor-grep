@@ -3,7 +3,7 @@ const path = require('path');
 const https = require('https');
 const { execSync } = require('child_process');
 
-const VERSION = 'v0.1.0';
+const VERSION = 'v0.2.0';
 const GITHUB_REPO = 'tensor-grep/tensor-grep';
 
 const PLATFORM_MAP = {
@@ -52,6 +52,10 @@ https.get(downloadUrl, (response) => {
         console.log('Download complete!');
       });
     });
+  } else if (response.statusCode !== 200) {
+    fs.unlinkSync(binPath);
+    console.error(`Download failed with status code ${response.statusCode}`);
+    process.exit(1);
   } else {
     response.pipe(file);
     file.on('finish', () => {
@@ -65,6 +69,5 @@ https.get(downloadUrl, (response) => {
 }).on('error', (err) => {
   fs.unlinkSync(binPath);
   console.error(`Download failed: ${err.message}`);
-  // Do not fail hard, maybe fallback to python module
-  process.exit(0);
+  process.exit(1);
 });

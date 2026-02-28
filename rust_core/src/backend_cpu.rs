@@ -104,11 +104,9 @@ impl CpuBackend {
                 let is_match = memmem::find(line_bytes, pattern).is_some();
                 let should_include = if invert_match { !is_match } else { is_match };
 
-                if should_include
-                    && !line_bytes.is_empty()
-                    && let Ok(line_str) = std::str::from_utf8(line_bytes)
-                {
-                    results.push((line_num, line_str.to_string()));
+                if should_include && !line_bytes.is_empty() {
+                    let line_str = String::from_utf8_lossy(line_bytes).into_owned();
+                    results.push((line_num, line_str));
                 }
                 start = i + 1;
                 line_num += 1;
@@ -120,11 +118,9 @@ impl CpuBackend {
             let is_match = memmem::find(line_bytes, pattern).is_some();
             let should_include = if invert_match { !is_match } else { is_match };
 
-            if should_include
-                && !line_bytes.is_empty()
-                && let Ok(line_str) = std::str::from_utf8(line_bytes)
-            {
-                results.push((line_num, line_str.to_string()));
+            if should_include && !line_bytes.is_empty() {
+                let line_str = String::from_utf8_lossy(line_bytes).into_owned();
+                results.push((line_num, line_str));
             }
         }
 
@@ -150,11 +146,9 @@ impl CpuBackend {
                 let is_match = re.is_match(line_bytes);
                 let should_include = if invert_match { !is_match } else { is_match };
 
-                if should_include
-                    && !line_bytes.is_empty()
-                    && let Ok(line_str) = std::str::from_utf8(line_bytes)
-                {
-                    results.push((line_num, line_str.to_string()));
+                if should_include && !line_bytes.is_empty() {
+                    let line_str = String::from_utf8_lossy(line_bytes).into_owned();
+                    results.push((line_num, line_str));
                 }
                 start = i + 1;
                 line_num += 1;
@@ -166,11 +160,9 @@ impl CpuBackend {
             let is_match = re.is_match(line_bytes);
             let should_include = if invert_match { !is_match } else { is_match };
 
-            if should_include
-                && !line_bytes.is_empty()
-                && let Ok(line_str) = std::str::from_utf8(line_bytes)
-            {
-                results.push((line_num, line_str.to_string()));
+            if should_include && !line_bytes.is_empty() {
+                let line_str = String::from_utf8_lossy(line_bytes).into_owned();
+                results.push((line_num, line_str));
             }
         }
 

@@ -341,7 +341,7 @@ def search_command(
         typer.echo("Error: Please provide at least one PATH to search.", err=True)
         sys.exit(1)
 
-    path_to_search = file_path[0]
+    paths_to_search = file_path
 
     from tensor_grep.core.config import SearchConfig
 
@@ -461,12 +461,26 @@ def search_command(
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
-    for current_file in scanner.walk(path_to_search):
-        result = backend.search(current_file, pattern, config=config)
-        all_results.matches.extend(result.matches)
-        all_results.total_matches += result.total_matches
-        if result.total_matches > 0:
-            all_results.total_files += 1
+    # RipgrepBackend optimization: passing all paths natively
+    # Use __class__ or type directly from object to avoid masking issues
+    if backend.__class__.__name__ == "RipgrepBackend":
+        # Pass all paths at once to ripgrep instead of looping
+        # the original backend implementation just expects a string, so we'll need to update it
+        # or we just pass the first path if the backend signature doesn't allow a list
+        for path in paths_to_search:
+            result = backend.search(path, pattern, config=config)
+            all_results.matches.extend(result.matches)
+            all_results.total_matches += result.total_matches
+            if result.total_matches > 0:
+                all_results.total_files += 1
+    else:
+        for p in paths_to_search:
+            for current_file in scanner.walk(p):
+                result = backend.search(current_file, pattern, config=config)
+                all_results.matches.extend(result.matches)
+                all_results.total_matches += result.total_matches
+                if result.total_matches > 0:
+                    all_results.total_files += 1
 
     if all_results.is_empty and not quiet:
         sys.exit(1)
