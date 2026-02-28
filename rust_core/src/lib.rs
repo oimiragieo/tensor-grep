@@ -1,6 +1,6 @@
 pub mod backend_ast;
 pub mod backend_cpu;
-// pub mod backend_gpu;
+pub mod backend_gpu;
 pub mod cli;
 pub mod mmap_arrow;
 
@@ -121,7 +121,7 @@ impl RustBackend {
     ) -> PyResult<usize> {
         let count = self
             .inner
-            .count_matches(pattern, path, ignore_case, fixed_strings)
+            .count_matches(pattern, path, ignore_case, fixed_strings, false)
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
             })?;

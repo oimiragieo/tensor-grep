@@ -99,6 +99,7 @@ impl CpuBackend {
         path: &str,
         ignore_case: bool,
         fixed_strings: bool,
+        invert_match: bool,
     ) -> anyhow::Result<usize> {
         let path_obj = Path::new(path);
         let mut total_count = 0;
@@ -107,14 +108,14 @@ impl CpuBackend {
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
             if path_obj.is_file() {
-                if let Ok(count) = self.count_file_memmem(pat_bytes, &path_obj.to_path_buf()) {
+                if let Ok(count) = self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match) {
                     total_count += count;
                 }
             } else if path_obj.is_dir() {
                 for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
                     if entry.file_type().is_file()
                         && let Ok(count) =
-                            self.count_file_memmem(pat_bytes, &entry.path().to_path_buf())
+                            self.count_file_memmem(pat_bytes, &entry.path().to_path_buf(), invert_match)
                     {
                         total_count += count;
                     }
@@ -134,13 +135,13 @@ impl CpuBackend {
         };
 
         if path_obj.is_file() {
-            if let Ok(count) = self.count_file_regex(&re, &path_obj.to_path_buf()) {
+            if let Ok(count) = self.count_file_regex(&re, &path_obj.to_path_buf(), invert_match) {
                 total_count += count;
             }
         } else if path_obj.is_dir() {
             for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
                 if entry.file_type().is_file()
-                    && let Ok(count) = self.count_file_regex(&re, &entry.path().to_path_buf())
+                    && let Ok(count) = self.count_file_regex(&re, &entry.path().to_path_buf(), invert_match)
                 {
                     total_count += count;
                 }
@@ -150,7 +151,7 @@ impl CpuBackend {
         Ok(total_count)
     }
 
-    fn count_file_memmem(&self, pattern: &[u8], path: &PathBuf) -> anyhow::Result<usize> {
+    fn count_file_memmem(&self, pattern: &[u8], path: &PathBuf, invert_match: bool) -> anyhow::Result<usize> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
@@ -158,19 +159,27 @@ impl CpuBackend {
         // But for massive speedup without line splitting, we can use par_split
         let count = mmap
             .par_split(|&b| b == b'\n')
-            .filter(|line_bytes| memmem::find(line_bytes, pattern).is_some())
+            .filter(|line_bytes| !line_bytes.is_empty()) // Prevent counting trailing empty split
+            .filter(|line_bytes| {
+                let is_match = memmem::find(line_bytes, pattern).is_some();
+                if invert_match { !is_match } else { is_match }
+            })
             .count();
 
         Ok(count)
     }
 
-    fn count_file_regex(&self, re: &regex::bytes::Regex, path: &PathBuf) -> anyhow::Result<usize> {
+    fn count_file_regex(&self, re: &regex::bytes::Regex, path: &PathBuf, invert_match: bool) -> anyhow::Result<usize> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         let count = mmap
             .par_split(|&b| b == b'\n')
-            .filter(|line_bytes| re.is_match(line_bytes))
+            .filter(|line_bytes| !line_bytes.is_empty()) // Prevent counting trailing empty split
+            .filter(|line_bytes| {
+                let is_match = re.is_match(line_bytes);
+                if invert_match { !is_match } else { is_match }
+            })
             .count();
 
         Ok(count)

@@ -1,41 +1,65 @@
-pub mod backend_ast;
-pub mod backend_cpu;
-// pub mod backend_gpu;
-pub mod cli;
-
-use backend_ast::AstBackend;
-use backend_cpu::CpuBackend;
 use clap::Parser;
-use cli::{Cli, Commands};
+use tensor_grep_rs::backend_cpu::CpuBackend;
+use tensor_grep_rs::backend_gpu::{should_use_gpu_pipeline, execute_gpu_pipeline, CliFlags};
+
+#[derive(Parser, Debug)]
+#[command(name = "tg")]
+#[command(version = "0.4.0")]
+#[command(about = "tensor-grep: GPU-Accelerated Log Parsing CLI")]
+pub struct Cli {
+    /// The search pattern (regex or string)
+    pub pattern: String,
+    
+    /// Path to search
+    pub path: String,
+    
+    /// Count matching lines
+    #[arg(short = 'c', long)]
+    pub count: bool,
+
+    /// Fixed string matching (disable regex)
+    #[arg(short = 'F', long)]
+    pub fixed_strings: bool,
+    
+    /// Invert match (select non-matching lines)
+    #[arg(short = 'v', long)]
+    pub invert_match: bool,
+    
+    /// Case insensitive search
+    #[arg(short = 'i', long)]
+    pub ignore_case: bool,
+    
+    /// Force CPU fallback
+    #[arg(long)]
+    pub force_cpu: bool,
+}
 
 fn main() -> anyhow::Result<()> {
+    // Note: Due to pyo3 auto-initialize feature, Python interpreter initializes on start seamlessly
     let cli = Cli::parse();
-
-    match cli.command {
-        Commands::Search {
-            pattern,
-            path,
-            ignore_case,
-            fixed_strings,
-            context: _,
-        } => {
-            let backend = CpuBackend::new();
-            backend.search(&pattern, &path, ignore_case, fixed_strings)?;
-        }
-        Commands::Classify { file } => {
-            println!("Classify stub: {}", file);
-            // let backend = GpuBackend::new();
-            // backend.classify(&file)?;
-        }
-        Commands::Run {
-            pattern,
-            lang,
-            path,
-        } => {
-            let backend = AstBackend::new();
-            backend.run(&pattern, &lang, &path)?;
-        }
+    
+    let flags = CliFlags {
+        count: cli.count,
+        fixed_strings: cli.fixed_strings,
+        invert_match: cli.invert_match,
+        ignore_case: cli.ignore_case,
+    };
+    
+    // Check if we should execute in Python/GPU land
+    if !cli.force_cpu && should_use_gpu_pipeline() {
+        return execute_gpu_pipeline(&cli.pattern, &cli.path, &flags);
+    }
+    
+    // Fallback to ultra-fast zero-copy Rust tier
+    let backend = CpuBackend::new();
+    
+    if cli.count {
+        // The inner CpuBackend supports counting extremely fast via memmap
+        let count = backend.count_matches(&cli.pattern, &cli.path, cli.ignore_case, cli.fixed_strings, cli.invert_match)?;
+        println!("{}", count);
+        return Ok(());
     }
 
+    println!("Full output extraction not yet implemented in Rust port. Use -c to test counting.");
     Ok(())
 }
