@@ -21,24 +21,9 @@ def test_json_output_snapshot(sample_log_file, snapshot):
     # Also get the json-escaped version
     import json
 
-    # Strip surrounding quotes from dumped JSON path string
-    # We do this instead of replacing file_path directly because Python 3.11/3.12 might 
-    # escape the `\r` part in `\runneradmin` inconsistently with `json.dumps()` in earlier tests.
-    # To be fully robust, let's normalize separators just for replacement logic.
-    escaped_file_path = json.dumps(file_path)[1:-1]
-    
-    # Use regex to do a case-insensitive, normalized replacement
-    import re
-    
-    # We escape the regex pattern since paths contain \ and . which are special in regex
-    # The normal path
-    norm_path_pattern = re.escape(file_path)
-    output_stable = re.sub(norm_path_pattern, "<FILE>", output, flags=re.IGNORECASE)
-    
-    # The json-escaped path might have varying amounts of backslashes. 
-    # Let's normalize backslashes in the output json itself to forward slashes for the match.
-    # Actually, the simplest fix is to deserialize the JSON, replace the path, and re-serialize.
-    # We know the output is meant to be valid JSON.
+    # Clean out any backslashes first, before JSON parsing
+    # The real issue is that `\r` and `\u` in the absolute paths might get incorrectly treated by regex or json
+    # so let's simply load JSON, and clean it up.
     
     try:
         parsed = json.loads(output)
@@ -49,7 +34,12 @@ def test_json_output_snapshot(sample_log_file, snapshot):
         output_stable = json.dumps(parsed)
     except json.JSONDecodeError:
         # Fallback to string replace if not valid JSON (shouldn't happen here)
+        escaped_file_path = json.dumps(file_path)[1:-1]
         output_stable = output.replace(escaped_file_path, "<FILE>")
         output_stable = output_stable.replace(file_path, "<FILE>")
+        # Sometimes Windows paths have escaped sequences like \r or \u that were literal in the path but got converted 
+        # to actual escape codes during some string processing. We can just replace the prefix:
+        import re
+        output_stable = re.sub(r'"[A-Za-z]:\\[^"]+"', '"<FILE>"', output_stable)
 
     snapshot.assert_match(output_stable, "json_output.json")
