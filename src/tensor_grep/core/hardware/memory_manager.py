@@ -15,16 +15,17 @@ class MemoryManager:
         budget = self.get_vram_budget_mb(device_id)
         if budget == 0:
             import os
+
             import psutil
-            
+
             try:
                 system_ram_mb = psutil.virtual_memory().total / (1024 * 1024)
             except Exception:
                 # Fallback to a safe estimate if psutil fails
                 system_ram_mb = 8192
-            
+
             cpu_count = os.cpu_count() or 4
-            
+
             # Use ~40% of system RAM, divided by number of CPUs to give a sensible chunk
             cpu_chunk = int((system_ram_mb * 0.4) / cpu_count)
             return max(256, min(cpu_chunk, 1024)) # Bound between 256MB and 1GB per process
