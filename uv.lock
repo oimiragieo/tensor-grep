@@ -3642,6 +3642,7 @@ name = "tensor-grep"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "importlib-metadata", marker = "python_full_version < '3.12'" },
     { name = "mcp" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp" },
@@ -3691,6 +3692,7 @@ nlp = [
 requires-dist = [
     { name = "cudf-cu12", marker = "extra == 'gpu'" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
+    { name = "importlib-metadata", marker = "python_full_version < '3.12'", specifier = ">=8.5.0" },
     { name = "kvikio-cu12", marker = "extra == 'gpu'" },
     { name = "mcp", specifier = ">=1.2.0" },
     { name = "mutmut", marker = "extra == 'dev'", specifier = ">=3.0" },
