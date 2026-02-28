@@ -116,7 +116,7 @@ class CybertBackend:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("cybert_tokenize"):
                 tokens = tokenize(lines)
-        except ImportError:
+        except Exception:
             tokens = tokenize(lines)
 
         inputs = []
