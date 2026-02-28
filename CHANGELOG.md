@@ -9,8 +9,12 @@ Unreleased changes. Release notes have not yet been written.
   - `tensor-grep-rs` now maps OS files via `memmap2` and constructs Arrow StringArrays without copying the payload into RAM.
   - Implemented dynamic **VRAM Chunking**, yielding Arrow slices to cuDF to prevent Out-Of-Memory (OOM) exceptions when mapping multi-gigabyte log files to GPU VRAM limits.
   - Replaced CPU-bound HuggingFace cyBERT tokenization with native `cudf.core.subword_tokenize()`. Logs stay entirely in VRAM while being mapped to Transformer tensors.
-- **Fixes**
-  - Updated Pipeline to automatically map complex `ripgrep` regex configurations (like invert-match, boundaries, context cues) directly to the CPU fallback if they exceed Rust's core capabilities.
+- **Security Audit & Critical Fixes**
+  - Resolved 7 strict Mypy type errors across AST and GPU backend modules.
+  - Implemented dual UTF-8 and latin-1 encoding compilation fallbacks for complex regexes across Rust/Python boundary.
+  - Restored lost Ripgrep JSON context lines (`-C`/`-B`/`-A`) parsing.
+  - Removed artificial GPU bypassing for small files to test true tensor utilization.
+  - Fixed workflow permissions (`id-token: write` and `contents: read`) for optimal GitHub Action security compliance.
 
 0.1.5
 ===

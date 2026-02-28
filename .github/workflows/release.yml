@@ -96,6 +96,15 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify Version Match
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          NPM_VERSION=$(node -p "require('./npm/package.json').version")
+          if [ "$TAG_VERSION" != "$NPM_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match npm version ($NPM_VERSION)"
+            exit 1
+          fi
           
       - name: Publish NPM Package
         working-directory: npm
@@ -162,8 +171,6 @@ jobs:
           merge-multiple: true
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
 
   publish-docs:
     runs-on: ubuntu-latest

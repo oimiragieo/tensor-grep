@@ -6,7 +6,7 @@ use tensor_grep_rs::backend_gpu::{
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
-#[command(version = "0.5.0")]
+#[command(version = "0.2.0")]
 #[command(about = "tensor-grep: GPU-Accelerated Log Parsing CLI")]
 pub struct Cli {
     #[command(subcommand)]
