@@ -1,6 +1,6 @@
 use clap::Parser;
 use tensor_grep_rs::backend_cpu::CpuBackend;
-use tensor_grep_rs::backend_gpu::{should_use_gpu_pipeline, execute_gpu_pipeline, CliFlags};
+use tensor_grep_rs::backend_gpu::{CliFlags, execute_gpu_pipeline, should_use_gpu_pipeline};
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -9,10 +9,10 @@ use tensor_grep_rs::backend_gpu::{should_use_gpu_pipeline, execute_gpu_pipeline,
 pub struct Cli {
     /// The search pattern (regex or string)
     pub pattern: String,
-    
+
     /// Path to search
     pub path: String,
-    
+
     /// Count matching lines
     #[arg(short = 'c', long)]
     pub count: bool,
@@ -20,15 +20,15 @@ pub struct Cli {
     /// Fixed string matching (disable regex)
     #[arg(short = 'F', long)]
     pub fixed_strings: bool,
-    
+
     /// Invert match (select non-matching lines)
     #[arg(short = 'v', long)]
     pub invert_match: bool,
-    
+
     /// Case insensitive search
     #[arg(short = 'i', long)]
     pub ignore_case: bool,
-    
+
     /// Force CPU fallback
     #[arg(long)]
     pub force_cpu: bool,
@@ -37,29 +37,46 @@ pub struct Cli {
 fn main() -> anyhow::Result<()> {
     // Note: Due to pyo3 auto-initialize feature, Python interpreter initializes on start seamlessly
     let cli = Cli::parse();
-    
+
     let flags = CliFlags {
         count: cli.count,
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
         ignore_case: cli.ignore_case,
     };
-    
+
     // Check if we should execute in Python/GPU land
     if !cli.force_cpu && should_use_gpu_pipeline() {
         return execute_gpu_pipeline(&cli.pattern, &cli.path, &flags);
     }
-    
+
     // Fallback to ultra-fast zero-copy Rust tier
     let backend = CpuBackend::new();
-    
+
     if cli.count {
         // The inner CpuBackend supports counting extremely fast via memmap
-        let count = backend.count_matches(&cli.pattern, &cli.path, cli.ignore_case, cli.fixed_strings, cli.invert_match)?;
+        let count = backend.count_matches(
+            &cli.pattern,
+            &cli.path,
+            cli.ignore_case,
+            cli.fixed_strings,
+            cli.invert_match,
+        )?;
         println!("{}", count);
         return Ok(());
     }
 
-    println!("Full output extraction not yet implemented in Rust port. Use -c to test counting.");
+    let results = backend.search(
+        &cli.pattern,
+        &cli.path,
+        cli.ignore_case,
+        cli.fixed_strings,
+        cli.invert_match,
+    )?;
+
+    for (line_num, text) in results {
+        println!("{}:{}", line_num, text);
+    }
+
     Ok(())
 }

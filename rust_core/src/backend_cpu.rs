@@ -25,7 +25,35 @@ impl CpuBackend {
         path: &str,
         ignore_case: bool,
         fixed_strings: bool,
+        invert_match: bool,
     ) -> anyhow::Result<Vec<(usize, String)>> {
+        let path_obj = Path::new(path);
+        let mut results = Vec::new();
+
+        if fixed_strings && !ignore_case {
+            let pat_bytes = pattern.as_bytes();
+            if path_obj.is_file() {
+                if let Ok(file_results) =
+                    self.search_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)
+                {
+                    results.extend(file_results);
+                }
+            } else if path_obj.is_dir() {
+                for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
+                    if entry.file_type().is_file()
+                        && let Ok(file_results) = self.search_file_memmem(
+                            pat_bytes,
+                            &entry.path().to_path_buf(),
+                            invert_match,
+                        )
+                    {
+                        results.extend(file_results);
+                    }
+                }
+            }
+            return Ok(results);
+        }
+
         let re = if fixed_strings {
             RegexBuilder::new(&regex::escape(pattern))
                 .case_insensitive(ignore_case)
@@ -36,17 +64,17 @@ impl CpuBackend {
                 .build()?
         };
 
-        let path_obj = Path::new(path);
-        let mut results = Vec::new();
-
         if path_obj.is_file() {
-            if let Ok(file_results) = self.search_file(&re, &path_obj.to_path_buf()) {
+            if let Ok(file_results) =
+                self.search_file_regex(&re, &path_obj.to_path_buf(), invert_match)
+            {
                 results.extend(file_results);
             }
         } else if path_obj.is_dir() {
             for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
                 if entry.file_type().is_file()
-                    && let Ok(file_results) = self.search_file(&re, &entry.path().to_path_buf())
+                    && let Ok(file_results) =
+                        self.search_file_regex(&re, &entry.path().to_path_buf(), invert_match)
                 {
                     results.extend(file_results);
                 }
@@ -56,10 +84,11 @@ impl CpuBackend {
         Ok(results)
     }
 
-    fn search_file(
+    fn search_file_memmem(
         &self,
-        re: &regex::bytes::Regex,
+        pattern: &[u8],
         path: &PathBuf,
+        invert_match: bool,
     ) -> anyhow::Result<Vec<(usize, String)>> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
@@ -71,7 +100,11 @@ impl CpuBackend {
         for (i, &byte) in mmap.iter().enumerate() {
             if byte == b'\n' {
                 let line_bytes = &mmap[start..i];
-                if re.is_match(line_bytes)
+                let is_match = memmem::find(line_bytes, pattern).is_some();
+                let should_include = if invert_match { !is_match } else { is_match };
+
+                if should_include
+                    && !line_bytes.is_empty()
                     && let Ok(line_str) = std::str::from_utf8(line_bytes)
                 {
                     results.push((line_num, line_str.to_string()));
@@ -83,7 +116,57 @@ impl CpuBackend {
 
         if start < mmap.len() {
             let line_bytes = &mmap[start..];
-            if re.is_match(line_bytes)
+            let is_match = memmem::find(line_bytes, pattern).is_some();
+            let should_include = if invert_match { !is_match } else { is_match };
+
+            if should_include
+                && !line_bytes.is_empty()
+                && let Ok(line_str) = std::str::from_utf8(line_bytes)
+            {
+                results.push((line_num, line_str.to_string()));
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn search_file_regex(
+        &self,
+        re: &regex::bytes::Regex,
+        path: &PathBuf,
+        invert_match: bool,
+    ) -> anyhow::Result<Vec<(usize, String)>> {
+        let file = File::open(path)?;
+        let mmap = unsafe { MmapOptions::new().map(&file)? };
+
+        let mut results = Vec::new();
+        let mut line_num = 1;
+        let mut start = 0;
+
+        for (i, &byte) in mmap.iter().enumerate() {
+            if byte == b'\n' {
+                let line_bytes = &mmap[start..i];
+                let is_match = re.is_match(line_bytes);
+                let should_include = if invert_match { !is_match } else { is_match };
+
+                if should_include
+                    && !line_bytes.is_empty()
+                    && let Ok(line_str) = std::str::from_utf8(line_bytes)
+                {
+                    results.push((line_num, line_str.to_string()));
+                }
+                start = i + 1;
+                line_num += 1;
+            }
+        }
+
+        if start < mmap.len() {
+            let line_bytes = &mmap[start..];
+            let is_match = re.is_match(line_bytes);
+            let should_include = if invert_match { !is_match } else { is_match };
+
+            if should_include
+                && !line_bytes.is_empty()
                 && let Ok(line_str) = std::str::from_utf8(line_bytes)
             {
                 results.push((line_num, line_str.to_string()));
@@ -108,14 +191,19 @@ impl CpuBackend {
         if fixed_strings && !ignore_case {
             let pat_bytes = pattern.as_bytes();
             if path_obj.is_file() {
-                if let Ok(count) = self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match) {
+                if let Ok(count) =
+                    self.count_file_memmem(pat_bytes, &path_obj.to_path_buf(), invert_match)
+                {
                     total_count += count;
                 }
             } else if path_obj.is_dir() {
                 for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
                     if entry.file_type().is_file()
-                        && let Ok(count) =
-                            self.count_file_memmem(pat_bytes, &entry.path().to_path_buf(), invert_match)
+                        && let Ok(count) = self.count_file_memmem(
+                            pat_bytes,
+                            &entry.path().to_path_buf(),
+                            invert_match,
+                        )
                     {
                         total_count += count;
                     }
@@ -141,7 +229,8 @@ impl CpuBackend {
         } else if path_obj.is_dir() {
             for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
                 if entry.file_type().is_file()
-                    && let Ok(count) = self.count_file_regex(&re, &entry.path().to_path_buf(), invert_match)
+                    && let Ok(count) =
+                        self.count_file_regex(&re, &entry.path().to_path_buf(), invert_match)
                 {
                     total_count += count;
                 }
@@ -151,7 +240,12 @@ impl CpuBackend {
         Ok(total_count)
     }
 
-    fn count_file_memmem(&self, pattern: &[u8], path: &PathBuf, invert_match: bool) -> anyhow::Result<usize> {
+    fn count_file_memmem(
+        &self,
+        pattern: &[u8],
+        path: &PathBuf,
+        invert_match: bool,
+    ) -> anyhow::Result<usize> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
@@ -169,7 +263,12 @@ impl CpuBackend {
         Ok(count)
     }
 
-    fn count_file_regex(&self, re: &regex::bytes::Regex, path: &PathBuf, invert_match: bool) -> anyhow::Result<usize> {
+    fn count_file_regex(
+        &self,
+        re: &regex::bytes::Regex,
+        path: &PathBuf,
+        invert_match: bool,
+    ) -> anyhow::Result<usize> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
