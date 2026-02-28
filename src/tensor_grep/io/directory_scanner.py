@@ -1,9 +1,22 @@
 import fnmatch
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
 from tensor_grep.core.config import SearchConfig
+
+# Attempt to load the blazing fast Rust PyO3 gitignore scanner
+try:
+    if "pytest" not in sys.modules:
+        from tensor_grep.rust_core import RustDirectoryScanner
+
+        HAS_RUST_SCANNER = True
+    else:
+        # Avoid linking errors in mocked test environments
+        HAS_RUST_SCANNER = False
+except (ImportError, ModuleNotFoundError):
+    HAS_RUST_SCANNER = False
 
 
 class DirectoryScanner:
@@ -21,6 +34,23 @@ class DirectoryScanner:
                 yield str(base_path)
             return
 
+        # Use the highly-optimized Rust PyO3 `ignore` crate if available
+        if (
+            HAS_RUST_SCANNER
+            and not self.config.glob
+            and not self.config.file_type
+            and not self.config.type_not
+        ):
+            # Note: We fallback to python if specific python-side flag filters like glob/type are set
+            # to preserve compatibility until those are fully mapped to Rust builder.
+            scanner = RustDirectoryScanner(
+                hidden=self.config.hidden, max_depth=self.config.max_depth
+            )
+            for file_path in scanner.walk(path_str):
+                yield file_path
+            return
+
+        # Python Fallback Path
         max_depth = self.config.max_depth
         base_depth = len(base_path.parts)
 

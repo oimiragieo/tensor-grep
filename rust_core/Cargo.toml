@@ -23,6 +23,7 @@ arrow-array = "55.0.0"
 arrow-buffer = "55.0.0"
 arrow-schema = "55.0.0"
 pyo3-arrow = "0.9.0"
+ignore = "0.4.25"
 
 [[bin]]
 name = "tg"
