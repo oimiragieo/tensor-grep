@@ -13,6 +13,8 @@ class TestCLIWithoutGPU:
             capture_output=True,
             text=True,
         )
+        print("STDOUT:", result.stdout)
+        print("STDERR:", result.stderr)
         assert result.returncode == 0
         assert "ERROR" in result.stdout
 
