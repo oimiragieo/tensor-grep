@@ -44,13 +44,21 @@ class TestMemoryManager:
         assert manager.should_use_pinned_memory() is False
 
     @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
-    def test_should_handle_zero_vram_gracefully(self, mock_detect):
+    @patch("psutil.virtual_memory")
+    @patch("os.cpu_count")
+    def test_should_handle_zero_vram_gracefully(self, mock_cpu_count, mock_virtual_memory, mock_detect):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = False
         mock_detect.return_value = mock_instance
+        
+        mock_cpu_count.return_value = 8
+        mock_mem = MagicMock()
+        mock_mem.total = 16 * 1024 * 1024 * 1024  # 16 GB
+        mock_virtual_memory.return_value = mock_mem
 
         manager = MemoryManager()
-        assert manager.get_recommended_chunk_size_mb(0) == 0
+        # chunk size = max(256, min(16384 * 0.4 / 8, 1024)) = max(256, min(819.2, 1024)) = 819
+        assert manager.get_recommended_chunk_size_mb(0) == 819
         assert manager.get_vram_budget_mb(0) == 0
 
     @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
