@@ -154,14 +154,19 @@ class CuDFBackend(ComputeBackend):
             try:
                 import pyarrow as pa
 
+                from tensor_grep.core.hardware.memory_manager import MemoryManager
                 from tensor_grep.rust_core import read_mmap_to_arrow_chunked
 
-                # Assume chunks are split across multiple GPUs or just chunked for one GPU.
-                # If we have multiple GPUs, we can use ProcessPoolExecutor.
-                # If it's a single GPU but chunked to prevent OOM, we can process sequentially or parallelly.
+                # Dynamically calculate VRAM chunk sizes to prevent CUDA Out-Of-Memory exceptions
+                memory_manager = MemoryManager()
+                # Default to 80% of free VRAM if NVML is available, otherwise fallback to configured size
+                vram_budget = memory_manager.get_vram_budget_mb()
 
-                # Since we already have the rust core returning a list of PyCapsules mapped cleanly:
-                chunk_bytes = self.chunk_sizes_mb[0] * 1024 * 1024
+                if vram_budget > 0:
+                    chunk_bytes = vram_budget * 1024 * 1024
+                else:
+                    chunk_bytes = self.chunk_sizes_mb[0] * 1024 * 1024
+
                 if chunk_bytes == 0:
                     chunk_bytes = 1024 * 1024
 
@@ -190,6 +195,12 @@ class CuDFBackend(ComputeBackend):
                         )
 
                     line_offset += chunk_lines_count
+
+                    # Force VRAM cleanup before loading the next chunk
+                    del series
+                    del matched
+                    del mask
+                    cudf.core.buffer.acquire_spill_lock()
 
             except (ImportError, Exception):
                 # Fallback to pure Python multi-processing CPU mapping
