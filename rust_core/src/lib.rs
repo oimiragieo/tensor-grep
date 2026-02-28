@@ -3,7 +3,6 @@ pub mod backend_cpu;
 pub mod backend_gpu;
 pub mod cli;
 pub mod mmap_arrow;
-pub mod scanner;
 
 use crate::backend_cpu::CpuBackend;
 use arrow_array::Array;
@@ -11,7 +10,6 @@ use arrow_array::StringArray;
 use mmap_arrow::create_arrow_string_array_from_mmap;
 use pyo3::prelude::*;
 use pyo3_arrow::error::PyArrowResult;
-use scanner::RustDirectoryScanner;
 use std::sync::Arc;
 
 /// Reads a file into a zero-copy Arrow StringArray and exports it as a PyCapsule
@@ -135,7 +133,6 @@ impl RustBackend {
 #[pymodule]
 fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustBackend>()?;
-    m.add_class::<RustDirectoryScanner>()?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow, m)?)?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow_chunked, m)?)?;
     Ok(())
