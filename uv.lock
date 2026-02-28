@@ -1247,10 +1247,38 @@ wheels = [
 
 [[package]]
 name = "importlib-metadata"
+version = "8.4.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.12' and platform_machine == 'aarch64'",
+    "python_full_version < '3.12' and platform_machine == 'x86_64'",
+    "python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'x86_64'",
+]
+dependencies = [
+    { name = "zipp", marker = "python_full_version < '3.12'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c0/bd/fa8ce65b0a7d4b6d143ec23b0f5fd3f7ab80121078c465bc02baeaab22dc/importlib_metadata-8.4.0.tar.gz", hash = "sha256:9a547d3bc3608b025f93d403fdd1aae741c24fbb8314df4b155675742ce303c5", size = 54320, upload-time = "2024-08-20T17:11:42.348Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/14/362d31bf1076b21e1bcdcb0dc61944822ff263937b804a79231df2774d28/importlib_metadata-8.4.0-py3-none-any.whl", hash = "sha256:66f342cc6ac9818fc6ff340576acd24d65ba0b3efabb2b4ac08b598965a4a2f1", size = 26269, upload-time = "2024-08-20T17:11:41.102Z" },
+]
+
+[[package]]
+name = "importlib-metadata"
 version = "8.7.1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and platform_machine == 'aarch64'",
+    "python_full_version == '3.13.*' and platform_machine == 'aarch64'",
+    "python_full_version == '3.12.*' and platform_machine == 'aarch64'",
+    "python_full_version >= '3.14' and platform_machine == 'x86_64'",
+    "python_full_version == '3.13.*' and platform_machine == 'x86_64'",
+    "python_full_version == '3.12.*' and platform_machine == 'x86_64'",
+    "python_full_version >= '3.14' and platform_machine != 'aarch64' and platform_machine != 'x86_64'",
+    "python_full_version == '3.13.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64'",
+    "python_full_version == '3.12.*' and platform_machine != 'aarch64' and platform_machine != 'x86_64'",
+]
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version >= '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/49/3b30cad09e7771a4982d9975a8cbf64f00d4a1ececb53297f1d9a7be1b10/importlib_metadata-8.7.1.tar.gz", hash = "sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb", size = 57107, upload-time = "2025-12-21T10:00:19.278Z" }
 wheels = [
@@ -2248,7 +2276,8 @@ name = "opentelemetry-api"
 version = "1.39.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "importlib-metadata" },
+    { name = "importlib-metadata", version = "8.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "importlib-metadata", version = "8.7.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/97/b9/3161be15bb8e3ad01be8be5a968a9237c3027c5be504362ff800fca3e442/opentelemetry_api-1.39.1.tar.gz", hash = "sha256:fbde8c80e1b937a2c61f20347e91c0c18a1940cecf012d62e65a7caf08967c9c", size = 65767, upload-time = "2025-12-11T13:32:39.182Z" }
@@ -3642,7 +3671,7 @@ name = "tensor-grep"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
-    { name = "importlib-metadata", marker = "python_full_version < '3.12'" },
+    { name = "importlib-metadata", version = "8.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "mcp" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp" },
@@ -3692,7 +3721,7 @@ nlp = [
 requires-dist = [
     { name = "cudf-cu12", marker = "extra == 'gpu'" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
-    { name = "importlib-metadata", marker = "python_full_version < '3.12'", specifier = ">=8.5.0" },
+    { name = "importlib-metadata", marker = "python_full_version < '3.12'", specifier = "<8.5.0" },
     { name = "kvikio-cu12", marker = "extra == 'gpu'" },
     { name = "mcp", specifier = ">=1.2.0" },
     { name = "mutmut", marker = "extra == 'dev'", specifier = ">=3.0" },
