@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.3.3 (2026-03-01)
+
+### Bug Fixes
+
+- **cli**: Make tg upgrade work without pip in uv-managed envs
+  ([`3b60ae1`](https://github.com/oimiragieo/tensor-grep/commit/3b60ae16eb27ded76a9f7b89c233a9c3119625f4))
+
+### Documentation
+
+- **benchmarks**: Refresh README and paper with 0.3.1 benchmark pass
+  ([`d87601c`](https://github.com/oimiragieo/tensor-grep/commit/d87601ca1cc6d75721afa2f0a8c2b1a99c054b32))
+
+
 ## v0.3.2 (2026-03-01)
 
 ### Bug Fixes
