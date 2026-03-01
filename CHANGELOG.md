@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## v0.3.1 (2026-03-01)
+
+### Bug Fixes
+
+- **ci/gpu**: Make cyBERT Triton fallback unit test deterministic when `tritonclient` is installed but no Triton server is running
+
+- **installer**: Replace stale `tg` shell aliases (PowerShell/Bash) and force current-session alias to the fresh install path
+
+### Features
+
+- **router**: Prioritize direct `rg` passthrough for standard text search, then Rust backend, then GPU only for large+complex workloads
+
+### Documentation
+
+- Update installer/version behavior notes and troubleshooting guidance for stale `tg` command resolution
+
 
 ## v0.3.0 (2026-03-01)
 

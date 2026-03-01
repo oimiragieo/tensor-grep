@@ -98,10 +98,17 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 ```
 
 Installer defaults and channels:
-- Default behavior installs the current pinned stable release (`tensor-grep==0.2.2` as of this release train).
+- Default behavior installs the current pinned stable release (`tensor-grep==0.3.0` as of this release train).
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=0.2.1`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
+- Installers now replace stale `tg` aliases in your shell profile and set a live session alias to the newly installed binary.
+
+If `tg --version` still reports an older version, check command resolution:
+```powershell
+Get-Command tg
+where.exe tg
+```
 
 Examples:
 ```powershell

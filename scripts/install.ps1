@@ -5,7 +5,7 @@
 
 $ErrorActionPreference = "Stop"
 $originalPath = (Get-Location).Path
-$defaultVersion = "0.2.2"
+$defaultVersion = "0.3.0"
 $installChannel = if ($env:TENSOR_GREP_CHANNEL) { $env:TENSOR_GREP_CHANNEL } else { "stable" }
 $requestedVersion = $env:TENSOR_GREP_VERSION
 
@@ -97,17 +97,22 @@ try {
         New-Item -ItemType File -Path $profilePath -Force | Out-Null
     }
 
-    $aliasCommand = "Set-Alias -Name tg -Value `"$installDir\.venv\Scripts\tg.exe`""
+    $aliasCommand = "Set-Alias -Name tg -Value `"$installDir\.venv\Scripts\tg.exe`" -Scope Global"
     $profileContent = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+    $aliasPattern = '(?m)^\s*Set-Alias\s+-Name\s+tg\s+-Value\s+.*$'
 
-    if ($profileContent -notmatch "Set-Alias -Name tg") {
-        Add-Content -Path $profilePath -Value "`n# Tensor-Grep Alias`n$aliasCommand"
-        Write-Host "`nSuccessfully installed tensor-grep!"
-        Write-Host "Alias 'tg' added to your PowerShell profile."
-        Write-Host "Please restart your terminal or run: . \$PROFILE"
+    if ($profileContent -match $aliasPattern) {
+        $updatedProfile = [regex]::Replace($profileContent, $aliasPattern, $aliasCommand)
+        Set-Content -Path $profilePath -Value $updatedProfile
+        Write-Host "`nSuccessfully installed tensor-grep! Updated existing tg alias in profile."
     } else {
-        Write-Host "`nSuccessfully installed tensor-grep! Alias 'tg' already exists."
+        Add-Content -Path $profilePath -Value "`n# Tensor-Grep Alias`n$aliasCommand"
+        Write-Host "`nSuccessfully installed tensor-grep! Added tg alias to profile."
     }
+
+    # Ensure current session resolves tg to the newly installed binary immediately.
+    Set-Alias -Name tg -Value "$installDir\.venv\Scripts\tg.exe" -Scope Global -Force
+    Write-Host "Current session alias now points to: $((Get-Command tg).Source)"
 
     Write-Host "=========================================================="
     Write-Host " Installation complete! Try running: tg search `"ERROR`" ."

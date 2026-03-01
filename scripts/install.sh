@@ -3,7 +3,7 @@
 set -e
 
 ORIGINAL_DIR="$(pwd)"
-DEFAULT_VERSION="0.2.2"
+DEFAULT_VERSION="0.3.0"
 INSTALL_CHANNEL="${TENSOR_GREP_CHANNEL:-stable}"
 REQUESTED_VERSION="${TENSOR_GREP_VERSION:-}"
 
@@ -102,15 +102,22 @@ fi
 
 ALIAS_CMD="alias tg='$INSTALL_DIR/.venv/bin/tg'"
 
-if ! grep -q "alias tg=" "$PROFILE_FILE"; then
+if [ -f "$PROFILE_FILE" ] && grep -qE '^[[:space:]]*alias[[:space:]]+tg=' "$PROFILE_FILE"; then
+    # Replace any existing tg alias to avoid stale paths/versions.
+    TMP_PROFILE="${PROFILE_FILE}.tg.tmp"
+    sed -E "s|^[[:space:]]*alias[[:space:]]+tg=.*$|$ALIAS_CMD|" "$PROFILE_FILE" > "$TMP_PROFILE"
+    mv "$TMP_PROFILE" "$PROFILE_FILE"
+    echo -e "\nSuccessfully installed tensor-grep! Updated existing tg alias in $PROFILE_FILE."
+else
     echo -e "\n# Tensor-Grep Alias" >> "$PROFILE_FILE"
     echo "$ALIAS_CMD" >> "$PROFILE_FILE"
-    echo -e "\nSuccessfully installed tensor-grep!"
-    echo "Alias 'tg' added to $PROFILE_FILE."
-    echo "Please restart your terminal or run: source $PROFILE_FILE"
-else
-    echo -e "\nSuccessfully installed tensor-grep! Alias 'tg' already exists in $PROFILE_FILE."
+    echo -e "\nSuccessfully installed tensor-grep! Added tg alias to $PROFILE_FILE."
 fi
+
+# Ensure the current shell session also resolves tg to the fresh install.
+alias tg="$INSTALL_DIR/.venv/bin/tg"
+echo "Current session alias now points to: $(command -v tg)"
+echo "If your shell doesn't apply aliases in non-interactive mode, run: source $PROFILE_FILE"
 
 echo "=========================================================="
 echo " Installation complete! Try running: tg search \"ERROR\" ."

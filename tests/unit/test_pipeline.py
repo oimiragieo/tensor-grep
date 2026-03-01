@@ -52,7 +52,11 @@ class TestPipeline:
         with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
             mock.return_value.is_available.return_value = True
             pipeline = Pipeline(force_cpu=False)
-            assert pipeline.backend.__class__.__name__ in ("MagicMock", "RipgrepBackend")
+            assert pipeline.backend.__class__.__name__ in (
+                "MagicMock",
+                "RipgrepBackend",
+                "RustCoreBackend",
+            )
 
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_fallback_to_cpu_when_no_gpu(self, mock_mem):

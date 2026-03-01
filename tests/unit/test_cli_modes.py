@@ -142,7 +142,9 @@ def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):
         calls["pattern"] = pattern
         return 0
 
-    monkeypatch.setattr("tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available", lambda self: True)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available", lambda self: True
+    )
     monkeypatch.setattr(
         "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
         _fake_passthrough,

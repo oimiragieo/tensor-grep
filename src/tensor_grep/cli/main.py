@@ -3,7 +3,7 @@ import sys
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import typer
 
@@ -563,12 +563,15 @@ def search_command(
 
     # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
-        span_ctx = tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
+        rg_backend = cast(RipgrepBackend, backend)
+        span_ctx = (
+            tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
+        )
         with span_ctx as span, nvtx_range("search.file", color="cyan"):
             if span is not None:
                 span.set_attribute("backend", backend.__class__.__name__)
                 span.set_attribute("path_count", len(paths_to_search))
-            result = backend.search(paths_to_search, pattern, config=config)
+            result = rg_backend.search(paths_to_search, pattern, config=config)
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
         all_results.matches.extend(result.matches)
