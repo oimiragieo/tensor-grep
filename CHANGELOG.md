@@ -1,20 +1,25 @@
 # CHANGELOG
 
+
 ## v0.3.1 (2026-03-01)
 
 ### Bug Fixes
 
-- **ci/gpu**: Make cyBERT Triton fallback unit test deterministic when `tritonclient` is installed but no Triton server is running
-
-- **installer**: Replace stale `tg` shell aliases (PowerShell/Bash) and force current-session alias to the fresh install path
-
-### Features
-
-- **router**: Prioritize direct `rg` passthrough for standard text search, then Rust backend, then GPU only for large+complex workloads
+- **ci**: Stabilize routing tests and installer alias/version resolution
+  ([`5355390`](https://github.com/oimiragieo/tensor-grep/commit/53553903abe5a95b775606fbfb0bc6399d51fec2))
 
 ### Documentation
 
-- Update installer/version behavior notes and troubleshooting guidance for stale `tg` command resolution
+- Refresh benchmark results from full benchmark pass
+  ([`91d4c4b`](https://github.com/oimiragieo/tensor-grep/commit/91d4c4bc5e4109215211d6afe45dbeb666811121))
+
+### Performance Improvements
+
+- Add ripgrep passthrough, benchmark regression gates, and observability hooks
+  ([`8c67f14`](https://github.com/oimiragieo/tensor-grep/commit/8c67f140072acac597374585408f4d8aef8a158b))
+
+- **router**: Prefer rg passthrough then rust with GPU heuristics
+  ([`21bc9a5`](https://github.com/oimiragieo/tensor-grep/commit/21bc9a5068446b803465a1bf70a1dfbf6f681ccb))
 
 
 ## v0.3.0 (2026-03-01)
