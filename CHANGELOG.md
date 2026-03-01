@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.3.4 (2026-03-01)
+
+### Bug Fixes
+
+- **installer**: Add linux/macos tg path shims and profile path wiring
+  ([`6796338`](https://github.com/oimiragieo/tensor-grep/commit/679633836e6b8f9a87dad8f0a99c4c7b3a81fb7a))
+
+### Chores
+
+- **deps**: Remove invalid typer[all] extra
+  ([`ef89e9b`](https://github.com/oimiragieo/tensor-grep/commit/ef89e9b4fda81dfcb68203509a6242e28f7bc4a6))
+
+### Continuous Integration
+
+- **release**: Publish PyPI directly from CI with OIDC and wheel matrix
+  ([`34d256c`](https://github.com/oimiragieo/tensor-grep/commit/34d256c8d5f79e73d53b2640123a302a271be345))
+
+
 ## v0.3.3 (2026-03-01)
 
 ### Bug Fixes
