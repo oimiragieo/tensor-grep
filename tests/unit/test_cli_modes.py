@@ -1,3 +1,4 @@
+import subprocess
 from dataclasses import dataclass
 
 from typer.testing import CliRunner
@@ -156,3 +157,53 @@ def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):
     assert result.exit_code == 0
     assert calls["pattern"] == "ERROR"
     assert calls["paths"] == ["."]
+
+
+def test_upgrade_uses_uv_when_available(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        raise AssertionError("pip fallback should not be used when uv succeeds")
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "uv"
+    assert "Successfully upgraded tensor-grep via uv!" in result.stdout
+
+
+def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
+    calls: list[list[str]] = []
+    pip_attempts = {"count": 0}
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            raise FileNotFoundError("uv not found")
+        if cmd[:3] == ["python", "-m", "ensurepip"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="ensurepip ok", stderr="")
+        if cmd[:3] == ["python", "-m", "pip"]:
+            pip_attempts["count"] += 1
+            if pip_attempts["count"] == 1:
+                raise subprocess.CalledProcessError(
+                    returncode=1, cmd=cmd, stderr="No module named pip"
+                )
+            return subprocess.CompletedProcess(cmd, 0, stdout="Successfully installed", stderr="")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert any(cmd[:3] == ["python", "-m", "ensurepip"] for cmd in calls)
+    assert pip_attempts["count"] == 2
+    assert "Successfully upgraded tensor-grep via pip+ensurepip!" in result.stdout

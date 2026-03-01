@@ -802,27 +802,62 @@ def upgrade() -> None:
     import subprocess
     import sys
 
+    def _run_upgrade() -> tuple[subprocess.CompletedProcess[str], str]:
+        errors: list[str] = []
+        pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"]
+        attempts: list[tuple[str, list[str]]] = [
+            (
+                "uv",
+                ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "tensor-grep"],
+            ),
+            ("pip", pip_cmd),
+        ]
+        for label, cmd in attempts:
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                return result, label
+            except FileNotFoundError as e:
+                errors.append(f"{label}: {e}")
+            except subprocess.CalledProcessError as e:
+                stderr = (e.stderr or "").strip()
+                stdout = (e.stdout or "").strip()
+                combined = stderr or stdout or str(e)
+                errors.append(f"{label}: {combined}")
+                if label == "pip" and "No module named pip" in combined:
+                    try:
+                        subprocess.run(
+                            [sys.executable, "-m", "ensurepip", "--upgrade"],
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                        result = subprocess.run(pip_cmd, capture_output=True, text=True, check=True)
+                        return result, "pip+ensurepip"
+                    except FileNotFoundError as ee:
+                        errors.append(f"ensurepip: {ee}")
+                    except subprocess.CalledProcessError as ee:
+                        ee_stderr = (ee.stderr or "").strip()
+                        ee_stdout = (ee.stdout or "").strip()
+                        errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
+        raise RuntimeError("; ".join(errors))
+
     typer.echo("Upgrading tensor-grep to the latest version...")
 
     try:
-        # We use sys.executable to ensure we're upgrading in the current python environment
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"],
-            capture_output=True,
-            text=True,
-            check=True,
+        result, method = _run_upgrade()
+        output = "\n".join(
+            part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )
-
-        # Check if actually upgraded or already up to date
-        if "Requirement already satisfied" in result.stdout:
+        if "Requirement already satisfied" in output:
             typer.echo("tensor-grep is already up to date!")
         else:
-            typer.echo("Successfully upgraded tensor-grep!")
-            typer.echo(result.stdout)
+            typer.echo(f"Successfully upgraded tensor-grep via {method}!")
+            if output:
+                typer.echo(output)
 
-    except subprocess.CalledProcessError as e:
+    except RuntimeError as e:
         typer.echo("Error occurred while upgrading tensor-grep.", err=True)
-        typer.echo(e.stderr, err=True)
+        typer.echo(str(e), err=True)
         sys.exit(1)
 
 
