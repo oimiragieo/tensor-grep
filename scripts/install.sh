@@ -2,6 +2,11 @@
 
 set -e
 
+ORIGINAL_DIR="$(pwd)"
+DEFAULT_VERSION="0.2.2"
+INSTALL_CHANNEL="${TENSOR_GREP_CHANNEL:-stable}"
+REQUESTED_VERSION="${TENSOR_GREP_VERSION:-}"
+
 echo "=========================================================="
 echo "           TENSOR-GREP LINUX/MACOS INSTALLER              "
 echo "=========================================================="
@@ -43,16 +48,43 @@ uv venv --python 3.12 .venv
 
 # 4. Install PyTorch bindings and the tool
 echo "[4/4] Installing tensor-grep and ML bindings (this may take a few minutes for CUDA/ROCm)..."
+if [ "$INSTALL_CHANNEL" = "main" ]; then
+    PKG_SPEC="git+https://github.com/oimiragieo/tensor-grep.git@main"
+elif [ -n "$REQUESTED_VERSION" ]; then
+    PKG_SPEC="tensor-grep==$REQUESTED_VERSION"
+else
+    PKG_SPEC="tensor-grep==$DEFAULT_VERSION"
+fi
+echo "      Install source: $INSTALL_CHANNEL"
+if [ "$INSTALL_CHANNEL" = "stable" ]; then
+    echo "      Package: $PKG_SPEC"
+fi
+
 if [ "$HARDWARE_FLAG" != "cpu" ]; then
     uv pip install torch torchvision torchaudio $INDEX_URL --python .venv/bin/python
     # For linux, we also install kvikio and cudf dependencies if NVIDIA
     if [ "$HARDWARE_FLAG" == "nvidia" ]; then
-        uv pip install "tensor-grep[gpu,nlp,ast]" --python .venv/bin/python
+        if [ "$INSTALL_CHANNEL" = "main" ]; then
+            PKG_REQUIREMENT="tensor-grep[gpu,nlp,ast] @ $PKG_SPEC"
+        else
+            PKG_REQUIREMENT="$PKG_SPEC[gpu,nlp,ast]"
+        fi
+        uv pip install "$PKG_REQUIREMENT" --python .venv/bin/python
     else
-        uv pip install "tensor-grep[gpu-win,nlp,ast]" --python .venv/bin/python
+        if [ "$INSTALL_CHANNEL" = "main" ]; then
+            PKG_REQUIREMENT="tensor-grep[gpu-win,nlp,ast] @ $PKG_SPEC"
+        else
+            PKG_REQUIREMENT="$PKG_SPEC[gpu-win,nlp,ast]"
+        fi
+        uv pip install "$PKG_REQUIREMENT" --python .venv/bin/python
     fi
 else
-    uv pip install "tensor-grep[ast,nlp]" --python .venv/bin/python
+    if [ "$INSTALL_CHANNEL" = "main" ]; then
+        PKG_REQUIREMENT="tensor-grep[ast,nlp] @ $PKG_SPEC"
+    else
+        PKG_REQUIREMENT="$PKG_SPEC[ast,nlp]"
+    fi
+    uv pip install "$PKG_REQUIREMENT" --python .venv/bin/python
 fi
 
 # Ensure AST runtime grammars are present explicitly across environments.
@@ -82,4 +114,8 @@ fi
 
 echo "=========================================================="
 echo " Installation complete! Try running: tg search \"ERROR\" ."
+./.venv/bin/tg --version || true
 echo "=========================================================="
+
+cd "$ORIGINAL_DIR"
+echo "Returned to original directory: $ORIGINAL_DIR"

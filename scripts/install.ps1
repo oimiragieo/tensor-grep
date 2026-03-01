@@ -5,6 +5,9 @@
 
 $ErrorActionPreference = "Stop"
 $originalPath = (Get-Location).Path
+$defaultVersion = "0.2.2"
+$installChannel = if ($env:TENSOR_GREP_CHANNEL) { $env:TENSOR_GREP_CHANNEL } else { "stable" }
+$requestedVersion = $env:TENSOR_GREP_VERSION
 
 Write-Host "=========================================================="
 Write-Host "           TENSOR-GREP WINDOWS INSTALLER                  "
@@ -55,12 +58,34 @@ try {
 
     # 4. Install PyTorch bindings and the tool
     Write-Host "[4/4] Installing tensor-grep and ML bindings (this may take a few minutes for CUDA)..."
+    $pkgSpec = if ($installChannel -eq "main") {
+        "git+https://github.com/oimiragieo/tensor-grep.git@main"
+    } elseif ($requestedVersion) {
+        "tensor-grep==$requestedVersion"
+    } else {
+        "tensor-grep==$defaultVersion"
+    }
+    Write-Host "      Install source: $installChannel"
+    if ($installChannel -eq "stable") {
+        Write-Host "      Package: $pkgSpec"
+    }
+
     if ($hardwareFlag -ne "cpu") {
         # Install PyTorch with specific index first to ensure correct wheel resolution
         & $uvPath pip install torch torchvision torchaudio $indexArg $indexUrl --python "$installDir\.venv\Scripts\python.exe"
-        & $uvPath pip install "tensor-grep[gpu-win,nlp,ast]" --python "$installDir\.venv\Scripts\python.exe"
+        $pkgRequirement = if ($installChannel -eq "main") {
+            "tensor-grep[gpu-win,nlp,ast] @ $pkgSpec"
+        } else {
+            "$pkgSpec[gpu-win,nlp,ast]"
+        }
+        & $uvPath pip install $pkgRequirement --python "$installDir\.venv\Scripts\python.exe"
     } else {
-        & $uvPath pip install "tensor-grep[ast,nlp]" --python "$installDir\.venv\Scripts\python.exe"
+        $pkgRequirement = if ($installChannel -eq "main") {
+            "tensor-grep[ast,nlp] @ $pkgSpec"
+        } else {
+            "$pkgSpec[ast,nlp]"
+        }
+        & $uvPath pip install $pkgRequirement --python "$installDir\.venv\Scripts\python.exe"
     }
 
     # Ensure AST runtime grammars are present explicitly across environments.
@@ -86,6 +111,7 @@ try {
 
     Write-Host "=========================================================="
     Write-Host " Installation complete! Try running: tg search `"ERROR`" ."
+    & "$installDir\.venv\Scripts\tg.exe" --version
     Write-Host "=========================================================="
 }
 finally {
