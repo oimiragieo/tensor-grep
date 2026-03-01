@@ -1,4 +1,5 @@
 import logging
+import re
 from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
@@ -23,6 +24,9 @@ class CPUBackend(ComputeBackend):
         path = Path(file_path)
         if not path.exists() or not path.is_file():
             return SearchResult(matches=[], total_files=0, total_matches=0)
+
+        if config.ltl:
+            return self._search_ltl(path, pattern, config)
 
         # ReDoS Protection:
         # Instead of using Python's standard `re` module (which uses backtracking and is vulnerable
@@ -82,8 +86,6 @@ class CPUBackend(ComputeBackend):
             logger.warning(
                 "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
             )
-
-        import re
 
         matches = []
         flags = 0
@@ -190,4 +192,62 @@ class CPUBackend(ComputeBackend):
 
         return SearchResult(
             matches=matches, total_files=1 if matches else 0, total_matches=total_matches_count
+        )
+
+    @staticmethod
+    def _decode_line(line_bytes: bytes) -> str:
+        try:
+            return line_bytes.decode("utf-8").rstrip("\n\r")
+        except UnicodeDecodeError:
+            try:
+                return line_bytes.decode("latin-1").rstrip("\n\r")
+            except Exception:
+                return line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
+
+    @staticmethod
+    def _compile_ltl(pattern: str, flags: int) -> tuple[re.Pattern[str], re.Pattern[str]]:
+        # Supported grammar (minimal v1): A -> eventually B
+        ltl_match = re.match(r"^\s*(.+?)\s*->\s*eventually\s+(.+?)\s*$", pattern, re.IGNORECASE)
+        if ltl_match is None:
+            raise ValueError("Unsupported LTL query. Use: 'A -> eventually B'")
+        left_expr, right_expr = ltl_match.group(1), ltl_match.group(2)
+        return re.compile(left_expr, flags), re.compile(right_expr, flags)
+
+    def _search_ltl(self, path: Path, pattern: str, config: SearchConfig) -> SearchResult:
+        flags = 0
+        if config.ignore_case or (config.smart_case and pattern.islower()):
+            flags |= re.IGNORECASE
+
+        left_regex, right_regex = self._compile_ltl(pattern, flags)
+        lines: list[tuple[int, str]] = []
+        with open(path, "rb") as file_obj:
+            for line_idx, line_bytes in enumerate(file_obj, 1):
+                lines.append((line_idx, self._decode_line(line_bytes)))
+
+        matches: list[MatchLine] = []
+        sequence_count = 0
+
+        for idx, (left_line_no, left_text) in enumerate(lines):
+            if left_regex.search(left_text) is None:
+                continue
+            right_match_idx = None
+            for probe in range(idx + 1, len(lines)):
+                if right_regex.search(lines[probe][1]) is not None:
+                    right_match_idx = probe
+                    break
+            if right_match_idx is None:
+                continue
+
+            right_line_no, right_text = lines[right_match_idx]
+            matches.append(MatchLine(line_number=left_line_no, text=left_text, file=str(path)))
+            matches.append(MatchLine(line_number=right_line_no, text=right_text, file=str(path)))
+            sequence_count += 1
+
+            if config.max_count and sequence_count >= config.max_count:
+                break
+
+        return SearchResult(
+            matches=matches,
+            total_files=1 if sequence_count > 0 else 0,
+            total_matches=sequence_count,
         )

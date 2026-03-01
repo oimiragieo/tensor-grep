@@ -125,3 +125,44 @@ class TestCPUBackend:
 
         assert result.total_matches == 0
         assert result.matches == []
+
+    def test_should_match_ltl_eventually_sequence_when_ordered(self, tmp_path):
+        from tensor_grep.core.config import SearchConfig
+
+        log = tmp_path / "ltl.log"
+        log.write_text("INFO boot\nAUTH_FAIL user=a\nINFO retry\nDB_TIMEOUT after auth\n")
+
+        backend = CPUBackend()
+        config = SearchConfig(ltl=True)
+        result = backend.search(str(log), r"AUTH_FAIL -> eventually DB_TIMEOUT", config=config)
+
+        assert result.total_matches == 1
+        assert [m.line_number for m in result.matches] == [2, 4]
+
+    def test_should_not_match_ltl_when_order_is_wrong(self, tmp_path):
+        from tensor_grep.core.config import SearchConfig
+
+        log = tmp_path / "ltl_wrong_order.log"
+        log.write_text("DB_TIMEOUT first\nAUTH_FAIL second\n")
+
+        backend = CPUBackend()
+        config = SearchConfig(ltl=True)
+        result = backend.search(str(log), r"AUTH_FAIL -> eventually DB_TIMEOUT", config=config)
+
+        assert result.total_matches == 0
+        assert result.matches == []
+
+    def test_should_error_for_unsupported_ltl_syntax(self, tmp_path):
+        from tensor_grep.core.config import SearchConfig
+
+        log = tmp_path / "ltl_invalid.log"
+        log.write_text("A\nB\n")
+
+        backend = CPUBackend()
+        config = SearchConfig(ltl=True)
+
+        try:
+            backend.search(str(log), "A UNTIL B", config=config)
+            raise AssertionError("Expected ValueError for invalid LTL expression")
+        except ValueError as exc:
+            assert "Unsupported LTL query" in str(exc)

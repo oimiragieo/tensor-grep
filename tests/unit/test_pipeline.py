@@ -134,3 +134,15 @@ class TestPipeline:
                 "RustCoreBackend",
                 "RipgrepBackend",
             )
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_should_route_ltl_queries_to_cpu_backend(self, mock_rust, mock_rg):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(query_pattern="A -> eventually B", ltl=True),
+        )
+        assert pipeline.backend.__class__.__name__ == "CPUBackend"

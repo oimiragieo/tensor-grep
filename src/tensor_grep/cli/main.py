@@ -391,6 +391,11 @@ def search_command(
         "--lang",
         help="Explicitly define language grammar for --ast (e.g. python, javascript).",
     ),
+    ltl: bool = typer.Option(
+        False,
+        "--ltl",
+        help="Interpret PATTERN as a temporal query (supports: 'A -> eventually B').",
+    ),
 ) -> None:
     """
     Search files for a regex pattern, with GPU acceleration when applicable.
@@ -509,6 +514,7 @@ def search_command(
         format_type=format_type,
         ast=ast,
         lang=lang,
+        ltl=ltl,
         query_pattern=pattern,
     )
 
@@ -519,6 +525,7 @@ def search_command(
     can_passthrough_rg = (
         rg_backend.is_available()
         and not config.ast
+        and not config.ltl
         and not config.force_cpu
         and format_type == "rg"
         and not json

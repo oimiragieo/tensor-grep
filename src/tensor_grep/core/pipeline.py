@@ -23,6 +23,7 @@ class Pipeline:
             or config.after_context
             or config.line_regexp
             or config.word_regexp
+            or config.ltl
         )
 
     @staticmethod
@@ -130,12 +131,10 @@ class Pipeline:
                 or config.after_context
                 or config.line_regexp
                 or config.word_regexp
+                or config.ltl
             ):
-                # Complex flags require ripgrep or pure python CPU backend
-                if rg_available:
-                    self.backend = rg_backend
-                else:
-                    self.backend = CPUBackend()
+                # Context/word/line/LTL semantics are handled in our CPU backend.
+                self.backend = CPUBackend()
             elif rg_available:
                 # Default search path: always delegate to native rg for best end-to-end CLI speed.
                 self.backend = rg_backend
