@@ -71,7 +71,7 @@ fn read_mmap_to_arrow_chunked(
             StringArray::from(string_array.slice(current_idx, slice_len).into_data());
 
         let py_array = pyo3_arrow::PyArray::from_array_ref(Arc::new(sliced_array));
-        
+
         let exported = py_array.to_pyarrow(py)?;
         py_chunks.push(exported.into());
 

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::backend_gpu::{
-    CliFlags, execute_gpu_pipeline, execute_python_module_fallback, should_use_gpu_pipeline,
+    execute_gpu_pipeline, execute_python_module_fallback, should_use_gpu_pipeline, CliFlags,
 };
 
 #[derive(Parser, Debug)]

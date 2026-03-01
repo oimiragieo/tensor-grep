@@ -305,7 +305,11 @@ impl CpuBackend {
             .filter(|line_bytes| !line_bytes.is_empty()) // Prevent counting trailing empty split
             .filter(|line_bytes| {
                 let is_match = memmem::find(line_bytes, pattern).is_some();
-                if invert_match { !is_match } else { is_match }
+                if invert_match {
+                    !is_match
+                } else {
+                    is_match
+                }
             })
             .count();
 
@@ -326,7 +330,11 @@ impl CpuBackend {
             .filter(|line_bytes| !line_bytes.is_empty()) // Prevent counting trailing empty split
             .filter(|line_bytes| {
                 let is_match = re.is_match(line_bytes);
-                if invert_match { !is_match } else { is_match }
+                if invert_match {
+                    !is_match
+                } else {
+                    is_match
+                }
             })
             .count();
 
