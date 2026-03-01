@@ -32,6 +32,8 @@ htmlcov/
 
 # Rust
 rust_core/target/
+rust_core/Cargo.lock
+rustup-init.exe
 
 # Node
 npm/node_modules/
@@ -42,6 +44,7 @@ npm/node_modules/
 *.txt
 benchmarks/corpus/
 ripgrep-*/
+gpu_bench_data/
 
 # Tests
 .hypothesis/
