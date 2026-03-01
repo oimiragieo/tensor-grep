@@ -61,6 +61,9 @@ if ($hardwareFlag -ne "cpu") {
     & $uvPath pip install "tensor-grep[ast,nlp]" --python "$installDir\.venv\Scripts\python.exe"
 }
 
+# Ensure AST runtime grammars are present explicitly across environments.
+& $uvPath pip install tree-sitter tree-sitter-python tree-sitter-javascript --python "$installDir\.venv\Scripts\python.exe"
+
 # 5. Add Alias to User Profile
 $profilePath = $PROFILE
 if (!(Test-Path $profilePath)) {

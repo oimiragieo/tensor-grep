@@ -57,13 +57,19 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-x")
             if config.fixed_strings:
                 cmd.append("-F")
+            if config.no_ignore:
+                cmd.append("--no-ignore")
+            if config.glob:
+                for glob in config.glob:
+                    cmd.extend(["-g", glob])
 
             if config.context is not None:
                 cmd.extend(["-C", str(config.context)])
-            elif config.before_context is not None:
-                cmd.extend(["-B", str(config.before_context)])
-            elif config.after_context is not None:
-                cmd.extend(["-A", str(config.after_context)])
+            else:
+                if config.before_context is not None:
+                    cmd.extend(["-B", str(config.before_context)])
+                if config.after_context is not None:
+                    cmd.extend(["-A", str(config.after_context)])
 
             if config.max_count is not None:
                 cmd.extend(["-m", str(config.max_count)])
@@ -80,6 +86,11 @@ class RipgrepBackend(ComputeBackend):
             result = subprocess.run(
                 cmd, capture_output=True, text=True, check=False, encoding="utf-8"
             )
+            if result.returncode > 1:
+                stderr = result.stderr.strip()
+                raise RuntimeError(
+                    f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
+                )
 
             import json
 

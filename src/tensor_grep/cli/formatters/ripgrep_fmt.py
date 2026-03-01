@@ -12,7 +12,7 @@ class RipgrepFormatter(OutputFormatter):
     def format(self, result: SearchResult) -> str:
         lines = []
 
-        if self.config.count:
+        if self.config.count or self.config.count_matches:
             if result.total_matches > 0 or self.config.include_zero:
                 # Group counts by file to match ripgrep output
                 counts_by_file: dict[str, int] = defaultdict(int)

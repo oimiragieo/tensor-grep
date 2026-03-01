@@ -1,8 +1,11 @@
+import logging
 from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
+
+logger = logging.getLogger(__name__)
 
 
 class CPUBackend(ComputeBackend):
@@ -29,12 +32,31 @@ class CPUBackend(ComputeBackend):
             from tensor_grep.rust_core import RustBackend
 
             rust_backend = RustBackend()
-            rust_results = rust_backend.search(
-                pattern=pattern,
-                path=file_path,
-                ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
-                fixed_strings=config.fixed_strings,
-            )
+            try:
+                rust_results = rust_backend.search(
+                    pattern=pattern,
+                    path=file_path,
+                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
+                    fixed_strings=config.fixed_strings,
+                    invert_match=config.invert_match,
+                )
+            except TypeError:
+                rust_results = rust_backend.search(
+                    pattern=pattern,
+                    path=file_path,
+                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
+                    fixed_strings=config.fixed_strings,
+                )
+
+            # If Rust returns no matches on a file that is not valid UTF-8, fall back to Python
+            # decoding path (latin-1/replace) for compatibility.
+            if not rust_results:
+                try:
+                    Path(file_path).read_text(encoding="utf-8")
+                except UnicodeDecodeError as exc:
+                    raise RuntimeError(
+                        "Rust backend UTF-8 decode mismatch, using Python fallback"
+                    ) from exc
 
             # Since the Rust backend currently just returns `(line_num, string)`, we need to adapt it
             # context lines (like -C 2) aren't fully implemented in the Rust bridging yet, but we will
@@ -49,21 +71,17 @@ class CPUBackend(ComputeBackend):
                     "Rust backend does not support context lines or invert_match yet, fallback to python"
                 )
 
-            # Fallback to python for rust empty responses since sometimes files are encoded in latin-1 and rust regex might fail silently
-            if len(rust_results) == 0:
-                raise Exception(
-                    "Rust backend returned empty result, fallback to python to double check"
-                )
-
             matches = [MatchLine(line_number=r[0], text=r[1], file=file_path) for r in rust_results]
 
             return SearchResult(
                 matches=matches, total_files=1 if matches else 0, total_matches=len(matches)
             )
 
-        except Exception:
+        except Exception as exc:
             # Fallback to python `re` only if `tensor_grep.rust_core` is entirely broken or not supporting the feature
-            pass
+            logger.warning(
+                "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
+            )
 
         import re
 
@@ -167,8 +185,8 @@ class CPUBackend(ComputeBackend):
                     else:
                         if before_lines > 0:
                             before_queue.append((line_idx, line_text))
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(f"CPU backend search failed for {file_path}: {exc}") from exc
 
         return SearchResult(
             matches=matches, total_files=1 if matches else 0, total_matches=total_matches_count

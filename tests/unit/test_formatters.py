@@ -6,6 +6,7 @@ from tensor_grep.cli.formatters.csv_fmt import CsvFormatter
 from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 from tensor_grep.cli.formatters.table_fmt import TableFormatter
+from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
@@ -40,3 +41,9 @@ class TestFormatters:
         rows = list(reader)
         assert rows[0] == ["file", "line_number", "text"]
         assert rows[1] == ["test.log", "2", "ERROR test"]
+
+    def test_count_matches_mode_outputs_count(self):
+        config = SearchConfig(count_matches=True)
+        fmt = RipgrepFormatter(config=config)
+        output = fmt.format(self.result)
+        assert output == "1"

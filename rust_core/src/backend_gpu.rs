@@ -62,7 +62,7 @@ pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> any
         let config_class = config_module.getattr("SearchConfig")?;
 
         // kwargs for config
-        let kwargs = PyDict::new(py);
+        let kwargs = PyDict::new_bound(py);
         kwargs.set_item("count", config.count)?;
         kwargs.set_item("fixed_strings", config.fixed_strings)?;
         kwargs.set_item("invert_match", config.invert_match)?;
@@ -71,7 +71,7 @@ pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> any
         let search_config = config_class.call((), Some(&kwargs))?;
 
         // kwargs for pipeline
-        let pipe_kwargs = PyDict::new(py);
+        let pipe_kwargs = PyDict::new_bound(py);
         pipe_kwargs.set_item("force_cpu", false)?;
         pipe_kwargs.set_item("config", search_config.clone())?;
 

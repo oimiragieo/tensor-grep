@@ -40,12 +40,8 @@ pub fn create_arrow_string_array_from_mmap(filepath: &str) -> anyhow::Result<Str
     // First offset is always 0
     offset_builder.append(0);
 
-    // Get a reference to the raw bytes in the mmap
-    // It's safe because mmap_arc keeps the Mmap alive
-    let mmap_ref = unsafe {
-        let ptr = (&mmap_arc._mmap as *const Mmap) as *const u8;
-        std::slice::from_raw_parts(ptr, mmap_len)
-    };
+    // Get a reference to mapped file bytes (not the Mmap struct memory).
+    let mmap_ref: &[u8] = &mmap_arc._mmap;
 
     for idx in memchr_iter(b'\n', mmap_ref) {
         // Arrow offsets track the end of the string

@@ -55,6 +55,9 @@ else
     uv pip install "tensor-grep[ast,nlp]" --python .venv/bin/python
 fi
 
+# Ensure AST runtime grammars are present explicitly across environments.
+uv pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .venv/bin/python
+
 # 5. Add Alias to User Profile
 PROFILE_FILE=""
 if [ -n "$BASH_VERSION" ]; then

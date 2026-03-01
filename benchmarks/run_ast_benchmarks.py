@@ -1,6 +1,9 @@
 import os
+import shutil
 import subprocess
+import sys
 import time
+from pathlib import Path
 
 SCENARIOS = [
     {
@@ -60,23 +63,27 @@ class DataProcessor_{idx}:
 def run_cmd_capture(cmd):
     start = time.time()
     try:
-        # Use shell=True so ast-grep and tg resolve from the PATH automatically
-        # For security, only join cmd list if shell=True is used
-        cmd_str = " ".join(cmd)
         result = subprocess.run(
-            cmd_str,
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
             text=True,
             encoding="utf-8",
-            shell=True,
         )
         stdout = result.stdout
     except Exception as e:
         print(f"Failed to run {' '.join(cmd)}: {e}")
         stdout = ""
     return time.time() - start, stdout
+
+
+def resolve_ast_grep_binary() -> str | None:
+    for candidate in ("sg", "ast-grep", "ast-grep.exe"):
+        found = shutil.which(candidate)
+        if found:
+            return found
+    return None
 
 
 def compare_results(ast_out, tg_out, scenario_name):
@@ -94,20 +101,38 @@ def compare_results(ast_out, tg_out, scenario_name):
 
 
 def main():
-    bench_dir = "bench_ast_data"
+    bench_dir = Path(__file__).resolve().parent / "bench_ast_data"
     # Generates 10 files, each with 500 classes and 1000 functions
-    generate_ast_data(bench_dir, num_files=10, funcs_per_file=500)
+    generate_ast_data(str(bench_dir), num_files=10, funcs_per_file=500)
 
     print("\nStarting Benchmarks: ast-grep vs tensor-grep (--ast)")
     print("-" * 75)
     print(f"{'Scenario':<35} | {'ast-grep':<10} | {'tensor-grep':<10} | {'Parity'}")
     print("-" * 75)
 
-    tg_cmd = ["python", "-m", "tensor_grep.cli.main", "run"]
+    ast_bin = resolve_ast_grep_binary()
+    if not ast_bin:
+        print("ast-grep binary not found on PATH. Skipping ast-grep parity baseline.")
+        print("Run `cargo install ast-grep` or install ast-grep binary to enable this benchmark.")
+        return
+
+    tg_cmd = [sys.executable, "-m", "tensor_grep.cli.main", "run"]
 
     for scenario in SCENARIOS:
-        ast_cmd = scenario["ast_args"]
-        actual_tg_cmd = tg_cmd + scenario["tg_args"][2:]
+        ast_cmd = [
+            ast_bin,
+            *[
+                str(bench_dir) if arg == "bench_ast_data" else arg
+                for arg in scenario["ast_args"][2:]
+            ],
+        ]
+        actual_tg_cmd = [
+            *tg_cmd,
+            *[
+                str(bench_dir) if arg == "bench_ast_data" else arg
+                for arg in scenario["tg_args"][2:]
+            ],
+        ]
 
         # Warmup caches
         run_cmd_capture(ast_cmd)

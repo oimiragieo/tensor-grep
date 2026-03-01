@@ -1,8 +1,11 @@
 import base64
 import importlib.util
+import logging
 import re
 import urllib.parse
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 HAS_CYBERT_DEPS = False
 try:
@@ -76,9 +79,8 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
             return {"input_ids": tokens.input_ids.values_host}
     except ImportError:
         pass
-    except Exception:
-        # Fallback if vocab is missing or other cuDF error
-        pass
+    except Exception as exc:
+        logger.warning("cuDF tokenization failed, falling back to transformers tokenizer: %s", exc)
 
     try:
         from transformers import AutoTokenizer
@@ -116,8 +118,10 @@ class CybertBackend:
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("cybert_tokenize"):
                 tokens = tokenize(lines)
-        except Exception:
+        except ImportError:
             tokens = tokenize(lines)
+        except Exception as exc:
+            raise RuntimeError(f"CyBERT tokenization failed: {exc}") from exc
 
         inputs = []
 
@@ -136,9 +140,8 @@ class CybertBackend:
             try:
                 result = client.infer(model_name="cybert", inputs=inputs)
                 probs = result.as_numpy("logits")
-            except Exception:
-                # If triton server is not there or mocked error, fallback
-                probs = np.array([[0.1, 0.8, 0.1]] * len(lines))
+            except Exception as exc:
+                raise RuntimeError(f"CyBERT inference failed: {exc}") from exc
 
         threshold = getattr(config, "nlp_threshold", 0.0) if config else 0.0
 

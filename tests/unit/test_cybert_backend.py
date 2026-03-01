@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 
 class TestCybertBackend:
@@ -77,3 +78,17 @@ class TestCybertBackend:
         results_filtered = backend.classify(["good line", "vague line"], config=config)
         assert len(results_filtered) == 1
         assert results_filtered[0]["confidence"] >= 0.5
+
+    @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
+    def test_should_raise_when_inference_fails(self):
+        import tritonclient.http as httpclient
+
+        mock_client = MagicMock()
+        mock_client.infer.side_effect = RuntimeError("server unavailable")
+        httpclient.InferenceServerClient.return_value = mock_client
+
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        backend = CybertBackend()
+        with pytest.raises(RuntimeError, match="CyBERT inference failed"):
+            backend.classify(["test line"])

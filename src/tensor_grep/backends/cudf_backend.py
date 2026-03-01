@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,8 @@ from tensor_grep.core.result import MatchLine, SearchResult
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 def _process_chunk_on_device(
@@ -136,9 +139,24 @@ class CuDFBackend(ComputeBackend):
                     matches.append(
                         MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
                     )
-            except (ImportError, Exception):
+            except ImportError:
                 # Fallback to cuDF's native text reader if the rust bridge isn't compiled
                 # or if the PyCapsule conversion fails during testing environments
+                series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
+                mask = series.str.contains(pattern, regex=True, flags=flags)
+                if config and config.invert_match:
+                    mask = ~mask
+                matched = series[mask]
+                for idx, text in zip(matched.index.to_pandas(), matched.to_pandas(), strict=False):
+                    matches.append(
+                        MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Zero-copy Rust bridge failed for %s, using native cudf.read_text fallback: %s",
+                    file_path,
+                    exc,
+                )
                 series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
                 mask = series.str.contains(pattern, regex=True, flags=flags)
                 if config and config.invert_match:
@@ -151,6 +169,7 @@ class CuDFBackend(ComputeBackend):
 
         else:
             # PHASE 3.1: VRAM Chunking for Large Files
+            chunked_processing_succeeded = False
             try:
                 import pyarrow as pa
 
@@ -220,9 +239,23 @@ class CuDFBackend(ComputeBackend):
                     del mask
                     cudf.core.buffer.acquire_spill_lock()
 
-            except (ImportError, Exception):
+                chunked_processing_succeeded = True
+
+            except ImportError:
                 # Fallback to pure Python multi-processing CPU mapping
-                pass
+                logger.debug(
+                    "Chunked PyArrow/cudf path unavailable for %s, falling back", file_path
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Chunked PyArrow/cudf path failed for %s, falling back to process pool: %s",
+                    file_path,
+                    exc,
+                )
+
+            if chunked_processing_succeeded:
+                matches.sort(key=lambda m: m.line_number)
+                return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
 
             offset = 0
             line_offset = 0

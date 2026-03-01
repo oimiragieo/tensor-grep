@@ -3,9 +3,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import torch
 
+import logging
+
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
+
+logger = logging.getLogger(__name__)
 
 
 class AstBackend(ComputeBackend):
@@ -126,7 +130,12 @@ class AstBackend(ComputeBackend):
             source_bytes = f.read()
 
         tree = parser.parse(source_bytes)
-        edge_index, x, line_numbers = self._ast_to_graph(tree.root_node, source_bytes)
+        try:
+            query = parser.language.query(f"({pattern}) @match")
+        except Exception as exc:
+            raise ValueError(f"Invalid AST query pattern for language '{lang}': {pattern}") from exc
+
+        edge_index, x, _line_numbers = self._ast_to_graph(tree.root_node, source_bytes)
 
         # Move to GPU
         import torch
@@ -152,28 +161,31 @@ class AstBackend(ComputeBackend):
 
         # We perform actual structural matching using tree-sitter queries instead of naive hash
         # to fix the ast matching accuracy issue
-        try:
-            query = parser.language.query(f"({pattern}) @match")
+        if hasattr(query, "captures"):
             captures = query.captures(tree.root_node)
+        else:
+            import tree_sitter
 
-            for node, _ in captures:
-                line_num = node.start_point[0] + 1
-                if line_num not in seen_lines and line_num <= len(lines):
-                    seen_lines.add(line_num)
-                    matches.append(
-                        MatchLine(line_number=line_num, text=lines[line_num - 1], file=file_path)
-                    )
-        except Exception:
-            # Fallback to simple matching if query fails
-            features = [x.item() for x in x.cpu().view(-1)]
-            for idx, _feature in enumerate(features):
-                # Placeholder matching for test compatibility if complex query fails
-                line_num = line_numbers[idx]
-                if line_num not in seen_lines and line_num <= len(lines):
-                    seen_lines.add(line_num)
-                    matches.append(
-                        MatchLine(line_number=line_num, text=lines[line_num - 1], file=file_path)
-                    )
+            cursor = tree_sitter.QueryCursor(query)
+            captures = cursor.captures(tree.root_node)
+
+        if isinstance(captures, dict):
+            capture_nodes = []
+            for nodes in captures.values():
+                capture_nodes.extend(nodes)
+            iter_nodes = ((node, None) for node in capture_nodes)
+        else:
+            iter_nodes = captures
+
+        for node, _ in iter_nodes:
+            line_num = node.start_point[0] + 1
+            if line_num not in seen_lines and line_num <= len(lines):
+                seen_lines.add(line_num)
+                matches.append(
+                    MatchLine(line_number=line_num, text=lines[line_num - 1], file=file_path)
+                )
+
+        logger.debug("AST search completed for %s with %d matches", file_path, len(matches))
 
         matches.sort(key=lambda m: m.line_number)
 

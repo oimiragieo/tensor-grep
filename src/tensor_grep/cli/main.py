@@ -1,9 +1,18 @@
+import re
 import sys
+from contextlib import nullcontext
+from dataclasses import replace
+from typing import TYPE_CHECKING
 
 import typer
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.core.result import MatchLine
+
+if TYPE_CHECKING:
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import DirectoryScanner
 
 app = typer.Typer(
     help="""tensor-grep (tg) - The GPU-Accelerated Semantic Log Parsing CLI
@@ -18,6 +27,46 @@ Combines raw regex speed with semantic understanding (cyBERT) while maintaining 
     add_completion=False,
     rich_markup_mode="markdown",
 )
+
+
+def _collect_candidate_files(
+    scanner: "DirectoryScanner", paths: list[str]
+) -> tuple[list[str], set[str]]:
+    ordered = []
+    seen = set()
+    for p in paths:
+        for current_file in scanner.walk(p):
+            if current_file not in seen:
+                seen.add(current_file)
+                ordered.append(current_file)
+    return ordered, seen
+
+
+def _only_matching_lines(
+    matches: list[MatchLine], pattern: str, config: "SearchConfig"
+) -> list[MatchLine]:
+    flags = 0
+    if config.ignore_case or (config.smart_case and pattern.islower()):
+        flags |= re.IGNORECASE
+
+    if config.fixed_strings:
+        regex = re.compile(re.escape(pattern), flags)
+    elif config.line_regexp:
+        regex = re.compile(f"^{pattern}$", flags)
+    elif config.word_regexp:
+        regex = re.compile(rf"\b{pattern}\b", flags)
+    else:
+        regex = re.compile(pattern, flags)
+
+    extracted: list[MatchLine] = []
+    for match in matches:
+        for token in regex.findall(match.text):
+            if isinstance(token, tuple):
+                token = "".join(token)
+            token_text = str(token)
+            if token_text:
+                extracted.append(replace(match, text=token_text))
+    return extracted
 
 
 @app.command(
@@ -458,6 +507,23 @@ def search_command(
     backend = pipeline.get_backend()
 
     scanner = DirectoryScanner(config)
+    candidate_files_ordered, candidate_files_set = _collect_candidate_files(
+        scanner, paths_to_search
+    )
+
+    if files:
+        if candidate_files_ordered:
+            print("\n".join(candidate_files_ordered))
+            sys.exit(0)
+        sys.exit(1)
+
+    tracer = None
+    try:
+        from opentelemetry import trace as otel_trace
+
+        tracer = otel_trace.get_tracer(__name__)
+    except ImportError:
+        tracer = None
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
@@ -468,23 +534,57 @@ def search_command(
         # the original backend implementation just expects a string, so we'll need to update it
         # or we just pass the first path if the backend signature doesn't allow a list
         for path in paths_to_search:
-            result = backend.search(path, pattern, config=config)
+            span_ctx = (
+                tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
+            )
+            with span_ctx as span:
+                if span is not None:
+                    span.set_attribute("backend", backend.__class__.__name__)
+                    span.set_attribute("path", path)
+                result = backend.search(path, pattern, config=config)
+                if span is not None:
+                    span.set_attribute("matches", result.total_matches)
+            all_results.matches.extend(result.matches)
+            all_results.total_matches += result.total_matches
+            all_results.total_files += result.total_files
+    else:
+        for current_file in candidate_files_ordered:
+            span_ctx = (
+                tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
+            )
+            with span_ctx as span:
+                if span is not None:
+                    span.set_attribute("backend", backend.__class__.__name__)
+                    span.set_attribute("path", current_file)
+                result = backend.search(current_file, pattern, config=config)
+                if span is not None:
+                    span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
             all_results.total_matches += result.total_matches
             if result.total_matches > 0:
                 all_results.total_files += 1
-    else:
-        for p in paths_to_search:
-            for current_file in scanner.walk(p):
-                result = backend.search(current_file, pattern, config=config)
-                all_results.matches.extend(result.matches)
-                all_results.total_matches += result.total_matches
-                if result.total_matches > 0:
-                    all_results.total_files += 1
 
-    if all_results.is_empty and not quiet:
+    if only_matching:
+        all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
+        all_results.total_matches = len(all_results.matches)
+        all_results.total_files = len({m.file for m in all_results.matches})
+
+    matched_files = {m.file for m in all_results.matches}
+
+    if files_with_matches:
+        if matched_files:
+            print("\n".join(sorted(matched_files)))
+            sys.exit(0)
         sys.exit(1)
-    elif all_results.is_empty and quiet:
+
+    if files_without_match:
+        unmatched = sorted(candidate_files_set - matched_files)
+        if unmatched:
+            print("\n".join(unmatched))
+            sys.exit(0)
+        sys.exit(1)
+
+    if all_results.is_empty:
         sys.exit(1)
 
     if quiet:

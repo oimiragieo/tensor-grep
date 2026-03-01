@@ -1,3 +1,6 @@
+import types
+from unittest.mock import patch
+
 from tensor_grep.backends.cpu_backend import CPUBackend
 
 
@@ -103,3 +106,22 @@ class TestCPUBackend:
         assert result.matches[1].text == "line 2"
         assert result.matches[2].line_number == 3
         assert result.matches[2].text == "ERROR MATCH"
+
+    def test_should_not_fallback_to_python_when_rust_returns_empty(self, tmp_path):
+        log = tmp_path / "fallback.log"
+        log.write_text("ERROR present\n")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                return []
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "ERROR")
+
+        assert result.total_matches == 0
+        assert result.matches == []

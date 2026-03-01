@@ -40,7 +40,11 @@ print("-" * 65)
 
 # --- AST Backend Benchmark ---
 try:
+    import importlib.util
     import unittest.mock as mock
+
+    if importlib.util.find_spec("tree_sitter") is None:
+        raise RuntimeError("tree_sitter not installed")
 
     with mock.patch("tensor_grep.backends.ast_backend.AstBackend.is_available", return_value=True):
         from tensor_grep.backends.ast_backend import AstBackend
@@ -51,18 +55,15 @@ try:
         cfg = SearchConfig(ast=True, lang="python")
 
         start = time.time()
-        # Find method definition matching 'def process_data($DATA)'
-        res = ast_backend.search(str(AST_FILE), "def process_data($DATA):", cfg)
+        # Use a valid tree-sitter query node pattern for python function definitions.
+        res = ast_backend.search(str(AST_FILE), "function_definition", cfg)
         ast_time = time.time() - start
 
-        print("  Query: 'def process_data($DATA):'")
+        print("  Query: 'function_definition'")
         print(f"  Found {res.total_matches} structural matches in {ast_time:.3f}s")
         print("-" * 65)
 except Exception as e:
     print(f"AST Backend failed: {e}")
-    import traceback
-
-    traceback.print_exc()
     print("-" * 65)
 
 # --- cyBERT Backend Benchmark ---
@@ -100,13 +101,13 @@ try:
 
     print("Testing TorchBackend (VRAM-native Exact String Matching):")
     with (
-        mock.patch("torch.cuda.is_available", return_value=True),
+        mock.patch(
+            "tensor_grep.backends.torch_backend.TorchBackend.is_available", return_value=True
+        ),
         mock.patch("torch.device", return_value="cpu"),
     ):
         torch_backend = TorchBackend()
-        # Force the backend to use CPU since the container has no GPU
-        torch_backend.device = "cpu"
-        cfg = SearchConfig()
+        cfg = SearchConfig(fixed_strings=True)
 
         start = time.time()
         res = torch_backend.search(str(LOG_FILE), "Database connection timeout", cfg)

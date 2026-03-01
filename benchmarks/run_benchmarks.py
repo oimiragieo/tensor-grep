@@ -1,6 +1,8 @@
 import os
+import shutil
 import subprocess
 import time
+from pathlib import Path
 
 # Scenarios to test
 SCENARIOS = [
@@ -64,7 +66,7 @@ SCENARIOS = [
             "ERROR",
             "bench_data",
         ],
-        "tg_args": ["tg", "search", "-g", "*.log", "ERROR", "bench_data"],
+        "tg_args": ["tg", "search", "--glob=*.log", "ERROR", "bench_data"],
     },
     {
         "name": "9. Word Boundary",
@@ -121,6 +123,16 @@ def run_cmd_capture(cmd):
     return time.time() - start, stdout
 
 
+def resolve_rg_binary() -> str:
+    path = shutil.which("rg")
+    if path:
+        return path
+    local = Path(__file__).resolve().parent / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
+    if local.exists():
+        return str(local)
+    raise FileNotFoundError("ripgrep binary not found on PATH or in benchmarks folder.")
+
+
 def compare_results(rg_out, tg_out, scenario_name):
     # Ripgrep and TG format counts differently, or output them in different orders across multiple files.
     # Rather than doing exact stdout comparison which fails due to file traversal order differences on GPU,
@@ -167,10 +179,12 @@ def compare_results(rg_out, tg_out, scenario_name):
 
 
 def main():
-    bench_dir = "bench_data"
+    bench_dir = Path(__file__).resolve().parent / "bench_data"
     generate_test_data(
-        bench_dir, num_files=2, lines_per_file=2_000_000
+        str(bench_dir), num_files=2, lines_per_file=2_000_000
     )  # ~240MB total, triggers 50MB GPU chunking bypass
+
+    rg_bin = resolve_rg_binary()
 
     print("\nStarting Benchmarks: ripgrep vs tensor-grep")
     print("-" * 75)
@@ -180,11 +194,14 @@ def main():
     # Ensure tg resolves to python module
 
     for scenario in SCENARIOS:
-        rg_cmd = [
-            "ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe",
-            "--no-ignore",
-            *scenario["rg_args"][1:],
+        rg_args = [
+            str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]
         ]
+        tg_args = [
+            str(bench_dir) if arg == "bench_data" else arg for arg in scenario["tg_args"][2:]
+        ]
+
+        rg_cmd = [rg_bin, "--no-ignore", *rg_args]
 
         # When running inside `uv run python run_benchmarks.py`, invoking `python` via subprocess
         # escapes the uv environment. We MUST use sys.executable to stay inside the PyTorch env.
@@ -195,7 +212,8 @@ def main():
             "-m",
             "tensor_grep.cli.main",
             "search",
-            *scenario["tg_args"][2:],
+            "--no-ignore",
+            *tg_args,
         ]
 
         # Actual benchmark

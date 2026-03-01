@@ -119,7 +119,8 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
     pipeline = Pipeline(config=config)
     backend = pipeline.get_backend()
 
-    if type(backend).__name__ != "AstBackend":
+    backend_name = type(backend).__name__
+    if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
         return "Error: AstBackend is not available on this system. Requires torch_geometric and tree_sitter."
 
     scanner = DirectoryScanner(config)

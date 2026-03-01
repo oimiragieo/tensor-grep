@@ -76,6 +76,14 @@ runner = "python -m pytest tests/unit/ -x --no-header -q"
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+exclude = [
+    "bench_data",
+    "bench_ast_data",
+    "gpu_bench_data",
+    "benchmarks/bench_data",
+    "benchmarks/bench_ast_data",
+    "benchmarks/gpu_bench_data",
+]
 
 [tool.ruff.lint]
 select = [
