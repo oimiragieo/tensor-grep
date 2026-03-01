@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-03-01)
+
+### Continuous Integration
+
+- **pypi**: Remove environment claim to match trusted publisher
+  ([`76ecaf3`](https://github.com/oimiragieo/tensor-grep/commit/76ecaf3a243f341bfbd066926f3484cb1105afb6))
+
+- **pypi**: Restore environment deployment tracking
+  ([`299e6d3`](https://github.com/oimiragieo/tensor-grep/commit/299e6d3dd5796830568003182aa96e0adff5bed2))
+
+### Features
+
+- **ltl**: Add temporal query mode with CPU sequence evaluation
+  ([`6b0a529`](https://github.com/oimiragieo/tensor-grep/commit/6b0a52986e497dbd5ae69c7703e5844217e30651))
+
+
 ## v0.3.4 (2026-03-01)
 
 ### Bug Fixes
