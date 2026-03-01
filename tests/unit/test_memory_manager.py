@@ -46,7 +46,9 @@ class TestMemoryManager:
     @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
     @patch("psutil.virtual_memory")
     @patch("os.cpu_count")
-    def test_should_handle_zero_vram_gracefully(self, mock_cpu_count, mock_virtual_memory, mock_detect):
+    def test_should_handle_zero_vram_gracefully(
+        self, mock_cpu_count, mock_virtual_memory, mock_detect
+    ):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = False
         mock_detect.return_value = mock_instance

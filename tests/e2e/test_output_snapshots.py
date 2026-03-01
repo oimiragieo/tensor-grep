@@ -40,6 +40,7 @@ def test_json_output_snapshot(sample_log_file, snapshot):
         # Sometimes Windows paths have escaped sequences like \r or \u that were literal in the path but got converted
         # to actual escape codes during some string processing. We can just replace the prefix:
         import re
+
         output_stable = re.sub(r'"[A-Za-z]:\\[^"]+"', '"<FILE>"', output_stable)
 
     snapshot.assert_match(output_stable, "json_output.json")
