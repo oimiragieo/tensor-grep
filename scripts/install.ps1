@@ -91,28 +91,78 @@ try {
     # Ensure AST runtime grammars are present explicitly across environments.
     & $uvPath pip install tree-sitter tree-sitter-python tree-sitter-javascript --python "$installDir\.venv\Scripts\python.exe"
 
-    # 5. Add Alias to User Profile
-    $profilePath = $PROFILE
-    if (!(Test-Path $profilePath)) {
-        New-Item -ItemType File -Path $profilePath -Force | Out-Null
+    # 5. Install PATH shims for profile-independent command resolution.
+    $shimDirs = @(
+        "$env:USERPROFILE\.local\bin",
+        "$env:USERPROFILE\bin"
+    )
+    $cmdShimContent = "@echo off`r`n`"$installDir\.venv\Scripts\tg.exe`" %*`r`n"
+    $installedShimPaths = @()
+    foreach ($shimDir in $shimDirs) {
+        if (!(Test-Path $shimDir)) {
+            New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
+        }
+        $cmdShimPath = "$shimDir\tg.cmd"
+        Set-Content -Path $cmdShimPath -Value $cmdShimContent -Encoding ascii
+        $installedShimPaths += $cmdShimPath
     }
 
-    $aliasCommand = "Set-Alias -Name tg -Value `"$installDir\.venv\Scripts\tg.exe`" -Scope Global"
-    $profileContent = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
-    $aliasPattern = '(?m)^\s*Set-Alias\s+-Name\s+tg\s+-Value\s+.*$'
+    # Ensure user PATH includes shim directories for new terminals.
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $userPathParts = @()
+    if ($userPath) {
+        $userPathParts = $userPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    }
+    foreach ($shimDir in $shimDirs) {
+        if ($userPathParts -notcontains $shimDir) {
+            $userPath = if ($userPath) { "$userPath;$shimDir" } else { $shimDir }
+            $userPathParts += $shimDir
+            Write-Host "Added $shimDir to user PATH."
+        }
+    }
+    [Environment]::SetEnvironmentVariable("Path", $userPath, "User")
 
-    if ($profileContent -match $aliasPattern) {
-        $updatedProfile = [regex]::Replace($profileContent, $aliasPattern, $aliasCommand)
-        Set-Content -Path $profilePath -Value $updatedProfile
-        Write-Host "`nSuccessfully installed tensor-grep! Updated existing tg alias in profile."
-    } else {
-        Add-Content -Path $profilePath -Value "`n# Tensor-Grep Alias`n$aliasCommand"
-        Write-Host "`nSuccessfully installed tensor-grep! Added tg alias to profile."
+    # Ensure current process PATH includes shim directories immediately.
+    $currentPathParts = $env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    foreach ($shimDir in $shimDirs) {
+        if ($currentPathParts -notcontains $shimDir) {
+            $env:Path = "$env:Path;$shimDir"
+            $currentPathParts += $shimDir
+        }
+    }
+
+    # 6. Add Alias to both PowerShell 7 and Windows PowerShell profiles.
+    $docsPath = [Environment]::GetFolderPath("MyDocuments")
+    $profilePaths = @(
+        (Join-Path $docsPath "PowerShell\Microsoft.PowerShell_profile.ps1"),
+        (Join-Path $docsPath "WindowsPowerShell\Microsoft.PowerShell_profile.ps1")
+    )
+    $aliasCommand = "Set-Alias -Name tg -Value `"$installDir\.venv\Scripts\tg.exe`" -Scope Global"
+    $aliasPattern = '(?m)^\s*Set-Alias\s+-Name\s+tg\s+-Value\s+.*$'
+    foreach ($profilePath in $profilePaths) {
+        $profileDir = Split-Path -Parent $profilePath
+        if (!(Test-Path $profileDir)) {
+            New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+        }
+        if (!(Test-Path $profilePath)) {
+            New-Item -ItemType File -Path $profilePath -Force | Out-Null
+        }
+        $profileContent = Get-Content $profilePath -Raw -ErrorAction SilentlyContinue
+        if ($profileContent -match $aliasPattern) {
+            $updatedProfile = [regex]::Replace($profileContent, $aliasPattern, $aliasCommand)
+            Set-Content -Path $profilePath -Value $updatedProfile
+            Write-Host "Updated existing tg alias in profile: $profilePath"
+        } else {
+            Add-Content -Path $profilePath -Value "`n# Tensor-Grep Alias`n$aliasCommand"
+            Write-Host "Added tg alias to profile: $profilePath"
+        }
     }
 
     # Ensure current session resolves tg to the newly installed binary immediately.
     Set-Alias -Name tg -Value "$installDir\.venv\Scripts\tg.exe" -Scope Global -Force
     Write-Host "Current session alias now points to: $((Get-Command tg).Source)"
+    Write-Host "Installed PATH shims:"
+    $installedShimPaths | ForEach-Object { Write-Host "  - $_" }
 
     Write-Host "=========================================================="
     Write-Host " Installation complete! Try running: tg search `"ERROR`" ."
