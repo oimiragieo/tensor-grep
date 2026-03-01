@@ -3,6 +3,13 @@
 
 ## v0.2.2 (2026-03-01)
 
+### Features
+
+- **installer**: Default install scripts to pinned stable release, add `TENSOR_GREP_CHANNEL=main` and
+  `TENSOR_GREP_VERSION` overrides, print installed version, and restore original working directory
+  after install
+  ([`067c5af`](https://github.com/oimiragieo/tensor-grep/commit/067c5aff3c3ef81e90501fca5c632f0327d6d92c))
+
 ### Bug Fixes
 
 - Harden backends, wire CLI modes, stabilize benchmarks and CI

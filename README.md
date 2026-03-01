@@ -84,6 +84,24 @@ irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/instal
 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
 ```
 
+Installer defaults and channels:
+- Default behavior installs the current pinned stable release (`tensor-grep==0.2.2` as of this release train).
+- Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=0.2.1`).
+- Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
+- At completion, the installer prints `tg --version` and returns to the directory where you started the script.
+
+Examples:
+```powershell
+# Windows PowerShell: install from main
+$env:TENSOR_GREP_CHANNEL = "main"
+irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+```
+
+```bash
+# Linux/macOS: install a specific stable release
+TENSOR_GREP_VERSION=0.2.1 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+```
+
 ### Python Package Managers (pip/uv)
 If you're a Python programmer, `tensor-grep` can be installed via `pip` or `uv`.
 
