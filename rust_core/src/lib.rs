@@ -1,3 +1,5 @@
+#![allow(clippy::useless_conversion)]
+
 pub mod backend_ast;
 pub mod backend_cpu;
 pub mod backend_gpu;
