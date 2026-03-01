@@ -2,6 +2,7 @@ import re
 import sys
 from contextlib import nullcontext
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import typer
@@ -41,6 +42,16 @@ def _collect_candidate_files(
                 seen.add(current_file)
                 ordered.append(current_file)
     return ordered, seen
+
+
+def _sum_total_bytes(paths: list[str]) -> int:
+    total = 0
+    for p in paths:
+        try:
+            total += Path(p).stat().st_size
+        except OSError:
+            continue
+    return total
 
 
 def _only_matching_lines(
@@ -498,17 +509,17 @@ def search_command(
         format_type=format_type,
         ast=ast,
         lang=lang,
+        query_pattern=pattern,
     )
 
-    from tensor_grep.core.pipeline import Pipeline
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
-    pipeline = Pipeline(force_cpu=cpu, config=config)
-    backend = pipeline.get_backend()
-
+    rg_backend = RipgrepBackend()
     can_passthrough_rg = (
-        backend.__class__.__name__ == "RipgrepBackend"
+        rg_backend.is_available()
+        and not config.ast
+        and not config.force_cpu
         and format_type == "rg"
         and not json
         and not files
@@ -517,15 +528,22 @@ def search_command(
         and not only_matching
         and not stats
     )
-    if can_passthrough_rg and hasattr(backend, "search_passthrough"):
+    if can_passthrough_rg:
         with nvtx_range("search.passthrough_rg", color="green"):
-            exit_code = backend.search_passthrough(paths_to_search, pattern, config=config)
+            exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
         sys.exit(0 if exit_code == 0 else 1)
 
     scanner = DirectoryScanner(config)
     candidate_files_ordered, candidate_files_set = _collect_candidate_files(
         scanner, paths_to_search
     )
+    config.input_total_bytes = _sum_total_bytes(candidate_files_ordered)
+
+    from tensor_grep.core.pipeline import Pipeline
+    from tensor_grep.core.result import SearchResult
+
+    pipeline = Pipeline(force_cpu=cpu, config=config)
+    backend = pipeline.get_backend()
 
     if files:
         if candidate_files_ordered:
@@ -544,25 +562,18 @@ def search_command(
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
     # RipgrepBackend optimization: passing all paths natively
-    # Use __class__ or type directly from object to avoid masking issues
     if backend.__class__.__name__ == "RipgrepBackend":
-        # Pass all paths at once to ripgrep instead of looping
-        # the original backend implementation just expects a string, so we'll need to update it
-        # or we just pass the first path if the backend signature doesn't allow a list
-        for path in paths_to_search:
-            span_ctx = (
-                tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
-            )
-            with span_ctx as span, nvtx_range("search.file", color="cyan"):
-                if span is not None:
-                    span.set_attribute("backend", backend.__class__.__name__)
-                    span.set_attribute("path", path)
-                result = backend.search(path, pattern, config=config)
-                if span is not None:
-                    span.set_attribute("matches", result.total_matches)
-            all_results.matches.extend(result.matches)
-            all_results.total_matches += result.total_matches
-            all_results.total_files += result.total_files
+        span_ctx = tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
+        with span_ctx as span, nvtx_range("search.file", color="cyan"):
+            if span is not None:
+                span.set_attribute("backend", backend.__class__.__name__)
+                span.set_attribute("path_count", len(paths_to_search))
+            result = backend.search(paths_to_search, pattern, config=config)
+            if span is not None:
+                span.set_attribute("matches", result.total_matches)
+        all_results.matches.extend(result.matches)
+        all_results.total_matches += result.total_matches
+        all_results.total_files += result.total_files
     else:
         for current_file in candidate_files_ordered:
             span_ctx = (

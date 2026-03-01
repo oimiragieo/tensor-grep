@@ -122,3 +122,5 @@ class SearchConfig:
     ast: bool = False
     lang: str | None = None
     use_jit: bool = False
+    query_pattern: str | None = None
+    input_total_bytes: int = 0

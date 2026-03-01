@@ -12,6 +12,41 @@ from tensor_grep.core.hardware.memory_manager import MemoryManager
 
 
 class Pipeline:
+    @staticmethod
+    def _needs_python_cpu(config: SearchConfig | None) -> bool:
+        if config is None:
+            return False
+        return bool(
+            config.invert_match
+            or config.context
+            or config.before_context
+            or config.after_context
+            or config.line_regexp
+            or config.word_regexp
+        )
+
+    @staticmethod
+    def _is_complex_regex(config: SearchConfig | None) -> bool:
+        if config is None or config.fixed_strings:
+            return False
+        pattern = (config.query_pattern or "").strip()
+        if not pattern:
+            return False
+        # Heuristic: treat dense metacharacter patterns as complex regex workloads.
+        metachar_count = sum(1 for ch in pattern if ch in r".*+?[](){}|\\")
+        return metachar_count >= 3 or len(pattern) >= 32
+
+    @classmethod
+    def _should_try_gpu(cls, config: SearchConfig | None, needs_python_cpu: bool) -> bool:
+        if config is None:
+            return False
+        if config.ast or config.count or config.fixed_strings:
+            return False
+        if needs_python_cpu:
+            return False
+        large_input = config.input_total_bytes >= 256 * 1024 * 1024
+        return large_input and cls._is_complex_regex(config)
+
     def __init__(self, force_cpu: bool = False, config: SearchConfig | None = None):
         self.backend: ComputeBackend
         self.config = config
@@ -42,49 +77,21 @@ class Pipeline:
             # StringZilla backend for ultra-fast fixed string SIMD matching
             sz_backend = StringZillaBackend()
 
-            # Check if config has complex flags that the Rust core doesn't support yet
-            needs_python_cpu = False
-            if config:
-                if (
-                    config.invert_match
-                    or config.context
-                    or config.before_context
-                    or config.after_context
-                ):
-                    needs_python_cpu = True
-                if config.line_regexp or config.word_regexp:
-                    needs_python_cpu = True
+            needs_python_cpu = self._needs_python_cpu(config)
+            should_try_gpu = self._should_try_gpu(config, needs_python_cpu)
+            rg_available = rg_backend.is_available()
+            rust_available = rust_backend.is_available()
 
-            if rg_backend.is_available():
+            if rg_available:
                 fallback_backend: ComputeBackend = rg_backend
-            elif needs_python_cpu or not rust_backend.is_available():
+            elif needs_python_cpu or not rust_available:
                 fallback_backend = CPUBackend()
             else:
                 fallback_backend = rust_backend
 
             if force_cpu:
-                self.backend = fallback_backend
-            elif config and config.count and rust_backend.is_available():
-                # For pure counting, our Rust backend beats rg and everything else
-                self.backend = rust_backend
-            elif (
-                config
-                and config.fixed_strings
-                and sz_backend.is_available()
-                and not needs_python_cpu
-            ):
-                # For literal string searches without context boundaries, StringZilla's SIMD destroys C
-                self.backend = sz_backend
-            elif config and (
-                config.context
-                or config.before_context
-                or config.after_context
-                or config.line_regexp
-                or config.word_regexp
-            ):
-                # Complex flags require ripgrep or pure python CPU backend
-                if rg_backend.is_available():
-                    self.backend = rg_backend
+                if rust_available and not needs_python_cpu:
+                    self.backend = rust_backend
                 else:
                     self.backend = CPUBackend()
             elif config and config.ast:
@@ -106,6 +113,35 @@ class Pipeline:
                             self.backend = fallback_backend
                 except ImportError:
                     self.backend = fallback_backend
+            elif config and config.count and rust_available:
+                # For pure counting, our Rust backend beats rg and everything else
+                self.backend = rust_backend
+            elif (
+                config
+                and config.fixed_strings
+                and sz_backend.is_available()
+                and not needs_python_cpu
+            ):
+                # For literal string searches without context boundaries, StringZilla's SIMD destroys C
+                self.backend = sz_backend
+            elif config and (
+                config.context
+                or config.before_context
+                or config.after_context
+                or config.line_regexp
+                or config.word_regexp
+            ):
+                # Complex flags require ripgrep or pure python CPU backend
+                if rg_available:
+                    self.backend = rg_backend
+                else:
+                    self.backend = CPUBackend()
+            elif rg_available and not should_try_gpu:
+                # Default search path: delegate to native rg for best end-to-end CLI speed.
+                self.backend = rg_backend
+            elif rust_available and not should_try_gpu:
+                # Secondary fast path when rg is unavailable.
+                self.backend = rust_backend
             else:
                 # Inject memory manager to get chunk sizes across all available GPUs
                 memory_manager = MemoryManager()
@@ -134,6 +170,7 @@ class Pipeline:
             if span is not None:
                 span.set_attribute("backend.selected", selected_backend_name)
                 span.set_attribute("needs_python_cpu", needs_python_cpu)
+                span.set_attribute("should_try_gpu", should_try_gpu)
 
         self.selected_backend_name = selected_backend_name
 
