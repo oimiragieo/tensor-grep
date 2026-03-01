@@ -5,6 +5,9 @@ import sys
 import time
 from pathlib import Path
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+
 SCENARIOS = [
     {
         "name": "1. Simple Function Def",
@@ -62,6 +65,11 @@ class DataProcessor_{idx}:
 
 def run_cmd_capture(cmd):
     start = time.time()
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_DIR)
+    )
     try:
         result = subprocess.run(
             cmd,
@@ -70,6 +78,7 @@ def run_cmd_capture(cmd):
             check=False,
             text=True,
             encoding="utf-8",
+            env=env,
         )
         stdout = result.stdout
     except Exception as e:

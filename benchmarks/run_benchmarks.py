@@ -1,8 +1,15 @@
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+# Ensure local `src/` imports work when running this script directly.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 # Scenarios to test
 SCENARIOS = [
@@ -106,6 +113,11 @@ def generate_test_data(directory: str, num_files: int = 5, lines_per_file: int =
 
 def run_cmd_capture(cmd):
     start = time.time()
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_DIR)
+    )
     try:
         # Run subprocess and capture stdout
         result = subprocess.run(
@@ -115,6 +127,7 @@ def run_cmd_capture(cmd):
             check=False,
             text=True,
             encoding="utf-8",
+            env=env,
         )
         stdout = result.stdout
     except Exception as e:
@@ -228,7 +241,7 @@ def main():
             cfg = SearchConfig(count=True)
             backend = RustCoreBackend()
             start_tg = time.time()
-            backend.search("bench_data", "ERROR", cfg)
+            backend.search(str(bench_dir), "ERROR", cfg)
             tg_time = time.time() - start_tg
             _, tg_out = run_cmd_capture(actual_tg_cmd)  # run again just for parity check
         else:

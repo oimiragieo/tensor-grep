@@ -135,25 +135,6 @@ class AstBackend(ComputeBackend):
         except Exception as exc:
             raise ValueError(f"Invalid AST query pattern for language '{lang}': {pattern}") from exc
 
-        edge_index, x, _line_numbers = self._ast_to_graph(tree.root_node, source_bytes)
-
-        # Move to GPU
-        import torch
-
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        x = x.to(device)
-        edge_index = edge_index.to(device)
-
-        # NOTE: In a true AST-Grep GNN, the 'pattern' is parsed into a query graph,
-        # and we use `torch_geometric.nn.models.GraphSAGE` or Subgraph Matching.
-        # For this implementation, we simulate the subgraph isomorphism match by
-        # mathematically isolating nodes whose structural hash feature matches the pattern hash.
-
-        # 1. Convert Query to simulated embedding
-        # In a real system, we'd embed the AST nodes of the query pattern.
-        # Since we simulate this, we'll try to find the specific pattern string in the source
-        # using the node text from tree-sitter.
-
         matches = []
         seen_lines = set()
 

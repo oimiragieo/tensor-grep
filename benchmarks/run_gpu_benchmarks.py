@@ -1,5 +1,12 @@
+import sys
 import time
 from pathlib import Path
+
+# Ensure local `src/` imports work when running this script directly.
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 # Setup minimal data for GPU benchmark if not exists
 BENCH_DIR = Path("gpu_bench_data")
@@ -46,10 +53,10 @@ try:
     if importlib.util.find_spec("tree_sitter") is None:
         raise RuntimeError("tree_sitter not installed")
 
-    with mock.patch("tensor_grep.backends.ast_backend.AstBackend.is_available", return_value=True):
-        from tensor_grep.backends.ast_backend import AstBackend
-        from tensor_grep.core.config import SearchConfig
+    from tensor_grep.backends.ast_backend import AstBackend
+    from tensor_grep.core.config import SearchConfig
 
+    with mock.patch.object(AstBackend, "is_available", return_value=True):
         print("Testing AST Backend (Structural Code Search):")
         ast_backend = AstBackend()
         cfg = SearchConfig(ast=True, lang="python")
@@ -101,9 +108,7 @@ try:
 
     print("Testing TorchBackend (VRAM-native Exact String Matching):")
     with (
-        mock.patch(
-            "tensor_grep.backends.torch_backend.TorchBackend.is_available", return_value=True
-        ),
+        mock.patch.object(TorchBackend, "is_available", return_value=True),
         mock.patch("torch.device", return_value="cpu"),
     ):
         torch_backend = TorchBackend()

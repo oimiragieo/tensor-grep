@@ -26,7 +26,7 @@ fn read_mmap_to_arrow(py: Python<'_>, filepath: &str) -> PyArrowResult<PyObject>
 
     // 3. Export to a Python Arrow object (returns a PyCapsule wrapping the C Data Interface)
     let exported = py_array.to_pyarrow(py)?;
-    Ok(exported.into())
+    Ok(exported)
 }
 
 /// Reads a file into a zero-copy Arrow StringArray and yields it in chunks (slices)
@@ -73,7 +73,7 @@ fn read_mmap_to_arrow_chunked(
         let py_array = pyo3_arrow::PyArray::from_array_ref(Arc::new(sliced_array));
 
         let exported = py_array.to_pyarrow(py)?;
-        py_chunks.push(exported.into());
+        py_chunks.push(exported);
 
         current_idx += slice_len;
     }
@@ -105,13 +105,11 @@ impl RustBackend {
         fixed_strings: bool,
         invert_match: bool,
     ) -> PyResult<Vec<(usize, String)>> {
-        let results = self
-            .inner
+        self.inner
             .search(pattern, path, ignore_case, fixed_strings, invert_match)
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Rust search failed: {}", e))
-            })?;
-        Ok(results)
+            })
     }
 
     /// Fast-path count implementation that only returns the number of matches
@@ -122,13 +120,11 @@ impl RustBackend {
         ignore_case: bool,
         fixed_strings: bool,
     ) -> PyResult<usize> {
-        let count = self
-            .inner
+        self.inner
             .count_matches(pattern, path, ignore_case, fixed_strings, false)
             .map_err(|e| {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
-            })?;
-        Ok(count)
+            })
     }
 }
 
