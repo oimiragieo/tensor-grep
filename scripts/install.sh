@@ -90,7 +90,21 @@ fi
 # Ensure AST runtime grammars are present explicitly across environments.
 uv pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .venv/bin/python
 
-# 5. Add Alias to User Profile
+# 5. Install PATH shims for profile-independent command resolution.
+SHIM_DIRS=("$HOME/.local/bin" "$HOME/bin")
+INSTALLED_SHIMS=()
+for SHIM_DIR in "${SHIM_DIRS[@]}"; do
+    mkdir -p "$SHIM_DIR"
+    SHIM_PATH="$SHIM_DIR/tg"
+    cat > "$SHIM_PATH" << EOF
+#!/usr/bin/env bash
+"$INSTALL_DIR/.venv/bin/tg" "\$@"
+EOF
+    chmod +x "$SHIM_PATH"
+    INSTALLED_SHIMS+=("$SHIM_PATH")
+done
+
+# 6. Add Alias and PATH wiring to User Profile
 PROFILE_FILE=""
 if [ -n "$BASH_VERSION" ]; then
     PROFILE_FILE="$HOME/.bashrc"
@@ -101,6 +115,10 @@ else
 fi
 
 ALIAS_CMD="alias tg='$INSTALL_DIR/.venv/bin/tg'"
+PATH_EXPORT_LOCAL='export PATH="$HOME/.local/bin:$PATH"'
+PATH_EXPORT_BIN='export PATH="$HOME/bin:$PATH"'
+
+touch "$PROFILE_FILE"
 
 if [ -f "$PROFILE_FILE" ] && grep -qE '^[[:space:]]*alias[[:space:]]+tg=' "$PROFILE_FILE"; then
     # Replace any existing tg alias to avoid stale paths/versions.
@@ -114,9 +132,21 @@ else
     echo -e "\nSuccessfully installed tensor-grep! Added tg alias to $PROFILE_FILE."
 fi
 
+if ! grep -qF "$PATH_EXPORT_LOCAL" "$PROFILE_FILE"; then
+    echo "$PATH_EXPORT_LOCAL" >> "$PROFILE_FILE"
+fi
+if ! grep -qF "$PATH_EXPORT_BIN" "$PROFILE_FILE"; then
+    echo "$PATH_EXPORT_BIN" >> "$PROFILE_FILE"
+fi
+
 # Ensure the current shell session also resolves tg to the fresh install.
 alias tg="$INSTALL_DIR/.venv/bin/tg"
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 echo "Current session alias now points to: $(command -v tg)"
+echo "Installed PATH shims:"
+for SHIM_PATH in "${INSTALLED_SHIMS[@]}"; do
+    echo "  - $SHIM_PATH"
+done
 echo "If your shell doesn't apply aliases in non-interactive mode, run: source $PROFILE_FILE"
 
 echo "=========================================================="
