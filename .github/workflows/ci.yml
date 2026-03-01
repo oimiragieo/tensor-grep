@@ -251,6 +251,9 @@ jobs:
     needs: [release, build-wheels-pypi, build-sdist-pypi]
     if: needs.release.outputs.publish_pypi == 'true'
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tensor-grep
     permissions:
       id-token: write
     steps:
