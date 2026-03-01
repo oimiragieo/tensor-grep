@@ -1,14 +1,20 @@
 # CHANGELOG
 
 
+## v0.3.2 (2026-03-01)
+
+### Bug Fixes
+
+- **installer**: Make tg resolve across new and no-profile shells
+  ([`78afe8c`](https://github.com/oimiragieo/tensor-grep/commit/78afe8c9932082ec5866fd705f0649035ca076aa))
+
+
 ## v0.3.1 (2026-03-01)
 
 ### Bug Fixes
 
 - **ci**: Stabilize routing tests and installer alias/version resolution
   ([`5355390`](https://github.com/oimiragieo/tensor-grep/commit/53553903abe5a95b775606fbfb0bc6399d51fec2))
-
-- **installer/windows**: Install `tg.cmd` PATH shims and update both PowerShell 7 and Windows PowerShell profiles so `tg` works in new/no-profile terminals
 
 ### Documentation
 
