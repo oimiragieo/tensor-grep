@@ -97,6 +97,7 @@ impl RustBackend {
     }
 
     /// Search a file or directory using the Rust memmap2 backend
+    #[allow(clippy::useless_conversion)]
     fn search(
         &self,
         pattern: &str,
@@ -113,6 +114,7 @@ impl RustBackend {
     }
 
     /// Fast-path count implementation that only returns the number of matches
+    #[allow(clippy::useless_conversion)]
     fn count_matches(
         &self,
         pattern: &str,
