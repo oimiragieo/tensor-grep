@@ -46,6 +46,44 @@ class TestPipeline:
         pipeline = Pipeline(force_cpu=False, config=config)
         assert pipeline.backend == mock_cudf.return_value
 
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_should_prefer_ripgrep_even_when_gpu_heuristic_matches(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_cudf.return_value.is_available.return_value = True
+
+        config = SearchConfig(
+            query_pattern=r"(ERROR|WARN).*timeout\s+\d+",
+            input_total_bytes=512 * 1024 * 1024,
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+        assert pipeline.backend == mock_rg.return_value
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_should_prefer_rust_before_gpu_when_rg_missing(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_cudf.return_value.is_available.return_value = True
+
+        config = SearchConfig(
+            query_pattern=r"(ERROR|WARN).*timeout\s+\d+",
+            input_total_bytes=512 * 1024 * 1024,
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+        assert pipeline.backend == mock_rust.return_value
+
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_select_cudf_when_available(self, mock_mem):
         mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
