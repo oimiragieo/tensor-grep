@@ -13,7 +13,7 @@ name = "tensor-grep"
 version = "0.3.3"
 requires-python = ">=3.11"
 dependencies = [
-    "typer[all]>=0.12",
+    "typer>=0.12",
     "rich>=13.0",
     "mcp>=1.2.0",
     "pyarrow>=14.0.0",
