@@ -112,6 +112,5 @@ upload_to_pypi = false
 upload_to_release = true
 commit_message = "chore(release): v{version} [skip ci]"
 version_variables = [
-    "src/tensor_grep/cli/main.py:pkg_version = \"{version}\"  # Fallback",
-    "npm/package.json:\"version\": \"{version}\"",
+    "src/tensor_grep/cli/main.py:pkg_version",
 ]
