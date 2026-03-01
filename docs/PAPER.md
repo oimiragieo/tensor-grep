@@ -1,7 +1,7 @@
 # Tensor-Grep: High-Performance Multi-GPU Log Parsing and Structural Code Retrieval via Hybrid Architectures
 
 **Abstract:**
-With the exponential growth of telemetry data and massive monorepos in enterprise software, traditional CPU-bound log parsers and code search tools are increasingly becoming bottlenecks in modern CI/CD and security pipelines. To address the constraints of line-rate packet processing and massive data analytics, we present **tensor-grep**, a highly resilient, GPU-accelerated engine that bridges the gap between raw regex throughput and deep semantic code representation. Instead of treating text search as a homogenous compute problem, our primary contribution demonstrates that **routing is the optimization**. `tensor-grep` dynamically dispatches evaluation between zero-cost Rust abstractions for simple strings, and VRAM-native PyTorch/RAPIDS arrays for structural Graph Neural Network (GNN) matching and complex Deterministic Finite Automata (DFA) resolution. Our benchmarks demonstrate up to a 10x throughput improvement over traditional C-based binaries alongside significant precision gains in semantic cybersecurity log classification. We formally outline how this tripartite routing architecture successfully masks operating system limitations, defining a new line-rate maximum for local telemetry arrays.
+With the exponential growth of telemetry data and massive monorepos in enterprise software, traditional CPU-bound log parsers and code search tools are increasingly becoming bottlenecks in modern CI/CD and security pipelines. To address the constraints of line-rate packet processing and massive data analytics, we present **tensor-grep**, a highly resilient, GPU-accelerated engine that bridges the gap between raw regex throughput and deep semantic code representation. Instead of treating text search as a homogenous compute problem, our primary contribution demonstrates that **routing is the optimization**. `tensor-grep` dynamically dispatches evaluation between zero-cost Rust abstractions for simple strings, and VRAM-native PyTorch/RAPIDS arrays for structural Graph Neural Network (GNN) matching and complex Deterministic Finite Automata (DFA) resolution. Our latest full benchmark pass shows mixed end-to-end CLI throughput versus specialized native tools, while also showing strong backend-level latency for targeted AST/NLP/Torch workloads and faster literal counting on the Rust path. We formally outline how this tripartite routing architecture masks operating system limitations and enables predictable query-class-aware execution.
 
 ---
 
@@ -72,15 +72,29 @@ We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` 
 To ensure an empirical representation of both enterprise developer machines and standard CI/CD clusters, our local validation utilized an **AMD Ryzen 7 5800XT with 64GB DDR4 RAM** alongside dual **NVIDIA RTX 4070 / RTX 5070 (Ada Lovelace `sm_120`)** GPUs. This specific CPU bound (and the PCIe Gen4 interconnect latency) contextualizes why massive VRAM payloads face initialization bottlenecks when crossing OS virtualization layers.
 
 ### 3.2 Main Results: Bare-Metal GPU Execution on RTX 5070
-Executing the framework bare-metal against the NVIDIA RTX 5070 yielded extraordinary empirical evidence of the framework's capabilities when Python multiprocessing constraints are bypassed (using statically bound `uv` environments):
+We re-ran the benchmark suite on 2026-03-01 from repository scripts and captured the output artifacts directly:
 
-* **Literal Constraint Matrix Evaluation:** The `TorchBackend` searched a 10,000-line synthetic database log for a strict literal constraint ("Database connection timeout", evaluating 2,000 positive matches) entirely inside VRAM in an astonishing **0.007 seconds**. 
-* **Structural Graph Traversal:** The `AstBackend` successfully mapped a full Python codebase into an AST Graph, hashed the geometric nodes, and mathematically validated subgraph invariants (`def process_data($DATA):`) across the tensor map in **0.322 seconds**. This time explicitly includes the heavy `tree-sitter` dynamic library loading overhead; subsequent queries on the loaded tensor resolve asymptotically closer to zero.
+* `artifacts/bench_run_benchmarks.txt`
+* `artifacts/bench_run_ast_benchmarks.txt`
+* `artifacts/bench_run_gpu_benchmarks.txt`
+* `artifacts/bench_pytest_throughput.txt`
 
-These primary bare-metal measurements definitively conclude that `tensor-grep` transcends theoretical architectures. By forcing exact constraint solving into GPU bounds, it effectively redefines the line-rate maximum of local parsing arrays.
+Backend-level timings from `run_gpu_benchmarks.py`:
+
+* **AST backend:** `function_definition` query completed in **0.068 seconds** (4 matches).
+* **cyBERT backend:** classified 10,000 log lines in **0.076 seconds**.
+* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.329 seconds** (2,000 matches).
+
+These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
-When evaluating complex regular expressions (involving lookaheads, semantic boundaries, and multi-wildcards) over standardized logs, traditional CPU-bound tools suffer from DFA state explosion and severe CPU cache-miss degradation. In these scenarios, `tensor-grep` dynamically routed the query to the GPU. Testing against 6 complex semantic patterns, `tensor-grep` evaluated the dataset in **0.199s**, compared to `ripgrep`'s **0.607s**. This yields a **~3x performance increase**, empirically proving that VRAM-mapped parallel execution outperforms CPU caching limits for complex state machines.
+The latest full script-driven CLI benchmark (`run_benchmarks.py`) shows that on this Windows-hosted test environment, end-to-end process costs dominate most regex/text scenarios:
+
+* **Regex Match:** ripgrep **0.491s** vs tensor-grep **6.378s**
+* **Invert Match:** ripgrep **1.067s** vs tensor-grep **16.214s**
+* **Context (`-C2`):** ripgrep **1.668s** vs tensor-grep **29.628s**
+
+All scenarios passed parity checks, confirming output correctness for the benchmark corpus despite timing gaps.
 
 ```mermaid
 gantt
@@ -89,17 +103,23 @@ gantt
     axisFormat %S
     
     section CPU (ripgrep)
-    Native C DFA Evaluation :a1, 0, 0.607s
+    Native C DFA Evaluation :a1, 0, 0.491s
     
-    section GPU (tensor-grep)
-    cuDF Massively Parallel :a2, 0, 0.199s
+    section tensor-grep CLI (this run)
+    tensor-grep Regex Match :a2, 0, 6.378s
 ```
 
 ### 3.4 Exact String Matching (The CPU/Rust Advantage)
-Conversely, exact literal string matching does not utilize DFA; CPUs utilize heavily optimized Aho-Corasick or SIMD vectorization to scan memory at the physical limits of RAM bandwidth. We generated a synthetic 5,000,000-line log file (~150MB) to test this boundary. 
-- Native C `ripgrep` evaluated the file in **~0.17s**.
-- Our native Rust implementation (`tensor-grep-rs` using `memmap2` and `rayon`) evaluated the file natively on Windows in **~0.21s**.
-- Using our PyO3/Arrow integration layer, the Rust fallback executed a count via the Python CLI in **0.081s** vs Ripgrep's **0.141s**.
+In the fresh benchmark pass, the strongest `tensor-grep` result remained the Rust-backed count path:
+
+* **Count Matches:** ripgrep **0.137s** vs tensor-grep **0.088s**
+
+For other exact/fixed-string modes in this run:
+
+* **Fixed Strings (`-F`):** ripgrep **0.500s** vs tensor-grep **2.760s**
+* **Simple String Match:** ripgrep **0.453s** vs tensor-grep **6.326s**
+
+This suggests the current architecture is highly competitive when it routes to the native Rust counting backend, while general CLI text search paths still carry substantial startup/orchestration overhead.
 
 ```mermaid
 gantt
@@ -107,14 +127,14 @@ gantt
     dateFormat  s
     axisFormat %S
     
-    section Native CPU
-    ripgrep (Native C)         :a1, 0, 0.17s
-    tensor-grep-rs (Rust)      :a2, 0, 0.21s
+    section Native CPU / CLI
+    ripgrep Count              :a1, 0, 0.137s
+    tensor-grep Count          :a2, 0, 0.088s
     
-    section Fallbacks & Constraints
-    PyO3 (Rust FFI to Python)  :a3, 0, 1.9s
-    Pure Python Fallback       :a4, 0, 5.17s
-    cuDF WSL PCIe Transfer     :a5, 0, 14.40s
+    section Other exact/fixed paths
+    ripgrep Fixed Strings      :a3, 0, 0.500s
+    tensor-grep Fixed Strings  :a4, 0, 2.760s
+    tensor-grep Simple String  :a5, 0, 6.326s
 ```
 
 ### 3.5 OS Architectural Limitations: Windows `spawn()` vs. WSL `fork()`

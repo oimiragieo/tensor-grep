@@ -18,36 +18,43 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Quick examples comparing tools
 
-This example benchmark demonstrates the raw throughput advantage of keeping data entirely in GPU memory, avoiding CPU PCIe bus bottlenecks. Timings were collected on a system with an AMD Ryzen 7 5800XT, 64GB RAM, and Dual RTX 4070/5070 cards using `cuDF` via WS2.
+Fresh benchmark pass results (2026-03-01) from this repository's benchmark scripts are below.
 
-| Tool | Command | Line count | Time |
+Environment notes:
+- End-to-end CLI timings include Python process startup cost.
+- `tg` is fastest on the Rust count path in this run.
+- `ripgrep` remains faster on most text-search scenarios in this Windows-hosted benchmark setup.
+
+### ripgrep vs tensor-grep (`benchmarks/run_benchmarks.py`)
+
+| Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| tensor-grep (GPU) | `tg search -n -w '[A-Z]+_SUSPEND'` | 450 | **0.034s** |
-| tensor-grep (Rust Fallback) | `tg search -n -w '[A-Z]+_SUSPEND'` | 450 | **0.081s** |
-| ripgrep | `rg -n -w '[A-Z]+_SUSPEND'` | 450 | 0.141s |
-| ag (Silver Searcher) | `ag -w '[A-Z]+_SUSPEND'` | 450 | 0.753s |
-| git grep | `LC_ALL=C git grep -E -n -w '[A-Z]+_SUSPEND'` | 450 | 0.823s |
+| Simple String Match | 0.453s | 6.326s | Parity PASS |
+| Case-Insensitive Match | 0.478s | 6.613s | Parity PASS |
+| Regex Match | 0.491s | 6.378s | Parity PASS |
+| Invert Match | 1.067s | 16.214s | Parity PASS |
+| Count Matches | 0.137s | **0.088s** | Parity PASS |
+| Context Lines (`-C2`) | 1.668s | 29.628s | Parity PASS |
+| Max Count (`-m 5`) | 0.101s | 0.498s | Parity PASS |
+| File Glob Filtering | 0.476s | 7.096s | Parity PASS |
+| Word Boundary | 0.509s | 7.511s | Parity PASS |
+| Fixed Strings (`-F`) | 0.500s | 2.760s | Parity PASS |
 
-Here's a straight-up comparison performing semantic NLP classification on a single large 500MB web-server log utilizing the NVIDIA Morpheus `cyBERT` transformer model:
+### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
-| Tool | Command | Time |
-| --- | --- | --- |
-| tensor-grep (NLP) | `tg classify /var/logs/nginx.log` | **1.210s** |
-| Python Regex Script | `python parse_logs.py /var/logs/nginx.log` | 18.143s |
+| Scenario | ast-grep | tensor-grep | Result |
+| --- | --- | --- | --- |
+| Simple Function Def | 0.106s | 0.367s | Parity PASS |
+| Try/Except Block | 0.092s | 0.356s | Parity PASS |
+| Class Declaration | 0.103s | 0.363s | Parity PASS |
 
-### Real-World "Hybrid" Transparency
-`tensor-grep` acts as a superset orchestrator. We openly acknowledge that for standard directory searches over millions of tiny files, native Rust/C tools are unbeatable. `tensor-grep` automatically wraps the native `rg` and `sg` (ast-grep) binaries if they are installed on your PATH, intercepting the JSON output directly back into its Python abstractions! 
+### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
-**Here is a real benchmark traversing an entire C:\dev directory:**
-
-| Tool | Command | C:\dev Traversal |
-| --- | --- | --- |
-| Native `rg` | `rg 'class Pipeline'` | **224.837s** |
-| Native `ast-grep` | `sg run -p 'def $FUNC()'` | 42.112s |
-| tensor-grep (Rust Fallback Count) | `tg -c 'def'` | **160.283s** (Bypasses Python via Rust core) |
-| tensor-grep (Hybrid ripgrep) | `tg 'class Pipeline'` | 231.141s (Subprocess wrap overhead) |
-
-For small, complex searches, rely on the `tg` wrapper to elegantly fallback to ripgrep. For counting massive files, rely on `tg` to use its embedded Apache Arrow PyO3 core. For massive log files, rely on `tg` to map files into GPU VRAM with `cuDF`.
+| Backend | Workload | Time | Output |
+| --- | --- | --- | --- |
+| AST backend | `function_definition` on test module | **0.068s** | 4 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | 0.076s | 0 ERROR labels |
+| Torch backend | Exact match on 10,000 log lines | 0.329s | 2,000 matches |
 
 ## Why should I use `tensor-grep`?
 
