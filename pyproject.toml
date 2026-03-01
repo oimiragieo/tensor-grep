@@ -103,3 +103,11 @@ strict = true
 ignore_missing_imports = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+branch = "main"
+build_command = "uv build"
+upload_to_pypi = false
+upload_to_release = true
+commit_message = "chore(release): v{version} [skip ci]"

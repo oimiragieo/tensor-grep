@@ -149,3 +149,22 @@ jobs:
       # to successfully parse the fallback architecture cleanly without crashing.
       - name: Run Pytest with GPU Hooks
         run: uv run pytest tests -v -m "not slow"
+
+  release:
+    name: Semantic Release
+    needs: [static-analysis, test-python, test-rust-core, test-gpu-linux]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Python Semantic Release
+        id: release
+        uses: python-semantic-release/python-semantic-release@v8.7.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
