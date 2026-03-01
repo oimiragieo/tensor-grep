@@ -13,13 +13,13 @@ pub struct CliFlags {
 pub fn should_use_gpu_pipeline() -> bool {
     Python::with_gil(|py| -> PyResult<bool> {
         // Attempt to import tensor_grep's existing device detector
-        let sys = py.import("sys")?;
+        let sys = py.import_bound("sys")?;
         let _path = sys.getattr("path")?;
 
-        let _builtins = py.import("builtins")?;
+        let _builtins = py.import_bound("builtins")?;
 
         // Let's try importing tensor_grep
-        let tg_module = match py.import("tensor_grep.core.hardware.device_detect") {
+        let tg_module = match py.import_bound("tensor_grep.core.hardware.device_detect") {
             Ok(m) => m,
             Err(_) => return Ok(false), // Not installed in python environment
         };
@@ -36,14 +36,14 @@ pub fn should_use_gpu_pipeline() -> bool {
 /// Fallback mechanism to invoke specific Python Typer subcommands directly from Rust
 pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyhow::Result<()> {
     Python::with_gil(|py| -> PyResult<()> {
-        let sys = py.import("sys")?;
+        let sys = py.import_bound("sys")?;
 
         // Emulate sys.argv for the Typer entrypoint
         let mut sys_argv = vec!["tg".to_string(), command.to_string()];
         sys_argv.extend(args);
         sys.setattr("argv", sys_argv)?;
 
-        let main_module = py.import("tensor_grep.cli.main")?;
+        let main_module = py.import_bound("tensor_grep.cli.main")?;
         main_module.call_method0("main_entry")?;
 
         Ok(())
@@ -54,11 +54,11 @@ pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyho
 /// Executes the cuDF Python Pipeline dynamically from Rust!
 pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> anyhow::Result<()> {
     Python::with_gil(|py| -> PyResult<()> {
-        let pipeline_module = py.import("tensor_grep.core.pipeline")?;
+        let pipeline_module = py.import_bound("tensor_grep.core.pipeline")?;
         let pipeline_class = pipeline_module.getattr("Pipeline")?;
 
         // Import config
-        let config_module = py.import("tensor_grep.core.config")?;
+        let config_module = py.import_bound("tensor_grep.core.config")?;
         let config_class = config_module.getattr("SearchConfig")?;
 
         // kwargs for config
