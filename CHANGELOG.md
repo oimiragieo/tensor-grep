@@ -1,14 +1,30 @@
 # CHANGELOG
 
 
-## v0.2.2 (2026-03-01)
+## v0.3.0 (2026-03-01)
+
+### Bug Fixes
+
+- **install**: Restore caller directory after powershell install
+  ([`5082450`](https://github.com/oimiragieo/tensor-grep/commit/50824504c179700c91382af64c2793f8d81ce28c))
+
+### Chores
+
+- **gitignore**: Ignore local benchmark and rust installer artifacts
+  ([`bcf49ef`](https://github.com/oimiragieo/tensor-grep/commit/bcf49effa351eff996c12c8aceb2300b2ac6ce4e))
+
+### Documentation
+
+- Document installer channels and changelog update
+  ([`6a77f01`](https://github.com/oimiragieo/tensor-grep/commit/6a77f01aba1cf67be286129fd416f2ce1401c0b3))
 
 ### Features
 
-- **installer**: Default install scripts to pinned stable release, add `TENSOR_GREP_CHANNEL=main` and
-  `TENSOR_GREP_VERSION` overrides, print installed version, and restore original working directory
-  after install
-  ([`067c5af`](https://github.com/oimiragieo/tensor-grep/commit/067c5aff3c3ef81e90501fca5c632f0327d6d92c))
+- **installer**: Default to pinned stable release with optional main channel
+  ([`067c5af`](https://github.com/oimiragieo/tensor-grep/commit/067c5aff98e5023247a50889464b838fd9b8a81f))
+
+
+## v0.2.2 (2026-03-01)
 
 ### Bug Fixes
 

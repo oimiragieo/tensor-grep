@@ -10,7 +10,7 @@ manifest-path = "rust_core/Cargo.toml"
 
 [project]
 name = "tensor-grep"
-version = "0.2.2"
+version = "0.3.0"
 requires-python = ">=3.11"
 dependencies = [
     "typer[all]>=0.12",
