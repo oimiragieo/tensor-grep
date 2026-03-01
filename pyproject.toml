@@ -38,6 +38,14 @@ dev = [
   "psutil",
   "types-PyYAML",
 ]
+bench = [
+  "pytest>=8.0",
+  "tree-sitter>=0.22",
+  "tree-sitter-python",
+  "tree-sitter-javascript",
+  "torch>=2.0",
+  "nvtx>=0.2",
+]
 
 [project.scripts]
 tg = "tensor_grep.cli.main:main_entry"

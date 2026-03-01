@@ -29,32 +29,38 @@ Environment notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.453s | 6.326s | Parity PASS |
-| Case-Insensitive Match | 0.478s | 6.613s | Parity PASS |
-| Regex Match | 0.491s | 6.378s | Parity PASS |
-| Invert Match | 1.067s | 16.214s | Parity PASS |
-| Count Matches | 0.137s | **0.088s** | Parity PASS |
-| Context Lines (`-C2`) | 1.668s | 29.628s | Parity PASS |
-| Max Count (`-m 5`) | 0.101s | 0.498s | Parity PASS |
-| File Glob Filtering | 0.476s | 7.096s | Parity PASS |
-| Word Boundary | 0.509s | 7.511s | Parity PASS |
-| Fixed Strings (`-F`) | 0.500s | 2.760s | Parity PASS |
+| Simple String Match | 0.444s | 2.708s | Parity PASS |
+| Case-Insensitive Match | 0.448s | 2.678s | Parity PASS |
+| Regex Match | 0.462s | 2.697s | Parity PASS |
+| Invert Match | 1.056s | 3.382s | Parity PASS |
+| Count Matches | 0.136s | **0.075s** | Parity PASS |
+| Context Lines (`-C2`) | 1.704s | 2.092s | Parity PASS |
+| Max Count (`-m 5`) | 0.104s | 2.588s | Parity PASS |
+| File Glob Filtering | 0.512s | 3.182s | Parity PASS |
+| Word Boundary | 0.507s | 0.843s | Parity PASS |
+| Fixed Strings (`-F`) | 0.445s | 2.764s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.106s | 0.367s | Parity PASS |
-| Try/Except Block | 0.092s | 0.356s | Parity PASS |
-| Class Declaration | 0.103s | 0.363s | Parity PASS |
+| Simple Function Def | 0.110s | 0.372s | Parity PASS |
+| Try/Except Block | 0.092s | 0.375s | Parity PASS |
+| Class Declaration | 0.106s | 0.371s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | **0.068s** | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | 0.076s | 0 ERROR labels |
-| Torch backend | Exact match on 10,000 log lines | 0.329s | 2,000 matches |
+| AST backend | `function_definition` on test module | **0.017s** | 4 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | 0.102s | 2,000 ERROR labels |
+| Torch backend | Exact match on 10,000 log lines | 0.217s | 2,000 matches |
+
+### Benchmark Governance (Regression Protection)
+
+- Benchmark scripts now emit machine-readable JSON artifacts in `artifacts/`.
+- Use `benchmarks/check_regression.py` to compare current runs against a baseline and fail if regression exceeds threshold.
+- CI benchmark workflow (`.github/workflows/benchmark.yml`) runs benchmark suites and performs an optional baseline gate when a per-OS baseline file exists under `benchmarks/baselines/`.
 
 ## Why should I use `tensor-grep`?
 

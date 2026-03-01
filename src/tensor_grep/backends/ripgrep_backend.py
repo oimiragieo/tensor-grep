@@ -37,50 +37,7 @@ class RipgrepBackend(ComputeBackend):
     def search(
         self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
-        binary_name = self._get_binary_name()
-        if binary_name is None:
-            raise RuntimeError("RipgrepBackend requires the 'rg' binary to be installed.")
-
-        cmd: list[str] = [binary_name, "--json"]
-
-        # We enforce JSON output so we can seamlessly parse it back into our SearchResult dataclasses
-        if config:
-            if config.ignore_case:
-                cmd.append("-i")
-            if config.case_sensitive:
-                cmd.append("-s")
-            if config.invert_match:
-                cmd.append("-v")
-            if config.word_regexp:
-                cmd.append("-w")
-            if config.line_regexp:
-                cmd.append("-x")
-            if config.fixed_strings:
-                cmd.append("-F")
-            if config.no_ignore:
-                cmd.append("--no-ignore")
-            if config.glob:
-                for glob in config.glob:
-                    cmd.extend(["-g", glob])
-
-            if config.context is not None:
-                cmd.extend(["-C", str(config.context)])
-            else:
-                if config.before_context is not None:
-                    cmd.extend(["-B", str(config.before_context)])
-                if config.after_context is not None:
-                    cmd.extend(["-A", str(config.after_context)])
-
-            if config.max_count is not None:
-                cmd.extend(["-m", str(config.max_count)])
-
-        # The pattern
-        cmd.append(pattern)
-        if isinstance(file_path, list):
-            cmd.extend(file_path)
-        else:
-            cmd.append(file_path)
-
+        cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=True)
         try:
             # We use check=False because rg exits with 1 if no matches are found
             result = subprocess.run(
@@ -134,3 +91,73 @@ class RipgrepBackend(ComputeBackend):
 
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+
+    def search_passthrough(
+        self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None
+    ) -> int:
+        """
+        Execute ripgrep directly and stream output to stdout/stderr without JSON re-parsing.
+        Returns rg's native exit code.
+        """
+        cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=False)
+        result = subprocess.run(cmd, check=False)
+        return int(result.returncode)
+
+    def _build_cmd(
+        self,
+        file_path: str | list[str],
+        pattern: str,
+        config: SearchConfig | None,
+        *,
+        json_mode: bool,
+    ) -> list[str]:
+        binary_name = self._get_binary_name()
+        if binary_name is None:
+            raise RuntimeError("RipgrepBackend requires the 'rg' binary to be installed.")
+
+        cmd: list[str] = [binary_name]
+        if json_mode:
+            cmd.append("--json")
+
+        # We enforce JSON output so we can seamlessly parse it back into our SearchResult dataclasses
+        if config:
+            if config.ignore_case:
+                cmd.append("-i")
+            if config.case_sensitive:
+                cmd.append("-s")
+            if config.invert_match:
+                cmd.append("-v")
+            if config.word_regexp:
+                cmd.append("-w")
+            if config.line_regexp:
+                cmd.append("-x")
+            if config.fixed_strings:
+                cmd.append("-F")
+            if config.no_ignore:
+                cmd.append("--no-ignore")
+            if config.glob:
+                for glob in config.glob:
+                    cmd.extend(["-g", glob])
+
+            if config.context is not None:
+                cmd.extend(["-C", str(config.context)])
+            else:
+                if config.before_context is not None:
+                    cmd.extend(["-B", str(config.before_context)])
+                if config.after_context is not None:
+                    cmd.extend(["-A", str(config.after_context)])
+
+            if config.max_count is not None:
+                cmd.extend(["-m", str(config.max_count)])
+            if config.count:
+                cmd.append("-c")
+            if config.count_matches:
+                cmd.append("--count-matches")
+
+        # The pattern
+        cmd.append(pattern)
+        if isinstance(file_path, list):
+            cmd.extend(file_path)
+        else:
+            cmd.append(file_path)
+        return cmd

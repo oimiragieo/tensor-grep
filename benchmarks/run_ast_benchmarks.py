@@ -110,6 +110,8 @@ def compare_results(ast_out, tg_out, scenario_name):
 
 
 def main():
+    from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
+
     bench_dir = Path(__file__).resolve().parent / "bench_ast_data"
     # Generates 10 files, each with 500 classes and 1000 functions
     generate_ast_data(str(bench_dir), num_files=10, funcs_per_file=500)
@@ -118,6 +120,8 @@ def main():
     print("-" * 75)
     print(f"{'Scenario':<35} | {'ast-grep':<10} | {'tensor-grep':<10} | {'Parity'}")
     print("-" * 75)
+    rows: list[dict[str, object]] = []
+    parity_failures = 0
 
     ast_bin = resolve_ast_grep_binary()
     if not ast_bin:
@@ -153,8 +157,29 @@ def main():
 
         parity_ok = compare_results(ast_out, tg_out, scenario["name"])
         parity_str = "PASS" if parity_ok else "FAIL"
+        if not parity_ok:
+            parity_failures += 1
 
         print(f"{scenario['name']:<35} | {ast_time:>8.3f}s | {tg_time:>8.3f}s | {parity_str}")
+        rows.append({
+            "name": scenario["name"],
+            "ast_time_s": round(ast_time, 6),
+            "tg_time_s": round(tg_time, 6),
+            "parity": parity_str,
+        })
+
+    artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
+    write_json(
+        artifacts_dir / "bench_run_ast_benchmarks.json",
+        {
+            "suite": "run_ast_benchmarks",
+            "generated_at_epoch_s": time.time(),
+            "rows": rows,
+            "parity_failures": parity_failures,
+        },
+    )
+    if parity_failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

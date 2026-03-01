@@ -49,7 +49,7 @@ jobs:
         run: uv run ruff check .
         
       - name: Python Ruff Formatter
-        run: uv run ruff format --check .
+        run: uv run ruff format --check --preview .
         
       - name: Python Mypy Typecheck
         run: uv run mypy src/tensor_grep

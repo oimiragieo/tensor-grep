@@ -192,6 +192,8 @@ def compare_results(rg_out, tg_out, scenario_name):
 
 
 def main():
+    from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
+
     bench_dir = Path(__file__).resolve().parent / "bench_data"
     generate_test_data(
         str(bench_dir), num_files=2, lines_per_file=2_000_000
@@ -203,6 +205,8 @@ def main():
     print("-" * 75)
     print(f"{'Scenario':<35} | {'ripgrep':<10} | {'tensor-grep':<10} | {'Parity'}")
     print("-" * 75)
+    rows: list[dict[str, object]] = []
+    parity_failures = 0
 
     # Ensure tg resolves to python module
 
@@ -249,8 +253,29 @@ def main():
 
         parity_ok = compare_results(rg_out, tg_out, scenario["name"])
         parity_str = "PASS" if parity_ok else "FAIL"
+        if not parity_ok:
+            parity_failures += 1
 
         print(f"{scenario['name']:<35} | {rg_time:>8.3f}s | {tg_time:>8.3f}s | {parity_str}")
+        rows.append({
+            "name": scenario["name"],
+            "rg_time_s": round(rg_time, 6),
+            "tg_time_s": round(tg_time, 6),
+            "parity": parity_str,
+        })
+
+    artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
+    write_json(
+        artifacts_dir / "bench_run_benchmarks.json",
+        {
+            "suite": "run_benchmarks",
+            "generated_at_epoch_s": time.time(),
+            "rows": rows,
+            "parity_failures": parity_failures,
+        },
+    )
+    if parity_failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

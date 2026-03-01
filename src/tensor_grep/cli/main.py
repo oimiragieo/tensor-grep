@@ -8,6 +8,7 @@ import typer
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
 if TYPE_CHECKING:
@@ -506,6 +507,21 @@ def search_command(
     pipeline = Pipeline(force_cpu=cpu, config=config)
     backend = pipeline.get_backend()
 
+    can_passthrough_rg = (
+        backend.__class__.__name__ == "RipgrepBackend"
+        and format_type == "rg"
+        and not json
+        and not files
+        and not files_with_matches
+        and not files_without_match
+        and not only_matching
+        and not stats
+    )
+    if can_passthrough_rg and hasattr(backend, "search_passthrough"):
+        with nvtx_range("search.passthrough_rg", color="green"):
+            exit_code = backend.search_passthrough(paths_to_search, pattern, config=config)
+        sys.exit(0 if exit_code == 0 else 1)
+
     scanner = DirectoryScanner(config)
     candidate_files_ordered, candidate_files_set = _collect_candidate_files(
         scanner, paths_to_search
@@ -537,7 +553,7 @@ def search_command(
             span_ctx = (
                 tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
             )
-            with span_ctx as span:
+            with span_ctx as span, nvtx_range("search.file", color="cyan"):
                 if span is not None:
                     span.set_attribute("backend", backend.__class__.__name__)
                     span.set_attribute("path", path)
@@ -552,7 +568,7 @@ def search_command(
             span_ctx = (
                 tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
             )
-            with span_ctx as span:
+            with span_ctx as span, nvtx_range("search.file", color="cyan"):
                 if span is not None:
                     span.set_attribute("backend", backend.__class__.__name__)
                     span.set_attribute("path", current_file)

@@ -35,6 +35,19 @@ class _FakeScanner:
         yield from _FAKE_WALK.get(path, [])
 
 
+@dataclass
+class _FakeRipgrepBackend:
+    called: bool = False
+    seen_paths: list[str] | None = None
+    seen_pattern: str | None = None
+
+    def search_passthrough(self, paths, pattern, config=None):
+        self.called = True
+        self.seen_paths = list(paths)
+        self.seen_pattern = pattern
+        return 0
+
+
 _FAKE_BACKEND = _FakeBackend(results_by_file={})
 _FAKE_WALK: dict[str, list[str]] = {}
 
@@ -119,3 +132,35 @@ def test_only_matching_outputs_token_not_whole_line(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "a.py:1:ERROR"
+
+
+def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):
+    class RipgrepBackend(_FakeRipgrepBackend):
+        pass
+
+    ripgrep_like_backend = RipgrepBackend()
+
+    class _FastPipeline:
+        def __init__(self, force_cpu=False, config=None):
+            self.backend = ripgrep_like_backend
+
+        def get_backend(self):
+            return self.backend
+
+    class _FailScanner:
+        def __init__(self, config=None):
+            pass
+
+        def walk(self, path):
+            raise AssertionError("DirectoryScanner.walk should not be called on passthrough path")
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FastPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FailScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", "."])
+
+    assert result.exit_code == 0
+    assert ripgrep_like_backend.called is True
+    assert ripgrep_like_backend.seen_pattern == "ERROR"
+    assert ripgrep_like_backend.seen_paths == ["."]

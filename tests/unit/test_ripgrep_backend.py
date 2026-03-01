@@ -86,3 +86,24 @@ def test_should_raise_on_rg_fatal_error():
     ):
         with pytest.raises(RuntimeError, match="exit code 2"):
             backend.search("test.log", "(")
+
+
+def test_passthrough_should_forward_count_flag_and_exit_code():
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True, no_ignore=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        exit_code = backend.search_passthrough(["bench_data"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "-c" in cmd
+    assert "--no-ignore" in cmd
+    assert exit_code == 0

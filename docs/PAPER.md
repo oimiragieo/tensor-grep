@@ -81,20 +81,20 @@ We re-ran the benchmark suite on 2026-03-01 from repository scripts and captured
 
 Backend-level timings from `run_gpu_benchmarks.py`:
 
-* **AST backend:** `function_definition` query completed in **0.068 seconds** (4 matches).
-* **cyBERT backend:** classified 10,000 log lines in **0.076 seconds**.
-* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.329 seconds** (2,000 matches).
+* **AST backend:** `function_definition` query completed in **0.017 seconds** (4 matches).
+* **cyBERT backend:** classified 10,000 log lines in **0.102 seconds** (2,000 ERROR labels).
+* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.217 seconds** (2,000 matches).
 
 These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
 The latest full script-driven CLI benchmark (`run_benchmarks.py`) shows that on this Windows-hosted test environment, end-to-end process costs dominate most regex/text scenarios:
 
-* **Regex Match:** ripgrep **0.491s** vs tensor-grep **6.378s**
-* **Invert Match:** ripgrep **1.067s** vs tensor-grep **16.214s**
-* **Context (`-C2`):** ripgrep **1.668s** vs tensor-grep **29.628s**
+* **Regex Match:** ripgrep **0.462s** vs tensor-grep **2.697s**
+* **Invert Match:** ripgrep **1.056s** vs tensor-grep **3.382s**
+* **Context (`-C2`):** ripgrep **1.704s** vs tensor-grep **2.092s**
 
-All scenarios passed parity checks, confirming output correctness for the benchmark corpus despite timing gaps.
+All scenarios passed parity checks. Compared to the previous run, introducing a direct ripgrep passthrough path substantially reduced end-to-end tensor-grep overhead in text-search modes.
 
 ```mermaid
 gantt
@@ -103,21 +103,21 @@ gantt
     axisFormat %S
     
     section CPU (ripgrep)
-    Native C DFA Evaluation :a1, 0, 0.491s
+    Native C DFA Evaluation :a1, 0, 0.462s
     
     section tensor-grep CLI (this run)
-    tensor-grep Regex Match :a2, 0, 6.378s
+    tensor-grep Regex Match :a2, 0, 2.697s
 ```
 
 ### 3.4 Exact String Matching (The CPU/Rust Advantage)
 In the fresh benchmark pass, the strongest `tensor-grep` result remained the Rust-backed count path:
 
-* **Count Matches:** ripgrep **0.137s** vs tensor-grep **0.088s**
+* **Count Matches:** ripgrep **0.136s** vs tensor-grep **0.075s**
 
 For other exact/fixed-string modes in this run:
 
-* **Fixed Strings (`-F`):** ripgrep **0.500s** vs tensor-grep **2.760s**
-* **Simple String Match:** ripgrep **0.453s** vs tensor-grep **6.326s**
+* **Fixed Strings (`-F`):** ripgrep **0.445s** vs tensor-grep **2.764s**
+* **Simple String Match:** ripgrep **0.444s** vs tensor-grep **2.708s**
 
 This suggests the current architecture is highly competitive when it routes to the native Rust counting backend, while general CLI text search paths still carry substantial startup/orchestration overhead.
 
@@ -128,13 +128,13 @@ gantt
     axisFormat %S
     
     section Native CPU / CLI
-    ripgrep Count              :a1, 0, 0.137s
-    tensor-grep Count          :a2, 0, 0.088s
+    ripgrep Count              :a1, 0, 0.136s
+    tensor-grep Count          :a2, 0, 0.075s
     
     section Other exact/fixed paths
-    ripgrep Fixed Strings      :a3, 0, 0.500s
-    tensor-grep Fixed Strings  :a4, 0, 2.760s
-    tensor-grep Simple String  :a5, 0, 6.326s
+    ripgrep Fixed Strings      :a3, 0, 0.445s
+    tensor-grep Fixed Strings  :a4, 0, 2.764s
+    tensor-grep Simple String  :a5, 0, 2.708s
 ```
 
 ### 3.5 OS Architectural Limitations: Windows `spawn()` vs. WSL `fork()`
@@ -162,6 +162,15 @@ Consequently, `tensor-grep` retains pure Python standard library capabilities fo
 One of the longest-standing limitations of `ripgrep` is its strict adherence to pure search capabilities; it lacks native in-place log mutation or capture-group code refactoring natively. Developers typically pipeline `rg` outputs into `sed -i` or `awk`, crippling performance via IPC context switching overhead. 
 
 To resolve this, we embedded a native `--replace` pipeline directly into the Rust memory-mapped engine. Because the entire log sequence is evaluated as a contiguous string slice natively inside the regex solver, we can seamlessly apply parameterized capture group mutations (e.g. `$1`, `${num}`) at speeds matching VSCode's native C++ text buffers but entirely via the CLI. Benchmarking the replacement of 100,000 function argument parameters across a synthetic python file, `tensor-grep-rs` safely applied complex parameterized Regex template replacements across all lines, and wrote the new file to disk in exactly **0.497 seconds**. This achieves what was previously an impossibility for pure `ripgrep` constraints while completely maintaining strict code formatting preservation.
+
+### 3.8 Benchmark Regression Governance
+To enforce sustainable performance gains, we introduced a benchmark-governance layer:
+
+1. Benchmark suites emit machine-readable JSON artifacts (`artifacts/bench_*.json`).
+2. A regression checker (`benchmarks/check_regression.py`) compares current runs against a baseline and fails if slowdown exceeds a configurable threshold.
+3. CI executes benchmark suites and performs an optional per-OS regression gate when baseline files are present.
+
+This turns performance claims into continuously verifiable constraints and enables objective rollback decisions when regressions are detected.
 
 ## 4. Related Work and Architectural Novelty
 

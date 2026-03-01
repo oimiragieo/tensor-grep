@@ -51,12 +51,10 @@ class TestCybertBackend:
 
         mock_result = MagicMock()
 
-        mock_result.as_numpy.return_value = np.array(
-            [
-                [0.1, 0.9, 0.0],  # High confidence
-                [0.4, 0.4, 0.2],  # Low confidence
-            ]
-        )
+        mock_result.as_numpy.return_value = np.array([
+            [0.1, 0.9, 0.0],  # High confidence
+            [0.4, 0.4, 0.2],  # Low confidence
+        ])
         mock_client.infer.return_value = mock_result
 
         from tensor_grep.backends.cybert_backend import CybertBackend
@@ -92,3 +90,20 @@ class TestCybertBackend:
         backend = CybertBackend()
         with pytest.raises(RuntimeError, match="CyBERT inference failed"):
             backend.classify(["test line"])
+
+    def test_should_use_heuristic_fallback_when_triton_missing(self):
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        backend = CybertBackend()
+        lines = [
+            "2026-03-01 [INFO] startup completed",
+            "2026-03-01 [WARNING] memory usage is high",
+            "2026-03-01 [ERROR] database connection timeout",
+            "fatal exception: cannot allocate memory",
+        ]
+
+        results = backend.classify(lines)
+        labels = [r["label"] for r in results]
+
+        assert labels.count("error") >= 2
+        assert "warn" in labels
