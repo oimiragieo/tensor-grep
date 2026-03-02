@@ -19,8 +19,34 @@ jobs:
       - name: Validate release/package asset consistency
         run: uv run python scripts/validate_release_assets.py
 
-  build-binaries:
+  validate-package-managers:
+    name: Validate Package Managers (${{ matrix.os }})
     needs: validate-release-assets
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Homebrew formula syntax
+        if: runner.os == 'Linux'
+        run: ruby -c scripts/tensor-grep.rb
+
+      - name: Validate winget manifest syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw "winget is required on windows-latest to validate manifests"
+          }
+          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+
+  build-binaries:
+    needs: [validate-release-assets, validate-package-managers]
     name: Build on ${{ matrix.os }} - ${{ matrix.gpu }}
     runs-on: ${{ matrix.os }}
     permissions:

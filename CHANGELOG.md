@@ -13,6 +13,10 @@
 - **multi-gpu**: Add explicit device-id fanout and release asset validation
   ([`27e8453`](https://github.com/oimiragieo/tensor-grep/commit/27e845394fbfc4f1d1bc1f15067d13a6c7c81fc2))
 
+### Continuous Integration
+
+- **pkg**: Add Linux/Windows package-manager readiness checks (Homebrew + Winget) in CI and release workflows
+
 
 ## v0.9.1 (2026-03-02)
 

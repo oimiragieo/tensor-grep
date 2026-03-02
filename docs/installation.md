@@ -52,3 +52,35 @@ uv run python scripts/validate_release_assets.py
 ```
 
 Main CI now runs this same validation in the `release-readiness` job to prevent release drift.
+
+### Homebrew Tap Flow
+
+1. Keep `scripts/tensor-grep.rb` aligned with the tagged version and release artifact URLs.
+2. Validate formula syntax:
+
+```bash
+ruby -c scripts/tensor-grep.rb
+```
+
+3. Commit/update the formula in your tap repository (for example `oimiragieo/homebrew-tap`), then test install:
+
+```bash
+brew tap oimiragieo/tap
+brew install tensor-grep
+tg --version
+```
+
+### Winget Flow
+
+1. Keep `scripts/oimiragieo.tensor-grep.yaml` aligned with the tagged version and Windows artifact URL.
+2. Validate manifest locally on Windows:
+
+```powershell
+winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+```
+
+3. Submit/update the manifest in `microsoft/winget-pkgs`.
+
+CI coverage:
+- `ci.yml` now includes `package-manager-readiness` on Linux + Windows.
+- `release.yml` also validates Homebrew and Winget manifests before building release artifacts.

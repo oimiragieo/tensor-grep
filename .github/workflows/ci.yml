@@ -32,6 +32,31 @@ jobs:
       - name: Validate release/package asset consistency
         run: uv run python scripts/validate_release_assets.py
 
+  package-manager-readiness:
+    name: package-manager-readiness (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Homebrew formula syntax
+        if: runner.os == 'Linux'
+        run: ruby -c scripts/tensor-grep.rb
+
+      - name: Validate winget manifest syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            throw "winget is required on windows-latest to validate manifests"
+          }
+          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+
   static-analysis:
     name: Formatting & Linting
     runs-on: ubuntu-latest
@@ -239,7 +264,7 @@ jobs:
 
   release:
     name: Semantic Release
-    needs: [release-readiness, static-analysis, test-python, test-rust-core, test-gpu-linux, benchmark-regression]
+    needs: [release-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, test-gpu-linux, benchmark-regression]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
     runs-on: ubuntu-latest
     outputs:
