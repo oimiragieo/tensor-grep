@@ -280,3 +280,33 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
     assert any(cmd[:3] == ["python", "-m", "ensurepip"] for cmd in calls)
     assert pip_attempts["count"] == 2
     assert "Successfully upgraded tensor-grep via pip+ensurepip!" in result.stdout
+
+
+def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            raise FileNotFoundError("uv not found")
+        if cmd[:3] == ["python", "-m", "pip"]:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                stderr="network timeout while contacting package index",
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 1
+    assert calls[0][0] == "uv"
+    assert any(cmd[:3] == ["python", "-m", "pip"] for cmd in calls)
+    assert "Error occurred while upgrading tensor-grep." in result.output
+    assert "uv:" in result.output
+    assert "pip:" in result.output
+    assert "network timeout while contacting package index" in result.output
