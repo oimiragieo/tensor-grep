@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.12.0 (2026-03-02)
+
+### Bug Fixes
+
+- **ci**: Align package artifact versions and formatting
+  ([`c653433`](https://github.com/oimiragieo/tensor-grep/commit/c653433e02f9bdf9098e71b0bdd4fd35c4ad0e29))
+
+### Features
+
+- Complete multi-gpu routing and harden pypi release checks
+  ([`f5deae1`](https://github.com/oimiragieo/tensor-grep/commit/f5deae1d9f8269598d354c51471e4679ae9e06bf))
+
+
 ## v0.11.1 (2026-03-02)
 
 ### Bug Fixes
