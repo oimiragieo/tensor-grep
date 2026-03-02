@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.6.0 (2026-03-02)
+
+### Continuous Integration
+
+- **bench**: Harden scheduled benchmark workflow
+  ([`b0950f4`](https://github.com/oimiragieo/tensor-grep/commit/b0950f4098294ff9e36207f50fba40708927c1d4))
+
+### Features
+
+- **obs**: Add backend selection reason telemetry
+  ([`6008eba`](https://github.com/oimiragieo/tensor-grep/commit/6008ebaff5852b6d067ca4298bacb7945beb2be9))
+
+
 ## v0.5.0 (2026-03-02)
 
 ### Build System
