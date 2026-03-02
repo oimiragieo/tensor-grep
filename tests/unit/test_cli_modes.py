@@ -399,3 +399,103 @@ def test_cli_stats_prints_summary_when_no_matches(monkeypatch):
     assert result.exit_code == 1
     assert "[stats] scanned_files=1 matched_files=0 total_matches=0" in result.output
     assert "[stats] backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
+
+
+class _FakeAstBackend:
+    def search(self, file_path: str, pattern: str, config=None) -> SearchResult:
+        try:
+            content = open(file_path, encoding="utf-8").read()
+        except OSError:
+            content = ""
+        has_match = pattern in content
+        matches = (
+            [
+                MatchLine(
+                    line_number=1, text=content.splitlines()[0] if content else "", file=file_path
+                )
+            ]
+            if has_match
+            else []
+        )
+        return SearchResult(
+            matches=matches, total_files=1 if has_match else 0, total_matches=len(matches)
+        )
+
+
+class _FakeAstPipeline:
+    def __init__(self, force_cpu=False, config=None):
+        self._backend = _FakeAstBackend()
+
+    def get_backend(self):
+        return self._backend
+
+
+class _FakeAstScanner:
+    def __init__(self, config=None):
+        pass
+
+    def walk(self, path):
+        yield "a.py"
+        yield "b.py"
+
+
+def test_scan_executes_rules_from_sgconfig(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+        )
+        Path("rules").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "[scan] rule=error-rule lang=python matches=1 files=1" in result.output
+    assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
+
+
+def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+            encoding="utf-8",
+        )
+        Path("rules").mkdir()
+        Path("tests").mkdir()
+        Path("rules/no_bad.yml").write_text(
+            "id: no-bad\nlanguage: python\nrule:\n  pattern: BAD\n",
+            encoding="utf-8",
+        )
+        Path("tests/no_bad_test.yml").write_text(
+            (
+                "tests:\n"
+                "  - id: no-bad-basic\n"
+                "    ruleId: no-bad\n"
+                "    valid:\n"
+                "      - 'all good'\n"
+                "    invalid:\n"
+                "      - 'contains BAD token'\n"
+            ),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "All tests passed. cases=2" in result.output

@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 
 import typer
 
@@ -108,6 +109,120 @@ def _only_matching_lines(
             if token_text:
                 extracted.append(replace(match, text=token_text))
     return extracted
+
+
+def _normalize_string_list(value: object, fallback: list[str]) -> list[str]:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return fallback
+
+
+def _load_yaml_dict(path: Path) -> dict:
+    import yaml
+
+    with path.open(encoding="utf-8") as handle:
+        loaded = yaml.safe_load(handle) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"YAML in {path} must be a mapping.")
+    return loaded
+
+
+def _load_sg_project_config(config_path: str | None) -> dict[str, object]:
+    resolved = Path(config_path or "sgconfig.yml").resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Config file {resolved} not found. Use `tg new` to create one.")
+
+    raw = _load_yaml_dict(resolved)
+    return {
+        "config_path": resolved,
+        "root_dir": resolved.parent,
+        "rule_dirs": _normalize_string_list(raw.get("ruleDirs"), ["rules"]),
+        "test_dirs": _normalize_string_list(raw.get("testDirs"), ["tests"]),
+        "language": str(raw.get("language") or "python"),
+    }
+
+
+def _iter_yaml_files(base_dir: Path, rel_dirs: list[str]) -> list[Path]:
+    candidates: list[Path] = []
+    for rel_dir in rel_dirs:
+        target = (base_dir / rel_dir).resolve()
+        if target.is_file() and target.suffix.lower() in {".yml", ".yaml"}:
+            candidates.append(target)
+            continue
+        if not target.is_dir():
+            continue
+        candidates.extend(sorted(target.rglob("*.yml")))
+        candidates.extend(sorted(target.rglob("*.yaml")))
+    return sorted(set(candidates))
+
+
+def _extract_rule_pattern(rule_data: dict) -> str | None:
+    direct = rule_data.get("pattern")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+
+    rule_node = rule_data.get("rule")
+    if isinstance(rule_node, dict):
+        nested = rule_node.get("pattern")
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+
+    return None
+
+
+def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
+    root_dir = cast(Path, project_cfg["root_dir"])
+    rule_dirs = cast(list[str], project_cfg["rule_dirs"])
+    default_language = cast(str, project_cfg["language"])
+
+    specs: list[dict[str, str]] = []
+    for rule_file in _iter_yaml_files(root_dir, rule_dirs):
+        payload = _load_yaml_dict(rule_file)
+
+        raw_rules = payload.get("rules")
+        if isinstance(raw_rules, list):
+            for idx, item in enumerate(raw_rules):
+                if not isinstance(item, dict):
+                    continue
+                pattern = _extract_rule_pattern(item)
+                if not pattern:
+                    continue
+                specs.append(
+                    {
+                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                        "pattern": pattern,
+                        "language": str(
+                            item.get("language") or payload.get("language") or default_language
+                        ),
+                    }
+                )
+            continue
+
+        pattern = _extract_rule_pattern(payload)
+        if not pattern:
+            continue
+        specs.append(
+            {
+                "id": str(payload.get("id") or rule_file.stem),
+                "pattern": pattern,
+                "language": str(payload.get("language") or default_language),
+            }
+        )
+
+    return specs
+
+
+def _suffix_for_language(language: str) -> str:
+    normalized = language.lower()
+    if normalized in {"js", "javascript"}:
+        return ".js"
+    if normalized in {"ts", "typescript"}:
+        return ".ts"
+    return ".py"
 
 
 @app.command(
@@ -797,15 +912,54 @@ def scan(
     ),
 ) -> None:
     """Scan and rewrite code by configuration (ast-grep parity)"""
-    import os
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.core.pipeline import Pipeline
+    from tensor_grep.io.directory_scanner import DirectoryScanner
 
-    if not os.path.exists(config or "sgconfig.yml"):
-        typer.echo(f"Error: Config file {config} not found. Use `tg new` to create one.", err=True)
+    try:
+        project_cfg = _load_sg_project_config(config)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    typer.echo(f"Scanning project using GPU-Accelerated GNNs based on {config}...")
-    # TODO: Load YAML rules and batch process via AstBackend
-    typer.echo("Scan completed.")
+    rules = _load_rule_specs(project_cfg)
+    if not rules:
+        typer.echo("Error: No valid rules found in configured rule directories.", err=True)
+        sys.exit(1)
+
+    cfg = SearchConfig(ast=True, lang=cast(str, project_cfg["language"]))
+    pipeline = Pipeline(config=cfg)
+    backend = pipeline.get_backend()
+    scanner = DirectoryScanner(cfg)
+    root_dir = cast(Path, project_cfg["root_dir"])
+    candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+
+    typer.echo(
+        f"Scanning project using GPU-Accelerated GNNs based on {project_cfg['config_path']}..."
+    )
+
+    total_matches = 0
+    matched_rules = 0
+    for rule in rules:
+        rule_cfg = replace(cfg, lang=rule["language"])
+        rule_matches = 0
+        matched_files: set[str] = set()
+        for current_file in candidate_files:
+            result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+            rule_matches += result.total_matches
+            if result.total_matches > 0:
+                matched_files.add(current_file)
+        total_matches += rule_matches
+        if rule_matches > 0:
+            matched_rules += 1
+        typer.echo(
+            f"[scan] rule={rule['id']} lang={rule['language']} "
+            f"matches={rule_matches} files={len(matched_files)}"
+        )
+
+    typer.echo(
+        f"Scan completed. rules={len(rules)} matched_rules={matched_rules} total_matches={total_matches}"
+    )
 
 
 @app.command()
@@ -815,9 +969,93 @@ def test(
     ),
 ) -> None:
     """Test ast-grep rules (ast-grep parity)"""
-    typer.echo(f"Testing AST rules from {config}...")
-    # TODO: Execute rule tests
-    typer.echo("All tests passed.")
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.core.pipeline import Pipeline
+
+    try:
+        project_cfg = _load_sg_project_config(config)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    rules = _load_rule_specs(project_cfg)
+    if not rules:
+        typer.echo("Error: No valid rules found in configured rule directories.", err=True)
+        sys.exit(1)
+    rules_by_id = {rule["id"]: rule for rule in rules}
+
+    root_dir = cast(Path, project_cfg["root_dir"])
+    test_dirs = cast(list[str], project_cfg["test_dirs"])
+    test_files = _iter_yaml_files(root_dir, test_dirs)
+    if not test_files:
+        typer.echo("Error: No test files found in configured test directories.", err=True)
+        sys.exit(1)
+
+    cfg = SearchConfig(ast=True, lang=cast(str, project_cfg["language"]))
+    pipeline = Pipeline(config=cfg)
+    backend = pipeline.get_backend()
+
+    total_cases = 0
+    failures: list[str] = []
+    for test_file in test_files:
+        payload = _load_yaml_dict(test_file)
+        raw_cases = payload.get("tests")
+        if isinstance(raw_cases, list):
+            cases = [case for case in raw_cases if isinstance(case, dict)]
+        else:
+            cases = [payload]
+
+        for case in cases:
+            case_id = str(case.get("id") or test_file.stem)
+            linked_rule = case.get("ruleId")
+            pattern = _extract_rule_pattern(case)
+            language = str(case.get("language") or cfg.lang or "python")
+            if not pattern and isinstance(linked_rule, str) and linked_rule in rules_by_id:
+                pattern = rules_by_id[linked_rule]["pattern"]
+                language = str(case.get("language") or rules_by_id[linked_rule]["language"])
+            if not pattern:
+                failures.append(f"{test_file}:{case_id}: missing pattern or ruleId")
+                continue
+
+            valid_snippets = _normalize_string_list(case.get("valid"), [])
+            invalid_snippets = _normalize_string_list(case.get("invalid"), [])
+            if not valid_snippets and not invalid_snippets:
+                failures.append(f"{test_file}:{case_id}: empty valid/invalid test lists")
+                continue
+
+            for expected_match, snippets in ((False, valid_snippets), (True, invalid_snippets)):
+                for snippet in snippets:
+                    total_cases += 1
+                    temp_name = (
+                        root_dir / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
+                    )
+                    temp_name.write_text(snippet, encoding="utf-8")
+                    try:
+                        result = backend.search(
+                            str(temp_name), pattern, config=replace(cfg, lang=language)
+                        )
+                        has_match = result.total_matches > 0
+                    except Exception as exc:
+                        failures.append(f"{test_file}:{case_id}: backend error: {exc}")
+                        has_match = expected_match
+                    finally:
+                        temp_name.unlink(missing_ok=True)
+
+                    if has_match != expected_match:
+                        expectation = "match" if expected_match else "no match"
+                        failures.append(
+                            f"{test_file}:{case_id}: expected {expectation}, got "
+                            f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
+                        )
+
+    typer.echo(f"Testing AST rules from {project_cfg['config_path']}...")
+    if failures:
+        for failure in failures:
+            typer.echo(f"[test] FAIL {failure}", err=True)
+        typer.echo(f"Rule tests failed. cases={total_cases} failures={len(failures)}", err=True)
+        sys.exit(1)
+
+    typer.echo(f"All tests passed. cases={total_cases}")
 
 
 @app.command()
