@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.7.0 (2026-03-02)
+
+### Features
+
+- **cli**: Show backend routing reason in --debug output
+  ([`b89a080`](https://github.com/oimiragieo/tensor-grep/commit/b89a080b998c5a8ed58afa200f76d90ac1e58da2))
+
+### Testing
+
+- **cli**: Cover tg upgrade dual-failure diagnostics
+  ([`6259e24`](https://github.com/oimiragieo/tensor-grep/commit/6259e2477d909eeab30f0c699a51ec67909f2877))
+
+
 ## v0.6.1 (2026-03-02)
 
 ### Bug Fixes
