@@ -18,6 +18,17 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+
+      - name: Repo Hygiene Guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden="$(git ls-files | grep -E '(^|/)(__pycache__/|.*\.pyc$|.*\.pyd$|artifacts/|src/tensor_grep/core/profile_stats$)' || true)"
+          if [ -n "$forbidden" ]; then
+            echo "Tracked generated artifacts detected:"
+            echo "$forbidden"
+            exit 1
+          fi
       
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
