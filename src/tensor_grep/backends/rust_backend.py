@@ -31,6 +31,7 @@ class RustCoreBackend(ComputeBackend):
         ignore_case = False
         count_only = False
         fixed_strings = False
+        invert_match = False
         if config:
             if config.ignore_case:
                 ignore_case = True
@@ -38,9 +39,11 @@ class RustCoreBackend(ComputeBackend):
                 count_only = True
             if config.fixed_strings:
                 fixed_strings = True
+            if config.invert_match:
+                invert_match = True
 
         try:
-            if count_only:
+            if count_only and not invert_match:
                 # Use highly-optimized Rayon parallel count fast-path
                 total_count = self.inner.count_matches(
                     pattern, str(file_path), ignore_case, fixed_strings
@@ -54,7 +57,7 @@ class RustCoreBackend(ComputeBackend):
             # Support older signature and new signature smoothly
             try:
                 results = self.inner.search(
-                    pattern, str(file_path), ignore_case, fixed_strings, False
+                    pattern, str(file_path), ignore_case, fixed_strings, invert_match
                 )
             except TypeError:
                 results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings)

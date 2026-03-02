@@ -69,10 +69,9 @@ class CPUBackend(ComputeBackend):
                 getattr(config, "context", False)
                 or getattr(config, "before_context", False)
                 or getattr(config, "after_context", False)
-                or getattr(config, "invert_match", False)
             ):
                 raise NotImplementedError(
-                    "Rust backend does not support context lines or invert_match yet, fallback to python"
+                    "Rust backend does not support context lines yet, fallback to python"
                 )
 
             matches = [MatchLine(line_number=r[0], text=r[1], file=file_path) for r in rust_results]

@@ -126,6 +126,29 @@ class TestCPUBackend:
         assert result.total_matches == 0
         assert result.matches == []
 
+    def test_should_use_rust_path_for_invert_match_when_supported(self, tmp_path):
+        from tensor_grep.core.config import SearchConfig
+
+        log = tmp_path / "invert.log"
+        log.write_text("ERROR\nINFO\n")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                assert kwargs["invert_match"] is True
+                return [(2, "FROM_RUST")]
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "ERROR", config=SearchConfig(invert_match=True))
+
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 2
+        assert result.matches[0].text == "FROM_RUST"
+
     def test_should_match_ltl_eventually_sequence_when_ordered(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
 
