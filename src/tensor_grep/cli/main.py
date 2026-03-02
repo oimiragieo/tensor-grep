@@ -1,5 +1,6 @@
 import re
 import sys
+import time
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -578,11 +579,9 @@ def search_command(
 
     pipeline = Pipeline(force_cpu=cpu, config=config)
     backend = pipeline.get_backend()
+    selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
+    selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
     if debug:
-        selected_backend_name = getattr(
-            pipeline, "selected_backend_name", backend.__class__.__name__
-        )
-        selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
         typer.echo(
             f"[debug] routing.backend={selected_backend_name} reason={selected_backend_reason}"
         )
@@ -602,6 +601,7 @@ def search_command(
         tracer = None
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    search_start = time.perf_counter()
 
     # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
@@ -642,24 +642,48 @@ def search_command(
         all_results.total_files = len({m.file for m in all_results.matches})
 
     matched_files = {m.file for m in all_results.matches}
+    elapsed_ms = (time.perf_counter() - search_start) * 1000.0
+
+    def _emit_stats() -> None:
+        if not stats:
+            return
+        typer.echo(
+            (
+                f"[stats] scanned_files={len(candidate_files_ordered)} "
+                f"matched_files={len(matched_files)} "
+                f"total_matches={all_results.total_matches} "
+                f"elapsed_ms={elapsed_ms:.2f}"
+            ),
+            err=True,
+        )
+        typer.echo(
+            f"[stats] backend={selected_backend_name} reason={selected_backend_reason}",
+            err=True,
+        )
 
     if files_with_matches:
         if matched_files:
+            _emit_stats()
             print("\n".join(sorted(matched_files)))
             sys.exit(0)
+        _emit_stats()
         sys.exit(1)
 
     if files_without_match:
         unmatched = sorted(candidate_files_set - matched_files)
         if unmatched:
+            _emit_stats()
             print("\n".join(unmatched))
             sys.exit(0)
+        _emit_stats()
         sys.exit(1)
 
     if all_results.is_empty:
+        _emit_stats()
         sys.exit(1)
 
     if quiet:
+        _emit_stats()
         sys.exit(0)
 
     formatter: OutputFormatter
@@ -682,6 +706,7 @@ def search_command(
         formatter = RipgrepFormatter(config=config)
 
     print(formatter.format(all_results))
+    _emit_stats()
 
 
 @app.command()

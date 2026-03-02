@@ -355,3 +355,47 @@ def test_cli_debug_prints_passthrough_routing_reason(monkeypatch):
         "[debug] routing.backend=RipgrepBackend reason=rg_passthrough_cli_fast_path"
         in result.output
     )
+
+
+def test_cli_stats_prints_summary_when_matches_found(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+
+    assert result.exit_code == 0
+    assert "[stats] scanned_files=1 matched_files=1 total_matches=1" in result.output
+    assert "[stats] backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
+
+
+def test_cli_stats_prints_summary_when_no_matches(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+
+    assert result.exit_code == 1
+    assert "[stats] scanned_files=1 matched_files=0 total_matches=0" in result.output
+    assert "[stats] backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
