@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.10.1 (2026-03-02)
+
+### Bug Fixes
+
+- **ci**: Install uv in package-manager validation jobs
+  ([`4c97de3`](https://github.com/oimiragieo/tensor-grep/commit/4c97de3e5b2ef609593f569a6eb024e61afeb258))
+
+- **ci**: Resync release assets and refresh benchmark docs
+  ([`a124395`](https://github.com/oimiragieo/tensor-grep/commit/a1243956f410131fc741ca39ba9fe8fd0e754e92))
+
+### Continuous Integration
+
+- **pkg**: Fallback when winget validate is unavailable
+  ([`76ae896`](https://github.com/oimiragieo/tensor-grep/commit/76ae896c96e064195328fbadc27901883390ce20))
+
+- **pkg**: Handle winget validate exit codes with fallback
+  ([`c2c6663`](https://github.com/oimiragieo/tensor-grep/commit/c2c66637d70ac9a5d619f5688a38debd1c540790))
+
+- **pkg**: Validate homebrew and winget manifests in ci/release
+  ([`6e80ffb`](https://github.com/oimiragieo/tensor-grep/commit/6e80ffb30b6ef0d699f167414948b2c9edb2a09a))
+
+
 ## v0.10.0 (2026-03-02)
 
 ### Bug Fixes
@@ -8,22 +30,10 @@
 - **release**: Align manifest and package versions to 0.9.1
   ([`8eab569`](https://github.com/oimiragieo/tensor-grep/commit/8eab56960f84a552dcfb79f06fbb5fc03dda7831))
 
-- **release**: Re-sync Cargo/npm/Winget/Homebrew versions and artifact URLs with 0.10.0
-
 ### Features
 
 - **multi-gpu**: Add explicit device-id fanout and release asset validation
   ([`27e8453`](https://github.com/oimiragieo/tensor-grep/commit/27e845394fbfc4f1d1bc1f15067d13a6c7c81fc2))
-
-### Continuous Integration
-
-- **pkg**: Add Linux/Windows package-manager readiness checks (Homebrew + Winget) in CI and release workflows
-- **pkg**: Add fallback validator path when `winget validate` is unavailable on a runner
-- **pkg**: Ensure `uv` is installed before Windows Winget fallback validation paths
-
-### Documentation
-
-- **benchmarks**: Refresh README and PAPER benchmark tables from the latest full local benchmark pass
 
 
 ## v0.9.1 (2026-03-02)
