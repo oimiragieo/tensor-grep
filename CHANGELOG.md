@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.9.0 (2026-03-02)
+
+### Bug Fixes
+
+- **cli**: Add precise yaml mapping type hints for mypy
+  ([`81c116e`](https://github.com/oimiragieo/tensor-grep/commit/81c116e8939506af80501cd5f64346751e7f579c))
+
+### Code Style
+
+- Align ruff preview formatting with CI
+  ([`60f5b20`](https://github.com/oimiragieo/tensor-grep/commit/60f5b207338081a7dc9465997cf03a3feb58dc23))
+
+- **tests**: Apply ruff formatter for cybert backend tests
+  ([`350dd76`](https://github.com/oimiragieo/tensor-grep/commit/350dd7616dbeb6bfec340cdff818d5039ee1a658))
+
+### Features
+
+- **cli**: Wire sgconfig scan and rule test execution
+  ([`39e8148`](https://github.com/oimiragieo/tensor-grep/commit/39e81480eb094a2d7b569786a995dc8d635e4008))
+
+
 ## v0.8.0 (2026-03-02)
 
 ### Chores
