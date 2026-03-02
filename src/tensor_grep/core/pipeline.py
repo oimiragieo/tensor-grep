@@ -17,8 +17,7 @@ class Pipeline:
         if config is None:
             return False
         return bool(
-            config.invert_match
-            or config.context
+            config.context
             or config.before_context
             or config.after_context
             or config.line_regexp

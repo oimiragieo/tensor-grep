@@ -171,3 +171,16 @@ class TestPipeline:
             config=SearchConfig(query_pattern="A -> eventually B", ltl=True),
         )
         assert pipeline.backend.__class__.__name__ == "CPUBackend"
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_should_route_invert_queries_to_rust_when_rg_missing(self, mock_rust, mock_rg):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(query_pattern="ERROR", invert_match=True),
+        )
+        assert pipeline.backend == mock_rust.return_value
+        assert pipeline.selected_backend_reason == "rust_secondary_fast_path"

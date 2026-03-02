@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- **routing**: Keep `invert-match` on Rust fast path when `rg` is unavailable
+
 
 ## v0.9.0 (2026-03-02)
 
