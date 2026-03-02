@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.4.1 (2026-03-02)
+
+### Bug Fixes
+
+- **cli**: Disable rg passthrough for --replace mode
+  ([`02f034c`](https://github.com/oimiragieo/tensor-grep/commit/02f034c0ce2f9acd977bc9c031bedafeb3ca14a7))
+
+### Continuous Integration
+
+- **bench**: Enforce regression gate in main pipeline
+  ([`9ca7ecb`](https://github.com/oimiragieo/tensor-grep/commit/9ca7ecbfc4b9ce500730315398a3199ad21f52ad))
+
+- **bench**: Install rg and enforce pipefail in benchmark gate
+  ([`ffca6b7`](https://github.com/oimiragieo/tensor-grep/commit/ffca6b736cd97a9f11b5048d9e73733cde038d99))
+
+- **pypi**: Allow idempotent publish on reruns
+  ([`6d332a3`](https://github.com/oimiragieo/tensor-grep/commit/6d332a396cadff8faa84694a768c605e51942145))
+
+
 ## v0.4.0 (2026-03-01)
 
 ### Continuous Integration
