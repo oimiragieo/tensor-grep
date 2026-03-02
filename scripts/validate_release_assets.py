@@ -105,7 +105,10 @@ def validate_all() -> list[str]:
             )
     if "ref: v${{ needs.release.outputs.release_version }}" not in ci_workflow:
         errors.append("CI workflow must build PyPI artifacts from semantic-release tag ref")
-    if "needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]" not in ci_workflow:
+    if (
+        "needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]"
+        not in ci_workflow
+    ):
         errors.append(
             "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
         )

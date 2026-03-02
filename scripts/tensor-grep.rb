@@ -4,12 +4,12 @@
 class TensorGrep < Formula
   desc "GPU-Accelerated Semantic Log Parsing CLI combining raw regex speed with cyBERT"
   homepage "https://github.com/oimiragieo/tensor-grep"
-  version "0.11.0"
+  version "0.11.1"
   
   if OS.mac?
-    url "https://github.com/oimiragieo/tensor-grep/releases/download/v0.11.0/tg-macos-amd64-cpu"
+    url "https://github.com/oimiragieo/tensor-grep/releases/download/v0.11.1/tg-macos-amd64-cpu"
   elsif OS.linux?
-    url "https://github.com/oimiragieo/tensor-grep/releases/download/v0.11.0/tg-linux-amd64-cpu"
+    url "https://github.com/oimiragieo/tensor-grep/releases/download/v0.11.1/tg-linux-amd64-cpu"
   end
 
   def install

@@ -100,8 +100,12 @@ def validate(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate built PyPI artifacts before publish.")
-    parser.add_argument("--dist-dir", type=Path, default=Path("dist"), help="Distribution directory")
-    parser.add_argument("--version", required=True, help="Expected package version (without leading v)")
+    parser.add_argument(
+        "--dist-dir", type=Path, default=Path("dist"), help="Distribution directory"
+    )
+    parser.add_argument(
+        "--version", required=True, help="Expected package version (without leading v)"
+    )
     parser.add_argument(
         "--require-platforms",
         default="linux,macos,windows",
@@ -109,7 +113,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    required_platforms = [item.strip() for item in args.require_platforms.split(",") if item.strip()]
+    required_platforms = [
+        item.strip() for item in args.require_platforms.split(",") if item.strip()
+    ]
     errors = validate(
         dist_dir=args.dist_dir,
         version=args.version,
