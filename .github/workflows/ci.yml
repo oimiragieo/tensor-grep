@@ -164,13 +164,20 @@ jobs:
       - name: Setup Python
         run: uv python install 3.12
 
+      - name: Install ripgrep
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+
       - name: Install benchmark dependencies
         run: |
           uv venv --python 3.12
-          uv pip install -e ".[dev,bench,ast]"
+          uv pip install -e ".[dev]"
 
       - name: Run core benchmark suite
+        shell: bash
         run: |
+          set -o pipefail
           mkdir -p artifacts
           uv run python benchmarks/run_benchmarks.py | tee artifacts/bench_run_benchmarks.txt
 
