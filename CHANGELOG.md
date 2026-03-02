@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.8.0 (2026-03-02)
+
+### Chores
+
+- **gitignore**: Ignore local artifacts directory
+  ([`ee957ff`](https://github.com/oimiragieo/tensor-grep/commit/ee957ffcbba4202a38a410873e87d2a792973be7))
+
+- **repo**: Ignore artifacts and remove tracked profile_stats
+  ([`770a772`](https://github.com/oimiragieo/tensor-grep/commit/770a772e86b483dcc6fe30afdb63c793651edcc8))
+
+### Continuous Integration
+
+- **hygiene**: Fail on tracked generated artifacts
+  ([`8c40eff`](https://github.com/oimiragieo/tensor-grep/commit/8c40eff86ec3604a069b5e131508a3c4cd565f25))
+
+### Features
+
+- **cli**: Wire --stats output across search paths
+  ([`4735ebe`](https://github.com/oimiragieo/tensor-grep/commit/4735ebea31c272eb66cb4cd61193e01a0662acee))
+
+
 ## v0.7.0 (2026-03-02)
 
 ### Features
