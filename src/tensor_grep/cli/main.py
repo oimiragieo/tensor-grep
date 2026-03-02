@@ -121,7 +121,7 @@ def _normalize_string_list(value: object, fallback: list[str]) -> list[str]:
     return fallback
 
 
-def _load_yaml_dict(path: Path) -> dict:
+def _load_yaml_dict(path: Path) -> dict[str, object]:
     import yaml
 
     with path.open(encoding="utf-8") as handle:
@@ -160,7 +160,7 @@ def _iter_yaml_files(base_dir: Path, rel_dirs: list[str]) -> list[Path]:
     return sorted(set(candidates))
 
 
-def _extract_rule_pattern(rule_data: dict) -> str | None:
+def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
     direct = rule_data.get("pattern")
     if isinstance(direct, str) and direct.strip():
         return direct.strip()
