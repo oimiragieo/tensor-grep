@@ -55,10 +55,9 @@ jobs:
             exit 0
           }
 
-          try {
-            winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
-          } catch {
-            Write-Warning "winget validate failed; falling back to python validator: $($_.Exception.Message)"
+          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "winget validate failed with exit code $LASTEXITCODE; falling back to python validator"
             uv python install 3.12
             uv run python scripts/validate_release_assets.py
           }
