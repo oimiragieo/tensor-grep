@@ -42,9 +42,13 @@ npm/node_modules/
 *.log
 *.patch
 *.txt
+artifacts/
 benchmarks/corpus/
 ripgrep-*/
 gpu_bench_data/
 
 # Tests
 .hypothesis/
+
+# Local profiling artifacts
+src/tensor_grep/core/profile_stats
