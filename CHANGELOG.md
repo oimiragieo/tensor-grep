@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.11.0 (2026-03-02)
+
+### Bug Fixes
+
+- **release**: Sync package manager and core versions to 0.10.1
+  ([`fc4d6a5`](https://github.com/oimiragieo/tensor-grep/commit/fc4d6a55182cf8ef14d4f10b6e0b6bf0d0f41580))
+
+### Features
+
+- **multi-gpu**: Explicit device-id routing and release hardening checks
+  ([`412bb33`](https://github.com/oimiragieo/tensor-grep/commit/412bb3377be01c61cda3294766d4d3858226f772))
+
+
 ## v0.10.1 (2026-03-02)
 
 ### Bug Fixes
