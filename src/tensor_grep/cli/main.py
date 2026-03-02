@@ -561,6 +561,8 @@ def search_command(
         stats_mode=stats,
     )
     if can_passthrough_rg:
+        if debug:
+            typer.echo("[debug] routing.backend=RipgrepBackend reason=rg_passthrough_cli_fast_path")
         with nvtx_range("search.passthrough_rg", color="green"):
             exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
         sys.exit(0 if exit_code == 0 else 1)
@@ -576,6 +578,14 @@ def search_command(
 
     pipeline = Pipeline(force_cpu=cpu, config=config)
     backend = pipeline.get_backend()
+    if debug:
+        selected_backend_name = getattr(
+            pipeline, "selected_backend_name", backend.__class__.__name__
+        )
+        selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+        typer.echo(
+            f"[debug] routing.backend={selected_backend_name} reason={selected_backend_reason}"
+        )
 
     if files:
         if candidate_files_ordered:

@@ -23,6 +23,8 @@ class _FakePipeline:
 
     def __init__(self, force_cpu=False, config=None):
         self.backend = _FAKE_BACKEND
+        self.selected_backend_name = "FakeBackend"
+        self.selected_backend_reason = "unit_test_fake_pipeline"
 
     def get_backend(self):
         return self.backend
@@ -310,3 +312,46 @@ def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatc
     assert "uv:" in result.output
     assert "pip:" in result.output
     assert "network timeout while contacting package index" in result.output
+
+
+def test_cli_debug_prints_pipeline_routing_reason(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+
+    assert result.exit_code == 0
+    assert "[debug] routing.backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
+
+
+def test_cli_debug_prints_passthrough_routing_reason(monkeypatch):
+    def _fake_passthrough(self, paths, pattern, config=None):
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available", lambda self: True
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--debug"])
+
+    assert result.exit_code == 0
+    assert (
+        "[debug] routing.backend=RipgrepBackend reason=rg_passthrough_cli_fast_path"
+        in result.output
+    )
