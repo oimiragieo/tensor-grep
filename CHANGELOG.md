@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.6.1 (2026-03-02)
+
+### Bug Fixes
+
+- **installer**: Default stable channel to latest release
+  ([`aa95068`](https://github.com/oimiragieo/tensor-grep/commit/aa9506848a60669a5c16399ae0b421804988929b))
+
+
 ## v0.6.0 (2026-03-02)
 
 ### Continuous Integration
