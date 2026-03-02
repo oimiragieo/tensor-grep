@@ -20,6 +20,12 @@ def main() -> int:
         default=10.0,
         help="Maximum allowed slowdown percentage before failing",
     )
+    parser.add_argument(
+        "--min-baseline-time-s",
+        type=float,
+        default=0.2,
+        help="Ignore scenarios with baseline time below this threshold to reduce CI jitter",
+    )
     args = parser.parse_args()
 
     baseline_path = Path(args.baseline)
@@ -35,7 +41,10 @@ def main() -> int:
     current = json.loads(current_path.read_text(encoding="utf-8"))
 
     regressions = check_regressions(
-        baseline=baseline, current=current, max_regression_pct=args.max_regression_pct
+        baseline=baseline,
+        current=current,
+        max_regression_pct=args.max_regression_pct,
+        min_baseline_time_s=args.min_baseline_time_s,
     )
     if regressions:
         print("Benchmark regressions detected:")

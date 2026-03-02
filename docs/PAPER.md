@@ -168,7 +168,8 @@ To enforce sustainable performance gains, we introduced a benchmark-governance l
 
 1. Benchmark suites emit machine-readable JSON artifacts (`artifacts/bench_*.json`).
 2. A regression checker (`benchmarks/check_regression.py`) compares current runs against a baseline and fails if slowdown exceeds a configurable threshold.
-3. CI executes benchmark suites and performs an optional per-OS regression gate when baseline files are present.
+3. Main CI now includes a required Ubuntu benchmark-regression gate that blocks merges/releases on measured slowdown, with markdown summaries attached to workflow output.
+4. A standalone benchmark workflow remains available for manual/scheduled deep benchmark passes across additional suites.
 
 This turns performance claims into continuously verifiable constraints and enables objective rollback decisions when regressions are detected.
 

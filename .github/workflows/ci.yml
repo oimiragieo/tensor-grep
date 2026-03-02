@@ -150,9 +150,57 @@ jobs:
       - name: Run Pytest with GPU Hooks
         run: uv run pytest tests -v -m "not slow"
 
+  benchmark-regression:
+    name: benchmark-regression (ubuntu-latest)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Install benchmark dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev,bench,ast]"
+
+      - name: Run core benchmark suite
+        run: |
+          mkdir -p artifacts
+          uv run python benchmarks/run_benchmarks.py | tee artifacts/bench_run_benchmarks.txt
+
+      - name: Enforce benchmark regression gate
+        run: |
+          uv run python benchmarks/check_regression.py \
+            --baseline benchmarks/baselines/run_benchmarks.ubuntu.json \
+            --current artifacts/bench_run_benchmarks.json \
+            --max-regression-pct 15.0 \
+            --min-baseline-time-s 0.2
+
+      - name: Build benchmark markdown summary
+        run: |
+          uv run python benchmarks/summarize_benchmarks.py \
+            --baseline benchmarks/baselines/run_benchmarks.ubuntu.json \
+            --current artifacts/bench_run_benchmarks.json \
+            --max-regression-pct 15.0 \
+            --min-baseline-time-s 0.2 \
+            --output artifacts/benchmark_summary.md
+          cat artifacts/benchmark_summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-artifacts-ci
+          path: artifacts/
+
   release:
     name: Semantic Release
-    needs: [static-analysis, test-python, test-rust-core, test-gpu-linux]
+    needs: [static-analysis, test-python, test-rust-core, test-gpu-linux, benchmark-regression]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
     runs-on: ubuntu-latest
     outputs:

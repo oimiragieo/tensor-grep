@@ -17,7 +17,10 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def check_regressions(
-    baseline: dict[str, Any], current: dict[str, Any], max_regression_pct: float = 10.0
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+    max_regression_pct: float = 10.0,
+    min_baseline_time_s: float = 0.2,
 ) -> list[str]:
     """
     Compare scenario timings. Returns a list of regression messages.
@@ -36,6 +39,10 @@ def check_regressions(
         if not isinstance(cur_time, (float, int)) or not isinstance(base_time, (float, int)):
             continue
         if base_time <= 0:
+            continue
+        # Tiny baseline durations are noisy on shared CI runners and can
+        # trigger false positives from scheduler jitter.
+        if float(base_time) < float(min_baseline_time_s):
             continue
         pct_delta = ((float(cur_time) - float(base_time)) / float(base_time)) * 100.0
         if pct_delta > max_regression_pct:

@@ -26,3 +26,11 @@ def test_check_regressions_ignores_missing_or_non_numeric_rows():
 
     regressions = check_regressions(baseline=baseline, current=current, max_regression_pct=0.0)
     assert regressions == []
+
+
+def test_check_regressions_ignores_tiny_baselines_by_default():
+    baseline = {"rows": [{"name": "tiny", "tg_time_s": 0.05}]}
+    current = {"rows": [{"name": "tiny", "tg_time_s": 0.20}]}
+
+    regressions = check_regressions(baseline=baseline, current=current, max_regression_pct=10.0)
+    assert regressions == []

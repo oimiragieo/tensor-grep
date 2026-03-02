@@ -60,7 +60,8 @@ Environment notes:
 
 - Benchmark scripts now emit machine-readable JSON artifacts in `artifacts/`.
 - Use `benchmarks/check_regression.py` to compare current runs against a baseline and fail if regression exceeds threshold.
-- CI benchmark workflow (`.github/workflows/benchmark.yml`) runs benchmark suites and performs an optional baseline gate when a per-OS baseline file exists under `benchmarks/baselines/`.
+- Main CI (`.github/workflows/ci.yml`) now includes a required `benchmark-regression` job on Ubuntu that runs `benchmarks/run_benchmarks.py`, enforces baseline regression thresholds, and publishes a markdown summary + JSON/text artifacts.
+- Standalone benchmark workflow (`.github/workflows/benchmark.yml`) remains available for manual and scheduled deep benchmark passes.
 
 ## Why should I use `tensor-grep`?
 
