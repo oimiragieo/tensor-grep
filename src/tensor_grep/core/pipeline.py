@@ -138,10 +138,8 @@ class Pipeline:
             elif rg_available:
                 # Default search path: always delegate to native rg for best end-to-end CLI speed.
                 self.backend = rg_backend
-            elif rust_available and not needs_python_cpu:
-                # Secondary fast path when rg is unavailable.
-                self.backend = rust_backend
             elif should_try_gpu:
+                # Heuristic GPU override for large/complex regex when rg is unavailable.
                 # Inject memory manager to get chunk sizes across all available GPUs
                 memory_manager = MemoryManager()
                 chunk_sizes = memory_manager.get_all_device_chunk_sizes_mb()
@@ -164,6 +162,9 @@ class Pipeline:
                                 self.backend = fallback_backend
                         except ImportError:
                             self.backend = fallback_backend
+            elif rust_available and not needs_python_cpu:
+                # Secondary fast path when rg is unavailable and GPU heuristics do not match.
+                self.backend = rust_backend
             else:
                 self.backend = fallback_backend
 
