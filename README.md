@@ -18,7 +18,7 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Quick examples comparing tools
 
-Fresh benchmark pass results (2026-03-02, commit `4c97de3`) from this repository's benchmark scripts are below.
+Fresh benchmark pass results (2026-03-02, commit `ef70ca3`) from this repository's benchmark scripts are below.
 
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
@@ -29,32 +29,32 @@ Environment notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.498s | 0.776s | Parity PASS |
-| Case-Insensitive Match | 0.473s | 0.736s | Parity PASS |
-| Regex Match | 0.509s | 0.758s | Parity PASS |
-| Invert Match | 1.084s | 1.363s | Parity PASS |
-| Count Matches | 0.224s | **0.086s** | Parity PASS |
-| Context Lines (`-C2`) | 1.742s | 2.027s | Parity PASS |
-| Max Count (`-m 5`) | 0.215s | 0.396s | Parity PASS |
-| File Glob Filtering | 0.403s | 0.785s | Parity PASS |
-| Word Boundary | 0.457s | 0.795s | Parity PASS |
-| Fixed Strings (`-F`) | 0.448s | 0.668s | Parity PASS |
+| Simple String Match | 0.643s | 0.899s | Parity PASS |
+| Case-Insensitive Match | 0.540s | 0.806s | Parity PASS |
+| Regex Match | 0.554s | 0.765s | Parity PASS |
+| Invert Match | 1.129s | 1.466s | Parity PASS |
+| Count Matches | 0.416s | **0.092s** | Parity PASS |
+| Context Lines (`-C2`) | 1.803s | 2.318s | Parity PASS |
+| Max Count (`-m 5`) | 0.130s | 0.395s | Parity PASS |
+| File Glob Filtering | 0.476s | 0.760s | Parity PASS |
+| Word Boundary | 0.486s | 0.775s | Parity PASS |
+| Fixed Strings (`-F`) | 0.507s | 0.823s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.121s | 0.418s | Parity PASS |
-| Try/Except Block | 0.109s | 0.487s | Parity PASS |
-| Class Declaration | 0.130s | 0.450s | Parity PASS |
+| Simple Function Def | 0.171s | 0.576s | Parity PASS |
+| Try/Except Block | 0.129s | 0.631s | Parity PASS |
+| Class Declaration | 0.137s | 0.542s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | **0.022s** | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | 0.146s | 2,000 ERROR labels |
-| Torch backend | Exact match on 10,000 log lines | 0.289s | 2,000 matches |
+| AST backend | `function_definition` on test module | **0.016s** | 4 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | 0.148s | 2,000 ERROR labels |
+| Torch backend | Exact match on 10,000 log lines | 0.318s | 2,000 matches |
 
 ### Benchmark Governance (Regression Protection)
 
@@ -66,6 +66,8 @@ Environment notes:
 ## Why should I use `tensor-grep`?
 
 - **It scales linearly with hardware.** If you are dealing with massive log files (100GB+) and you have access to enterprise NVIDIA GPUs or even modern consumer cards, `tensor-grep` will automatically chunk and distribute regex matching via `cuDF` natively inside GPU VRAM, bypassing CPU entirely.
+- **Explicit multi-GPU routing contract.** Runtime scheduling now exposes concrete device enumeration (`DeviceDetector.list_devices()`), returning `(device_id, vram_capacity_mb)` for each routable GPU. This is the canonical API for sharding/routing decisions.
+- **Explicit device pinning override.** Set `TENSOR_GREP_DEVICE_IDS` (for example `TENSOR_GREP_DEVICE_IDS=3,7`) to constrain scheduling and fanout to specific GPUs.
 - **It is a drop-in replacement for ripgrep.** `tg search` accepts the exact same 70+ CLI flags (`-i`, `-v`, `-C`, `-g`, `-t`) that you already know and love from `ripgrep`.
 - **In-Place File Mutations (NEW):** Unlike ripgrep, `tensor-grep` natively supports memory-mapped find-and-replace mutability via `--replace`. Apply `sed`-like capture groups (e.g. `$1`) at millions of lines per second without ever leaving the Rust terminal backend.
 - **AST-Grep Parity (NEW):** Structural code searching via PyTorch Geometric Graph Neural Networks (GNNs). Run `tg run`, `tg scan`, `tg lsp` to match structural code patterns (e.g. `if ($A) { return $B; }`) rather than dumb text strings.
@@ -99,7 +101,7 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 ```
 
 Installer defaults and channels:
-- Default behavior installs the current pinned stable release (`tensor-grep==0.9.1` as of this release train).
+- Default behavior installs the latest stable PyPI release.
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=0.2.1`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.

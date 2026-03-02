@@ -95,11 +95,20 @@ def validate_all() -> list[str]:
         "package-manager-readiness:",
         "Validate Homebrew formula syntax",
         "Validate winget manifest syntax",
+        "validate-pypi-artifacts:",
+        "Validate built PyPI artifact set",
+        "Verify published PyPI version matches release version",
     ):
         if expected not in ci_workflow:
             errors.append(
                 f"CI workflow missing expected package-manager validation block: {expected}"
             )
+    if "ref: v${{ needs.release.outputs.release_version }}" not in ci_workflow:
+        errors.append("CI workflow must build PyPI artifacts from semantic-release tag ref")
+    if "needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]" not in ci_workflow:
+        errors.append(
+            "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
+        )
     if ci_workflow.count("uses: astral-sh/setup-uv@v5") < 2:
         errors.append("CI workflow should install uv in package-manager/release validation paths")
 

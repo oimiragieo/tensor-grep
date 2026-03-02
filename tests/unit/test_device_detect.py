@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from tensor_grep.core.hardware.device_detect import DeviceDetector, Platform
+from tensor_grep.core.hardware.device_detect import DeviceDetector, DeviceInfo, Platform
 
 
 class TestDeviceDetect:
@@ -97,6 +97,37 @@ class TestDeviceDetect:
         assert detector.get_device_ids() == [0, 1]
         assert detector.get_vram_capacity_mb(0) == 12288
         assert detector.get_vram_capacity_mb(1) == 24576
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
+    def test_should_expose_public_device_enumeration_contract(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.return_value = 2
+
+        detector = DeviceDetector()
+        with (
+            patch.object(detector, "get_device_ids", return_value=[3, 7]),
+            patch.object(detector, "get_vram_capacity_mb", side_effect=[24576, 24576]),
+        ):
+            devices = detector.list_devices()
+
+        assert devices == [
+            DeviceInfo(device_id=3, vram_capacity_mb=24576),
+            DeviceInfo(device_id=7, vram_capacity_mb=24576),
+        ]
+
+    @patch.dict("sys.modules", {"torch": MagicMock()})
+    @patch("os.path.exists", return_value=False)
+    def test_should_expose_empty_device_enumeration_when_no_gpu(self, mock_exists):
+        import torch
+
+        torch.cuda.is_available.return_value = False
+        detector = DeviceDetector()
+        assert detector.list_devices() == []
 
     @patch.dict("sys.modules", {"torch": MagicMock(), "kvikio": MagicMock()})
     def test_should_detect_gds_support(self):

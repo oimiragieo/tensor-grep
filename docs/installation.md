@@ -90,3 +90,27 @@ Release automation notes:
 - Tag pushes (`v*`) run `release.yml` and require `validate-release-assets` and `validate-package-managers` before binaries are built.
 - `scripts/validate_release_assets.py` verifies cross-file version/URL consistency across PyPI, npm, Homebrew, and Winget release assets.
 - CI and release workflows install `uv` before Windows Winget fallback checks to keep validation deterministic on runner images without `winget validate`.
+- Main CI (`ci.yml`) now validates built PyPI artifacts before publish with `scripts/validate_pypi_artifacts.py`, checking:
+  - expected version in wheel/sdist filenames,
+  - wheel/sdist package metadata version,
+  - platform wheel coverage (linux/macos/windows).
+- `publish-pypi` now verifies PyPI's latest version matches the semantic-release tag version before the job is marked successful.
+
+### Repeatable Release Checklist
+
+1. Merge to `main` only after CI is green.
+2. Confirm semantic-release created tag `vX.Y.Z` and matching GitHub release.
+3. Confirm CI `validate-pypi-artifacts` is green before `publish-pypi`.
+4. Confirm PyPI latest version is exactly `X.Y.Z`.
+5. Confirm `scripts/tensor-grep.rb` and `scripts/oimiragieo.tensor-grep.yaml` reference `vX.Y.Z` assets.
+
+### Rollback Playbook
+
+If a publish is bad or inconsistent:
+
+1. Stop new releases by pushing a hotfix commit that sets `publish_pypi=false` behavior or temporarily disables release gating branch.
+2. Ship an immediate patch release (`X.Y.(Z+1)`) with corrected artifacts. Do not attempt to overwrite an existing PyPI version.
+3. For package managers:
+   - Homebrew: update formula to corrected version and re-run tap tests.
+   - Winget: submit corrected manifest version to `winget-pkgs`.
+4. Update `CHANGELOG.md` with rollback reason and remediation commit hash.

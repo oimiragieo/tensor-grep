@@ -117,6 +117,54 @@ class CuDFBackend(ComputeBackend):
         except Exception:
             return False
 
+    def _search_distributed(
+        self,
+        *,
+        file_path: str,
+        pattern: str,
+        file_size: int,
+        device_chunks_mb: list[tuple[int, int]],
+        config: SearchConfig | None,
+    ) -> list[MatchLine]:
+        matches: list[MatchLine] = []
+        execution_plan = self._build_execution_plan(
+            file_size=file_size,
+            device_chunks_mb=[(device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb],
+        )
+        with ProcessPoolExecutor(max_workers=len(device_chunks_mb)) as executor:
+            futures = []
+            for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):
+                future = executor.submit(
+                    _process_chunk_on_device,
+                    device_id,
+                    file_path,
+                    chunk_offset,
+                    chunk_size,
+                    pattern,
+                    config,
+                )
+                future._task_index = task_index  # type: ignore[attr-defined]
+                futures.append(future)
+
+            ordered_chunk_results: dict[int, tuple[list[MatchLine], int]] = {}
+            for future in as_completed(futures):
+                chunk_matches, chunk_line_count = future.result()
+                task_index = getattr(future, "_task_index", 0)
+                ordered_chunk_results[task_index] = (chunk_matches, chunk_line_count)
+
+            cumulative_line_offset = 0
+            for task_index in sorted(ordered_chunk_results):
+                chunk_matches, chunk_line_count = ordered_chunk_results[task_index]
+                for match in chunk_matches:
+                    object.__setattr__(
+                        match, "line_number", match.line_number + cumulative_line_offset
+                    )
+                    matches.append(match)
+                cumulative_line_offset += chunk_line_count
+
+        matches.sort(key=lambda m: m.line_number)
+        return matches
+
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
@@ -197,6 +245,21 @@ class CuDFBackend(ComputeBackend):
 
         else:
             # PHASE 3.1: VRAM Chunking for Large Files
+            device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
+            if not device_chunks_mb:
+                device_chunks_mb = [(0, 512)]
+
+            # For multi-GPU configurations, distributed fanout is the primary runtime path.
+            if len(device_chunks_mb) > 1:
+                matches = self._search_distributed(
+                    file_path=file_path,
+                    pattern=pattern,
+                    file_size=file_size,
+                    device_chunks_mb=device_chunks_mb,
+                    config=config,
+                )
+                return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
+
             chunked_processing_succeeded = False
             try:
                 import pyarrow as pa
@@ -284,49 +347,12 @@ class CuDFBackend(ComputeBackend):
             if chunked_processing_succeeded:
                 matches.sort(key=lambda m: m.line_number)
                 return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
-
-            device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
-            if not device_chunks_mb:
-                device_chunks_mb = [(0, 512)]
-
-            execution_plan = self._build_execution_plan(
+            matches = self._search_distributed(
+                file_path=file_path,
+                pattern=pattern,
                 file_size=file_size,
-                device_chunks_mb=[
-                    (device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb
-                ],
+                device_chunks_mb=device_chunks_mb,
+                config=config,
             )
-            with ProcessPoolExecutor(max_workers=len(device_chunks_mb)) as executor:
-                futures = []
-                for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):
-                    future = executor.submit(
-                        _process_chunk_on_device,
-                        device_id,
-                        file_path,
-                        chunk_offset,
-                        chunk_size,
-                        pattern,
-                        config,
-                    )
-                    future._task_index = task_index  # type: ignore[attr-defined]
-                    futures.append(future)
-
-                ordered_chunk_results: dict[int, tuple[list[MatchLine], int]] = {}
-                for future in as_completed(futures):
-                    chunk_matches, chunk_line_count = future.result()
-                    task_index = getattr(future, "_task_index", 0)
-                    ordered_chunk_results[task_index] = (chunk_matches, chunk_line_count)
-
-                cumulative_line_offset = 0
-                for task_index in sorted(ordered_chunk_results):
-                    chunk_matches, chunk_line_count = ordered_chunk_results[task_index]
-                    for match in chunk_matches:
-                        object.__setattr__(
-                            match, "line_number", match.line_number + cumulative_line_offset
-                        )
-                        matches.append(match)
-                    cumulative_line_offset += chunk_line_count
-
-            # Re-sort matches since they might finish out of order
-            matches.sort(key=lambda m: m.line_number)
 
         return SearchResult(matches=matches, total_files=1, total_matches=len(matches))

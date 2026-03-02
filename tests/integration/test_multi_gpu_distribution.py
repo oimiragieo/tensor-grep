@@ -35,6 +35,35 @@ class TestMultiGpuDistributionIntegration:
     @patch("tensor_grep.backends.cudf_backend.as_completed")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("os.path.getsize", return_value=4 * 1024 * 1024)
+    def test_should_prefer_distributed_execution_for_multi_gpu_even_when_chunked_reader_exists(
+        self, _mock_getsize, mock_pool, mock_as_completed
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        fake_executor = _FakeExecutor()
+        mock_pool.return_value.__enter__.return_value = fake_executor
+        mock_as_completed.side_effect = lambda futures: list(reversed(futures))
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "cudf": MagicMock(),
+                "rmm": MagicMock(),
+                "pyarrow": MagicMock(),
+                "tensor_grep.rust_core": MagicMock(),
+            },
+        ):
+            backend = CuDFBackend(chunk_sizes_mb=[1, 1], device_ids=[3, 7])
+            result = backend.search("test.log", "ERROR")
+
+        # Multi-device should use distributed ProcessPool path as first-class runtime execution.
+        assert mock_pool.called is True
+        assert fake_executor.submitted_device_ids[:2] == [3, 7]
+        assert result.total_matches == len(result.matches)
+
+    @patch("tensor_grep.backends.cudf_backend.as_completed")
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("os.path.getsize", return_value=4 * 1024 * 1024)
     @patch("tensor_grep.backends.cudf_backend.CuDFBackend.is_available", return_value=True)
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")

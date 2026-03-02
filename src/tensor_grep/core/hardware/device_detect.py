@@ -1,5 +1,6 @@
 import os
 import sys
+from dataclasses import dataclass
 from enum import Enum, auto
 
 
@@ -7,6 +8,12 @@ class Platform(Enum):
     LINUX = auto()
     WINDOWS = auto()
     WSL2 = auto()
+
+
+@dataclass(frozen=True)
+class DeviceInfo:
+    device_id: int
+    vram_capacity_mb: int
 
 
 class DeviceDetector:
@@ -138,6 +145,25 @@ class DeviceDetector:
 
         filtered_ids = [device_id for device_id in explicit_ids if device_id < count]
         return filtered_ids if filtered_ids else list(range(count))
+
+    def list_devices(self) -> list[DeviceInfo]:
+        """
+        Public device enumeration API for routing and scheduling layers.
+        Returns concrete CUDA device IDs and their VRAM capacity in MB.
+        """
+        device_ids = self.get_device_ids()
+        if not device_ids:
+            return []
+
+        devices: list[DeviceInfo] = []
+        for device_id in device_ids:
+            devices.append(
+                DeviceInfo(
+                    device_id=device_id,
+                    vram_capacity_mb=self.get_vram_capacity_mb(device_id),
+                )
+            )
+        return devices
 
     def get_vram_capacity_mb(self, device_id: int = 0) -> int:
         if not self.has_gpu():

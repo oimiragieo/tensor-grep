@@ -382,9 +382,31 @@ jobs:
           name: pypi-sdist
           path: dist
 
+  validate-pypi-artifacts:
+    name: validate-pypi-artifacts
+    needs: [release, build-wheels-pypi, build-sdist-pypi]
+    if: needs.release.outputs.publish_pypi == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all distributions
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pypi-*
+          path: dist
+          merge-multiple: true
+      - name: Validate built PyPI artifact set
+        run: |
+          python scripts/validate_pypi_artifacts.py \
+            --dist-dir dist \
+            --version "${{ needs.release.outputs.release_version }}" \
+            --require-platforms "linux,macos,windows"
+
   publish-pypi:
     name: publish-pypi
-    needs: [release, build-wheels-pypi, build-sdist-pypi]
+    needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]
     if: needs.release.outputs.publish_pypi == 'true'
     runs-on: ubuntu-latest
     environment:
@@ -403,3 +425,23 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+
+      - name: Verify published PyPI version matches release version
+        run: |
+          python - << 'PY'
+          import json
+          import time
+          import urllib.request
+
+          expected = "${{ needs.release.outputs.release_version }}"
+          latest = None
+          for _ in range(15):
+              with urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json", timeout=15) as resp:
+                  latest = json.load(resp)["info"]["version"]
+              if latest == expected:
+                  print(f"Verified PyPI version {latest}")
+                  raise SystemExit(0)
+              time.sleep(10)
+
+          raise SystemExit(f"PyPI latest version {latest} does not match expected {expected}")
+          PY

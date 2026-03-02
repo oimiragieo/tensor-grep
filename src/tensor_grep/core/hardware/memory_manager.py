@@ -39,11 +39,21 @@ class MemoryManager:
         if not self.detector.has_gpu():
             return []
         try:
-            return list(self.detector.get_device_ids())
+            devices = self.detector.list_devices()
+            device_ids = [device.device_id for device in devices]
+            if device_ids:
+                return device_ids
+            # Compatibility path for mocks/older detectors that don't populate list_devices yet.
+            if hasattr(self.detector, "get_device_ids"):
+                legacy_ids = list(self.detector.get_device_ids())
+                if legacy_ids:
+                    return legacy_ids
         except Exception:
             # Backward-compatible fallback when detector does not expose IDs.
-            count = self.detector.get_device_count()
-            return list(range(count)) if count > 0 else []
+            pass
+
+        count = self.detector.get_device_count()
+        return list(range(count)) if count > 0 else []
 
     def get_device_chunk_plan_mb(self) -> list[tuple[int, int]]:
         device_ids = self.get_device_ids()
