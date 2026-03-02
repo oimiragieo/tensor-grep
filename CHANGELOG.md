@@ -17,7 +17,7 @@
 
 ### Chores
 
-- **versioning**: Align Python, Rust, npm, Homebrew, and Winget release versions/URLs to `0.9.0`
+- **versioning**: Align Python, Rust, npm, Homebrew, and Winget release versions/URLs to `0.9.1`
 
 ### Testing
 
