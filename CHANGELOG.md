@@ -19,6 +19,7 @@
 
 - **pkg**: Add Linux/Windows package-manager readiness checks (Homebrew + Winget) in CI and release workflows
 - **pkg**: Add fallback validator path when `winget validate` is unavailable on a runner
+- **pkg**: Ensure `uv` is installed before Windows Winget fallback validation paths
 
 ### Documentation
 
