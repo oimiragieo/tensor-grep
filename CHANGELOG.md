@@ -7,6 +7,10 @@
 - **routing**: Keep `invert-match` on Rust fast path when `rg` is unavailable
 - **routing**: Route `-C/-A/-B/-w/-x` queries to `rg` fast path when available
 
+### Continuous Integration
+
+- **release**: Add workflow concurrency to prevent stale semantic-release push races
+
 
 ## v0.9.0 (2026-03-02)
 
