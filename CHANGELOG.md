@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.11.1 (2026-03-02)
+
+### Bug Fixes
+
+- **ci**: Build PyPI artifacts from semantic-release tag ref
+  ([`17cfc0b`](https://github.com/oimiragieo/tensor-grep/commit/17cfc0bdc60b410cc9f4e9ba2454646db9f0dc95))
+
+- **ci**: Correct workflow indentation for PyPI build jobs
+  ([`bd5d800`](https://github.com/oimiragieo/tensor-grep/commit/bd5d8001ef6e0c88762dfd0598611a932083fe24))
+
+- **release**: Resync package artifacts to 0.11.0
+  ([`ef70ca3`](https://github.com/oimiragieo/tensor-grep/commit/ef70ca365d947c695b862e3016f0a70d0da990ac))
+
+
 ## v0.11.0 (2026-03-02)
 
 ### Bug Fixes
