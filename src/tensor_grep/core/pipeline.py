@@ -52,6 +52,7 @@ class Pipeline:
         self.backend: ComputeBackend
         self.config = config
         selected_backend_name = "unknown"
+        selected_backend_reason = "unknown"
         span_ctx: Any = nullcontext()
 
         try:
@@ -93,8 +94,10 @@ class Pipeline:
             if force_cpu:
                 if rust_available and not needs_python_cpu:
                     self.backend = rust_backend
+                    selected_backend_reason = "force_cpu_rust"
                 else:
                     self.backend = CPUBackend()
+                    selected_backend_reason = "force_cpu_python_cpu"
             elif config and config.ast:
                 try:
                     from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
@@ -104,19 +107,24 @@ class Pipeline:
                     # Check for one-off CLI queries, prefer native ast-grep if installed for instant resolution
                     if ast_wrapper.is_available():
                         self.backend = ast_wrapper
+                        selected_backend_reason = "ast_wrapper_available"
                     else:
                         from tensor_grep.backends.ast_backend import AstBackend
 
                         ast_backend = AstBackend()
                         if ast_backend.is_available():
                             self.backend = ast_backend
+                            selected_backend_reason = "ast_backend_available"
                         else:
                             self.backend = fallback_backend
+                            selected_backend_reason = "ast_backends_unavailable_fallback"
                 except ImportError:
                     self.backend = fallback_backend
+                    selected_backend_reason = "ast_import_error_fallback"
             elif config and config.count and rust_available:
                 # For pure counting, our Rust backend beats rg and everything else
                 self.backend = rust_backend
+                selected_backend_reason = "count_rust_fast_path"
             elif (
                 config
                 and config.fixed_strings
@@ -125,6 +133,7 @@ class Pipeline:
             ):
                 # For literal string searches without context boundaries, StringZilla's SIMD destroys C
                 self.backend = sz_backend
+                selected_backend_reason = "fixed_strings_stringzilla_fast_path"
             elif config and (
                 config.context
                 or config.before_context
@@ -135,9 +144,11 @@ class Pipeline:
             ):
                 # Context/word/line/LTL semantics are handled in our CPU backend.
                 self.backend = CPUBackend()
+                selected_backend_reason = "python_cpu_semantics_required"
             elif rg_available:
                 # Default search path: always delegate to native rg for best end-to-end CLI speed.
                 self.backend = rg_backend
+                selected_backend_reason = "rg_default_fast_path"
             elif should_try_gpu:
                 # Heuristic GPU override for large/complex regex when rg is unavailable.
                 # Inject memory manager to get chunk sizes across all available GPUs
@@ -147,10 +158,12 @@ class Pipeline:
                 # If no chunk sizes were returned but we didn't force CPU, something is wrong with CUDA, fallback
                 if not chunk_sizes:
                     self.backend = fallback_backend
+                    selected_backend_reason = "gpu_selected_no_chunk_sizes_fallback"
                 else:
                     cudf_backend = CuDFBackend(chunk_sizes_mb=chunk_sizes)
                     if cudf_backend.is_available():
                         self.backend = cudf_backend
+                        selected_backend_reason = "gpu_heuristic_cudf"
                     else:
                         try:
                             from tensor_grep.backends.torch_backend import TorchBackend
@@ -158,23 +171,30 @@ class Pipeline:
                             torch_backend = TorchBackend()
                             if torch_backend.is_available():
                                 self.backend = torch_backend
+                                selected_backend_reason = "gpu_heuristic_torch"
                             else:
                                 self.backend = fallback_backend
+                                selected_backend_reason = "gpu_heuristic_no_gpu_backend_fallback"
                         except ImportError:
                             self.backend = fallback_backend
+                            selected_backend_reason = "gpu_heuristic_torch_import_error_fallback"
             elif rust_available and not needs_python_cpu:
                 # Secondary fast path when rg is unavailable and GPU heuristics do not match.
                 self.backend = rust_backend
+                selected_backend_reason = "rust_secondary_fast_path"
             else:
                 self.backend = fallback_backend
+                selected_backend_reason = "fallback_backend"
 
             selected_backend_name = type(self.backend).__name__
             if span is not None:
                 span.set_attribute("backend.selected", selected_backend_name)
+                span.set_attribute("backend.reason", selected_backend_reason)
                 span.set_attribute("needs_python_cpu", needs_python_cpu)
                 span.set_attribute("should_try_gpu", should_try_gpu)
 
         self.selected_backend_name = selected_backend_name
+        self.selected_backend_reason = selected_backend_reason
 
     def get_backend(self) -> ComputeBackend:
         return self.backend

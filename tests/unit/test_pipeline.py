@@ -16,6 +16,7 @@ class TestPipeline:
         pipeline = Pipeline(force_cpu=False, config=SearchConfig(query_pattern="ERROR"))
         assert pipeline.backend.__class__.__name__ == "MagicMock"
         assert pipeline.selected_backend_name == "MagicMock"
+        assert pipeline.selected_backend_reason == "rg_default_fast_path"
         assert mock_rg.return_value == pipeline.backend
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
@@ -26,6 +27,7 @@ class TestPipeline:
 
         pipeline = Pipeline(force_cpu=False, config=SearchConfig(query_pattern="ERROR"))
         assert pipeline.backend == mock_rust.return_value
+        assert pipeline.selected_backend_reason == "rust_secondary_fast_path"
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -45,6 +47,7 @@ class TestPipeline:
         )
         pipeline = Pipeline(force_cpu=False, config=config)
         assert pipeline.backend == mock_cudf.return_value
+        assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -64,6 +67,7 @@ class TestPipeline:
         )
         pipeline = Pipeline(force_cpu=False, config=config)
         assert pipeline.backend == mock_rg.return_value
+        assert pipeline.selected_backend_reason == "rg_default_fast_path"
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -83,6 +87,7 @@ class TestPipeline:
         )
         pipeline = Pipeline(force_cpu=False, config=config)
         assert pipeline.backend == mock_cudf.return_value
+        assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -102,6 +107,7 @@ class TestPipeline:
         )
         pipeline = Pipeline(force_cpu=False, config=config)
         assert pipeline.backend == mock_rust.return_value
+        assert pipeline.selected_backend_reason == "rust_secondary_fast_path"
 
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_select_cudf_when_available(self, mock_mem):
