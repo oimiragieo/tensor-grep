@@ -8,6 +8,8 @@
 - **release**: Align manifest and package versions to 0.9.1
   ([`8eab569`](https://github.com/oimiragieo/tensor-grep/commit/8eab56960f84a552dcfb79f06fbb5fc03dda7831))
 
+- **release**: Re-sync Cargo/npm/Winget/Homebrew versions and artifact URLs with 0.10.0
+
 ### Features
 
 - **multi-gpu**: Add explicit device-id fanout and release asset validation
@@ -17,6 +19,10 @@
 
 - **pkg**: Add Linux/Windows package-manager readiness checks (Homebrew + Winget) in CI and release workflows
 - **pkg**: Add fallback validator path when `winget validate` is unavailable on a runner
+
+### Documentation
+
+- **benchmarks**: Refresh README and PAPER benchmark tables from the latest full local benchmark pass
 
 
 ## v0.9.1 (2026-03-02)
