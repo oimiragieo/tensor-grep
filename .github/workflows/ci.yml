@@ -340,17 +340,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
-      strategy:
-        matrix:
-          os: [ubuntu-latest, windows-latest, macos-latest]
-      steps:
-        - uses: actions/checkout@v4
-          with:
-            ref: v${{ needs.release.outputs.release_version }}
-        - uses: PyO3/maturin-action@v1
-          with:
-            command: build
-            args: --release --out dist
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.release_version }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --out dist
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
       - name: Upload wheels
@@ -364,16 +364,16 @@ jobs:
     needs: release
     if: needs.release.outputs.publish_pypi == 'true'
     runs-on: ubuntu-latest
-      permissions:
-        contents: read
-      steps:
-        - uses: actions/checkout@v4
-          with:
-            ref: v${{ needs.release.outputs.release_version }}
-        - uses: PyO3/maturin-action@v1
-          with:
-            command: sdist
-            args: --out dist
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.release_version }}
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
       - name: Upload sdist
