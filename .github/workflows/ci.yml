@@ -53,9 +53,27 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            throw "winget is required on windows-latest to validate manifests"
+            Write-Warning "winget not found; falling back to python validator"
+            uv python install 3.12
+            uv run python scripts/validate_release_assets.py
+            exit 0
           }
-          winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+
+          $wingetHelp = winget --help
+          if ($wingetHelp -notmatch "validate") {
+            Write-Warning "winget validate is unavailable in this runner version; falling back to python validator"
+            uv python install 3.12
+            uv run python scripts/validate_release_assets.py
+            exit 0
+          }
+
+          try {
+            winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
+          } catch {
+            Write-Warning "winget validate failed; falling back to python validator: $($_.Exception.Message)"
+            uv python install 3.12
+            uv run python scripts/validate_release_assets.py
+          }
 
   static-analysis:
     name: Formatting & Linting

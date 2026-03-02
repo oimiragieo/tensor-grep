@@ -84,3 +84,4 @@ winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
 CI coverage:
 - `ci.yml` now includes `package-manager-readiness` on Linux + Windows.
 - `release.yml` also validates Homebrew and Winget manifests before building release artifacts.
+- On runners where `winget validate` is unavailable, workflows fall back to `scripts/validate_release_assets.py`.
