@@ -54,6 +54,34 @@ def _sum_total_bytes(paths: list[str]) -> int:
     return total
 
 
+def _can_passthrough_rg(
+    config: "SearchConfig",
+    *,
+    format_type: str,
+    json_mode: bool,
+    files_mode: bool,
+    files_with_matches: bool,
+    files_without_match: bool,
+    only_matching: bool,
+    stats_mode: bool,
+) -> bool:
+    # Keep passthrough only for modes where rg semantics are fully compatible
+    # with tensor-grep output and feature behavior.
+    return bool(
+        not config.ast
+        and not config.ltl
+        and not config.force_cpu
+        and config.replace_str is None
+        and format_type == "rg"
+        and not json_mode
+        and not files_mode
+        and not files_with_matches
+        and not files_without_match
+        and not only_matching
+        and not stats_mode
+    )
+
+
 def _only_matching_lines(
     matches: list[MatchLine], pattern: str, config: "SearchConfig"
 ) -> list[MatchLine]:
@@ -522,18 +550,15 @@ def search_command(
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     rg_backend = RipgrepBackend()
-    can_passthrough_rg = (
-        rg_backend.is_available()
-        and not config.ast
-        and not config.ltl
-        and not config.force_cpu
-        and format_type == "rg"
-        and not json
-        and not files
-        and not files_with_matches
-        and not files_without_match
-        and not only_matching
-        and not stats
+    can_passthrough_rg = rg_backend.is_available() and _can_passthrough_rg(
+        config,
+        format_type=format_type,
+        json_mode=json,
+        files_mode=files,
+        files_with_matches=files_with_matches,
+        files_without_match=files_without_match,
+        only_matching=only_matching,
+        stats_mode=stats,
     )
     if can_passthrough_rg:
         with nvtx_range("search.passthrough_rg", color="green"):

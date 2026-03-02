@@ -197,6 +197,41 @@ def test_cli_disables_ripgrep_passthrough_for_ltl_mode(monkeypatch):
     assert called["passthrough"] is False
 
 
+def test_cli_disables_ripgrep_passthrough_for_replace_mode(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="REPLACED", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    called = {"passthrough": False}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        called["passthrough"] = True
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available", lambda self: True
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--replace", "REPLACED"])
+
+    assert result.exit_code == 0
+    assert called["passthrough"] is False
+
+
 def test_upgrade_uses_uv_when_available(monkeypatch):
     calls: list[list[str]] = []
 
