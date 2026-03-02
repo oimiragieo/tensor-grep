@@ -1,15 +1,23 @@
 # CHANGELOG
 
-## Unreleased
+
+## v0.9.1 (2026-03-02)
 
 ### Bug Fixes
 
-- **routing**: Keep `invert-match` on Rust fast path when `rg` is unavailable
-- **routing**: Route `-C/-A/-B/-w/-x` queries to `rg` fast path when available
+- **routing**: Keep invert-match on rust fast path
+  ([`877a6ca`](https://github.com/oimiragieo/tensor-grep/commit/877a6ca0cd81a1987fac66cdaf1da137306d313d))
+
+- **routing**: Prefer rg for context and boundary semantics
+  ([`b7cea33`](https://github.com/oimiragieo/tensor-grep/commit/b7cea3381ef655ea44b737698e62c22a012e8c36))
+
+- **rust-path**: Honor invert-match without python fallback
+  ([`36f105c`](https://github.com/oimiragieo/tensor-grep/commit/36f105ccff16d2d910cbcf90c4c107b3ab05daeb))
 
 ### Continuous Integration
 
-- **release**: Add workflow concurrency to prevent stale semantic-release push races
+- **release**: Cancel stale runs to avoid non-fast-forward pushes
+  ([`5004f41`](https://github.com/oimiragieo/tensor-grep/commit/5004f4105af60596bba9ee3cb0a0499b1a972d63))
 
 
 ## v0.9.0 (2026-03-02)
