@@ -1,28 +1,17 @@
 # CHANGELOG
 
-## Unreleased
+
+## v0.10.0 (2026-03-02)
 
 ### Bug Fixes
 
-- **gpu**: Use explicit device IDs for cuDF chunk fanout instead of index assumptions
+- **release**: Align manifest and package versions to 0.9.1
+  ([`8eab569`](https://github.com/oimiragieo/tensor-grep/commit/8eab56960f84a552dcfb79f06fbb5fc03dda7831))
 
-### Continuous Integration
+### Features
 
-- **release**: Add `release-readiness` validation gate for package/release asset consistency
-
-### Documentation
-
-- **benchmarks**: Refresh README and PAPER benchmark numbers from 2026-03-02 benchmark pass
-- **install**: Document package-manager publish/validation workflow for Homebrew and Winget
-
-### Chores
-
-- **versioning**: Align Python, Rust, npm, Homebrew, and Winget release versions/URLs to `0.9.1`
-
-### Testing
-
-- **gpu**: Add multi-GPU pipeline/backend tests for device-ID routing and chunk fanout ordering
-- **release**: Add release/package consistency validation test
+- **multi-gpu**: Add explicit device-id fanout and release asset validation
+  ([`27e8453`](https://github.com/oimiragieo/tensor-grep/commit/27e845394fbfc4f1d1bc1f15067d13a6c7c81fc2))
 
 
 ## v0.9.1 (2026-03-02)
