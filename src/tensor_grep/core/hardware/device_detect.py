@@ -10,6 +10,33 @@ class Platform(Enum):
 
 
 class DeviceDetector:
+    @staticmethod
+    def _parse_explicit_device_ids() -> list[int] | None:
+        """
+        Parse explicit routing IDs from TENSOR_GREP_DEVICE_IDS.
+        Returns None when unset; otherwise returns a de-duplicated list.
+        """
+        raw = os.environ.get("TENSOR_GREP_DEVICE_IDS")
+        if raw is None:
+            return None
+
+        ids: list[int] = []
+        seen: set[int] = set()
+        for token in raw.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            try:
+                value = int(token)
+            except ValueError:
+                continue
+            if value < 0 or value in seen:
+                continue
+            seen.add(value)
+            ids.append(value)
+
+        return ids
+
     def has_gpu(self) -> bool:
         # Fast path: check if NVML library exists without loading torch
         if sys.platform == "win32":
@@ -105,7 +132,12 @@ class DeviceDetector:
         count = self.get_device_count()
         if count <= 0:
             return []
-        return list(range(count))
+        explicit_ids = self._parse_explicit_device_ids()
+        if explicit_ids is None:
+            return list(range(count))
+
+        filtered_ids = [device_id for device_id in explicit_ids if device_id < count]
+        return filtered_ids if filtered_ids else list(range(count))
 
     def get_vram_capacity_mb(self, device_id: int = 0) -> int:
         if not self.has_gpu():

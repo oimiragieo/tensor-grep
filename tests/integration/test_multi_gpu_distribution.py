@@ -32,6 +32,50 @@ class _FakeExecutor:
 
 
 class TestMultiGpuDistributionIntegration:
+    @patch("tensor_grep.backends.cudf_backend.as_completed")
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("os.path.getsize", return_value=4 * 1024 * 1024)
+    @patch("tensor_grep.backends.cudf_backend.CuDFBackend.is_available", return_value=True)
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    def test_should_fanout_multi_gpu_through_pipeline_backend_execution(
+        self,
+        mock_memory,
+        mock_rust,
+        mock_rg,
+        _mock_cudf_available,
+        _mock_getsize,
+        mock_pool,
+        mock_as_completed,
+    ):
+        from tensor_grep.core.pipeline import Pipeline
+
+        fake_executor = _FakeExecutor()
+        mock_pool.return_value.__enter__.return_value = fake_executor
+        mock_as_completed.side_effect = lambda futures: list(reversed(futures))
+
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = False
+        mock_memory.return_value.get_device_chunk_plan_mb.return_value = [(3, 1), (7, 1)]
+
+        config = SearchConfig(
+            query_pattern=r"(ERROR|WARN).*timeout\s+\d+",
+            input_total_bytes=512 * 1024 * 1024,
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+        with patch.dict(
+            "sys.modules",
+            {"cudf": MagicMock(), "rmm": MagicMock(), "tensor_grep.rust_core": None},
+        ):
+            result = pipeline.get_backend().search("test.log", "ERROR")
+
+        assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
+        assert fake_executor.submitted_device_ids[:2] == [3, 7]
+        assert result.total_matches == len(result.matches)
+        assert [m.line_number for m in result.matches][:2] == [1, 4]
+        assert [m.text for m in result.matches][:2] == ["3", "7"]
+
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
     @patch("tensor_grep.core.pipeline.MemoryManager")

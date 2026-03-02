@@ -68,9 +68,40 @@ def validate_all() -> list[str]:
         errors.append("Homebrew formula contains unresolved PLACEHOLDER text")
 
     release_workflow = _read(ROOT / ".github" / "workflows" / "release.yml")
-    for expected in ("build-binaries:", "create-release:", "publish-npm:", "publish-docs:"):
+    for expected in (
+        "on:",
+        "tags:",
+        "- 'v*'",
+        "validate-release-assets:",
+        "validate-package-managers:",
+        "build-binaries:",
+        "create-release:",
+        "publish-npm:",
+        "publish-docs:",
+    ):
         if expected not in release_workflow:
             errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")
+    if "needs: [validate-release-assets, validate-package-managers]" not in release_workflow:
+        errors.append(
+            "Release workflow build-binaries must depend on release/package-manager validators"
+        )
+    if "uses: astral-sh/setup-uv@v5" not in release_workflow:
+        errors.append(
+            "Release workflow package-manager validation must install uv before fallback checks"
+        )
+
+    ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
+    for expected in (
+        "package-manager-readiness:",
+        "Validate Homebrew formula syntax",
+        "Validate winget manifest syntax",
+    ):
+        if expected not in ci_workflow:
+            errors.append(
+                f"CI workflow missing expected package-manager validation block: {expected}"
+            )
+    if ci_workflow.count("uses: astral-sh/setup-uv@v5") < 2:
+        errors.append("CI workflow should install uv in package-manager/release validation paths")
 
     return errors
 

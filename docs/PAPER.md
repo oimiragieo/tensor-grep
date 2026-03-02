@@ -72,7 +72,7 @@ We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` 
 To ensure an empirical representation of both enterprise developer machines and standard CI/CD clusters, our local validation utilized an **AMD Ryzen 7 5800XT with 64GB DDR4 RAM** alongside dual **NVIDIA RTX 4070 / RTX 5070 (Ada Lovelace `sm_120`)** GPUs. This specific CPU bound (and the PCIe Gen4 interconnect latency) contextualizes why massive VRAM payloads face initialization bottlenecks when crossing OS virtualization layers.
 
 ### 3.2 Main Results: Bare-Metal GPU Execution on RTX 5070
-We re-ran the benchmark suite on 2026-03-02 (commit `c2c6663`) from repository scripts and captured the output artifacts directly:
+We re-ran the benchmark suite on 2026-03-02 (commit `4c97de3`) from repository scripts and captured the output artifacts directly:
 
 * `artifacts/bench_run_benchmarks.txt`
 * `artifacts/bench_run_ast_benchmarks.txt`
@@ -81,18 +81,18 @@ We re-ran the benchmark suite on 2026-03-02 (commit `c2c6663`) from repository s
 
 Backend-level timings from `run_gpu_benchmarks.py`:
 
-* **AST backend:** `function_definition` query completed in **0.051 seconds** (4 matches).
-* **cyBERT backend:** classified 10,000 log lines in **0.123 seconds** (2,000 ERROR labels).
-* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.222 seconds** (2,000 matches).
+* **AST backend:** `function_definition` query completed in **0.022 seconds** (4 matches).
+* **cyBERT backend:** classified 10,000 log lines in **0.146 seconds** (2,000 ERROR labels).
+* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.289 seconds** (2,000 matches).
 
 These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
 The latest full script-driven CLI benchmark (`run_benchmarks.py`) shows that on this Windows-hosted test environment, end-to-end process costs dominate most regex/text scenarios:
 
-* **Regex Match:** ripgrep **0.466s** vs tensor-grep **0.799s**
-* **Invert Match:** ripgrep **1.093s** vs tensor-grep **1.381s**
-* **Context (`-C2`):** ripgrep **1.791s** vs tensor-grep **2.184s**
+* **Regex Match:** ripgrep **0.509s** vs tensor-grep **0.758s**
+* **Invert Match:** ripgrep **1.084s** vs tensor-grep **1.363s**
+* **Context (`-C2`):** ripgrep **1.742s** vs tensor-grep **2.027s**
 
 All scenarios passed parity checks. Compared to the previous run, introducing a direct ripgrep passthrough path substantially reduced end-to-end tensor-grep overhead in text-search modes.
 
@@ -103,21 +103,21 @@ gantt
     axisFormat %S
     
     section CPU (ripgrep)
-    Native C DFA Evaluation :a1, 0, 0.466s
+    Native C DFA Evaluation :a1, 0, 0.509s
     
     section tensor-grep CLI (this run)
-    tensor-grep Regex Match :a2, 0, 0.799s
+    tensor-grep Regex Match :a2, 0, 0.758s
 ```
 
 ### 3.4 Exact String Matching (The CPU/Rust Advantage)
 In the fresh benchmark pass, the strongest `tensor-grep` result remained the Rust-backed count path:
 
-* **Count Matches:** ripgrep **0.152s** vs tensor-grep **0.080s**
+* **Count Matches:** ripgrep **0.224s** vs tensor-grep **0.086s**
 
 For other exact/fixed-string modes in this run:
 
-* **Fixed Strings (`-F`):** ripgrep **0.453s** vs tensor-grep **0.821s**
-* **Simple String Match:** ripgrep **0.457s** vs tensor-grep **0.712s**
+* **Fixed Strings (`-F`):** ripgrep **0.448s** vs tensor-grep **0.668s**
+* **Simple String Match:** ripgrep **0.498s** vs tensor-grep **0.776s**
 
 This suggests the current architecture is highly competitive when it routes to the native Rust counting backend, while general CLI text search paths still carry substantial startup/orchestration overhead.
 
@@ -128,13 +128,13 @@ gantt
     axisFormat %S
     
     section Native CPU / CLI
-    ripgrep Count              :a1, 0, 0.152s
-    tensor-grep Count          :a2, 0, 0.080s
+    ripgrep Count              :a1, 0, 0.224s
+    tensor-grep Count          :a2, 0, 0.086s
     
     section Other exact/fixed paths
-    ripgrep Fixed Strings      :a3, 0, 0.453s
-    tensor-grep Fixed Strings  :a4, 0, 0.821s
-    tensor-grep Simple String  :a5, 0, 0.712s
+    ripgrep Fixed Strings      :a3, 0, 0.448s
+    tensor-grep Fixed Strings  :a4, 0, 0.668s
+    tensor-grep Simple String  :a5, 0, 0.776s
 ```
 
 ### 3.5 OS Architectural Limitations: Windows `spawn()` vs. WSL `fork()`

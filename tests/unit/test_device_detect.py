@@ -4,6 +4,51 @@ from tensor_grep.core.hardware.device_detect import DeviceDetector, Platform
 
 
 class TestDeviceDetect:
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch.dict("os.environ", {"TENSOR_GREP_DEVICE_IDS": "3,7"})
+    @patch("os.path.exists", return_value=False)
+    def test_should_respect_explicit_device_ids_override(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.return_value = 8
+
+        detector = DeviceDetector()
+        assert detector.get_device_count() == 8
+        assert detector.get_device_ids() == [3, 7]
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch.dict("os.environ", {"TENSOR_GREP_DEVICE_IDS": "7,foo,7,2,-1"})
+    @patch("os.path.exists", return_value=False)
+    def test_should_filter_invalid_explicit_device_ids(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.return_value = 8
+
+        detector = DeviceDetector()
+        assert detector.get_device_ids() == [7, 2]
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch.dict("os.environ", {"TENSOR_GREP_DEVICE_IDS": "9,10"})
+    @patch("os.path.exists", return_value=False)
+    def test_should_fallback_to_contiguous_ids_when_override_out_of_range(
+        self, mock_exists, mock_sys
+    ):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.return_value = 2
+
+        detector = DeviceDetector()
+        assert detector.get_device_ids() == [0, 1]
+
     @patch.dict("sys.modules", {"torch": MagicMock()})
     @patch("os.path.exists", return_value=False)
     def test_should_detect_no_gpu_when_cuda_unavailable(self, mock_exists):
