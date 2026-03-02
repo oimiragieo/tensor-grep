@@ -315,6 +315,7 @@ jobs:
       - name: Download all distributions
         uses: actions/download-artifact@v4
         with:
+          pattern: pypi-*
           path: dist
           merge-multiple: true
       - name: Publish to PyPI
