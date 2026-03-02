@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-03-02)
+
+### Build System
+
+- **meta**: Publish README long description to PyPI
+  ([`8f2488b`](https://github.com/oimiragieo/tensor-grep/commit/8f2488b4a640cdca86e8d6a0ff548f9069c833a8))
+
+- **release**: Make sdist readme path compatible with maturin
+  ([`678ec12`](https://github.com/oimiragieo/tensor-grep/commit/678ec12b410df69a2d3bc4773cc3818b22ad317d))
+
+### Continuous Integration
+
+- **pypi**: Only download release artifacts for publish
+  ([`dd3eb90`](https://github.com/oimiragieo/tensor-grep/commit/dd3eb90f5066b2d623ee34effa4073d6ff30496c))
+
+### Features
+
+- **routing**: Allow gpu override for large complex regex
+  ([`047b122`](https://github.com/oimiragieo/tensor-grep/commit/047b12279038f3248d69d11933ce34b486625a84))
+
+
 ## v0.4.1 (2026-03-02)
 
 ### Bug Fixes
