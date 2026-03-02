@@ -11,6 +11,8 @@ def test_windows_installer_writes_path_shims_and_both_profiles() -> None:
     assert "PowerShell\\Microsoft.PowerShell_profile.ps1" in script
     assert "WindowsPowerShell\\Microsoft.PowerShell_profile.ps1" in script
     assert "Set-Alias -Name tg" in script
+    assert '"tensor-grep"' in script
+    assert "tensor-grep==$defaultVersion" not in script
 
 
 def test_unix_installer_writes_shims_and_exports_path() -> None:
@@ -20,3 +22,5 @@ def test_unix_installer_writes_shims_and_exports_path() -> None:
     assert "PATH_EXPORT_LOCAL='export PATH=\"$HOME/.local/bin:$PATH\"'" in script
     assert "PATH_EXPORT_BIN='export PATH=\"$HOME/bin:$PATH\"'" in script
     assert "ALIAS_CMD=\"alias tg='$INSTALL_DIR/.venv/bin/tg'\"" in script
+    assert 'PKG_SPEC="tensor-grep"' in script
+    assert "DEFAULT_VERSION=" not in script

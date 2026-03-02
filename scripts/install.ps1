@@ -5,7 +5,6 @@
 
 $ErrorActionPreference = "Stop"
 $originalPath = (Get-Location).Path
-$defaultVersion = "0.3.0"
 $installChannel = if ($env:TENSOR_GREP_CHANNEL) { $env:TENSOR_GREP_CHANNEL } else { "stable" }
 $requestedVersion = $env:TENSOR_GREP_VERSION
 
@@ -63,7 +62,7 @@ try {
     } elseif ($requestedVersion) {
         "tensor-grep==$requestedVersion"
     } else {
-        "tensor-grep==$defaultVersion"
+        "tensor-grep"
     }
     Write-Host "      Install source: $installChannel"
     if ($installChannel -eq "stable") {

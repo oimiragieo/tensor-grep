@@ -3,7 +3,6 @@
 set -e
 
 ORIGINAL_DIR="$(pwd)"
-DEFAULT_VERSION="0.3.0"
 INSTALL_CHANNEL="${TENSOR_GREP_CHANNEL:-stable}"
 REQUESTED_VERSION="${TENSOR_GREP_VERSION:-}"
 
@@ -53,7 +52,7 @@ if [ "$INSTALL_CHANNEL" = "main" ]; then
 elif [ -n "$REQUESTED_VERSION" ]; then
     PKG_SPEC="tensor-grep==$REQUESTED_VERSION"
 else
-    PKG_SPEC="tensor-grep==$DEFAULT_VERSION"
+    PKG_SPEC="tensor-grep"
 fi
 echo "      Install source: $INSTALL_CHANNEL"
 if [ "$INSTALL_CHANNEL" = "stable" ]; then
