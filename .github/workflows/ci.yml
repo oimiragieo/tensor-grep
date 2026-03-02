@@ -15,6 +15,23 @@ env:
   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
+  release-readiness:
+    name: release-readiness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Validate release/package asset consistency
+        run: uv run python scripts/validate_release_assets.py
+
   static-analysis:
     name: Formatting & Linting
     runs-on: ubuntu-latest
@@ -222,7 +239,7 @@ jobs:
 
   release:
     name: Semantic Release
-    needs: [static-analysis, test-python, test-rust-core, test-gpu-linux, benchmark-regression]
+    needs: [release-readiness, static-analysis, test-python, test-rust-core, test-gpu-linux, benchmark-regression]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
     runs-on: ubuntu-latest
     outputs:

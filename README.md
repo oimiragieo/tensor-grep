@@ -18,7 +18,7 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Quick examples comparing tools
 
-Fresh benchmark pass results (2026-03-01, commit `78afe8c`) from this repository's benchmark scripts are below.
+Fresh benchmark pass results (2026-03-02, commit `5004f41`) from this repository's benchmark scripts are below.
 
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
@@ -29,32 +29,32 @@ Environment notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.463s | 0.730s | Parity PASS |
-| Case-Insensitive Match | 0.475s | 0.690s | Parity PASS |
-| Regex Match | 0.472s | 0.705s | Parity PASS |
-| Invert Match | 1.155s | 1.332s | Parity PASS |
-| Count Matches | 0.134s | **0.073s** | Parity PASS |
-| Context Lines (`-C2`) | 1.718s | 1.946s | Parity PASS |
-| Max Count (`-m 5`) | 0.110s | 0.404s | Parity PASS |
-| File Glob Filtering | 0.443s | 0.701s | Parity PASS |
-| Word Boundary | 0.500s | 0.783s | Parity PASS |
-| Fixed Strings (`-F`) | 0.440s | 0.710s | Parity PASS |
+| Simple String Match | 0.454s | 0.719s | Parity PASS |
+| Case-Insensitive Match | 0.493s | 0.764s | Parity PASS |
+| Regex Match | 0.484s | 0.781s | Parity PASS |
+| Invert Match | 1.118s | 1.389s | Parity PASS |
+| Count Matches | 0.162s | **0.080s** | Parity PASS |
+| Context Lines (`-C2`) | 1.710s | 1.966s | Parity PASS |
+| Max Count (`-m 5`) | 0.108s | 0.386s | Parity PASS |
+| File Glob Filtering | 0.479s | 0.699s | Parity PASS |
+| Word Boundary | 0.473s | 0.722s | Parity PASS |
+| Fixed Strings (`-F`) | 0.469s | 0.698s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.118s | 0.389s | Parity PASS |
-| Try/Except Block | 0.103s | 0.403s | Parity PASS |
-| Class Declaration | 0.124s | 0.409s | Parity PASS |
+| Simple Function Def | 0.117s | 0.383s | Parity PASS |
+| Try/Except Block | 0.102s | 0.390s | Parity PASS |
+| Class Declaration | 0.119s | 0.386s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
 | AST backend | `function_definition` on test module | **0.018s** | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | 0.099s | 2,000 ERROR labels |
-| Torch backend | Exact match on 10,000 log lines | 0.357s | 2,000 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | 0.110s | 2,000 ERROR labels |
+| Torch backend | Exact match on 10,000 log lines | 0.218s | 2,000 matches |
 
 ### Benchmark Governance (Regression Protection)
 
@@ -99,7 +99,7 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 ```
 
 Installer defaults and channels:
-- Default behavior installs the current pinned stable release (`tensor-grep==0.3.0` as of this release train).
+- Default behavior installs the current pinned stable release (`tensor-grep==0.9.0` as of this release train).
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=0.2.1`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.

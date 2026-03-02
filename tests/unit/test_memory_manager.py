@@ -68,6 +68,7 @@ class TestMemoryManager:
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = True
         mock_instance.get_device_count.return_value = 2
+        mock_instance.get_device_ids.return_value = [0, 1]
 
         def mock_vram(device_id):
             if device_id == 0:
@@ -92,3 +93,6 @@ class TestMemoryManager:
         assert len(chunks) == 2
         assert chunks[0] == 4000
         assert chunks[1] == 8000
+
+        chunk_plan = manager.get_device_chunk_plan_mb()
+        assert chunk_plan == [(0, 4000), (1, 8000)]

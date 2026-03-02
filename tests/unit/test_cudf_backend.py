@@ -28,6 +28,7 @@ class TestCuDFBackend:
 
         backend = CuDFBackend(chunk_sizes_mb=[256])
         assert backend.chunk_sizes_mb == [256]
+        assert backend.device_ids == [0]
 
     @patch.dict("sys.modules", {"cudf": MagicMock()})
     @patch("os.path.getsize", return_value=1024)
@@ -155,3 +156,30 @@ class TestCuDFBackend:
 
         mock_pool.assert_not_called()
         assert result.total_matches == 1
+
+    def test_should_build_execution_plan_with_explicit_device_ids(self):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        plan = CuDFBackend._build_execution_plan(
+            file_size=10 * 1024 * 1024,
+            device_chunks_mb=[(3, 2), (7, 2)],
+        )
+        assert plan[0][0] == 3
+        assert plan[1][0] == 7
+        assert plan[2][0] == 3
+
+    @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
+    @patch("os.path.getsize", return_value=1024 * 1024 * 10)  # 10 MB file
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_submit_chunks_using_configured_device_ids(self, mock_pool, mock_getsize):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[2, 2], device_ids=[3, 7])
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+
+        with patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[]):
+            backend.search("test.log", "ERROR")
+
+        submitted_device_ids = [call.args[1] for call in mock_executor.submit.call_args_list]
+        assert submitted_device_ids[:2] == [3, 7]

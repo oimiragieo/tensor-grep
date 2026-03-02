@@ -4,22 +4,19 @@
 class TensorGrep < Formula
   desc "GPU-Accelerated Semantic Log Parsing CLI combining raw regex speed with cyBERT"
   homepage "https://github.com/oimiragieo/tensor-grep"
-  version "1.0.0-rc1"
+  version "0.9.0"
   
   if OS.mac?
-    url "https://github.com/oimiragieo/tensor-grep/releases/download/v1.0.0-rc1/tg-macos"
-    # Note: Replace this with the actual sha256 of the macOS binary once GitHub Actions finishes
-    # sha256 "PLACEHOLDER_MAC_SHA256" 
+    url "https://github.com/oimiragieo/tensor-grep/releases/download/v0.9.0/tg-macos-amd64-cpu"
   elsif OS.linux?
-    url "https://github.com/oimiragieo/tensor-grep/releases/download/v1.0.0-rc1/tg-linux"
-    # sha256 "PLACEHOLDER_LINUX_SHA256"
+    url "https://github.com/oimiragieo/tensor-grep/releases/download/v0.9.0/tg-linux-amd64-cpu"
   end
 
   def install
     if OS.mac?
-      bin.install "tg-macos" => "tg"
+      bin.install "tg-macos-amd64-cpu" => "tg"
     elsif OS.linux?
-      bin.install "tg-linux" => "tg"
+      bin.install "tg-linux-amd64-cpu" => "tg"
     end
   end
 

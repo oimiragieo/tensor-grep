@@ -49,6 +49,7 @@ class TestDeviceDetect:
 
         detector = DeviceDetector()
         assert detector.get_device_count() == 2
+        assert detector.get_device_ids() == [0, 1]
         assert detector.get_vram_capacity_mb(0) == 12288
         assert detector.get_vram_capacity_mb(1) == 24576
 

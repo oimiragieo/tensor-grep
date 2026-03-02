@@ -5,7 +5,22 @@ on:
       - 'v*'
 
 jobs:
+  validate-release-assets:
+    name: Validate Release Assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Setup Python
+        run: uv python install 3.12
+      - name: Validate release/package asset consistency
+        run: uv run python scripts/validate_release_assets.py
+
   build-binaries:
+    needs: validate-release-assets
     name: Build on ${{ matrix.os }} - ${{ matrix.gpu }}
     runs-on: ${{ matrix.os }}
     permissions:

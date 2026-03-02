@@ -9,7 +9,7 @@ class TestPipeline:
     @patch("tensor_grep.core.pipeline.MemoryManager")
     @patch("tensor_grep.core.pipeline.CuDFBackend")
     def test_should_prefer_ripgrep_for_default_text_search(self, mock_cudf, mock_mem, mock_rg):
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
         mock_cudf.return_value.is_available.return_value = True
         mock_rg.return_value.is_available.return_value = True
 
@@ -38,7 +38,7 @@ class TestPipeline:
     ):
         mock_rg.return_value.is_available.return_value = False
         mock_rust.return_value.is_available.return_value = False
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
         mock_cudf.return_value.is_available.return_value = True
 
         config = SearchConfig(
@@ -58,7 +58,7 @@ class TestPipeline:
     ):
         mock_rg.return_value.is_available.return_value = True
         mock_rust.return_value.is_available.return_value = True
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
         mock_cudf.return_value.is_available.return_value = True
 
         config = SearchConfig(
@@ -78,7 +78,7 @@ class TestPipeline:
     ):
         mock_rg.return_value.is_available.return_value = False
         mock_rust.return_value.is_available.return_value = True
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
         mock_cudf.return_value.is_available.return_value = True
 
         config = SearchConfig(
@@ -98,7 +98,7 @@ class TestPipeline:
     ):
         mock_rg.return_value.is_available.return_value = False
         mock_rust.return_value.is_available.return_value = True
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
         mock_cudf.return_value.is_available.return_value = True
 
         config = SearchConfig(
@@ -111,7 +111,7 @@ class TestPipeline:
 
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_select_cudf_when_available(self, mock_mem):
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
         with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
             mock.return_value.is_available.return_value = True
             pipeline = Pipeline(force_cpu=False)
@@ -123,7 +123,7 @@ class TestPipeline:
 
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_fallback_to_cpu_when_no_gpu(self, mock_mem):
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = [512]
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
         with patch("tensor_grep.core.pipeline.CuDFBackend") as mock_cudf:
             with patch(
                 "tensor_grep.backends.torch_backend.TorchBackend.is_available"
@@ -140,7 +140,7 @@ class TestPipeline:
 
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_fallback_to_cpu_when_no_vram(self, mock_mem):
-        mock_mem.return_value.get_all_device_chunk_sizes_mb.return_value = []
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = []
         with patch("tensor_grep.core.pipeline.CuDFBackend") as mock:
             mock.return_value.is_available.return_value = True
             pipeline = Pipeline(force_cpu=False)

@@ -33,14 +33,25 @@ class MemoryManager:
         return int(budget / 2)
 
     def get_all_device_chunk_sizes_mb(self) -> list[int]:
+        return [chunk_mb for _, chunk_mb in self.get_device_chunk_plan_mb()]
+
+    def get_device_ids(self) -> list[int]:
         if not self.detector.has_gpu():
             return []
+        try:
+            return list(self.detector.get_device_ids())
+        except Exception:
+            # Backward-compatible fallback when detector does not expose IDs.
+            count = self.detector.get_device_count()
+            return list(range(count)) if count > 0 else []
 
-        count = self.detector.get_device_count()
-        if count == 0:
+    def get_device_chunk_plan_mb(self) -> list[tuple[int, int]]:
+        device_ids = self.get_device_ids()
+        if not device_ids:
             return []
-
-        return [self.get_recommended_chunk_size_mb(i) for i in range(count)]
+        return [
+            (device_id, self.get_recommended_chunk_size_mb(device_id)) for device_id in device_ids
+        ]
 
     def should_use_pinned_memory(self) -> bool:
         if self.detector.has_gds():

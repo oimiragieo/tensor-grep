@@ -21,7 +21,7 @@ def _process_chunk_on_device(
     size: int,
     pattern: str,
     config: SearchConfig | None = None,
-) -> list[MatchLine]:
+) -> tuple[list[MatchLine], int]:
     import re
 
     import cudf
@@ -64,12 +64,40 @@ def _process_chunk_on_device(
             )
         )
 
-    return matches
+    return matches, len(series)
 
 
 class CuDFBackend(ComputeBackend):
-    def __init__(self, chunk_sizes_mb: list[int] | None = None):
+    def __init__(
+        self, chunk_sizes_mb: list[int] | None = None, device_ids: list[int] | None = None
+    ):
         self.chunk_sizes_mb = chunk_sizes_mb or [512]
+        self.device_ids = device_ids or list(range(len(self.chunk_sizes_mb)))
+
+    @staticmethod
+    def _build_execution_plan(
+        *,
+        file_size: int,
+        device_chunks_mb: list[tuple[int, int]],
+    ) -> list[tuple[int, int, int]]:
+        """
+        Build a (device_id, offset, size) plan for chunked execution.
+        Chunks are assigned round-robin across concrete device IDs.
+        """
+        if file_size <= 0 or not device_chunks_mb:
+            return []
+
+        plan: list[tuple[int, int, int]] = []
+        offset = 0
+        slot = 0
+        while offset < file_size:
+            device_id, chunk_mb = device_chunks_mb[slot % len(device_chunks_mb)]
+            chunk_bytes = max(chunk_mb * 1024 * 1024, 1024 * 1024)
+            size = min(chunk_bytes, file_size - offset)
+            plan.append((device_id, offset, size))
+            offset += size
+            slot += 1
+        return plan
 
     def is_available(self) -> bool:
         try:
@@ -257,43 +285,46 @@ class CuDFBackend(ComputeBackend):
                 matches.sort(key=lambda m: m.line_number)
                 return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
 
-            offset = 0
-            line_offset = 0
+            device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
+            if not device_chunks_mb:
+                device_chunks_mb = [(0, 512)]
 
-            with ProcessPoolExecutor(max_workers=len(self.chunk_sizes_mb)) as executor:
+            execution_plan = self._build_execution_plan(
+                file_size=file_size,
+                device_chunks_mb=[
+                    (device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb
+                ],
+            )
+            with ProcessPoolExecutor(max_workers=len(device_chunks_mb)) as executor:
                 futures = []
-                while offset < file_size:
-                    for i, chunk_mb in enumerate(self.chunk_sizes_mb):
-                        if offset >= file_size:
-                            break
+                for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):
+                    future = executor.submit(
+                        _process_chunk_on_device,
+                        device_id,
+                        file_path,
+                        chunk_offset,
+                        chunk_size,
+                        pattern,
+                        config,
+                    )
+                    future._task_index = task_index  # type: ignore[attr-defined]
+                    futures.append(future)
 
-                        chunk_bytes = chunk_mb * 1024 * 1024
-                        if chunk_bytes == 0:
-                            # Prevent infinite loop if a chunk size evaluates to 0
-                            chunk_bytes = 1024 * 1024
-
-                        size = min(chunk_bytes, file_size - offset)
-
-                        future = executor.submit(
-                            _process_chunk_on_device, i, file_path, offset, size, pattern, config
-                        )
-                        # We attach the line_offset to the future for correct numbering later
-                        future._line_offset = line_offset  # type: ignore
-                        futures.append(future)
-
-                        offset += size
-                        line_offset += (
-                            size // 50
-                        )  # Rough estimate for fast numbering, true line offset is complex for chunked reads
-
+                ordered_chunk_results: dict[int, tuple[list[MatchLine], int]] = {}
                 for future in as_completed(futures):
-                    chunk_matches = future.result()
-                    offset_val = getattr(future, "_line_offset", 0)
+                    chunk_matches, chunk_line_count = future.result()
+                    task_index = getattr(future, "_task_index", 0)
+                    ordered_chunk_results[task_index] = (chunk_matches, chunk_line_count)
+
+                cumulative_line_offset = 0
+                for task_index in sorted(ordered_chunk_results):
+                    chunk_matches, chunk_line_count = ordered_chunk_results[task_index]
                     for match in chunk_matches:
-                        # mypy sees line_number as read-only because it's a frozen dataclass maybe?
-                        # Let's recreate the object if necessary, or just setattr.
-                        object.__setattr__(match, "line_number", match.line_number + offset_val)
+                        object.__setattr__(
+                            match, "line_number", match.line_number + cumulative_line_offset
+                        )
                         matches.append(match)
+                    cumulative_line_offset += chunk_line_count
 
             # Re-sort matches since they might finish out of order
             matches.sort(key=lambda m: m.line_number)

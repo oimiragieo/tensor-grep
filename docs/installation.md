@@ -35,3 +35,20 @@ tg --help
 ```
 
 *Note: The pip version requires a configured Python environment and may require additional setup for GPU acceleration (like installing `cudf` and `torch`).*
+
+## Maintainer Notes: Package Manager Publish Flow
+
+The repository includes package-manager manifests:
+- Homebrew formula: `scripts/tensor-grep.rb`
+- Winget manifest: `scripts/oimiragieo.tensor-grep.yaml`
+
+Before cutting a tag release:
+1. Keep `pyproject.toml`, `rust_core/Cargo.toml`, and `npm/package.json` versions aligned.
+2. Ensure manifest URLs point to release artifact names produced by `.github/workflows/release.yml`.
+3. Run:
+
+```bash
+uv run python scripts/validate_release_assets.py
+```
+
+Main CI now runs this same validation in the `release-readiness` job to prevent release drift.

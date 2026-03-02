@@ -97,6 +97,16 @@ class DeviceDetector:
         except Exception:
             return 0
 
+    def get_device_ids(self) -> list[int]:
+        """
+        Return concrete CUDA device IDs available for routing/sharding.
+        We keep this explicit API so higher layers don't assume [0..N-1].
+        """
+        count = self.get_device_count()
+        if count <= 0:
+            return []
+        return list(range(count))
+
     def get_vram_capacity_mb(self, device_id: int = 0) -> int:
         if not self.has_gpu():
             return 0

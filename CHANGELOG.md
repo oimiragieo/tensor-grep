@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- **gpu**: Use explicit device IDs for cuDF chunk fanout instead of index assumptions
+
+### Continuous Integration
+
+- **release**: Add `release-readiness` validation gate for package/release asset consistency
+
+### Documentation
+
+- **benchmarks**: Refresh README and PAPER benchmark numbers from 2026-03-02 benchmark pass
+- **install**: Document package-manager publish/validation workflow for Homebrew and Winget
+
+### Chores
+
+- **versioning**: Align Python, Rust, npm, Homebrew, and Winget release versions/URLs to `0.9.0`
+
+### Testing
+
+- **gpu**: Add multi-GPU pipeline/backend tests for device-ID routing and chunk fanout ordering
+- **release**: Add release/package consistency validation test
+
 
 ## v0.9.1 (2026-03-02)
 

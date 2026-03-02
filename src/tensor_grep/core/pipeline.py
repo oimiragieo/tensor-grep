@@ -156,14 +156,16 @@ class Pipeline:
                 # Heuristic GPU override for large/complex regex when rg is unavailable.
                 # Inject memory manager to get chunk sizes across all available GPUs
                 memory_manager = MemoryManager()
-                chunk_sizes = memory_manager.get_all_device_chunk_sizes_mb()
+                device_chunk_plan = memory_manager.get_device_chunk_plan_mb()
+                chunk_sizes = [chunk_mb for _, chunk_mb in device_chunk_plan]
+                device_ids = [device_id for device_id, _ in device_chunk_plan]
 
                 # If no chunk sizes were returned but we didn't force CPU, something is wrong with CUDA, fallback
                 if not chunk_sizes:
                     self.backend = fallback_backend
                     selected_backend_reason = "gpu_selected_no_chunk_sizes_fallback"
                 else:
-                    cudf_backend = CuDFBackend(chunk_sizes_mb=chunk_sizes)
+                    cudf_backend = CuDFBackend(chunk_sizes_mb=chunk_sizes, device_ids=device_ids)
                     if cudf_backend.is_available():
                         self.backend = cudf_backend
                         selected_backend_reason = "gpu_heuristic_cudf"
