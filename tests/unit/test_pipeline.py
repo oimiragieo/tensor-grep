@@ -184,3 +184,29 @@ class TestPipeline:
         )
         assert pipeline.backend == mock_rust.return_value
         assert pipeline.selected_backend_reason == "rust_secondary_fast_path"
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_should_route_context_queries_to_ripgrep_when_available(self, mock_rust, mock_rg):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(query_pattern="ERROR", context=2),
+        )
+        assert pipeline.backend == mock_rg.return_value
+        assert pipeline.selected_backend_reason == "rg_semantics_fast_path"
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_should_fallback_context_queries_to_cpu_when_ripgrep_missing(self, mock_rust, mock_rg):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(query_pattern="ERROR", context=2),
+        )
+        assert pipeline.backend.__class__.__name__ == "CPUBackend"
+        assert pipeline.selected_backend_reason == "python_cpu_semantics_required"

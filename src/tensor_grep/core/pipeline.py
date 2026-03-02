@@ -141,9 +141,13 @@ class Pipeline:
                 or config.word_regexp
                 or config.ltl
             ):
-                # Context/word/line/LTL semantics are handled in our CPU backend.
-                self.backend = CPUBackend()
-                selected_backend_reason = "python_cpu_semantics_required"
+                # Use native rg for supported semantics when available; keep Python for LTL or no-rg fallback.
+                if config.ltl or not rg_available:
+                    self.backend = CPUBackend()
+                    selected_backend_reason = "python_cpu_semantics_required"
+                else:
+                    self.backend = rg_backend
+                    selected_backend_reason = "rg_semantics_fast_path"
             elif rg_available:
                 # Default search path: always delegate to native rg for best end-to-end CLI speed.
                 self.backend = rg_backend
