@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.12.3 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Sync winget and brew assets for v0.12.2
+  ([`57aee00`](https://github.com/oimiragieo/tensor-grep/commit/57aee002d96665a9ed6fc9a8a373e7e4c57aa8b9))
+
+### Continuous Integration
+
+- Enforce semantic-release version stamping coverage
+  ([`548f045`](https://github.com/oimiragieo/tensor-grep/commit/548f045d03a526451cb815fec8b55fd774c9f343))
+
+
 ## v0.12.2 (2026-03-03)
 
 ### Bug Fixes
