@@ -60,9 +60,15 @@ def validate_all() -> list[str]:
         errors.append("Homebrew formula version does not match pyproject version")
     expected_macos_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/tg-macos-amd64-cpu"
     expected_linux_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/tg-linux-amd64-cpu"
-    if expected_macos_url not in brew:
+    templated_macos_url = (
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/tg-macos-amd64-cpu"
+    )
+    templated_linux_url = (
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/tg-linux-amd64-cpu"
+    )
+    if expected_macos_url not in brew and templated_macos_url not in brew:
         errors.append("Homebrew formula macOS URL does not match expected release artifact URL")
-    if expected_linux_url not in brew:
+    if expected_linux_url not in brew and templated_linux_url not in brew:
         errors.append("Homebrew formula Linux URL does not match expected release artifact URL")
     if "PLACEHOLDER" in brew:
         errors.append("Homebrew formula contains unresolved PLACEHOLDER text")

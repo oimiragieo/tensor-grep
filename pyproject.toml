@@ -123,7 +123,10 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
+version_toml = [
+    "pyproject.toml:project.version",
+    "rust_core/Cargo.toml:package.version",
+]
 branch = "main"
 build_command = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default stable && pip install uv && uv build"
 upload_to_pypi = false
@@ -131,4 +134,8 @@ upload_to_release = true
 commit_message = "chore(release): v{version} [skip ci]"
 version_variables = [
     "src/tensor_grep/cli/main.py:pkg_version",
+    "npm/package.json:version",
+    "scripts/tensor-grep.rb:version",
+    "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
+    "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
 ]
