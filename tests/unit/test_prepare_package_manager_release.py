@@ -56,6 +56,14 @@ def test_prepare_bundle_generates_homebrew_winget_and_summary(tmp_path):
         / "oimiragieo.tensor-grep.yaml"
     ).exists()
     assert (out / "PUBLISH_INSTRUCTIONS.md").exists()
+    checksums = out / "BUNDLE_CHECKSUMS.txt"
+    assert checksums.exists()
+    checksum_text = checksums.read_text(encoding="utf-8")
+    assert "homebrew-tap/Formula/tensor-grep.rb" in checksum_text
+    assert (
+        "winget-pkgs/manifests/o/oimiragieo/tensor-grep/1.2.3/oimiragieo.tensor-grep.yaml"
+        in checksum_text
+    )
 
 
 def test_prepare_bundle_check_mode_fails_on_manifest_drift(tmp_path):

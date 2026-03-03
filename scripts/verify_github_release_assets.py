@@ -157,6 +157,7 @@ def verify_release_assets(*, repo: str, tag: str, token: str | None = None) -> l
         "tensor-grep.rb",
         "oimiragieo.tensor-grep.yaml",
         "PUBLISH_INSTRUCTIONS.md",
+        "BUNDLE_CHECKSUMS.txt",
         "CHECKSUMS.txt",
     ]
     checksum_required_assets = [

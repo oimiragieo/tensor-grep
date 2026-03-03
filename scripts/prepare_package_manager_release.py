@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import shutil
 import tomllib
@@ -45,7 +46,7 @@ def _validate_sources(version: str) -> list[str]:
     return errors
 
 
-def _bundle_paths(output_dir: Path, version: str) -> tuple[Path, Path, Path]:
+def _bundle_paths(output_dir: Path, version: str) -> tuple[Path, Path, Path, Path]:
     brew_dest = output_dir / "homebrew-tap" / "Formula" / "tensor-grep.rb"
     winget_dest = (
         output_dir
@@ -58,7 +59,8 @@ def _bundle_paths(output_dir: Path, version: str) -> tuple[Path, Path, Path]:
         / "oimiragieo.tensor-grep.yaml"
     )
     summary = output_dir / "PUBLISH_INSTRUCTIONS.md"
-    return brew_dest, winget_dest, summary
+    checksums = output_dir / "BUNDLE_CHECKSUMS.txt"
+    return brew_dest, winget_dest, summary, checksums
 
 
 def _write_summary(summary: Path, version: str) -> None:
@@ -73,9 +75,23 @@ def _write_summary(summary: Path, version: str) -> None:
             "1. Copy `winget-pkgs/manifests/o/oimiragieo/tensor-grep/"
             f"{version}/oimiragieo.tensor-grep.yaml` into `winget-pkgs`.\n"
             "2. Run `winget validate` in that repo and open a PR.\n"
+            "\n## Integrity\n"
+            "Verify copied files against `BUNDLE_CHECKSUMS.txt` before opening PRs.\n"
         ),
         encoding="utf-8",
     )
+
+
+def _write_bundle_checksums(*, output_dir: Path, checksums_path: Path) -> None:
+    files = sorted(
+        path for path in output_dir.rglob("*") if path.is_file() and path != checksums_path
+    )
+    lines: list[str] = []
+    for path in files:
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        rel = path.relative_to(output_dir).as_posix()
+        lines.append(f"{digest}  {rel}")
+    checksums_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
 def prepare_bundle(*, output_dir: Path, check_only: bool) -> int:
@@ -92,7 +108,9 @@ def prepare_bundle(*, output_dir: Path, check_only: bool) -> int:
 
     brew_src = ROOT / "scripts" / "tensor-grep.rb"
     winget_src = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
-    brew_dest, winget_dest, summary = _bundle_paths(output_dir=output_dir, version=version)
+    brew_dest, winget_dest, summary, checksums = _bundle_paths(
+        output_dir=output_dir, version=version
+    )
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -102,6 +120,7 @@ def prepare_bundle(*, output_dir: Path, check_only: bool) -> int:
     shutil.copy2(brew_src, brew_dest)
     shutil.copy2(winget_src, winget_dest)
     _write_summary(summary=summary, version=version)
+    _write_bundle_checksums(output_dir=output_dir, checksums_path=checksums)
 
     print(f"Prepared package-manager publish bundle at {output_dir}")
     return 0
