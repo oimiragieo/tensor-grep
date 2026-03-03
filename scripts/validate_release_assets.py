@@ -111,6 +111,28 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     return errors
 
 
+def validate_package_manager_docs(*, runbook_content: str, checklist_content: str) -> list[str]:
+    errors: list[str] = []
+    for heading in (
+        "## Homebrew Tap Flow",
+        "## Winget Flow",
+        "## Rollback Procedures",
+        "## Verification Commands",
+    ):
+        if heading not in runbook_content:
+            errors.append(f"Package manager runbook missing required heading: {heading}")
+
+    for marker in (
+        "## 4. Package-manager distribution finalization",
+        "## 5. Rollback runbook",
+        "Homebrew",
+        "Winget",
+    ):
+        if marker not in checklist_content:
+            errors.append(f"Release checklist missing package-manager marker: {marker}")
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
@@ -175,6 +197,15 @@ def validate_all() -> list[str]:
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
+
+    package_manager_runbook = _read(ROOT / "docs" / "package_manager_publish.md")
+    release_checklist = _read(ROOT / "docs" / "RELEASE_CHECKLIST.md")
+    errors.extend(
+        validate_package_manager_docs(
+            runbook_content=package_manager_runbook,
+            checklist_content=release_checklist,
+        )
+    )
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})

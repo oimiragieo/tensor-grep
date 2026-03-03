@@ -80,3 +80,21 @@ def test_should_require_ci_pypi_parity_retry_arguments():
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any("--pypi-wait-seconds" in err for err in errors)
     assert any("--pypi-poll-interval-seconds" in err for err in errors)
+
+
+def test_should_require_package_manager_runbook_and_checklist_sections():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_package_manager_docs(
+        runbook_content="## Homebrew Tap Flow\n",
+        checklist_content="## 5. Rollback runbook\n",
+    )
+    assert any("## Winget Flow" in err for err in errors)
+    assert any("## Rollback Procedures" in err for err in errors)
+    assert any("Package-manager distribution finalization" in err for err in errors)
