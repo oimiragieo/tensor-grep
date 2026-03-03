@@ -125,3 +125,4 @@ class SearchConfig:
     ltl: bool = False
     query_pattern: str | None = None
     input_total_bytes: int = 0
+    gpu_device_ids: list[int] | None = None

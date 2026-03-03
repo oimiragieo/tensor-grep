@@ -96,3 +96,27 @@ class TestMemoryManager:
 
         chunk_plan = manager.get_device_chunk_plan_mb()
         assert chunk_plan == [(0, 4000), (1, 8000)]
+
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
+    def test_should_filter_to_explicit_preferred_device_ids_when_valid(self, mock_detect):
+        mock_instance = MagicMock()
+        mock_instance.has_gpu.return_value = True
+        mock_instance.list_devices.return_value = [
+            MagicMock(device_id=0),
+            MagicMock(device_id=2),
+            MagicMock(device_id=7),
+        ]
+        mock_detect.return_value = mock_instance
+
+        manager = MemoryManager()
+        assert manager.get_device_ids(preferred_ids=[7, 2, 2, 99]) == [7, 2]
+
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
+    def test_should_fallback_to_detected_device_ids_when_preferred_ids_invalid(self, mock_detect):
+        mock_instance = MagicMock()
+        mock_instance.has_gpu.return_value = True
+        mock_instance.list_devices.return_value = [MagicMock(device_id=3), MagicMock(device_id=5)]
+        mock_detect.return_value = mock_instance
+
+        manager = MemoryManager()
+        assert manager.get_device_ids(preferred_ids=[9, 11]) == [3, 5]

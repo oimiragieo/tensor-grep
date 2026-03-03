@@ -156,7 +156,10 @@ class Pipeline:
                 # Heuristic GPU override for large/complex regex when rg is unavailable.
                 # Inject memory manager to get chunk sizes across all available GPUs
                 memory_manager = MemoryManager()
-                device_chunk_plan = memory_manager.get_device_chunk_plan_mb()
+                preferred_gpu_ids = config.gpu_device_ids if config else None
+                device_chunk_plan = memory_manager.get_device_chunk_plan_mb(
+                    preferred_ids=preferred_gpu_ids
+                )
                 chunk_sizes = [chunk_mb for _, chunk_mb in device_chunk_plan]
                 device_ids = [device_id for device_id, _ in device_chunk_plan]
 

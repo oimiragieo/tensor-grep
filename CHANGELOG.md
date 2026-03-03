@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Unreleased
+
+### Features
+
+- **multi-gpu**: Add per-request GPU ID routing in `SearchConfig` and wire it through `Pipeline` + `MemoryManager` to CuDF fanout scheduling.
+
+### Testing
+
+- Add unit coverage for preferred GPU ID normalization/fallback in `MemoryManager` and explicit GPU-ID propagation in pipeline routing.
+
 
 ## v0.12.5 (2026-03-03)
 

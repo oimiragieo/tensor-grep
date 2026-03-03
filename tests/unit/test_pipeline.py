@@ -88,6 +88,30 @@ class TestPipeline:
         pipeline = Pipeline(force_cpu=False, config=config)
         assert pipeline.backend == mock_cudf.return_value
         assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
+        mock_mem.return_value.get_device_chunk_plan_mb.assert_called_once_with(preferred_ids=None)
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_should_route_gpu_heuristic_using_explicit_configured_device_ids(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(7, 256), (3, 512)]
+        mock_cudf.return_value.is_available.return_value = True
+
+        config = SearchConfig(
+            query_pattern=r"(ERROR|WARN).*timeout\s+\d+",
+            input_total_bytes=512 * 1024 * 1024,
+            gpu_device_ids=[7, 3],
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+        assert pipeline.backend == mock_cudf.return_value
+        assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
+        mock_mem.return_value.get_device_chunk_plan_mb.assert_called_once_with(preferred_ids=[7, 3])
+        mock_cudf.assert_called_once_with(chunk_sizes_mb=[256, 512], device_ids=[7, 3])
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")

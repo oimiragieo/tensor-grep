@@ -35,7 +35,7 @@ class MemoryManager:
     def get_all_device_chunk_sizes_mb(self) -> list[int]:
         return [chunk_mb for _, chunk_mb in self.get_device_chunk_plan_mb()]
 
-    def get_device_ids(self) -> list[int]:
+    def _get_detected_device_ids(self) -> list[int]:
         if not self.detector.has_gpu():
             return []
         try:
@@ -55,8 +55,31 @@ class MemoryManager:
         count = self.detector.get_device_count()
         return list(range(count)) if count > 0 else []
 
-    def get_device_chunk_plan_mb(self) -> list[tuple[int, int]]:
-        device_ids = self.get_device_ids()
+    def get_device_ids(self, preferred_ids: list[int] | None = None) -> list[int]:
+        detected_ids = self._get_detected_device_ids()
+        if not detected_ids:
+            return []
+        if not preferred_ids:
+            return detected_ids
+
+        detected_set = set(detected_ids)
+        normalized: list[int] = []
+        seen: set[int] = set()
+        for device_id in preferred_ids:
+            if device_id in seen:
+                continue
+            if device_id in detected_set:
+                normalized.append(device_id)
+                seen.add(device_id)
+
+        # Preserve backward-compatible behavior: if all requested IDs are invalid,
+        # fall back to the detected routable set instead of disabling GPU usage.
+        return normalized if normalized else detected_ids
+
+    def get_device_chunk_plan_mb(
+        self, preferred_ids: list[int] | None = None
+    ) -> list[tuple[int, int]]:
+        device_ids = self.get_device_ids(preferred_ids=preferred_ids)
         if not device_ids:
             return []
         return [
