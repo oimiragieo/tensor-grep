@@ -57,6 +57,7 @@ This checklist reflects the current enterprise release pipeline:
    - `build-pypi-sdist`
    - `validate-pypi-artifacts`
    - `publish-pypi`
+   - `publish-success-gate`
    - parity gate step `Verify release version parity across tag/assets/PyPI`
 4. On tag release workflow, confirm GitHub release asset verification passes:
    - `verify-release-assets`

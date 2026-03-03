@@ -86,6 +86,8 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "validate-pypi-artifacts:",
         "Validate built PyPI artifact set",
         "Smoke-test install from built PyPI artifacts",
+        "publish-success-gate:",
+        "Confirm publish and parity gates",
         "Verify release version parity across tag/assets/PyPI",
         "scripts/validate_release_version_parity.py",
     ):
@@ -115,6 +117,9 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         errors.append(
             "CI workflow must pass --pypi-poll-interval-seconds to release parity validation"
         )
+
+    if "needs: [release, publish-pypi]" not in ci_workflow:
+        errors.append("CI workflow publish-success-gate must depend on release + publish-pypi")
 
     return errors
 

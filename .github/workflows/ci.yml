@@ -459,3 +459,19 @@ jobs:
             --check-pypi \
             --pypi-wait-seconds 180 \
             --pypi-poll-interval-seconds 10
+
+  publish-success-gate:
+    name: publish-success-gate
+    needs: [release, publish-pypi]
+    if: always() && needs.release.outputs.publish_pypi == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm publish and parity gates
+        run: |
+          if [ "${{ needs.publish-pypi.result }}" != "success" ]; then
+            echo "publish-pypi job did not succeed."
+            exit 1
+          fi
+          echo "publish-pypi and version parity gates succeeded."

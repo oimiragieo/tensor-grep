@@ -101,6 +101,30 @@ def test_should_require_ci_package_manager_bundle_build_and_checksum_verificatio
     assert any("Verify package-manager publish bundle checksums" in err for err in errors)
 
 
+def test_should_require_ci_terminal_publish_success_gate():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    publish-pypi:
+      needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]
+      steps:
+        - uses: astral-sh/setup-uv@v5
+        - uses: astral-sh/setup-uv@v5
+        - run: |
+            python scripts/validate_release_version_parity.py \
+              --pypi-wait-seconds 180 \
+              --pypi-poll-interval-seconds 10
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("publish-success-gate" in err for err in errors)
+
+
 def test_should_require_package_manager_runbook_and_checklist_sections():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
