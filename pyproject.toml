@@ -136,7 +136,7 @@ commit_message = "chore(release): v{version} [skip ci]"
 version_variables = [
     "src/tensor_grep/cli/main.py:pkg_version",
     "npm/package.json:version",
-    "scripts/tensor-grep.rb:version",
+    "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
     "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
     "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
 ]

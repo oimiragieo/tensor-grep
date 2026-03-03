@@ -35,6 +35,9 @@ def _version_from_npm() -> str:
 
 def _version_from_brew_formula() -> str:
     content = _read(ROOT / "scripts" / "tensor-grep.rb")
+    constant_match = re.search(r'(?m)^\s*TENSOR_GREP_VERSION\s*=\s*"([^"]+)"\s*$', content)
+    if constant_match:
+        return constant_match.group(1)
     match = re.search(r'(?m)^\s*version\s+"([^"]+)"\s*$', content)
     if not match:
         raise ValueError("Missing version in scripts/tensor-grep.rb")

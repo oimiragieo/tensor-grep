@@ -18,7 +18,13 @@ def test_stamp_release_assets_updates_brew_and_winget(tmp_path):
         '[project]\nname = "tensor-grep"\nversion = "1.2.3"\n', encoding="utf-8"
     )
     (root / "scripts" / "tensor-grep.rb").write_text(
-        'class TensorGrep < Formula\n  version "0.9.0"\nend\n', encoding="utf-8"
+        (
+            "class TensorGrep < Formula\n"
+            '  TENSOR_GREP_VERSION = "0.9.0"\n'
+            "  version TENSOR_GREP_VERSION\n"
+            "end\n"
+        ),
+        encoding="utf-8",
     )
     (root / "scripts" / "oimiragieo.tensor-grep.yaml").write_text(
         "# Winget Manifest for tensor-grep v0.9.0\n"
@@ -32,7 +38,9 @@ def test_stamp_release_assets_updates_brew_and_winget(tmp_path):
     rc = module.stamp_assets(check_only=False)
 
     assert rc == 0
-    assert 'version "1.2.3"' in (root / "scripts" / "tensor-grep.rb").read_text(encoding="utf-8")
+    assert 'TENSOR_GREP_VERSION = "1.2.3"' in (root / "scripts" / "tensor-grep.rb").read_text(
+        encoding="utf-8"
+    )
     winget = (root / "scripts" / "oimiragieo.tensor-grep.yaml").read_text(encoding="utf-8")
     assert "# Winget Manifest for tensor-grep v1.2.3" in winget
     assert "PackageVersion: 1.2.3" in winget
@@ -49,7 +57,13 @@ def test_stamp_release_assets_check_mode_fails_when_drifted(tmp_path):
         '[project]\nname = "tensor-grep"\nversion = "1.2.3"\n', encoding="utf-8"
     )
     (root / "scripts" / "tensor-grep.rb").write_text(
-        'class TensorGrep < Formula\n  version "0.9.0"\nend\n', encoding="utf-8"
+        (
+            "class TensorGrep < Formula\n"
+            '  TENSOR_GREP_VERSION = "0.9.0"\n'
+            "  version TENSOR_GREP_VERSION\n"
+            "end\n"
+        ),
+        encoding="utf-8",
     )
     (root / "scripts" / "oimiragieo.tensor-grep.yaml").write_text(
         "# Winget Manifest for tensor-grep v0.9.0\n"

@@ -129,7 +129,9 @@ def validate_all() -> list[str]:
     errors.extend(validate_winget_manifest(winget_content=winget, py_version=py_version))
 
     brew = _read(ROOT / "scripts" / "tensor-grep.rb")
-    if f'version "{py_version}"' not in brew:
+    has_direct_version = f'version "{py_version}"' in brew
+    has_constant_version = f'TENSOR_GREP_VERSION = "{py_version}"' in brew
+    if not has_direct_version and not has_constant_version:
         errors.append("Homebrew formula version does not match pyproject version")
     expected_macos_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/tg-macos-amd64-cpu"
     expected_linux_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/tg-linux-amd64-cpu"
@@ -190,7 +192,7 @@ def validate_all() -> list[str]:
     required_variable_entries = {
         "src/tensor_grep/cli/main.py:pkg_version",
         "npm/package.json:version",
-        "scripts/tensor-grep.rb:version",
+        "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
         "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
         "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
     }

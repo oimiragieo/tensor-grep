@@ -30,12 +30,21 @@ def stamp_assets(*, check_only: bool) -> int:
     brew_before = _read(brew_path)
     winget_before = _read(winget_path)
 
-    brew_after = re.sub(
-        r'(?m)^(\s*version\s+)"[^"]+"(\s*)$',
-        rf'\g<1>"{version}"\2',
-        brew_before,
-        count=1,
-    )
+    brew_after = brew_before
+    if re.search(r'(?m)^\s*TENSOR_GREP_VERSION\s*=\s*"[^"]+"\s*$', brew_after):
+        brew_after = re.sub(
+            r'(?m)^(\s*TENSOR_GREP_VERSION\s*=\s*)"[^"]+"(\s*)$',
+            rf'\g<1>"{version}"\2',
+            brew_after,
+            count=1,
+        )
+    else:
+        brew_after = re.sub(
+            r'(?m)^(\s*version\s+)"[^"]+"(\s*)$',
+            rf'\g<1>"{version}"\2',
+            brew_after,
+            count=1,
+        )
     winget_after = re.sub(
         r"(?m)^(\ufeff)?# Winget Manifest for tensor-grep v[^\s]+$",
         rf"\1# Winget Manifest for tensor-grep v{version}",
