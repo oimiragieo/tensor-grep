@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.16.2 (2026-03-03)
+
+### Bug Fixes
+
+- **release**: Make homebrew version bump deterministic via explicit variable
+  ([`82e9000`](https://github.com/oimiragieo/tensor-grep/commit/82e9000256014012b83d478c72c069c44775a953))
+
+- **release**: Sync homebrew formula to 0.16.1
+  ([`5e7120b`](https://github.com/oimiragieo/tensor-grep/commit/5e7120bcf2bd23d550e25a7fd62e1eab46280699))
+
+### Testing
+
+- **ci**: Enforce pypi parity retry args in workflow validation
+  ([`41c2f13`](https://github.com/oimiragieo/tensor-grep/commit/41c2f13c4d49705aa2ccb7b07ef3562cfcf7f51a))
+
+- **release**: Enforce package-manager runbook/checklist sections
+  ([`51334b8`](https://github.com/oimiragieo/tensor-grep/commit/51334b836d5e3117c3e235a2439e0e40b99ddd65))
+
+
 ## v0.16.1 (2026-03-03)
 
 ### Bug Fixes
