@@ -72,6 +72,7 @@ Environment notes:
 - **Explicit device pinning override.** Set `TENSOR_GREP_DEVICE_IDS` (for example `TENSOR_GREP_DEVICE_IDS=3,7`) to constrain scheduling and fanout to specific GPUs.
 - **Per-request GPU pinning for library/runtime callers.** `SearchConfig(gpu_device_ids=[...])` now propagates through `Pipeline -> MemoryManager -> CuDFBackend` so workloads can be pinned to selected GPUs without mutating process-wide env vars.
 - **Explicit pinning is first-class in routing.** When `gpu_device_ids` is provided for search modes that do not require CPU-only semantics, pipeline selection attempts pinned GPU backends first, then safely falls back to `rg`/Rust/CPU if unavailable.
+- **Runtime GPU routing observability.** `Pipeline` now records `selected_gpu_device_ids` for the active backend selection so service wrappers and telemetry pipelines can audit exactly which GPU IDs were used.
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
 - **Device-ID normalization contract.** Duplicate/invalid preferred IDs are ignored during routing normalization; if all requested IDs are invalid, the scheduler falls back to the detected routable GPU set instead of disabling GPU execution.
 - **It is a drop-in replacement for ripgrep.** `tg search` accepts the exact same 70+ CLI flags (`-i`, `-v`, `-C`, `-g`, `-t`) that you already know and love from `ripgrep`.

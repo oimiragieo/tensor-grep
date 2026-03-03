@@ -64,6 +64,7 @@ class Pipeline:
         self.config = config
         selected_backend_name = "unknown"
         selected_backend_reason = "unknown"
+        selected_gpu_device_ids: list[int] = []
         span_ctx: Any = nullcontext()
 
         try:
@@ -181,6 +182,7 @@ class Pipeline:
                     if cudf_backend.is_available():
                         self.backend = cudf_backend
                         selected_backend_reason = "gpu_explicit_ids_cudf"
+                        selected_gpu_device_ids = list(device_ids)
                     else:
                         try:
                             from tensor_grep.backends.torch_backend import TorchBackend
@@ -189,6 +191,7 @@ class Pipeline:
                             if torch_backend.is_available():
                                 self.backend = torch_backend
                                 selected_backend_reason = "gpu_explicit_ids_torch"
+                                selected_gpu_device_ids = list(device_ids)
                             else:
                                 self.backend = fallback_backend
                                 selected_backend_reason = "gpu_explicit_ids_no_gpu_backend_fallback"
@@ -217,6 +220,7 @@ class Pipeline:
                     if cudf_backend.is_available():
                         self.backend = cudf_backend
                         selected_backend_reason = "gpu_heuristic_cudf"
+                        selected_gpu_device_ids = list(device_ids)
                     else:
                         try:
                             from tensor_grep.backends.torch_backend import TorchBackend
@@ -225,6 +229,7 @@ class Pipeline:
                             if torch_backend.is_available():
                                 self.backend = torch_backend
                                 selected_backend_reason = "gpu_heuristic_torch"
+                                selected_gpu_device_ids = list(device_ids)
                             else:
                                 self.backend = fallback_backend
                                 selected_backend_reason = "gpu_heuristic_no_gpu_backend_fallback"
@@ -245,9 +250,13 @@ class Pipeline:
                 span.set_attribute("backend.reason", selected_backend_reason)
                 span.set_attribute("needs_python_cpu", needs_python_cpu)
                 span.set_attribute("should_try_gpu", should_try_gpu)
+                span.set_attribute(
+                    "backend.gpu_device_ids", ",".join(map(str, selected_gpu_device_ids))
+                )
 
         self.selected_backend_name = selected_backend_name
         self.selected_backend_reason = selected_backend_reason
+        self.selected_gpu_device_ids = selected_gpu_device_ids
 
     def get_backend(self) -> ComputeBackend:
         return self.backend
