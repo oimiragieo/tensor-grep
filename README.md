@@ -18,7 +18,7 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Quick examples comparing tools
 
-Fresh benchmark pass results (2026-03-03, commit `b0c0c75`) from this repository's benchmark scripts are below.
+Fresh benchmark pass results (2026-03-03, commit `df251f6`) from this repository's benchmark scripts are below.
 
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
@@ -29,32 +29,32 @@ Environment notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.794s | 0.879s | Parity PASS |
-| Case-Insensitive Match | 0.464s | 0.722s | Parity PASS |
-| Regex Match | 0.453s | 0.686s | Parity PASS |
-| Invert Match | 1.421s | 1.566s | Parity PASS |
-| Count Matches | 0.147s | **0.101s** | Parity PASS |
-| Context Lines (`-C2`) | 1.932s | 2.172s | Parity PASS |
-| Max Count (`-m 5`) | 0.116s | 0.350s | Parity PASS |
-| File Glob Filtering | 0.517s | 0.830s | Parity PASS |
-| Word Boundary | 0.477s | 0.694s | Parity PASS |
-| Fixed Strings (`-F`) | 0.521s | 0.698s | Parity PASS |
+| Simple String Match | 0.502s | 0.868s | Parity PASS |
+| Case-Insensitive Match | 0.575s | 0.745s | Parity PASS |
+| Regex Match | 0.442s | 0.692s | Parity PASS |
+| Invert Match | 1.062s | 1.374s | Parity PASS |
+| Count Matches | 0.166s | **0.087s** | Parity PASS |
+| Context Lines (`-C2`) | 1.666s | 1.934s | Parity PASS |
+| Max Count (`-m 5`) | 0.116s | 0.378s | Parity PASS |
+| File Glob Filtering | 0.428s | 0.668s | Parity PASS |
+| Word Boundary | 0.453s | 0.771s | Parity PASS |
+| Fixed Strings (`-F`) | 0.452s | 0.815s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.114s | 0.451s | Parity PASS |
-| Try/Except Block | 0.134s | 0.548s | Parity PASS |
-| Class Declaration | 0.157s | 0.517s | Parity PASS |
+| Simple Function Def | 0.118s | 0.379s | Parity PASS |
+| Try/Except Block | 0.129s | 0.475s | Parity PASS |
+| Class Declaration | 0.140s | 0.501s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | **0.023s** | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | 0.123s | 2,000 ERROR labels |
-| Torch backend | Exact match on 10,000 log lines | 0.383s | 2,000 matches |
+| AST backend | `function_definition` on test module | **0.017s** | 4 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | 0.104s | 2,000 ERROR labels |
+| Torch backend | Exact match on 10,000 log lines | 0.343s | 2,000 matches |
 
 ### Benchmark Governance (Regression Protection)
 
