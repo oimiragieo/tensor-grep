@@ -47,6 +47,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Validate Homebrew formula syntax
         if: runner.os == 'Linux'
         run: ruby -c scripts/tensor-grep.rb
@@ -57,7 +62,6 @@ jobs:
         run: |
           if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
             Write-Warning "winget not found; falling back to python validator"
-            uv python install 3.12
             uv run python scripts/validate_release_assets.py
             exit 0
           }
@@ -65,7 +69,6 @@ jobs:
           $wingetHelp = winget --help
           if ($wingetHelp -notmatch "validate") {
             Write-Warning "winget validate is unavailable in this runner version; falling back to python validator"
-            uv python install 3.12
             uv run python scripts/validate_release_assets.py
             exit 0
           }
@@ -73,26 +76,17 @@ jobs:
           winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
           if ($LASTEXITCODE -ne 0) {
             Write-Warning "winget validate failed with exit code $LASTEXITCODE; falling back to python validator"
-            uv python install 3.12
             uv run python scripts/validate_release_assets.py
           }
 
       - name: Validate package-manager publish bundle source state
-        run: |
-          uv python install 3.12
-          uv run python scripts/prepare_package_manager_release.py --check
+        run: uv run python scripts/prepare_package_manager_release.py --check
 
       - name: Build package-manager publish bundle artifact
-        run: |
-          uv python install 3.12
-          uv run python scripts/prepare_package_manager_release.py \
-            --output-dir artifacts/package-manager-bundle
+        run: uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
 
       - name: Verify package-manager publish bundle checksums
-        run: |
-          uv python install 3.12
-          uv run python scripts/verify_package_manager_bundle_checksums.py \
-            --bundle-dir artifacts/package-manager-bundle
+        run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
 
   static-analysis:
     name: Formatting & Linting
@@ -225,9 +219,11 @@ jobs:
       
       - name: Install uv
         uses: astral-sh/setup-uv@v5
-        
+
       - name: Setup Python
-        run: uv python install 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
         
       - name: Install Rust dependencies (for PyO3 fallback)
         uses: dtolnay/rust-toolchain@stable
