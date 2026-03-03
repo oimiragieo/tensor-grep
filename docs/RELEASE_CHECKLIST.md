@@ -64,6 +64,8 @@ This checklist reflects the current enterprise release pipeline:
 
 ## 4. Package-manager distribution finalization
 
+Detailed operational steps live in `docs/package_manager_publish.md`.
+
 1. Homebrew formula readiness:
    - CI runs `ruby -c scripts/tensor-grep.rb`.
    - Ensure formula URL points at `https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/...`.

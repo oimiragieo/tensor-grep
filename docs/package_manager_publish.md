@@ -1,0 +1,92 @@
+# Package Manager Publish Runbook
+
+This runbook defines repeatable Homebrew and Winget publish/rollback procedures after a successful `main` release pipeline.
+
+## Preconditions
+
+1. `CI` on `main` is green, including:
+   - `release-readiness`
+   - `package-manager-readiness`
+   - `publish-pypi` (if `publish_pypi=true`)
+2. Version-bearing files are aligned and validated:
+   - `pyproject.toml`
+   - `rust_core/Cargo.toml`
+   - `npm/package.json`
+   - `scripts/tensor-grep.rb`
+   - `scripts/oimiragieo.tensor-grep.yaml`
+3. Run:
+   ```bash
+   uv run python scripts/validate_release_assets.py
+   ```
+
+## Homebrew Tap Flow
+
+1. Clone your tap repo:
+   ```bash
+   git clone https://github.com/oimiragieo/homebrew-tap.git
+   cd homebrew-tap
+   ```
+2. Copy updated formula from `tensor-grep`:
+   ```bash
+   cp /path/to/tensor-grep/scripts/tensor-grep.rb Formula/tensor-grep.rb
+   ruby -c Formula/tensor-grep.rb
+   ```
+3. Commit and open PR:
+   ```bash
+   git checkout -b release/tensor-grep-vX.Y.Z
+   git add Formula/tensor-grep.rb
+   git commit -m "chore(brew): publish tensor-grep vX.Y.Z"
+   git push origin release/tensor-grep-vX.Y.Z
+   ```
+4. After merge, smoke-test install:
+   ```bash
+   brew update
+   brew install oimiragieo/tap/tensor-grep
+   tg --version
+   ```
+
+## Winget Flow
+
+1. Fork and clone `winget-pkgs`:
+   ```bash
+   git clone https://github.com/<you>/winget-pkgs.git
+   cd winget-pkgs
+   ```
+2. Add/update manifest for `oimiragieo.tensor-grep` at version `X.Y.Z`.
+3. Validate locally:
+   ```powershell
+   winget validate --manifest .\manifests\o\oimiragieo\tensor-grep\X.Y.Z\
+   ```
+4. Commit and open PR:
+   ```bash
+   git checkout -b release/tensor-grep-vX.Y.Z
+   git add manifests/o/oimiragieo/tensor-grep/X.Y.Z
+   git commit -m "chore(winget): publish tensor-grep vX.Y.Z"
+   git push origin release/tensor-grep-vX.Y.Z
+   ```
+5. After merge, smoke-test:
+   ```powershell
+   winget install oimiragieo.tensor-grep
+   tg --version
+   ```
+
+## Rollback Procedures
+
+1. Homebrew rollback:
+   - Revert tap formula to previous known-good release.
+   - Merge revert PR.
+   - Ask users to run `brew update` and reinstall.
+2. Winget rollback:
+   - Submit manifest update PR pointing to prior known-good installer.
+   - If needed, submit corrective patch manifest release.
+3. PyPI/GitHub mismatch:
+   - Do not delete production artifacts as primary fix.
+   - Publish a corrective patch release (`X.Y.(Z+1)`) and re-run parity gates.
+
+## Verification Commands
+
+```bash
+gh run list --limit 20
+uv run python scripts/validate_release_assets.py
+python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z
+```
