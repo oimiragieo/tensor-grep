@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Unreleased
+
+### Bug Fixes
+
+- **release**: Re-sync Homebrew/Winget package-manager assets to `0.14.0` and normalize nested Winget `InstallerUrl` stamping.
+
+### Continuous Integration
+
+- **release**: Enforce structural Winget manifest validation (YAML parse + nested installer URL contract) in release asset checks.
+
 
 ## v0.14.0 (2026-03-03)
 

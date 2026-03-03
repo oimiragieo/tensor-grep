@@ -68,7 +68,7 @@ This checklist reflects the current enterprise release pipeline:
    - Ensure formula URL points at `https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/...`.
 2. Winget manifest readiness:
    - CI runs `winget validate` on Windows when available and falls back to Python validator.
-   - Ensure `PackageVersion` and `InstallerUrl` in `scripts/oimiragieo.tensor-grep.yaml` match release version.
+   - Ensure `PackageVersion` and nested `Installers[0].InstallerUrl` in `scripts/oimiragieo.tensor-grep.yaml` match release version.
 3. Post-release operational publish:
    - Homebrew tap update: open/update PR in tap repo with new formula.
    - Winget submission: create/update manifest PR in winget-pkgs for new version.

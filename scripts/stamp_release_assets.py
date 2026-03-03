@@ -43,8 +43,8 @@ def stamp_assets(*, check_only: bool) -> int:
         count=1,
     )
     winget_after = re.sub(
-        r"(?m)^(InstallerUrl:\s*https://github\.com/oimiragieo/tensor-grep/releases/download/v)[^/]+(/tg-windows-amd64-cpu\.exe\s*)$",
-        rf"\g<1>{version}\g<2>",
+        r"(?m)^\s*InstallerUrl:\s*https://github\.com/oimiragieo/tensor-grep/releases/download/v[^/]+/tg-windows-amd64-cpu\.exe\s*$",
+        rf"    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v{version}/tg-windows-amd64-cpu.exe",
         winget_after,
         count=1,
     )

@@ -35,7 +35,7 @@ def test_stamp_release_assets_updates_brew_and_winget(tmp_path):
     winget = (root / "scripts" / "oimiragieo.tensor-grep.yaml").read_text(encoding="utf-8")
     assert "PackageVersion: 1.2.3" in winget
     assert (
-        "InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe"
+        "    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe"
         in winget
     )
 

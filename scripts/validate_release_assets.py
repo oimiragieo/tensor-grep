@@ -5,6 +5,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -30,6 +32,43 @@ def _version_from_npm() -> str:
     return str(data["version"])
 
 
+def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[str]:
+    errors: list[str] = []
+    if f"PackageVersion: {py_version}" not in winget_content:
+        errors.append("Winget manifest PackageVersion does not match pyproject version")
+    expected_windows_url = (
+        f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/"
+        "tg-windows-amd64-cpu.exe"
+    )
+    if expected_windows_url not in winget_content:
+        errors.append("Winget manifest InstallerUrl does not match expected release artifact URL")
+    if "PLACEHOLDER" in winget_content:
+        errors.append("Winget manifest contains unresolved PLACEHOLDER text")
+    try:
+        parsed_winget = yaml.safe_load(winget_content) or {}
+    except yaml.YAMLError as exc:
+        errors.append(f"Winget manifest is not valid YAML: {exc}")
+        parsed_winget = {}
+    if not isinstance(parsed_winget, dict):
+        errors.append("Winget manifest must deserialize to a mapping")
+        return errors
+
+    installers = parsed_winget.get("Installers")
+    if not isinstance(installers, list) or not installers:
+        errors.append("Winget manifest must contain a non-empty Installers list")
+        return errors
+
+    first = installers[0]
+    if not isinstance(first, dict):
+        errors.append("Winget manifest first installer must be a mapping")
+        return errors
+
+    installer_url = first.get("InstallerUrl")
+    if installer_url != expected_windows_url:
+        errors.append("Winget manifest InstallerUrl must be nested under first installer mapping")
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
@@ -43,17 +82,9 @@ def validate_all() -> list[str]:
     if npm_version != py_version:
         errors.append(f"Version mismatch: npm/package.json={npm_version} != pyproject={py_version}")
 
-    winget = _read(ROOT / "scripts" / "oimiragieo.tensor-grep.yaml")
-    if f"PackageVersion: {py_version}" not in winget:
-        errors.append("Winget manifest PackageVersion does not match pyproject version")
-    expected_windows_url = (
-        f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/"
-        "tg-windows-amd64-cpu.exe"
-    )
-    if expected_windows_url not in winget:
-        errors.append("Winget manifest InstallerUrl does not match expected release artifact URL")
-    if "PLACEHOLDER" in winget:
-        errors.append("Winget manifest contains unresolved PLACEHOLDER text")
+    winget_path = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
+    winget = _read(winget_path)
+    errors.extend(validate_winget_manifest(winget_content=winget, py_version=py_version))
 
     brew = _read(ROOT / "scripts" / "tensor-grep.rb")
     if f'version "{py_version}"' not in brew:
