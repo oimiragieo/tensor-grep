@@ -159,6 +159,11 @@ jobs:
           uv run python scripts/prepare_package_manager_release.py \
             --output-dir artifacts/package-manager-bundle
 
+      - name: Verify package-manager bundle checksums
+        run: |
+          uv run python scripts/verify_package_manager_bundle_checksums.py \
+            --bundle-dir artifacts/package-manager-bundle
+
       - name: Smoke-verify Linux release binary version
         run: |
           uv run python scripts/smoke_verify_release_binary.py \

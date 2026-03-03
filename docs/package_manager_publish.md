@@ -97,5 +97,6 @@ gh run list --limit 20
 uv run python scripts/validate_release_assets.py
 uv run python scripts/prepare_package_manager_release.py --check
 uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
+uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
 python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z
 ```
