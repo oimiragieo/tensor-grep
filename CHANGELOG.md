@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.12.4 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Sync brew/winget manifests to v0.12.3
+  ([`f0f4368`](https://github.com/oimiragieo/tensor-grep/commit/f0f436895e2e110e9e89d1db6138702103626cbf))
+
+### Documentation
+
+- **paper**: Assess STATIC constrained decoding fit for tensor-grep
+  ([`144d578`](https://github.com/oimiragieo/tensor-grep/commit/144d5789cc724411c01454f5318e7782822dd779))
+
+
 ## v0.12.3 (2026-03-03)
 
 ### Bug Fixes
