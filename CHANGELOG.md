@@ -1,6 +1,40 @@
 # CHANGELOG
 
 
+## v0.19.0 (2026-03-03)
+
+### Code Style
+
+- **test**: Apply ruff preview formatting for release asset tests
+  ([`6d296d1`](https://github.com/oimiragieo/tensor-grep/commit/6d296d1d0b05af4afa607c93687501f4b533d73f))
+
+### Continuous Integration
+
+- **release**: Enforce tag parity job wiring for publish gates
+  ([`538205b`](https://github.com/oimiragieo/tensor-grep/commit/538205b7e46207b2638546ac87188debeec48a70))
+
+- **release**: Gate docs publish on verified release assets
+  ([`e210545`](https://github.com/oimiragieo/tensor-grep/commit/e21054569595c19a6059a25e318c922a7b85200f))
+
+- **release**: Smoke-verify linux binary version before publish
+  ([`b42d7eb`](https://github.com/oimiragieo/tensor-grep/commit/b42d7eb35c2e5342cf863b3bfcdeb7dd99428a3f))
+
+### Documentation
+
+- **bench**: Refresh benchmark tables for commit 538205b
+  ([`04842db`](https://github.com/oimiragieo/tensor-grep/commit/04842db5dde941fd219edf54a41624588ef3d8f8))
+
+### Features
+
+- **gpu**: Execute torch multi-gpu fanout via per-device workers
+  ([`a56dbb3`](https://github.com/oimiragieo/tensor-grep/commit/a56dbb3c0af796fa9d27f289201da1e8703338f7))
+
+### Testing
+
+- **release**: Enforce strict release asset and checksum matrix
+  ([`2891efe`](https://github.com/oimiragieo/tensor-grep/commit/2891efe725ea535b791a121eeb884f3ba2d6c200))
+
+
 ## v0.18.0 (2026-03-03)
 
 ### Code Style
