@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.12.5 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Sync brew and winget release assets to v0.12.4
+  ([`d3442bd`](https://github.com/oimiragieo/tensor-grep/commit/d3442bd449a59a24cd96d50c713594c695c8f3b2))
+
+### Documentation
+
+- **release**: Add enterprise package-manager publish and rollback runbook
+  ([`55f724b`](https://github.com/oimiragieo/tensor-grep/commit/55f724b880554f737e1f9ace6854771d02ea64bc))
+
+
 ## v0.12.4 (2026-03-03)
 
 ### Bug Fixes
