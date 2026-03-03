@@ -22,6 +22,8 @@ class _FakePipeline:
     backend: _FakeBackend
 
     def __init__(self, force_cpu=False, config=None):
+        global _LAST_PIPELINE_CONFIG
+        _LAST_PIPELINE_CONFIG = config
         self.backend = _FAKE_BACKEND
         self.selected_backend_name = "FakeBackend"
         self.selected_backend_reason = "unit_test_fake_pipeline"
@@ -53,6 +55,7 @@ class _FakeRipgrepBackend:
 
 _FAKE_BACKEND = _FakeBackend(results_by_file={})
 _FAKE_WALK: dict[str, list[str]] = {}
+_LAST_PIPELINE_CONFIG = None
 
 
 def _patch_cli_dependencies(monkeypatch):
@@ -70,6 +73,48 @@ def test_files_mode_lists_candidates(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout.strip().splitlines() == ["a.py", "b.py"]
+
+
+def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _LAST_PIPELINE_CONFIG = None
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["search", "ERROR", ".", "--ltl", "--gpu-device-ids", "3,7,7"],
+    )
+
+    assert result.exit_code == 0
+    assert _LAST_PIPELINE_CONFIG is not None
+    assert _LAST_PIPELINE_CONFIG.gpu_device_ids == [3, 7]
+
+
+def test_cli_should_fail_fast_on_invalid_gpu_device_ids(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(results_by_file={})
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["search", "ERROR", ".", "--gpu-device-ids", "0,foo"],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid GPU device id 'foo'" in result.output
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):

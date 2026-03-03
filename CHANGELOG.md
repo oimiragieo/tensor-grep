@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **cli**: Add `--gpu-device-ids` to expose per-request GPU pinning from CLI into runtime routing.
+
 ### Continuous Integration
 
 - **release**: Validate GitHub binary artifact filename matrix and publish `CHECKSUMS.txt` SHA256 manifest before release upload.

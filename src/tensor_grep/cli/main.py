@@ -121,6 +121,36 @@ def _normalize_string_list(value: object, fallback: list[str]) -> list[str]:
     return fallback
 
 
+def _parse_gpu_device_ids_cli(raw: str | None) -> list[int] | None:
+    if raw is None:
+        return None
+    parsed: list[int] = []
+    seen: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            value = int(token)
+        except ValueError as exc:
+            raise typer.BadParameter(
+                f"Invalid GPU device id '{token}'. Use comma-separated integers, e.g. 0,1."
+            ) from exc
+        if value < 0:
+            raise typer.BadParameter(
+                f"Invalid GPU device id '{token}'. Device IDs must be non-negative."
+            )
+        if value in seen:
+            continue
+        seen.add(value)
+        parsed.append(value)
+    if not parsed:
+        raise typer.BadParameter(
+            "No valid GPU device IDs provided. Use comma-separated integers, e.g. 0,1."
+        )
+    return parsed
+
+
 def _load_yaml_dict(path: Path) -> dict[str, object]:
     import yaml
 
@@ -191,23 +221,27 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append({
-                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
-                    "language": str(
-                        item.get("language") or payload.get("language") or default_language
-                    ),
-                })
+                specs.append(
+                    {
+                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                        "pattern": pattern,
+                        "language": str(
+                            item.get("language") or payload.get("language") or default_language
+                        ),
+                    }
+                )
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append({
-            "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
-            "language": str(payload.get("language") or default_language),
-        })
+        specs.append(
+            {
+                "id": str(payload.get("id") or rule_file.stem),
+                "pattern": pattern,
+                "language": str(payload.get("language") or default_language),
+            }
+        )
 
     return specs
 
@@ -536,6 +570,11 @@ def search_command(
         "--ltl",
         help="Interpret PATTERN as a temporal query (supports: 'A -> eventually B').",
     ),
+    gpu_device_ids: str | None = typer.Option(
+        None,
+        "--gpu-device-ids",
+        help="Comma-separated GPU IDs to pin this search request to (e.g. 0,1).",
+    ),
 ) -> None:
     """
     Search files for a regex pattern, with GPU acceleration when applicable.
@@ -550,6 +589,8 @@ def search_command(
     paths_to_search = file_path
 
     from tensor_grep.core.config import SearchConfig
+
+    parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
 
     config = SearchConfig(
         regexp=regexp,
@@ -656,6 +697,7 @@ def search_command(
         lang=lang,
         ltl=ltl,
         query_pattern=pattern,
+        gpu_device_ids=parsed_gpu_device_ids,
     )
 
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
