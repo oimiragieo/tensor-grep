@@ -133,6 +133,22 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
     return errors
 
 
+def validate_homebrew_formula_contract(*, brew_content: str, py_version: str) -> list[str]:
+    errors: list[str] = []
+    has_direct_version = f'version "{py_version}"' in brew_content
+    has_constant_version = f'TENSOR_GREP_VERSION = "{py_version}"' in brew_content
+    if not has_direct_version and not has_constant_version:
+        errors.append("Homebrew formula version does not match pyproject version")
+
+    if "TENSOR_GREP_VERSION =" not in brew_content:
+        errors.append("Homebrew formula must use explicit TENSOR_GREP_VERSION assignment")
+
+    if "version TENSOR_GREP_VERSION" not in brew_content:
+        errors.append("Homebrew formula must declare `version TENSOR_GREP_VERSION`")
+
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
@@ -151,10 +167,7 @@ def validate_all() -> list[str]:
     errors.extend(validate_winget_manifest(winget_content=winget, py_version=py_version))
 
     brew = _read(ROOT / "scripts" / "tensor-grep.rb")
-    has_direct_version = f'version "{py_version}"' in brew
-    has_constant_version = f'TENSOR_GREP_VERSION = "{py_version}"' in brew
-    if not has_direct_version and not has_constant_version:
-        errors.append("Homebrew formula version does not match pyproject version")
+    errors.extend(validate_homebrew_formula_contract(brew_content=brew, py_version=py_version))
     expected_macos_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/tg-macos-amd64-cpu"
     expected_linux_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{py_version}/tg-linux-amd64-cpu"
     templated_macos_url = (

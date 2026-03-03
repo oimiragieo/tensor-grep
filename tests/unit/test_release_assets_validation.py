@@ -98,3 +98,18 @@ def test_should_require_package_manager_runbook_and_checklist_sections():
     assert any("## Winget Flow" in err for err in errors)
     assert any("## Rollback Procedures" in err for err in errors)
     assert any("Package-manager distribution finalization" in err for err in errors)
+
+
+def test_should_require_explicit_homebrew_version_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    bad_brew = 'class TensorGrep < Formula\n  version "1.2.3"\nend\n'
+    errors = module.validate_homebrew_formula_contract(brew_content=bad_brew, py_version="1.2.3")
+    assert any("TENSOR_GREP_VERSION assignment" in err for err in errors)
+    assert any("version TENSOR_GREP_VERSION" in err for err in errors)
