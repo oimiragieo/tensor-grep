@@ -170,6 +170,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "Validate release tag/version parity across package metadata",
         "scripts/validate_release_version_parity.py",
         "artifacts/CHECKSUMS.txt",
+        "Build package-manager publish bundle",
+        "scripts/prepare_package_manager_release.py \\",
+        "--output-dir artifacts/package-manager-bundle",
+        "artifacts/package-manager-bundle/**",
         "Validate package-manager publish bundle source state",
         "scripts/prepare_package_manager_release.py --check",
     ):

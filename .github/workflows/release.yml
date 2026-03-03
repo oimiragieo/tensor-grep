@@ -154,6 +154,11 @@ jobs:
             --artifacts-dir artifacts \
             --checksums-out artifacts/CHECKSUMS.txt
 
+      - name: Build package-manager publish bundle
+        run: |
+          uv run python scripts/prepare_package_manager_release.py \
+            --output-dir artifacts/package-manager-bundle
+
       - name: Smoke-verify Linux release binary version
         run: |
           uv run python scripts/smoke_verify_release_binary.py \
@@ -166,6 +171,7 @@ jobs:
           files: |
             artifacts/**/tg-*
             artifacts/CHECKSUMS.txt
+            artifacts/package-manager-bundle/**
           generate_release_notes: true
 
   verify-release-assets:

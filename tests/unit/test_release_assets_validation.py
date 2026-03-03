@@ -155,3 +155,28 @@ def test_should_require_publish_jobs_to_depend_on_tag_version_parity():
     errors = module.validate_release_workflow_content(release_workflow=bad_release_workflow)
     assert any("publish-docs must depend on validate-tag-version-parity" in err for err in errors)
     assert any("publish-npm must depend on validate-tag-version-parity" in err for err in errors)
+
+
+def test_should_require_release_to_publish_package_manager_bundle_assets():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    bad_release_workflow = """
+    jobs:
+      create-release:
+        steps:
+          - name: Create GitHub Release
+            uses: softprops/action-gh-release@v2
+            with:
+              files: |
+                artifacts/**/tg-*
+                artifacts/CHECKSUMS.txt
+    """
+    errors = module.validate_release_workflow_content(release_workflow=bad_release_workflow)
+    assert any("Build package-manager publish bundle" in err for err in errors)
+    assert any("artifacts/package-manager-bundle/**" in err for err in errors)
