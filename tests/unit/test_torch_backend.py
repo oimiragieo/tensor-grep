@@ -1,4 +1,5 @@
 import types
+from typing import ClassVar
 from unittest.mock import patch
 
 from tensor_grep.core.config import SearchConfig
@@ -65,6 +66,32 @@ class _FakeTorch(types.ModuleType):
         return _FakeTensor(list(values))
 
 
+class _FakeFuture:
+    def __init__(self, result):
+        self._result = result
+
+    def result(self):
+        return self._result
+
+
+class _FakeExecutor:
+    submitted_devices: ClassVar[list[str]] = []
+
+    def __init__(self, *args, **kwargs):
+        _ = (args, kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _ = (exc_type, exc, tb)
+        return False
+
+    def submit(self, fn, **kwargs):
+        _FakeExecutor.submitted_devices.append(str(kwargs["device"]))
+        return _FakeFuture(fn(**kwargs))
+
+
 def test_torch_backend_uses_gpu_literal_matching(tmp_path):
     from tensor_grep.backends.torch_backend import TorchBackend
 
@@ -119,5 +146,25 @@ def test_torch_backend_should_distribute_device_selection_when_ids_provided(tmp_
     # Pattern tensor + 4 line tensors are mapped across both configured devices.
     assert "cuda:3" in fake_torch.device_calls
     assert "cuda:7" in fake_torch.device_calls
-    # Last four tensor allocations correspond to per-line checks and should round-robin.
-    assert fake_torch.tensor_device_calls[-4:] == ["cuda:3", "cuda:7", "cuda:3", "cuda:7"]
+    # Last four tensor allocations correspond to per-device shard execution.
+    assert fake_torch.tensor_device_calls[-4:] == ["cuda:3", "cuda:3", "cuda:7", "cuda:7"]
+
+
+def test_torch_backend_should_fanout_work_to_executor_when_multi_gpu(tmp_path):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_fanout.log"
+    path.write_text("ERROR A\nERROR B\nERROR C\nERROR D\n", encoding="utf-8")
+
+    fake_torch = _FakeTorch()
+    _FakeExecutor.submitted_devices = []
+    backend = TorchBackend(device_ids=[3, 7])
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+        patch("tensor_grep.backends.torch_backend.ThreadPoolExecutor", _FakeExecutor),
+    ):
+        result = backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 4
+    assert _FakeExecutor.submitted_devices == ["cuda:3", "cuda:7"]

@@ -1,3 +1,4 @@
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 from tensor_grep.core.config import SearchConfig
@@ -10,6 +11,45 @@ class _FakeFuture:
 
     def result(self):
         return self._result
+
+
+class _TorchFuture:
+    def __init__(self, result):
+        self._result = result
+
+    def result(self):
+        return self._result
+
+
+class _TorchExecutor:
+    submitted_devices: ClassVar[list[str]] = []
+
+    def __init__(self, *args, **kwargs):
+        _ = (args, kwargs)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _ = (exc_type, exc, tb)
+        return False
+
+    def submit(self, fn, **kwargs):
+        _TorchExecutor.submitted_devices.append(str(kwargs["device"]))
+        return _TorchFuture(fn(**kwargs))
+
+
+class _FakeTorchModule:
+    uint8 = "uint8"
+
+    @staticmethod
+    def device(value: str):
+        return value
+
+    @staticmethod
+    def tensor(values, dtype=None, device=None):
+        _ = (values, dtype, device)
+        return object()
 
 
 class _FakeExecutor:
@@ -243,3 +283,46 @@ class TestMultiGpuDistributionIntegration:
         # 2 chunks at 1 line each with 3-line chunk offsets => line 1 then line 4.
         assert [m.line_number for m in result.matches][:2] == [1, 4]
         assert [m.text for m in result.matches][:2] == ["3", "7"]
+
+    @patch("tensor_grep.backends.cudf_backend.CuDFBackend.is_available", return_value=False)
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.backends.torch_backend.ThreadPoolExecutor", _TorchExecutor)
+    @patch("tensor_grep.backends.torch_backend.TorchBackend.is_available", return_value=True)
+    @patch(
+        "tensor_grep.backends.torch_backend.TorchBackend._contains_literal_torch",
+        side_effect=lambda **kwargs: "ERROR" in kwargs["line"],
+    )
+    def test_should_execute_torch_fanout_across_selected_gpu_ids_via_pipeline(
+        self,
+        _mock_contains,
+        _mock_torch_available,
+        mock_memory,
+        mock_rust,
+        mock_rg,
+        _mock_cudf_available,
+        tmp_path,
+    ):
+        from tensor_grep.core.pipeline import Pipeline
+
+        log_path = tmp_path / "torch_pipeline.log"
+        log_path.write_text("ERROR A\nINFO B\nERROR C\nWARN D\n", encoding="utf-8")
+
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = False
+        mock_memory.return_value.get_device_chunk_plan_mb.return_value = [(7, 128), (3, 128)]
+
+        config = SearchConfig(
+            query_pattern="ERROR",
+            input_total_bytes=8 * 1024 * 1024,
+            gpu_device_ids=[7, 3],
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+        _TorchExecutor.submitted_devices = []
+        with patch.dict("sys.modules", {"torch": _FakeTorchModule()}):
+            result = pipeline.get_backend().search(str(log_path), "ERROR")
+
+        assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
+        assert _TorchExecutor.submitted_devices == ["cuda:7", "cuda:3"]
+        assert result.total_matches == 2

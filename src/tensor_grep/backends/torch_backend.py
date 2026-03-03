@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from tensor_grep.backends.base import ComputeBackend
@@ -44,6 +45,36 @@ class TorchBackend(ComputeBackend):
         windows = line_tensor.unfold(0, pattern_len, 1)
         return bool((windows == pattern_tensor).all(dim=1).any().item())
 
+    def _search_lines_on_device(
+        self,
+        *,
+        torch: Any,
+        numbered_lines: list[tuple[int, str]],
+        query: str,
+        cfg: SearchConfig,
+        file_path: str,
+        pattern_tensor: Any,
+        pattern_len: int,
+        device: Any,
+    ) -> list[MatchLine]:
+        matches: list[MatchLine] = []
+        for line_number, line in numbered_lines:
+            compare_line = (
+                line.lower() if cfg.ignore_case or (cfg.smart_case and query.islower()) else line
+            )
+            is_match = self._contains_literal_torch(
+                torch=torch,
+                line=compare_line,
+                pattern_tensor=pattern_tensor,
+                pattern_len=pattern_len,
+                device=device,
+            )
+            if cfg.invert_match:
+                is_match = not is_match
+            if is_match:
+                matches.append(MatchLine(line_number=line_number, text=line, file=file_path))
+        return matches
+
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
@@ -85,27 +116,53 @@ class TorchBackend(ComputeBackend):
             for device in devices
         ]
 
-        for line_number, line in enumerate(lines, 1):
-            slot = (line_number - 1) % len(devices)
-            device = devices[slot]
-            pattern_tensor = pattern_tensors[slot]
-            compare_line = (
-                line.lower() if cfg.ignore_case or (cfg.smart_case and pattern.islower()) else line
-            )
-            is_match = self._contains_literal_torch(
-                torch=torch,
-                line=compare_line,
-                pattern_tensor=pattern_tensor,
-                pattern_len=pattern_len,
-                device=device,
-            )
-            if cfg.invert_match:
-                is_match = not is_match
+        numbered_lines = list(enumerate(lines, 1))
+        if len(devices) > 1:
+            shards: list[list[tuple[int, str]]] = [[] for _ in devices]
+            for index, item in enumerate(numbered_lines):
+                shards[index % len(devices)].append(item)
 
-            if is_match:
-                matches.append(MatchLine(line_number=line_number, text=line, file=file_path))
-                if cfg.max_count and len(matches) >= cfg.max_count:
-                    break
+            with ThreadPoolExecutor(max_workers=len(devices)) as executor:
+                futures = []
+                for slot, device in enumerate(devices):
+                    futures.append(
+                        executor.submit(
+                            self._search_lines_on_device,
+                            torch=torch,
+                            numbered_lines=shards[slot],
+                            query=query,
+                            cfg=cfg,
+                            file_path=file_path,
+                            pattern_tensor=pattern_tensors[slot],
+                            pattern_len=pattern_len,
+                            device=device,
+                        )
+                    )
+                for future in futures:
+                    matches.extend(future.result())
+            matches.sort(key=lambda item: item.line_number)
+            if cfg.max_count:
+                matches = matches[: cfg.max_count]
+        else:
+            for line_number, line in numbered_lines:
+                is_match = self._contains_literal_torch(
+                    torch=torch,
+                    line=(
+                        line.lower()
+                        if cfg.ignore_case or (cfg.smart_case and query.islower())
+                        else line
+                    ),
+                    pattern_tensor=pattern_tensors[0],
+                    pattern_len=pattern_len,
+                    device=devices[0],
+                )
+                if cfg.invert_match:
+                    is_match = not is_match
+
+                if is_match:
+                    matches.append(MatchLine(line_number=line_number, text=line, file=file_path))
+                    if cfg.max_count and len(matches) >= cfg.max_count:
+                        break
 
         return SearchResult(
             matches=matches,
