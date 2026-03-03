@@ -1,6 +1,46 @@
 # CHANGELOG
 
 
+## v0.20.0 (2026-03-03)
+
+### Continuous Integration
+
+- Add terminal publish-success-gate to main release flow
+  ([`84a51ad`](https://github.com/oimiragieo/tensor-grep/commit/84a51ad8d2220eeacaa114e5823e424fb6d606b7))
+
+- Make package-manager bundle checks shell-safe and reduce python install flake
+  ([`0e77c57`](https://github.com/oimiragieo/tensor-grep/commit/0e77c5788278c7227bd8d0c031d03072f2e1e8a1))
+
+- Verify package-manager bundle checksums in main pipeline
+  ([`07ac74a`](https://github.com/oimiragieo/tensor-grep/commit/07ac74a8ce39088da3daa9c764355efca0a94618))
+
+- **release**: Add package-manager bundle checksums and verify assets
+  ([`1ba5742`](https://github.com/oimiragieo/tensor-grep/commit/1ba57429ead3e7b693aea563dc85c5d27fe9f4a3))
+
+- **release**: Add terminal publish success gate job
+  ([`996f602`](https://github.com/oimiragieo/tensor-grep/commit/996f60286dbbf84613f29fbfc5766eb4ca1f1dd0))
+
+- **release**: Enforce GitHub digest parity for release checksums
+  ([`f8a8df2`](https://github.com/oimiragieo/tensor-grep/commit/f8a8df206cc5366fe9cd43e9b8c2e1fe495c3ebf))
+
+- **release**: Publish package-manager bundle assets on tag builds
+  ([`6e76a15`](https://github.com/oimiragieo/tensor-grep/commit/6e76a1518028533c9dd83cbb4865b6ba704b10b0))
+
+- **release**: Require package-manager bundle assets in release verification
+  ([`66552b8`](https://github.com/oimiragieo/tensor-grep/commit/66552b8b070c575010b623ba664063c6103b2d75))
+
+- **release**: Validate bundle checksum manifest against release assets
+  ([`b632582`](https://github.com/oimiragieo/tensor-grep/commit/b6325824f016aad8a1353fb4cd3d2e6bf73053ec))
+
+- **release**: Verify package-manager bundle checksums before publish
+  ([`4172517`](https://github.com/oimiragieo/tensor-grep/commit/417251733d436ad620749537bac7eac85eb251a9))
+
+### Features
+
+- **obs**: Expose selected GPU device ids on pipeline routing
+  ([`4e97208`](https://github.com/oimiragieo/tensor-grep/commit/4e972081843323458e8d8cbac2c3ba9b3a165fa2))
+
+
 ## v0.19.0 (2026-03-03)
 
 ### Code Style
