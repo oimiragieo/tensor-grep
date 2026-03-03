@@ -14,8 +14,9 @@ class TorchBackend(ComputeBackend):
     Uses tensor operations for literal substring matching on GPU.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, device_ids: list[int] | None = None) -> None:
         self.device_detector = DeviceDetector()
+        self.device_ids = device_ids
 
     def is_available(self) -> bool:
         try:
@@ -60,7 +61,10 @@ class TorchBackend(ComputeBackend):
 
         import torch
 
-        device = torch.device("cuda:0")
+        resolved_device_ids = self.device_ids or self.device_detector.get_device_ids()
+        if not resolved_device_ids:
+            resolved_device_ids = [0]
+        devices = [torch.device(f"cuda:{device_id}") for device_id in resolved_device_ids]
 
         with open(file_path, encoding="utf-8", errors="replace") as handle:
             lines = handle.read().splitlines()
@@ -76,9 +80,15 @@ class TorchBackend(ComputeBackend):
         if not pattern_bytes:
             return SearchResult(matches=[], total_files=0, total_matches=0)
         pattern_len = len(pattern_bytes)
-        pattern_tensor = torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=device)
+        pattern_tensors = [
+            torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=device)
+            for device in devices
+        ]
 
         for line_number, line in enumerate(lines, 1):
+            slot = (line_number - 1) % len(devices)
+            device = devices[slot]
+            pattern_tensor = pattern_tensors[slot]
             compare_line = (
                 line.lower() if cfg.ignore_case or (cfg.smart_case and pattern.islower()) else line
             )

@@ -53,8 +53,10 @@ class _FakeTorch(types.ModuleType):
 
     def __init__(self):
         super().__init__("torch")
+        self.device_calls: list[str] = []
 
     def device(self, value: str):
+        self.device_calls.append(value)
         return value
 
     def tensor(self, values, dtype=None, device=None):
@@ -95,3 +97,23 @@ def test_torch_backend_regex_falls_back_to_cpu(tmp_path):
 
     assert result is sentinel
     cpu.assert_called_once()
+
+
+def test_torch_backend_should_distribute_device_selection_when_ids_provided(tmp_path):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_multi.log"
+    path.write_text("ERROR 1\nERROR 2\nERROR 3\nERROR 4\n", encoding="utf-8")
+
+    fake_torch = _FakeTorch()
+    backend = TorchBackend(device_ids=[3, 7])
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        result = backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 4
+    # Pattern tensor + 4 line tensors are mapped across both configured devices.
+    assert "cuda:3" in fake_torch.device_calls
+    assert "cuda:7" in fake_torch.device_calls

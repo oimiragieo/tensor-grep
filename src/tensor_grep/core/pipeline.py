@@ -176,7 +176,7 @@ class Pipeline:
                         try:
                             from tensor_grep.backends.torch_backend import TorchBackend
 
-                            torch_backend = TorchBackend()
+                            torch_backend = TorchBackend(device_ids=device_ids)
                             if torch_backend.is_available():
                                 self.backend = torch_backend
                                 selected_backend_reason = "gpu_heuristic_torch"
