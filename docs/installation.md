@@ -85,6 +85,7 @@ CI coverage:
 - `ci.yml` now includes `package-manager-readiness` on Linux + Windows.
 - `release.yml` also validates Homebrew and Winget manifests before building release artifacts.
 - On runners where `winget validate` is unavailable, workflows fall back to `scripts/validate_release_assets.py`.
+- CI/release package-manager jobs also run `scripts/prepare_package_manager_release.py --check` to ensure manifests are ready for tap/winget-pkgs publication.
 
 Release automation notes:
 - Tag pushes (`v*`) run `release.yml` and require `validate-release-assets` and `validate-package-managers` before binaries are built.

@@ -77,6 +77,11 @@ jobs:
             uv run python scripts/validate_release_assets.py
           }
 
+      - name: Validate package-manager publish bundle source state
+        run: |
+          uv python install 3.12
+          uv run python scripts/prepare_package_manager_release.py --check
+
   static-analysis:
     name: Formatting & Linting
     runs-on: ubuntu-latest

@@ -75,6 +75,8 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "package-manager-readiness:",
         "Validate Homebrew formula syntax",
         "Validate winget manifest syntax",
+        "Validate package-manager publish bundle source state",
+        "scripts/prepare_package_manager_release.py --check",
         "validate-pypi-artifacts:",
         "Validate built PyPI artifact set",
         "Smoke-test install from built PyPI artifacts",
@@ -209,6 +211,8 @@ def validate_all() -> list[str]:
         "publish-docs:",
         "Validate release binary artifact matrix and generate checksums",
         "artifacts/CHECKSUMS.txt",
+        "Validate package-manager publish bundle source state",
+        "scripts/prepare_package_manager_release.py --check",
     ):
         if expected not in release_workflow:
             errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")
