@@ -1,14 +1,17 @@
 # CHANGELOG
 
-## Unreleased
+
+## v0.13.0 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Sync brew and winget release asset refs to 0.12.5
+  ([`3dc6262`](https://github.com/oimiragieo/tensor-grep/commit/3dc6262ff2632349db0d1e34dd6e5a853155c219))
 
 ### Features
 
-- **multi-gpu**: Add per-request GPU ID routing in `SearchConfig` and wire it through `Pipeline` + `MemoryManager` to CuDF fanout scheduling.
-
-### Testing
-
-- Add unit coverage for preferred GPU ID normalization/fallback in `MemoryManager` and explicit GPU-ID propagation in pipeline routing.
+- **multi-gpu**: Add per-request device-id routing contract
+  ([`eb249e4`](https://github.com/oimiragieo/tensor-grep/commit/eb249e43c6807eaa5c7fe36309d93b5a556282a3))
 
 
 ## v0.12.5 (2026-03-03)
