@@ -443,4 +443,6 @@ jobs:
             --expected-version "${{ needs.release.outputs.release_version }}" \
             --expected-tag "v${{ needs.release.outputs.release_version }}" \
             --skip-package-managers \
-            --check-pypi
+            --check-pypi \
+            --pypi-wait-seconds 180 \
+            --pypi-poll-interval-seconds 10

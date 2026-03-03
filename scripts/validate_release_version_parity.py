@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import time
 import tomllib
 import urllib.request
 from pathlib import Path
@@ -54,12 +55,36 @@ def _fetch_pypi_latest(package_name: str = "tensor-grep") -> str:
     return str(data["info"]["version"])
 
 
+def _fetch_pypi_latest_with_retry(
+    *,
+    expected_version: str,
+    wait_seconds: int,
+    poll_interval_seconds: int,
+    package_name: str = "tensor-grep",
+) -> str:
+    if wait_seconds <= 0:
+        return _fetch_pypi_latest(package_name=package_name)
+
+    deadline = time.monotonic() + wait_seconds
+    interval = max(1, poll_interval_seconds)
+    latest = ""
+    while True:
+        latest = _fetch_pypi_latest(package_name=package_name)
+        if latest == expected_version:
+            return latest
+        if time.monotonic() >= deadline:
+            return latest
+        time.sleep(interval)
+
+
 def validate_release_version_parity(
     *,
     expected_version: str,
     expected_tag: str | None = None,
     check_pypi: bool = False,
     check_package_managers: bool = True,
+    pypi_wait_seconds: int = 0,
+    pypi_poll_interval_seconds: int = 5,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -98,7 +123,11 @@ def validate_release_version_parity(
             errors.append("winget installer url does not target expected release version")
 
     if check_pypi:
-        latest = _fetch_pypi_latest()
+        latest = _fetch_pypi_latest_with_retry(
+            expected_version=expected_version,
+            wait_seconds=pypi_wait_seconds,
+            poll_interval_seconds=pypi_poll_interval_seconds,
+        )
         if latest != expected_version:
             errors.append(f"pypi latest {latest} != expected {expected_version}")
 
@@ -113,6 +142,18 @@ def main() -> int:
     parser.add_argument("--expected-tag")
     parser.add_argument("--check-pypi", action="store_true")
     parser.add_argument("--skip-package-managers", action="store_true")
+    parser.add_argument(
+        "--pypi-wait-seconds",
+        type=int,
+        default=0,
+        help="Optional wait window for PyPI eventual consistency checks",
+    )
+    parser.add_argument(
+        "--pypi-poll-interval-seconds",
+        type=int,
+        default=5,
+        help="Polling interval for PyPI parity checks",
+    )
     args = parser.parse_args()
 
     errors = validate_release_version_parity(
@@ -120,6 +161,8 @@ def main() -> int:
         expected_tag=args.expected_tag,
         check_pypi=args.check_pypi,
         check_package_managers=not args.skip_package_managers,
+        pypi_wait_seconds=args.pypi_wait_seconds,
+        pypi_poll_interval_seconds=args.pypi_poll_interval_seconds,
     )
     if errors:
         for err in errors:
