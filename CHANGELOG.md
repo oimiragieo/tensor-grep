@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.17.0 (2026-03-03)
+
+### Features
+
+- **release**: Add package-manager publish bundle automation and CI checks
+  ([`fb602b8`](https://github.com/oimiragieo/tensor-grep/commit/fb602b8a4b843a488f298e9289f129c2109708d1))
+
+### Testing
+
+- **release**: Enforce homebrew explicit-version formula contract
+  ([`79b6405`](https://github.com/oimiragieo/tensor-grep/commit/79b64055ba4997bb50346863f1c8238a4eed4923))
+
+- **release**: Enforce package-manager sections in installation docs
+  ([`85143d9`](https://github.com/oimiragieo/tensor-grep/commit/85143d919f844b4fc671d36bc9d9e23230242b23))
+
+
 ## v0.16.2 (2026-03-03)
 
 ### Bug Fixes
