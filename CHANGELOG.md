@@ -1,14 +1,18 @@
 # CHANGELOG
 
-## Unreleased
+
+## v0.14.1 (2026-03-03)
 
 ### Bug Fixes
 
-- **release**: Re-sync Homebrew/Winget package-manager assets to `0.14.0` and normalize nested Winget `InstallerUrl` stamping.
+- **ci**: Add pyyaml runtime dependency for release asset validator
+  ([`b0c0c75`](https://github.com/oimiragieo/tensor-grep/commit/b0c0c75b36ed1dc11af54b33d9c6503899a1dc6e))
 
-### Continuous Integration
+- **release**: Enforce structural winget checks and resync package assets 0.14.0
+  ([`e85e125`](https://github.com/oimiragieo/tensor-grep/commit/e85e12541073a702d2eb1113800de29300ec789e))
 
-- **release**: Enforce structural Winget manifest validation (YAML parse + nested installer URL contract) in release asset checks.
+- **release**: Stamp winget header version and lock with tests
+  ([`2e98eff`](https://github.com/oimiragieo/tensor-grep/commit/2e98effcc4b5283c5a0c7d497f41cb692f794cff))
 
 
 ## v0.14.0 (2026-03-03)
