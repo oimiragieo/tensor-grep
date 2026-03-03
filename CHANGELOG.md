@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.18.0 (2026-03-03)
+
+### Code Style
+
+- **test**: Apply ruff preview formatting for release asset verifier tests
+  ([`e60ad5a`](https://github.com/oimiragieo/tensor-grep/commit/e60ad5a8233fa2c14590e05e0e461b145d4121a5))
+
+### Features
+
+- **gpu**: Honor explicit device pinning in routing; refresh benchmarks
+  ([`a554d83`](https://github.com/oimiragieo/tensor-grep/commit/a554d831ac9bb44ad436985c0dba3b1b3905e82d))
+
+- **release**: Verify uploaded GitHub assets and checksum matrix
+  ([`3a19da2`](https://github.com/oimiragieo/tensor-grep/commit/3a19da2a87e8d7fbc8539cdc2d5ff98fa4bf16c4))
+
+### Testing
+
+- **gpu**: Lock DeviceDetector multi-gpu id enumeration contract
+  ([`a9ab730`](https://github.com/oimiragieo/tensor-grep/commit/a9ab7307a994147e221e6874347b3ad9d2e7328d))
+
+
 ## v0.17.0 (2026-03-03)
 
 ### Features

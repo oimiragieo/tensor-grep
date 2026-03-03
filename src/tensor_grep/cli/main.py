@@ -1215,7 +1215,7 @@ def main_entry() -> None:
 
             pkg_version = version("tensor-grep")
         except Exception:
-            pkg_version = "0.17.0"  # Fallback if not installed via package manager
+            pkg_version = "0.18.0"  # Fallback if not installed via package manager
 
         print(f"tensor-grep {pkg_version}")
         print()
