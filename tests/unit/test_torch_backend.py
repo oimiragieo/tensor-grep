@@ -54,12 +54,14 @@ class _FakeTorch(types.ModuleType):
     def __init__(self):
         super().__init__("torch")
         self.device_calls: list[str] = []
+        self.tensor_device_calls: list[str | None] = []
 
     def device(self, value: str):
         self.device_calls.append(value)
         return value
 
     def tensor(self, values, dtype=None, device=None):
+        self.tensor_device_calls.append(device)
         return _FakeTensor(list(values))
 
 
@@ -117,3 +119,5 @@ def test_torch_backend_should_distribute_device_selection_when_ids_provided(tmp_
     # Pattern tensor + 4 line tensors are mapped across both configured devices.
     assert "cuda:3" in fake_torch.device_calls
     assert "cuda:7" in fake_torch.device_calls
+    # Last four tensor allocations correspond to per-line checks and should round-robin.
+    assert fake_torch.tensor_device_calls[-4:] == ["cuda:3", "cuda:7", "cuda:3", "cuda:7"]
