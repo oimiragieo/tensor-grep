@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.16.0 (2026-03-03)
+
+### Bug Fixes
+
+- **release**: Sync homebrew formula to 0.15.1
+  ([`d373e03`](https://github.com/oimiragieo/tensor-grep/commit/d373e0341fa3e78dfd01098ad61741f2ce9afc4a))
+
+### Documentation
+
+- **bench**: Refresh README and paper benchmark results
+  ([`9031bba`](https://github.com/oimiragieo/tensor-grep/commit/9031bbaa7f640bfcaca0b73ea8454a3a727a26cb))
+
+### Features
+
+- **multi-gpu**: Add explicit device-id enumeration API contract
+  ([`69ddc38`](https://github.com/oimiragieo/tensor-grep/commit/69ddc38b684792edb7abd5cfc31895ee89601352))
+
+
 ## v0.15.1 (2026-03-03)
 
 ### Bug Fixes
