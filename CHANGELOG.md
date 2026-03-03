@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.12.1 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Sync package manager artifacts to v0.12.0
+  ([`dcb02db`](https://github.com/oimiragieo/tensor-grep/commit/dcb02db36d4d0c0d4631fdffbb16918904637683))
+
+### Continuous Integration
+
+- Add pypi artifact smoke install and hash-matrix checks
+  ([`1177679`](https://github.com/oimiragieo/tensor-grep/commit/11776799ab86ec4efb03510ea1102a479bffdfa2))
+
+
 ## v0.12.0 (2026-03-02)
 
 ### Bug Fixes
