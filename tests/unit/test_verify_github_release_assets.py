@@ -16,11 +16,15 @@ def test_validate_release_assets_payload_should_pass_for_complete_asset_matrix()
     module = _load_module()
     release_data = {
         "assets": [
-            {"name": "tg-linux-amd64-cpu"},
-            {"name": "tg-linux-amd64-nvidia"},
-            {"name": "tg-macos-amd64-cpu"},
-            {"name": "tg-windows-amd64-cpu.exe"},
-            {"name": "tg-windows-amd64-nvidia.exe"},
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "tg-linux-amd64-nvidia", "size": 100, "digest": f"sha256:{'b' * 64}"},
+            {"name": "tg-macos-amd64-cpu", "size": 100, "digest": f"sha256:{'c' * 64}"},
+            {"name": "tg-windows-amd64-cpu.exe", "size": 100, "digest": f"sha256:{'d' * 64}"},
+            {
+                "name": "tg-windows-amd64-nvidia.exe",
+                "size": 100,
+                "digest": f"sha256:{'e' * 64}",
+            },
             {"name": "CHECKSUMS.txt"},
         ]
     }
@@ -48,7 +52,12 @@ def test_validate_release_assets_payload_should_pass_for_complete_asset_matrix()
 
 def test_validate_release_assets_payload_should_fail_on_missing_asset_or_checksum():
     module = _load_module()
-    release_data = {"assets": [{"name": "tg-linux-amd64-cpu"}, {"name": "CHECKSUMS.txt"}]}
+    release_data = {
+        "assets": [
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+        ]
+    }
     checksums_content = f"{'a' * 64}  tg-linux-amd64-cpu\n"
     errors = module.validate_release_assets_payload(
         release_data=release_data,
@@ -67,12 +76,16 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_managed_asset
     module = _load_module()
     release_data = {
         "assets": [
-            {"name": "tg-linux-amd64-cpu"},
-            {"name": "tg-linux-amd64-nvidia"},
-            {"name": "tg-macos-amd64-cpu"},
-            {"name": "tg-windows-amd64-cpu.exe"},
-            {"name": "tg-windows-amd64-nvidia.exe"},
-            {"name": "tg-linux-arm64-cpu"},
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "tg-linux-amd64-nvidia", "size": 100, "digest": f"sha256:{'b' * 64}"},
+            {"name": "tg-macos-amd64-cpu", "size": 100, "digest": f"sha256:{'c' * 64}"},
+            {"name": "tg-windows-amd64-cpu.exe", "size": 100, "digest": f"sha256:{'d' * 64}"},
+            {
+                "name": "tg-windows-amd64-nvidia.exe",
+                "size": 100,
+                "digest": f"sha256:{'e' * 64}",
+            },
+            {"name": "tg-linux-arm64-cpu", "size": 100, "digest": f"sha256:{'f' * 64}"},
             {"name": "CHECKSUMS.txt"},
         ]
     }
@@ -103,11 +116,15 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_checksum_entr
     module = _load_module()
     release_data = {
         "assets": [
-            {"name": "tg-linux-amd64-cpu"},
-            {"name": "tg-linux-amd64-nvidia"},
-            {"name": "tg-macos-amd64-cpu"},
-            {"name": "tg-windows-amd64-cpu.exe"},
-            {"name": "tg-windows-amd64-nvidia.exe"},
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "tg-linux-amd64-nvidia", "size": 100, "digest": f"sha256:{'b' * 64}"},
+            {"name": "tg-macos-amd64-cpu", "size": 100, "digest": f"sha256:{'c' * 64}"},
+            {"name": "tg-windows-amd64-cpu.exe", "size": 100, "digest": f"sha256:{'d' * 64}"},
+            {
+                "name": "tg-windows-amd64-nvidia.exe",
+                "size": 100,
+                "digest": f"sha256:{'e' * 64}",
+            },
             {"name": "CHECKSUMS.txt"},
         ]
     }
@@ -135,3 +152,34 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_checksum_entr
         "Unexpected checksum entry for unmanaged asset: tg-extra-experimental" in err
         for err in errors
     )
+
+
+def test_validate_release_assets_payload_should_fail_on_digest_mismatch():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'0' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+        ]
+    }
+    checksums_content = f"{'a' * 64}  tg-linux-amd64-cpu\n"
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content=checksums_content,
+        expected_assets=["tg-linux-amd64-cpu", "CHECKSUMS.txt"],
+    )
+    assert any("Checksum mismatch for tg-linux-amd64-cpu" in err for err in errors)
+
+
+def test_validate_release_assets_payload_should_fail_when_digest_metadata_missing():
+    module = _load_module()
+    release_data = {
+        "assets": [{"name": "tg-linux-amd64-cpu", "size": 100}, {"name": "CHECKSUMS.txt"}]
+    }
+    checksums_content = f"{'a' * 64}  tg-linux-amd64-cpu\n"
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content=checksums_content,
+        expected_assets=["tg-linux-amd64-cpu", "CHECKSUMS.txt"],
+    )
+    assert any("missing GitHub digest metadata" in err for err in errors)

@@ -5,6 +5,24 @@ import json
 import urllib.request
 
 
+def _normalize_digest(raw_digest: str) -> str | None:
+    digest = raw_digest.strip().lower()
+    if not digest:
+        return None
+    if ":" in digest:
+        algorithm, value = digest.split(":", 1)
+        if algorithm != "sha256":
+            return None
+        digest = value
+    if len(digest) != 64:
+        return None
+    try:
+        int(digest, 16)
+    except ValueError:
+        return None
+    return digest
+
+
 def _parse_checksums(checksums_content: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for raw_line in checksums_content.splitlines():
@@ -28,11 +46,12 @@ def validate_release_assets_payload(
     if not isinstance(assets, list):
         return ["GitHub release payload assets field must be a list"]
 
-    names = {
-        str(asset.get("name"))
+    named_assets = {
+        str(asset["name"]): asset
         for asset in assets
         if isinstance(asset, dict) and isinstance(asset.get("name"), str)
     }
+    names = set(named_assets.keys())
     missing = [name for name in expected_assets if name not in names]
     for name in missing:
         errors.append(f"Missing release asset: {name}")
@@ -52,14 +71,30 @@ def validate_release_assets_payload(
         if name not in checksums:
             errors.append(f"CHECKSUMS.txt missing digest entry for asset: {name}")
             continue
-        digest = checksums[name]
-        if len(digest) != 64:
+        digest = _normalize_digest(checksums[name])
+        if digest is None:
             errors.append(f"Invalid SHA256 digest length for {name} in CHECKSUMS.txt")
             continue
-        try:
-            int(digest, 16)
-        except ValueError:
-            errors.append(f"Non-hex SHA256 digest for {name} in CHECKSUMS.txt")
+
+        asset = named_assets.get(name)
+        if not isinstance(asset, dict):
+            continue
+        size = asset.get("size")
+        if not isinstance(size, int) or size <= 0:
+            errors.append(f"Release asset {name} has invalid size metadata")
+
+        raw_asset_digest = asset.get("digest")
+        if not isinstance(raw_asset_digest, str):
+            errors.append(f"Release asset {name} missing GitHub digest metadata")
+            continue
+        asset_digest = _normalize_digest(raw_asset_digest)
+        if asset_digest is None:
+            errors.append(f"Release asset {name} has invalid digest metadata: {raw_asset_digest}")
+            continue
+        if asset_digest != digest:
+            errors.append(
+                f"Checksum mismatch for {name}: CHECKSUMS.txt does not match GitHub asset digest"
+            )
 
     for checksum_name in sorted(checksums):
         if checksum_name in expected_checksum_assets:
