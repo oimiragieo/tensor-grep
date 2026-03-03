@@ -82,6 +82,18 @@ jobs:
           uv python install 3.12
           uv run python scripts/prepare_package_manager_release.py --check
 
+      - name: Build package-manager publish bundle artifact
+        run: |
+          uv python install 3.12
+          uv run python scripts/prepare_package_manager_release.py \
+            --output-dir artifacts/package-manager-bundle
+
+      - name: Verify package-manager publish bundle checksums
+        run: |
+          uv python install 3.12
+          uv run python scripts/verify_package_manager_bundle_checksums.py \
+            --bundle-dir artifacts/package-manager-bundle
+
   static-analysis:
     name: Formatting & Linting
     runs-on: ubuntu-latest

@@ -82,6 +82,25 @@ def test_should_require_ci_pypi_parity_retry_arguments():
     assert any("--pypi-poll-interval-seconds" in err for err in errors)
 
 
+def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    package-manager-readiness:
+      steps:
+        - run: uv run python scripts/prepare_package_manager_release.py --check
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("Build package-manager publish bundle artifact" in err for err in errors)
+    assert any("Verify package-manager publish bundle checksums" in err for err in errors)
+
+
 def test_should_require_package_manager_runbook_and_checklist_sections():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
