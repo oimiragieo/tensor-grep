@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v0.15.0 (2026-03-03)
+
+### Bug Fixes
+
+- **release**: Sync homebrew formula to 0.14.1
+  ([`c1d1142`](https://github.com/oimiragieo/tensor-grep/commit/c1d1142a9ea426f81fe56570e8eaef6decd563f4))
+
+### Code Style
+
+- **ci**: Apply ruff formatting for release parity validator
+  ([`2151708`](https://github.com/oimiragieo/tensor-grep/commit/2151708fd6cd70f9319fb4e4b1c6d1cb0584a800))
+
+### Continuous Integration
+
+- **release**: Enforce consolidated version parity gate before publish success
+  ([`ea0229b`](https://github.com/oimiragieo/tensor-grep/commit/ea0229bc71a259d8172c4f7c254a32bdcb78d207))
+
+### Documentation
+
+- **bench**: Refresh benchmark tables for latest main run
+  ([`f0e9db3`](https://github.com/oimiragieo/tensor-grep/commit/f0e9db30a17a48e17f95528428487bb60c264500))
+
+- **bench**: Refresh README and paper with latest benchmark pass
+  ([`52166dd`](https://github.com/oimiragieo/tensor-grep/commit/52166ddaf6b2122e3bb8a4bba5e5a324493f32b5))
+
+- **release**: Add package-manager publish and rollback runbook
+  ([`df251f6`](https://github.com/oimiragieo/tensor-grep/commit/df251f671c1033b0e296fbd0a70b84a7516e6744))
+
+### Features
+
+- **gpu**: Wire torch fallback to selected multi-gpu device ids
+  ([`03556bf`](https://github.com/oimiragieo/tensor-grep/commit/03556bfef61539109433d8e6620e859a5fe48c8e))
+
+### Testing
+
+- **gpu**: Lock mixed device-id normalization contract in pipeline
+  ([`9292215`](https://github.com/oimiragieo/tensor-grep/commit/92922159c0c3adebe0e16a84b04a5e6f71a31188))
+
+- **gpu**: Lock torch round-robin execution across selected device ids
+  ([`3ebe12e`](https://github.com/oimiragieo/tensor-grep/commit/3ebe12edcb2437eed0cc174c7e3dafe890334a63))
+
+- **torch**: Pin fake backend device ids to avoid detector cuda dependency
+  ([`105f945`](https://github.com/oimiragieo/tensor-grep/commit/105f9451d33176884ee566f401f1a41804b1c86d))
+
+
 ## v0.14.1 (2026-03-03)
 
 ### Bug Fixes
@@ -13,10 +58,6 @@
 
 - **release**: Stamp winget header version and lock with tests
   ([`2e98eff`](https://github.com/oimiragieo/tensor-grep/commit/2e98effcc4b5283c5a0c7d497f41cb692f794cff))
-
-### Documentation
-
-- **bench**: Refresh `README.md` and `docs/PAPER.md` with latest 2026-03-03 benchmark pass (`b0c0c75`).
 
 
 ## v0.14.0 (2026-03-03)
