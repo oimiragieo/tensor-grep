@@ -1,4 +1,4 @@
-# Winget Manifest for tensor-grep v0.12.3
+# Winget Manifest for tensor-grep v0.14.0
 # Submit this to the microsoft/winget-pkgs repository
 
 PackageIdentifier: oimiragieo.tensor-grep

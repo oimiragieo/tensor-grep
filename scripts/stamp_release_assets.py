@@ -37,9 +37,15 @@ def stamp_assets(*, check_only: bool) -> int:
         count=1,
     )
     winget_after = re.sub(
+        r"(?m)^(\ufeff)?# Winget Manifest for tensor-grep v[^\s]+$",
+        rf"\1# Winget Manifest for tensor-grep v{version}",
+        winget_before,
+        count=1,
+    )
+    winget_after = re.sub(
         r"(?m)^(PackageVersion:\s*).*$",
         rf"\g<1>{version}",
-        winget_before,
+        winget_after,
         count=1,
     )
     winget_after = re.sub(

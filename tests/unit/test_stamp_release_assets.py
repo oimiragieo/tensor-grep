@@ -21,6 +21,7 @@ def test_stamp_release_assets_updates_brew_and_winget(tmp_path):
         'class TensorGrep < Formula\n  version "0.9.0"\nend\n', encoding="utf-8"
     )
     (root / "scripts" / "oimiragieo.tensor-grep.yaml").write_text(
+        "# Winget Manifest for tensor-grep v0.9.0\n"
         "PackageVersion: 0.9.0\n"
         "InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v0.9.0/tg-windows-amd64-cpu.exe\n",
         encoding="utf-8",
@@ -33,6 +34,7 @@ def test_stamp_release_assets_updates_brew_and_winget(tmp_path):
     assert rc == 0
     assert 'version "1.2.3"' in (root / "scripts" / "tensor-grep.rb").read_text(encoding="utf-8")
     winget = (root / "scripts" / "oimiragieo.tensor-grep.yaml").read_text(encoding="utf-8")
+    assert "# Winget Manifest for tensor-grep v1.2.3" in winget
     assert "PackageVersion: 1.2.3" in winget
     assert (
         "    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe"
@@ -50,6 +52,7 @@ def test_stamp_release_assets_check_mode_fails_when_drifted(tmp_path):
         'class TensorGrep < Formula\n  version "0.9.0"\nend\n', encoding="utf-8"
     )
     (root / "scripts" / "oimiragieo.tensor-grep.yaml").write_text(
+        "# Winget Manifest for tensor-grep v0.9.0\n"
         "PackageVersion: 0.9.0\n"
         "InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v0.9.0/tg-windows-amd64-cpu.exe\n",
         encoding="utf-8",
