@@ -69,7 +69,7 @@ def test_torch_backend_uses_gpu_literal_matching(tmp_path):
     path = tmp_path / "torch.log"
     path.write_text("INFO\nERROR timeout\nWARN\n", encoding="utf-8")
 
-    backend = TorchBackend()
+    backend = TorchBackend(device_ids=[0])
     with (
         patch.object(TorchBackend, "is_available", return_value=True),
         patch.dict("sys.modules", {"torch": _FakeTorch()}),
