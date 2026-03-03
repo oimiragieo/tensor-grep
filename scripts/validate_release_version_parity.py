@@ -59,6 +59,7 @@ def validate_release_version_parity(
     expected_version: str,
     expected_tag: str | None = None,
     check_pypi: bool = False,
+    check_package_managers: bool = True,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -66,9 +67,10 @@ def validate_release_version_parity(
         "pyproject": _version_from_pyproject(),
         "cargo": _version_from_cargo(),
         "npm": _version_from_npm(),
-        "homebrew": _version_from_brew_formula(),
-        "winget": _version_from_winget_manifest(),
     }
+    if check_package_managers:
+        versions["homebrew"] = _version_from_brew_formula()
+        versions["winget"] = _version_from_winget_manifest()
     for source, actual in versions.items():
         if actual != expected_version:
             errors.append(f"{source} version {actual} != expected {expected_version}")
@@ -76,25 +78,26 @@ def validate_release_version_parity(
     if expected_tag is not None and expected_tag != f"v{expected_version}":
         errors.append(f"expected tag {expected_tag} != v{expected_version}")
 
-    brew_content = _read(ROOT / "scripts" / "tensor-grep.rb")
-    for platform, artifact in {
-        "macOS": "tg-macos-amd64-cpu",
-        "Linux": "tg-linux-amd64-cpu",
-    }.items():
-        expected_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{expected_version}/{artifact}"
-        templated_url = (
-            f"https://github.com/oimiragieo/tensor-grep/releases/download/v#{{version}}/{artifact}"
-        )
-        if expected_url not in brew_content and templated_url not in brew_content:
-            errors.append(f"homebrew {platform} url does not target v{expected_version}")
+    if check_package_managers:
+        brew_content = _read(ROOT / "scripts" / "tensor-grep.rb")
+        for platform, artifact in {
+            "macOS": "tg-macos-amd64-cpu",
+            "Linux": "tg-linux-amd64-cpu",
+        }.items():
+            expected_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{expected_version}/{artifact}"
+            templated_url = (
+                f"https://github.com/oimiragieo/tensor-grep/releases/download/v#{{version}}/{artifact}"
+            )
+            if expected_url not in brew_content and templated_url not in brew_content:
+                errors.append(f"homebrew {platform} url does not target v{expected_version}")
 
-    winget_content = _read(ROOT / "scripts" / "oimiragieo.tensor-grep.yaml")
-    expected_winget_url = (
-        "https://github.com/oimiragieo/tensor-grep/releases/download/"
-        f"v{expected_version}/tg-windows-amd64-cpu.exe"
-    )
-    if expected_winget_url not in winget_content:
-        errors.append("winget installer url does not target expected release version")
+        winget_content = _read(ROOT / "scripts" / "oimiragieo.tensor-grep.yaml")
+        expected_winget_url = (
+            "https://github.com/oimiragieo/tensor-grep/releases/download/"
+            f"v{expected_version}/tg-windows-amd64-cpu.exe"
+        )
+        if expected_winget_url not in winget_content:
+            errors.append("winget installer url does not target expected release version")
 
     if check_pypi:
         latest = _fetch_pypi_latest()
@@ -111,12 +114,14 @@ def main() -> int:
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--expected-tag")
     parser.add_argument("--check-pypi", action="store_true")
+    parser.add_argument("--skip-package-managers", action="store_true")
     args = parser.parse_args()
 
     errors = validate_release_version_parity(
         expected_version=args.expected_version,
         expected_tag=args.expected_tag,
         check_pypi=args.check_pypi,
+        check_package_managers=not args.skip_package_managers,
     )
     if errors:
         for err in errors:

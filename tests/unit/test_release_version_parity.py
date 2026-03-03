@@ -32,3 +32,13 @@ def test_should_fail_when_expected_tag_mismatches_expected_version():
         expected_version="0.14.1", expected_tag="v0.14.2"
     )
     assert "expected tag v0.14.2 != v0.14.1" in errors
+
+
+def test_should_skip_package_manager_checks_when_requested():
+    module = _load_module()
+    errors = module.validate_release_version_parity(
+        expected_version="9.9.9", check_package_managers=False
+    )
+    assert any("pyproject version" in err for err in errors)
+    assert all("homebrew" not in err for err in errors)
+    assert all("winget" not in err for err in errors)
