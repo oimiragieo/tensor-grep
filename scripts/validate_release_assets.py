@@ -148,6 +148,44 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
     return errors
 
 
+def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
+    errors: list[str] = []
+    for expected in (
+        "on:",
+        "tags:",
+        "- 'v*'",
+        "validate-release-assets:",
+        "validate-package-managers:",
+        "build-binaries:",
+        "create-release:",
+        "verify-release-assets:",
+        "publish-npm:",
+        "publish-docs:",
+        "Validate release binary artifact matrix and generate checksums",
+        "Verify uploaded release assets and checksum coverage",
+        "scripts/verify_github_release_assets.py",
+        "artifacts/CHECKSUMS.txt",
+        "Validate package-manager publish bundle source state",
+        "scripts/prepare_package_manager_release.py --check",
+    ):
+        if expected not in release_workflow:
+            errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")
+    if "needs: [validate-release-assets, validate-package-managers]" not in release_workflow:
+        errors.append(
+            "Release workflow build-binaries must depend on release/package-manager validators"
+        )
+    if "uses: astral-sh/setup-uv@v5" not in release_workflow:
+        errors.append(
+            "Release workflow package-manager validation must install uv before fallback checks"
+        )
+    if (
+        "publish-docs:" in release_workflow
+        and "needs: verify-release-assets" not in release_workflow
+    ):
+        errors.append("Release workflow publish-docs must depend on verify-release-assets")
+    return errors
+
+
 def validate_homebrew_formula_contract(*, brew_content: str, py_version: str) -> list[str]:
     errors: list[str] = []
     has_direct_version = f'version "{py_version}"' in brew_content
@@ -199,34 +237,7 @@ def validate_all() -> list[str]:
         errors.append("Homebrew formula contains unresolved PLACEHOLDER text")
 
     release_workflow = _read(ROOT / ".github" / "workflows" / "release.yml")
-    for expected in (
-        "on:",
-        "tags:",
-        "- 'v*'",
-        "validate-release-assets:",
-        "validate-package-managers:",
-        "build-binaries:",
-        "create-release:",
-        "verify-release-assets:",
-        "publish-npm:",
-        "publish-docs:",
-        "Validate release binary artifact matrix and generate checksums",
-        "Verify uploaded release assets and checksum coverage",
-        "scripts/verify_github_release_assets.py",
-        "artifacts/CHECKSUMS.txt",
-        "Validate package-manager publish bundle source state",
-        "scripts/prepare_package_manager_release.py --check",
-    ):
-        if expected not in release_workflow:
-            errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")
-    if "needs: [validate-release-assets, validate-package-managers]" not in release_workflow:
-        errors.append(
-            "Release workflow build-binaries must depend on release/package-manager validators"
-        )
-    if "uses: astral-sh/setup-uv@v5" not in release_workflow:
-        errors.append(
-            "Release workflow package-manager validation must install uv before fallback checks"
-        )
+    errors.extend(validate_release_workflow_content(release_workflow=release_workflow))
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))

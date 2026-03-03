@@ -208,6 +208,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   publish-docs:
+    needs: verify-release-assets
     runs-on: ubuntu-latest
     permissions:
       contents: write
