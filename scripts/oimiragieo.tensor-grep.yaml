@@ -2,7 +2,7 @@
 # Submit this to the microsoft/winget-pkgs repository
 
 PackageIdentifier: oimiragieo.tensor-grep
-PackageVersion: 0.12.1
+PackageVersion: 0.12.2
 PackageName: tensor-grep
 Publisher: oimiragieo
 License: MIT

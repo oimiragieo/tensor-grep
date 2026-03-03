@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.12.2 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Allow smoke install to resolve dependencies from index
+  ([`17dca55`](https://github.com/oimiragieo/tensor-grep/commit/17dca551d157b06ec0a64e9b95738b0eff620856))
+
+- **release**: Sync artifacts to v0.12.1 and auto-stamp release files
+  ([`fbab25e`](https://github.com/oimiragieo/tensor-grep/commit/fbab25e51ddb2c845511669f7f8e23b77f3f3000))
+
+
 ## v0.12.1 (2026-03-03)
 
 ### Bug Fixes
