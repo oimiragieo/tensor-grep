@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.16.1 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Retry pypi parity check and lock preferred-id fanout path
+  ([`79b0a4a`](https://github.com/oimiragieo/tensor-grep/commit/79b0a4af1d385c3218ac03d37b7e6e8c9a1de0e1))
+
+- **release**: Sync homebrew formula to 0.16.0
+  ([`8200524`](https://github.com/oimiragieo/tensor-grep/commit/8200524b25384ef91ae73df4916aeffe3bac2fb3))
+
+
 ## v0.16.0 (2026-03-03)
 
 ### Bug Fixes
