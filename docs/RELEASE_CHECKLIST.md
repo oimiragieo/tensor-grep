@@ -57,6 +57,7 @@ This checklist reflects the current enterprise release pipeline:
    - `build-pypi-sdist`
    - `validate-pypi-artifacts`
    - `publish-pypi`
+   - parity gate step `Verify release version parity across tag/assets/PyPI`
 4. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version

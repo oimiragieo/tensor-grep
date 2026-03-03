@@ -419,8 +419,13 @@ jobs:
       name: pypi
       url: https://pypi.org/p/tensor-grep
     permissions:
+      contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.release_version }}
+
       - name: Download all distributions
         uses: actions/download-artifact@v4
         with:
@@ -432,22 +437,9 @@ jobs:
         with:
           skip-existing: true
 
-      - name: Verify published PyPI version matches release version
+      - name: Verify release version parity across tag/assets/PyPI
         run: |
-          python - << 'PY'
-          import json
-          import time
-          import urllib.request
-
-          expected = "${{ needs.release.outputs.release_version }}"
-          latest = None
-          for _ in range(15):
-              with urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json", timeout=15) as resp:
-                  latest = json.load(resp)["info"]["version"]
-              if latest == expected:
-                  print(f"Verified PyPI version {latest}")
-                  raise SystemExit(0)
-              time.sleep(10)
-
-          raise SystemExit(f"PyPI latest version {latest} does not match expected {expected}")
-          PY
+          python scripts/validate_release_version_parity.py \
+            --expected-version "${{ needs.release.outputs.release_version }}" \
+            --expected-tag "v${{ needs.release.outputs.release_version }}" \
+            --check-pypi

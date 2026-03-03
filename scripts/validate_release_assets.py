@@ -137,7 +137,8 @@ def validate_all() -> list[str]:
         "validate-pypi-artifacts:",
         "Validate built PyPI artifact set",
         "Smoke-test install from built PyPI artifacts",
-        "Verify published PyPI version matches release version",
+        "Verify release version parity across tag/assets/PyPI",
+        "scripts/validate_release_version_parity.py",
     ):
         if expected not in ci_workflow:
             errors.append(
