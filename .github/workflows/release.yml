@@ -162,8 +162,23 @@ jobs:
             artifacts/CHECKSUMS.txt
           generate_release_notes: true
 
-  publish-npm:
+  verify-release-assets:
     needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify uploaded release assets and checksum coverage
+        run: |
+          python scripts/verify_github_release_assets.py \
+            --repo "${{ github.repository }}" \
+            --tag "${GITHUB_REF#refs/tags/}" \
+            --token "${{ secrets.GITHUB_TOKEN }}"
+
+  publish-npm:
+    needs: verify-release-assets
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -58,7 +58,10 @@ This checklist reflects the current enterprise release pipeline:
    - `validate-pypi-artifacts`
    - `publish-pypi`
    - parity gate step `Verify release version parity across tag/assets/PyPI`
-4. Verify published version parity:
+4. On tag release workflow, confirm GitHub release asset verification passes:
+   - `verify-release-assets`
+   - step `Verify uploaded release assets and checksum coverage`
+5. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version
 
@@ -115,4 +118,5 @@ PY
 
 # Release asset consistency
 uv run python scripts/validate_release_assets.py
+python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z
 ```
