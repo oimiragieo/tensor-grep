@@ -85,9 +85,7 @@ def validate_release_version_parity(
             "Linux": "tg-linux-amd64-cpu",
         }.items():
             expected_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{expected_version}/{artifact}"
-            templated_url = (
-                f"https://github.com/oimiragieo/tensor-grep/releases/download/v#{{version}}/{artifact}"
-            )
+            templated_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v#{{version}}/{artifact}"
             if expected_url not in brew_content and templated_url not in brew_content:
                 errors.append(f"homebrew {platform} url does not target v{expected_version}")
 

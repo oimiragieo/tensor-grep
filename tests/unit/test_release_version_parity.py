@@ -14,7 +14,8 @@ def _load_module():
 
 def test_should_validate_release_version_parity_without_pypi():
     module = _load_module()
-    errors = module.validate_release_version_parity(expected_version="0.14.1")
+    expected_version = module._version_from_pyproject()
+    errors = module.validate_release_version_parity(expected_version=expected_version)
     assert errors == []
 
 
@@ -28,10 +29,12 @@ def test_should_fail_when_expected_version_does_not_match_project_versions():
 
 def test_should_fail_when_expected_tag_mismatches_expected_version():
     module = _load_module()
+    expected_version = module._version_from_pyproject()
+    wrong_tag = f"v{expected_version}.x"
     errors = module.validate_release_version_parity(
-        expected_version="0.14.1", expected_tag="v0.14.2"
+        expected_version=expected_version, expected_tag=wrong_tag
     )
-    assert "expected tag v0.14.2 != v0.14.1" in errors
+    assert f"expected tag {wrong_tag} != v{expected_version}" in errors
 
 
 def test_should_skip_package_manager_checks_when_requested():
