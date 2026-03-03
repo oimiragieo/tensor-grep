@@ -131,7 +131,7 @@ def test_should_require_package_manager_sections_in_installation_docs():
     assert any("### Rollback Playbook" in err for err in errors)
 
 
-def test_should_require_publish_docs_to_depend_on_release_asset_verification():
+def test_should_require_publish_jobs_to_depend_on_tag_version_parity():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -142,8 +142,16 @@ def test_should_require_publish_docs_to_depend_on_release_asset_verification():
 
     bad_release_workflow = """
     jobs:
+      validate-tag-version-parity:
+        needs: verify-release-assets
+        runs-on: ubuntu-latest
       publish-docs:
+        needs: verify-release-assets
+        runs-on: ubuntu-latest
+      publish-npm:
+        needs: verify-release-assets
         runs-on: ubuntu-latest
     """
     errors = module.validate_release_workflow_content(release_workflow=bad_release_workflow)
-    assert any("publish-docs must depend on verify-release-assets" in err for err in errors)
+    assert any("publish-docs must depend on validate-tag-version-parity" in err for err in errors)
+    assert any("publish-npm must depend on validate-tag-version-parity" in err for err in errors)

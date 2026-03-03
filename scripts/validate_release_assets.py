@@ -159,30 +159,67 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "build-binaries:",
         "create-release:",
         "verify-release-assets:",
+        "validate-tag-version-parity:",
         "publish-npm:",
         "publish-docs:",
         "Validate release binary artifact matrix and generate checksums",
         "Verify uploaded release assets and checksum coverage",
         "scripts/verify_github_release_assets.py",
+        "Validate release tag/version parity across package metadata",
+        "scripts/validate_release_version_parity.py",
         "artifacts/CHECKSUMS.txt",
         "Validate package-manager publish bundle source state",
         "scripts/prepare_package_manager_release.py --check",
     ):
         if expected not in release_workflow:
             errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")
-    if "needs: [validate-release-assets, validate-package-managers]" not in release_workflow:
+
+    try:
+        parsed = yaml.safe_load(release_workflow) or {}
+    except yaml.YAMLError as exc:
+        errors.append(f"Release workflow is not valid YAML: {exc}")
+        parsed = {}
+
+    jobs = parsed.get("jobs", {}) if isinstance(parsed, dict) else {}
+    if not isinstance(jobs, dict):
+        errors.append("Release workflow must define jobs as a mapping")
+        return errors
+
+    def _needs(job_name: str) -> list[str]:
+        job = jobs.get(job_name)
+        if not isinstance(job, dict):
+            return []
+        needs = job.get("needs")
+        if isinstance(needs, str):
+            return [needs]
+        if isinstance(needs, list):
+            return [str(item) for item in needs]
+        return []
+
+    build_needs = _needs("build-binaries")
+    if not {"validate-release-assets", "validate-package-managers"}.issubset(set(build_needs)):
         errors.append(
             "Release workflow build-binaries must depend on release/package-manager validators"
         )
+
+    parity_needs = _needs("validate-tag-version-parity")
+    if "verify-release-assets" not in parity_needs:
+        errors.append(
+            "Release workflow validate-tag-version-parity must depend on verify-release-assets"
+        )
+
+    docs_needs = _needs("publish-docs")
+    if "validate-tag-version-parity" not in docs_needs:
+        errors.append("Release workflow publish-docs must depend on validate-tag-version-parity")
+
+    npm_needs = _needs("publish-npm")
+    if "validate-tag-version-parity" not in npm_needs:
+        errors.append("Release workflow publish-npm must depend on validate-tag-version-parity")
+
     if "uses: astral-sh/setup-uv@v5" not in release_workflow:
         errors.append(
             "Release workflow package-manager validation must install uv before fallback checks"
         )
-    if (
-        "publish-docs:" in release_workflow
-        and "needs: verify-release-assets" not in release_workflow
-    ):
-        errors.append("Release workflow publish-docs must depend on verify-release-assets")
     return errors
 
 
