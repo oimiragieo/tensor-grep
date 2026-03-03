@@ -38,49 +38,23 @@ def _parse_checksums(checksums_content: str) -> dict[str, str]:
     return result
 
 
-def validate_release_assets_payload(
+def _validate_manifest_against_assets(
     *,
-    release_data: dict,
-    checksums_content: str,
-    expected_assets: list[str],
-    checksum_required_assets: list[str] | None = None,
+    manifest_content: str,
+    manifest_name: str,
+    required_assets: set[str],
+    named_assets: dict[str, dict],
 ) -> list[str]:
     errors: list[str] = []
-    assets = release_data.get("assets", [])
-    if not isinstance(assets, list):
-        return ["GitHub release payload assets field must be a list"]
+    checksums = _parse_checksums(manifest_content)
 
-    named_assets = {
-        str(asset["name"]): asset
-        for asset in assets
-        if isinstance(asset, dict) and isinstance(asset.get("name"), str)
-    }
-    names = set(named_assets.keys())
-    missing = [name for name in expected_assets if name not in names]
-    for name in missing:
-        errors.append(f"Missing release asset: {name}")
-    expected_set = set(expected_assets)
-    checksum_required_set = (
-        set(checksum_required_assets) if checksum_required_assets is not None else expected_set
-    )
-    managed_names = {
-        name for name in names if name == "CHECKSUMS.txt" or str(name).startswith("tg-")
-    }
-    unexpected_managed = sorted(managed_names - expected_set)
-    for name in unexpected_managed:
-        errors.append(f"Unexpected managed release asset: {name}")
-
-    checksums = _parse_checksums(checksums_content)
-    expected_checksum_assets = {name for name in checksum_required_set if name != "CHECKSUMS.txt"}
-    for name in expected_checksum_assets:
-        if name not in expected_set:
-            continue
+    for name in required_assets:
         if name not in checksums:
-            errors.append(f"CHECKSUMS.txt missing digest entry for asset: {name}")
+            errors.append(f"{manifest_name} missing digest entry for asset: {name}")
             continue
         digest = _normalize_digest(checksums[name])
         if digest is None:
-            errors.append(f"Invalid SHA256 digest length for {name} in CHECKSUMS.txt")
+            errors.append(f"Invalid SHA256 digest length for {name} in {manifest_name}")
             continue
 
         asset = named_assets.get(name)
@@ -100,14 +74,81 @@ def validate_release_assets_payload(
             continue
         if asset_digest != digest:
             errors.append(
-                f"Checksum mismatch for {name}: CHECKSUMS.txt does not match GitHub asset digest"
+                f"Checksum mismatch for {name}: {manifest_name} does not match GitHub asset digest"
             )
 
     for checksum_name in sorted(checksums):
-        if checksum_name in expected_checksum_assets:
+        if checksum_name in required_assets:
             continue
         if checksum_name.startswith("tg-"):
             errors.append(f"Unexpected checksum entry for unmanaged asset: {checksum_name}")
+    return errors
+
+
+def validate_release_assets_payload(
+    *,
+    release_data: dict,
+    checksums_content: str,
+    bundle_checksums_content: str | None = None,
+    expected_assets: list[str],
+    checksum_required_assets: list[str] | None = None,
+    bundle_checksum_required_assets: list[str] | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    assets = release_data.get("assets", [])
+    if not isinstance(assets, list):
+        return ["GitHub release payload assets field must be a list"]
+
+    named_assets = {
+        str(asset["name"]): asset
+        for asset in assets
+        if isinstance(asset, dict) and isinstance(asset.get("name"), str)
+    }
+    names = set(named_assets.keys())
+    missing = [name for name in expected_assets if name not in names]
+    for name in missing:
+        errors.append(f"Missing release asset: {name}")
+    expected_set = set(expected_assets)
+    checksum_required_set = (
+        set(checksum_required_assets) if checksum_required_assets is not None else expected_set
+    )
+    bundle_checksum_required_set = (
+        set(bundle_checksum_required_assets)
+        if bundle_checksum_required_assets is not None
+        else set()
+    )
+    managed_names = {
+        name for name in names if name == "CHECKSUMS.txt" or str(name).startswith("tg-")
+    }
+    unexpected_managed = sorted(managed_names - expected_set)
+    for name in unexpected_managed:
+        errors.append(f"Unexpected managed release asset: {name}")
+
+    expected_checksum_assets = {name for name in checksum_required_set if name != "CHECKSUMS.txt"}
+    errors.extend(
+        _validate_manifest_against_assets(
+            manifest_content=checksums_content,
+            manifest_name="CHECKSUMS.txt",
+            required_assets=expected_checksum_assets,
+            named_assets=named_assets,
+        )
+    )
+
+    if bundle_checksum_required_set:
+        if not isinstance(bundle_checksums_content, str):
+            errors.append("Missing release asset content: BUNDLE_CHECKSUMS.txt")
+        else:
+            expected_bundle_assets = {
+                name for name in bundle_checksum_required_set if name != "BUNDLE_CHECKSUMS.txt"
+            }
+            errors.extend(
+                _validate_manifest_against_assets(
+                    manifest_content=bundle_checksums_content,
+                    manifest_name="BUNDLE_CHECKSUMS.txt",
+                    required_assets=expected_bundle_assets,
+                    named_assets=named_assets,
+                )
+            )
     return errors
 
 
@@ -135,6 +176,7 @@ def verify_release_assets(*, repo: str, tag: str, token: str | None = None) -> l
 
     assets = release_data.get("assets", [])
     checksums_url = None
+    bundle_checksums_url = None
     for asset in assets:
         if (
             isinstance(asset, dict)
@@ -142,12 +184,20 @@ def verify_release_assets(*, repo: str, tag: str, token: str | None = None) -> l
             and isinstance(asset.get("browser_download_url"), str)
         ):
             checksums_url = asset["browser_download_url"]
-            break
+        if (
+            isinstance(asset, dict)
+            and asset.get("name") == "BUNDLE_CHECKSUMS.txt"
+            and isinstance(asset.get("browser_download_url"), str)
+        ):
+            bundle_checksums_url = asset["browser_download_url"]
 
     if not checksums_url:
         return ["Missing release asset: CHECKSUMS.txt"]
+    if not bundle_checksums_url:
+        return ["Missing release asset: BUNDLE_CHECKSUMS.txt"]
 
     checksums_content = _download_text(checksums_url, token=token)
+    bundle_checksums_content = _download_text(bundle_checksums_url, token=token)
     expected_assets = [
         "tg-linux-amd64-cpu",
         "tg-linux-amd64-nvidia",
@@ -168,11 +218,19 @@ def verify_release_assets(*, repo: str, tag: str, token: str | None = None) -> l
         "tg-windows-amd64-nvidia.exe",
         "CHECKSUMS.txt",
     ]
+    bundle_checksum_required_assets = [
+        "tensor-grep.rb",
+        "oimiragieo.tensor-grep.yaml",
+        "PUBLISH_INSTRUCTIONS.md",
+        "BUNDLE_CHECKSUMS.txt",
+    ]
     return validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
+        bundle_checksums_content=bundle_checksums_content,
         expected_assets=expected_assets,
         checksum_required_assets=checksum_required_assets,
+        bundle_checksum_required_assets=bundle_checksum_required_assets,
     )
 
 

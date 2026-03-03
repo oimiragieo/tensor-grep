@@ -202,3 +202,61 @@ def test_validate_release_assets_payload_should_allow_expected_non_checksum_asse
         checksum_required_assets=["tg-linux-amd64-cpu", "CHECKSUMS.txt"],
     )
     assert errors == []
+
+
+def test_validate_release_assets_payload_should_fail_when_bundle_checksums_missing():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'a' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+            {"name": "BUNDLE_CHECKSUMS.txt"},
+        ]
+    }
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content="",
+        bundle_checksums_content=None,
+        expected_assets=["tensor-grep.rb", "CHECKSUMS.txt", "BUNDLE_CHECKSUMS.txt"],
+        checksum_required_assets=["CHECKSUMS.txt"],
+        bundle_checksum_required_assets=["tensor-grep.rb", "BUNDLE_CHECKSUMS.txt"],
+    )
+    assert any("Missing release asset content: BUNDLE_CHECKSUMS.txt" in err for err in errors)
+
+
+def test_validate_release_assets_payload_should_validate_bundle_checksums_against_asset_digests():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'a' * 64}"},
+            {"name": "oimiragieo.tensor-grep.yaml", "size": 10, "digest": f"sha256:{'b' * 64}"},
+            {"name": "PUBLISH_INSTRUCTIONS.md", "size": 10, "digest": f"sha256:{'c' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+            {"name": "BUNDLE_CHECKSUMS.txt"},
+        ]
+    }
+    bundle_checksums_content = "\n".join([
+        f"{'a' * 64}  tensor-grep.rb",
+        f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
+        f"{'0' * 64}  PUBLISH_INSTRUCTIONS.md",
+    ])
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content="",
+        bundle_checksums_content=bundle_checksums_content,
+        expected_assets=[
+            "tensor-grep.rb",
+            "oimiragieo.tensor-grep.yaml",
+            "PUBLISH_INSTRUCTIONS.md",
+            "CHECKSUMS.txt",
+            "BUNDLE_CHECKSUMS.txt",
+        ],
+        checksum_required_assets=["CHECKSUMS.txt"],
+        bundle_checksum_required_assets=[
+            "tensor-grep.rb",
+            "oimiragieo.tensor-grep.yaml",
+            "PUBLISH_INSTRUCTIONS.md",
+            "BUNDLE_CHECKSUMS.txt",
+        ],
+    )
+    assert any("Checksum mismatch for PUBLISH_INSTRUCTIONS.md" in err for err in errors)
