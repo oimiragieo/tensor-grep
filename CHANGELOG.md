@@ -1,18 +1,22 @@
 # CHANGELOG
 
-## Unreleased
 
-### Features
+## v0.14.0 (2026-03-03)
 
-- **cli**: Add `--gpu-device-ids` to expose per-request GPU pinning from CLI into runtime routing.
+### Code Style
+
+- **cli**: Apply ruff preview formatting for rule spec construction
+  ([`4fa4a87`](https://github.com/oimiragieo/tensor-grep/commit/4fa4a87283fd95e2dff5c644a2314921fcf6356e))
 
 ### Continuous Integration
 
-- **release**: Validate GitHub binary artifact filename matrix and publish `CHECKSUMS.txt` SHA256 manifest before release upload.
+- **release**: Validate binary artifact matrix and publish checksums
+  ([`ffe1028`](https://github.com/oimiragieo/tensor-grep/commit/ffe1028afb0c3e7ddc177a9e2ec0c6e5e9465468))
 
-### Documentation
+### Features
 
-- **paper**: Add explicit 2026 STATIC constrained-decoding fit analysis and decision boundary for tensor-grep integration.
+- **cli**: Add --gpu-device-ids request pinning and sync brew 0.13.1
+  ([`1e83b64`](https://github.com/oimiragieo/tensor-grep/commit/1e83b64634958b9dfd73aa7c0d8a2927fc660fa0))
 
 
 ## v0.13.1 (2026-03-03)
