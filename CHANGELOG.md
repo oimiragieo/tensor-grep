@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.13.1 (2026-03-03)
+
+### Bug Fixes
+
+- **release**: Auto-stamp brew and winget assets during semantic release
+  ([`dac2b87`](https://github.com/oimiragieo/tensor-grep/commit/dac2b87a2474f266a10fe903e72ac47b3e9f3500))
+
+### Documentation
+
+- **bench**: Refresh benchmark tables; sync package assets to 0.13.0
+  ([`ea8dbee`](https://github.com/oimiragieo/tensor-grep/commit/ea8dbee813d9bf6a337f164e1ed7b264cb2606ac))
+
+
 ## v0.13.0 (2026-03-03)
 
 ### Bug Fixes
@@ -12,14 +25,6 @@
 
 - **multi-gpu**: Add per-request device-id routing contract
   ([`eb249e4`](https://github.com/oimiragieo/tensor-grep/commit/eb249e43c6807eaa5c7fe36309d93b5a556282a3))
-
-### Continuous Integration
-
-- **release**: Stamp brew/winget assets from `pyproject` during semantic-release build to prevent post-bump version drift.
-
-### Documentation
-
-- Refresh README and paper benchmark tables with the latest `dac2b87` benchmark artifact outputs.
 
 
 ## v0.12.5 (2026-03-03)
