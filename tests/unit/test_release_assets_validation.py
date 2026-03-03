@@ -181,3 +181,31 @@ def test_should_require_release_to_publish_package_manager_bundle_assets():
     assert any("Build package-manager publish bundle" in err for err in errors)
     assert any("Verify package-manager bundle checksums" in err for err in errors)
     assert any("artifacts/package-manager-bundle/**" in err for err in errors)
+
+
+def test_should_require_terminal_release_success_gate_dependencies():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    bad_release_workflow = """
+    jobs:
+      validate-tag-version-parity:
+        needs: verify-release-assets
+      publish-npm:
+        needs: validate-tag-version-parity
+      publish-docs:
+        needs: validate-tag-version-parity
+      release-success-gate:
+        needs: validate-tag-version-parity
+        runs-on: ubuntu-latest
+    """
+    errors = module.validate_release_workflow_content(release_workflow=bad_release_workflow)
+    assert any(
+        "release-success-gate must depend on parity + publish-npm + publish-docs" in err
+        for err in errors
+    )

@@ -162,6 +162,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "validate-tag-version-parity:",
         "publish-npm:",
         "publish-docs:",
+        "release-success-gate:",
         "Validate release binary artifact matrix and generate checksums",
         "Smoke-verify Linux release binary version",
         "Verify uploaded release assets and checksum coverage",
@@ -179,6 +180,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "artifacts/package-manager-bundle/**",
         "Validate package-manager publish bundle source state",
         "scripts/prepare_package_manager_release.py --check",
+        "Confirm release publication gates",
     ):
         if expected not in release_workflow:
             errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")
@@ -224,6 +226,14 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     npm_needs = _needs("publish-npm")
     if "validate-tag-version-parity" not in npm_needs:
         errors.append("Release workflow publish-npm must depend on validate-tag-version-parity")
+
+    release_gate_needs = _needs("release-success-gate")
+    if not {"validate-tag-version-parity", "publish-npm", "publish-docs"}.issubset(
+        set(release_gate_needs)
+    ):
+        errors.append(
+            "Release workflow release-success-gate must depend on parity + publish-npm + publish-docs"
+        )
 
     if "uses: astral-sh/setup-uv@v5" not in release_workflow:
         errors.append(

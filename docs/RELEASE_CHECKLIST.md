@@ -63,6 +63,8 @@ This checklist reflects the current enterprise release pipeline:
    - step `Verify uploaded release assets and checksum coverage`
    - includes required package-manager bundle assets (`tensor-grep.rb`, `oimiragieo.tensor-grep.yaml`, `PUBLISH_INSTRUCTIONS.md`)
    - includes `BUNDLE_CHECKSUMS.txt` parity validation for package-manager bundle assets
+5. Confirm terminal publish gate is green:
+   - `release-success-gate` (depends on parity + npm publish + docs deploy)
 5. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version

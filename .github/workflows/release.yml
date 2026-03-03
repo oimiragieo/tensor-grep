@@ -263,3 +263,13 @@ jobs:
         
       - name: Deploy Docs
         run: mkdocs gh-deploy --force
+
+  release-success-gate:
+    needs: [validate-tag-version-parity, publish-npm, publish-docs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm release publication gates
+        run: |
+          echo "Release publication gates passed: parity, npm, docs."
