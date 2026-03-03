@@ -69,6 +69,48 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
     return errors
 
 
+def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
+    errors: list[str] = []
+    for expected in (
+        "package-manager-readiness:",
+        "Validate Homebrew formula syntax",
+        "Validate winget manifest syntax",
+        "validate-pypi-artifacts:",
+        "Validate built PyPI artifact set",
+        "Smoke-test install from built PyPI artifacts",
+        "Verify release version parity across tag/assets/PyPI",
+        "scripts/validate_release_version_parity.py",
+    ):
+        if expected not in ci_workflow:
+            errors.append(
+                f"CI workflow missing expected package-manager validation block: {expected}"
+            )
+
+    if "ref: v${{ needs.release.outputs.release_version }}" not in ci_workflow:
+        errors.append("CI workflow must build PyPI artifacts from semantic-release tag ref")
+
+    if (
+        "needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]"
+        not in ci_workflow
+    ):
+        errors.append(
+            "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
+        )
+
+    if ci_workflow.count("uses: astral-sh/setup-uv@v5") < 2:
+        errors.append("CI workflow should install uv in package-manager/release validation paths")
+
+    if "--pypi-wait-seconds" not in ci_workflow:
+        errors.append("CI workflow must pass --pypi-wait-seconds to release parity validation")
+
+    if "--pypi-poll-interval-seconds" not in ci_workflow:
+        errors.append(
+            "CI workflow must pass --pypi-poll-interval-seconds to release parity validation"
+        )
+
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
@@ -130,31 +172,7 @@ def validate_all() -> list[str]:
         )
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
-    for expected in (
-        "package-manager-readiness:",
-        "Validate Homebrew formula syntax",
-        "Validate winget manifest syntax",
-        "validate-pypi-artifacts:",
-        "Validate built PyPI artifact set",
-        "Smoke-test install from built PyPI artifacts",
-        "Verify release version parity across tag/assets/PyPI",
-        "scripts/validate_release_version_parity.py",
-    ):
-        if expected not in ci_workflow:
-            errors.append(
-                f"CI workflow missing expected package-manager validation block: {expected}"
-            )
-    if "ref: v${{ needs.release.outputs.release_version }}" not in ci_workflow:
-        errors.append("CI workflow must build PyPI artifacts from semantic-release tag ref")
-    if (
-        "needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]"
-        not in ci_workflow
-    ):
-        errors.append(
-            "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
-        )
-    if ci_workflow.count("uses: astral-sh/setup-uv@v5") < 2:
-        errors.append("CI workflow should install uv in package-manager/release validation paths")
+    errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})

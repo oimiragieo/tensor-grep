@@ -57,3 +57,26 @@ def test_should_fail_winget_manifest_when_installer_url_not_nested():
     )
     errors = module.validate_winget_manifest(winget_content=winget, py_version="1.2.3")
     assert any("InstallerUrl must be nested under first installer mapping" in err for err in errors)
+
+
+def test_should_require_ci_pypi_parity_retry_arguments():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    publish-pypi:
+      needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]
+      steps:
+        - uses: astral-sh/setup-uv@v5
+        - uses: astral-sh/setup-uv@v5
+        - run: |
+            python scripts/validate_release_version_parity.py
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("--pypi-wait-seconds" in err for err in errors)
+    assert any("--pypi-poll-interval-seconds" in err for err in errors)
