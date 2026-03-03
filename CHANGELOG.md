@@ -17,6 +17,10 @@
 
 - **release**: Stamp brew/winget assets from `pyproject` during semantic-release build to prevent post-bump version drift.
 
+### Documentation
+
+- Refresh README and paper benchmark tables with the latest `dac2b87` benchmark artifact outputs.
+
 
 ## v0.12.5 (2026-03-03)
 
