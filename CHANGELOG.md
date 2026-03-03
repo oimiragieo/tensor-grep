@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.15.1 (2026-03-03)
+
+### Bug Fixes
+
+- **ci**: Scope publish parity gate to tag/core versions and pypi
+  ([`4539963`](https://github.com/oimiragieo/tensor-grep/commit/4539963cd082d81887a3014503fea285ff8ae583))
+
+- **ci**: Unflake parity tests and apply required formatting
+  ([`d471452`](https://github.com/oimiragieo/tensor-grep/commit/d4714527b25cbe4391cb87ae724e69dec8d18432))
+
+- **release**: Sync homebrew formula to 0.15.0
+  ([`146103a`](https://github.com/oimiragieo/tensor-grep/commit/146103a4d31c15b1a04bb2cded63ccbb3b52e144))
+
+
 ## v0.15.0 (2026-03-03)
 
 ### Bug Fixes
