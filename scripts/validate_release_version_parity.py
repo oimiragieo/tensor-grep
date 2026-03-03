@@ -81,9 +81,7 @@ def validate_release_version_parity(
         "macOS": "tg-macos-amd64-cpu",
         "Linux": "tg-linux-amd64-cpu",
     }.items():
-        expected_url = (
-            f"https://github.com/oimiragieo/tensor-grep/releases/download/v{expected_version}/{artifact}"
-        )
+        expected_url = f"https://github.com/oimiragieo/tensor-grep/releases/download/v{expected_version}/{artifact}"
         templated_url = (
             f"https://github.com/oimiragieo/tensor-grep/releases/download/v#{{version}}/{artifact}"
         )

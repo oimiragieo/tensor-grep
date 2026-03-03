@@ -32,4 +32,3 @@ def test_should_fail_when_expected_tag_mismatches_expected_version():
         expected_version="0.14.1", expected_tag="v0.14.2"
     )
     assert "expected tag v0.14.2 != v0.14.1" in errors
-
