@@ -36,8 +36,16 @@ def validate_release_assets_payload(
     missing = [name for name in expected_assets if name not in names]
     for name in missing:
         errors.append(f"Missing release asset: {name}")
+    expected_set = set(expected_assets)
+    managed_names = {
+        name for name in names if name == "CHECKSUMS.txt" or str(name).startswith("tg-")
+    }
+    unexpected_managed = sorted(managed_names - expected_set)
+    for name in unexpected_managed:
+        errors.append(f"Unexpected managed release asset: {name}")
 
     checksums = _parse_checksums(checksums_content)
+    expected_checksum_assets = {name for name in expected_assets if name != "CHECKSUMS.txt"}
     for name in expected_assets:
         if name == "CHECKSUMS.txt":
             continue
@@ -52,6 +60,12 @@ def validate_release_assets_payload(
             int(digest, 16)
         except ValueError:
             errors.append(f"Non-hex SHA256 digest for {name} in CHECKSUMS.txt")
+
+    for checksum_name in sorted(checksums):
+        if checksum_name in expected_checksum_assets:
+            continue
+        if checksum_name.startswith("tg-"):
+            errors.append(f"Unexpected checksum entry for unmanaged asset: {checksum_name}")
     return errors
 
 
