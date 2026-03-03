@@ -28,7 +28,6 @@ def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
             "-m",
             "pip",
             "install",
-            "--no-index",
             "--find-links",
             str(resolved_dist),
             f"tensor-grep=={version}",

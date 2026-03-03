@@ -33,10 +33,9 @@ def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
 
     assert len(calls) == 3
     assert calls[0][:3] == [module.sys.executable, "-m", "venv"]
-    assert calls[1][2:7] == [
+    assert calls[1][2:6] == [
         "pip",
         "install",
-        "--no-index",
         "--find-links",
         str(tmp_path.resolve()),
     ]
