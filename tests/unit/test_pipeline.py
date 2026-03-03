@@ -117,6 +117,33 @@ class TestPipeline:
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
     @patch("tensor_grep.core.pipeline.MemoryManager")
     @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_should_allow_mixed_preferred_device_ids_and_use_normalized_chunk_plan(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+        # MemoryManager normalizes preferred IDs and returns only routable IDs/chunks.
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(7, 256)]
+        mock_cudf.return_value.is_available.return_value = True
+
+        config = SearchConfig(
+            query_pattern=r"(ERROR|WARN).*timeout\s+\d+",
+            input_total_bytes=512 * 1024 * 1024,
+            gpu_device_ids=[7, 99, 7],
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+
+        assert pipeline.backend == mock_cudf.return_value
+        assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
+        mock_mem.return_value.get_device_chunk_plan_mb.assert_called_once_with(
+            preferred_ids=[7, 99, 7]
+        )
+        mock_cudf.assert_called_once_with(chunk_sizes_mb=[256], device_ids=[7])
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
     @patch("tensor_grep.backends.torch_backend.TorchBackend")
     def test_should_pass_device_ids_to_torch_backend_when_cudf_unavailable(
         self, mock_torch_backend, mock_cudf, mock_mem, mock_rust, mock_rg
