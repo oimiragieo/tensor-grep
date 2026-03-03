@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Unreleased
+
+### Continuous Integration
+
+- **release**: Validate GitHub binary artifact filename matrix and publish `CHECKSUMS.txt` SHA256 manifest before release upload.
+
+### Documentation
+
+- **paper**: Add explicit 2026 STATIC constrained-decoding fit analysis and decision boundary for tensor-grep integration.
+
 
 ## v0.13.1 (2026-03-03)
 

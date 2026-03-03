@@ -84,6 +84,8 @@ def validate_all() -> list[str]:
         "create-release:",
         "publish-npm:",
         "publish-docs:",
+        "Validate release binary artifact matrix and generate checksums",
+        "artifacts/CHECKSUMS.txt",
     ):
         if expected not in release_workflow:
             errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")

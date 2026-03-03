@@ -74,6 +74,7 @@ This checklist reflects the current enterprise release pipeline:
    - Winget submission: create/update manifest PR in winget-pkgs for new version.
 4. Keep release artifacts canonical:
    - Build artifacts must map 1:1 to tag version and expected filenames.
+   - Release job validates expected binary filename matrix and emits `CHECKSUMS.txt` (SHA256) before publishing GitHub release assets.
 
 ## 5. Rollback runbook
 
