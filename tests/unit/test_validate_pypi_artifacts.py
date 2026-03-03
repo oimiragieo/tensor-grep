@@ -88,3 +88,16 @@ def test_should_fail_when_required_platform_wheel_missing(tmp_path: Path):
     )
 
     assert any("Missing required wheel platform artifact: windows" == err for err in errors)
+
+
+def test_should_build_hash_matrix_for_all_artifacts(tmp_path: Path):
+    module = _load_module()
+    version = "0.11.1"
+    wheel = _write_wheel(tmp_path, version, "manylinux_2_34_x86_64")
+    sdist = _write_sdist(tmp_path, version)
+
+    matrix = module.build_hash_matrix(tmp_path)
+
+    assert set(matrix.keys()) == {wheel.name, sdist.name}
+    for digest in matrix.values():
+        assert len(digest) == 64

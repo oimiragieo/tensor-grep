@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import tarfile
 import zipfile
 from pathlib import Path
@@ -32,6 +33,16 @@ def _sdist_metadata_version(sdist_path: Path) -> str:
             raise ValueError(f"{sdist_path.name} contains unreadable PKG-INFO")
         metadata_text = data.read().decode("utf-8")
         return _parse_metadata_version(metadata_text)
+
+
+def build_hash_matrix(dist_dir: Path) -> dict[str, str]:
+    matrix: dict[str, str] = {}
+    for artifact in sorted(dist_dir.glob("tensor_grep-*")):
+        if not artifact.is_file():
+            continue
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        matrix[artifact.name] = digest
+    return matrix
 
 
 def validate(
@@ -94,6 +105,15 @@ def validate(
                 found = any(platform_lower in name for name in wheel_names)
             if not found:
                 errors.append(f"Missing required wheel platform artifact: {platform_lower}")
+
+    hash_matrix = build_hash_matrix(dist_dir)
+    expected_files = {p.name for p in wheels} | {p.name for p in sdists}
+    missing_hashes = sorted(expected_files - set(hash_matrix.keys()))
+    if missing_hashes:
+        errors.append(f"Missing hash entries for artifacts: {', '.join(missing_hashes)}")
+    for filename, digest in hash_matrix.items():
+        if len(digest) != 64:
+            errors.append(f"Invalid SHA256 digest length for {filename}")
 
     return errors
 

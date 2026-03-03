@@ -93,7 +93,9 @@ Release automation notes:
 - Main CI (`ci.yml`) now validates built PyPI artifacts before publish with `scripts/validate_pypi_artifacts.py`, checking:
   - expected version in wheel/sdist filenames,
   - wheel/sdist package metadata version,
-  - platform wheel coverage (linux/macos/windows).
+  - platform wheel coverage (linux/macos/windows),
+  - SHA256 hash matrix generation for all built artifacts.
+- Main CI also runs `scripts/smoke_test_pypi_artifacts.py` to install from local `dist/` artifacts in an isolated virtual environment before publish.
 - `publish-pypi` now verifies PyPI's latest version matches the semantic-release tag version before the job is marked successful.
 
 ### Repeatable Release Checklist

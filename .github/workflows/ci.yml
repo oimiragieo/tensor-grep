@@ -403,6 +403,12 @@ jobs:
             --dist-dir dist \
             --version "${{ needs.release.outputs.release_version }}" \
             --require-platforms "linux,macos,windows"
+      - name: Smoke-test install from built PyPI artifacts
+        run: |
+          python scripts/smoke_test_pypi_artifacts.py \
+            --dist-dir dist \
+            --version "${{ needs.release.outputs.release_version }}" \
+            --work-dir .tmp
 
   publish-pypi:
     name: publish-pypi

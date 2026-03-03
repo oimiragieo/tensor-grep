@@ -97,6 +97,7 @@ def validate_all() -> list[str]:
         "Validate winget manifest syntax",
         "validate-pypi-artifacts:",
         "Validate built PyPI artifact set",
+        "Smoke-test install from built PyPI artifacts",
         "Verify published PyPI version matches release version",
     ):
         if expected not in ci_workflow:
