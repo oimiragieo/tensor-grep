@@ -29,32 +29,32 @@ Environment notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.440s | 0.692s | Parity PASS |
-| Case-Insensitive Match | 0.521s | 0.750s | Parity PASS |
-| Regex Match | 0.492s | 0.758s | Parity PASS |
-| Invert Match | 1.245s | 1.434s | Parity PASS |
-| Count Matches | 0.139s | **0.083s** | Parity PASS |
-| Context Lines (`-C2`) | 1.648s | 2.002s | Parity PASS |
-| Max Count (`-m 5`) | 0.125s | 0.354s | Parity PASS |
-| File Glob Filtering | 0.423s | 0.670s | Parity PASS |
-| Word Boundary | 0.469s | 0.721s | Parity PASS |
-| Fixed Strings (`-F`) | 0.412s | 0.665s | Parity PASS |
+| Simple String Match | 0.455s | 0.681s | Parity PASS |
+| Case-Insensitive Match | 0.443s | 0.711s | Parity PASS |
+| Regex Match | 0.482s | 0.756s | Parity PASS |
+| Invert Match | 1.185s | 1.717s | Parity PASS |
+| Count Matches | 0.145s | **0.078s** | Parity PASS |
+| Context Lines (`-C2`) | 1.806s | 2.505s | Parity PASS |
+| Max Count (`-m 5`) | 0.152s | 0.413s | Parity PASS |
+| File Glob Filtering | 0.513s | 0.699s | Parity PASS |
+| Word Boundary | 0.483s | 0.758s | Parity PASS |
+| Fixed Strings (`-F`) | 0.655s | 0.699s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.122s | 0.411s | Parity PASS |
-| Try/Except Block | 0.102s | 0.403s | Parity PASS |
-| Class Declaration | 0.114s | 0.399s | Parity PASS |
+| Simple Function Def | 0.110s | 0.404s | Parity PASS |
+| Try/Except Block | 0.095s | 0.402s | Parity PASS |
+| Class Declaration | 0.108s | 0.393s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | **0.059s** | 4 matches |
+| AST backend | `function_definition` on test module | **0.052s** | 4 matches |
 | cyBERT backend | Semantic classification on 10,000 log lines | 0.113s | 2,000 ERROR labels |
-| Torch backend | Exact match on 10,000 log lines | 0.244s | 2,000 matches |
+| Torch backend | Exact match on 10,000 log lines | 0.230s | 2,000 matches |
 
 ### Benchmark Governance (Regression Protection)
 
@@ -70,6 +70,7 @@ Environment notes:
 - **Explicit multi-GPU routing contract.** Runtime scheduling now exposes stable ID enumeration (`DeviceDetector.enumerate_device_ids()`) and rich device enumeration (`DeviceDetector.list_devices()`), where `list_devices()` returns `(device_id, vram_capacity_mb)` for each routable GPU. This is the canonical API contract for sharding/routing decisions.
 - **Explicit device pinning override.** Set `TENSOR_GREP_DEVICE_IDS` (for example `TENSOR_GREP_DEVICE_IDS=3,7`) to constrain scheduling and fanout to specific GPUs.
 - **Per-request GPU pinning for library/runtime callers.** `SearchConfig(gpu_device_ids=[...])` now propagates through `Pipeline -> MemoryManager -> CuDFBackend` so workloads can be pinned to selected GPUs without mutating process-wide env vars.
+- **Explicit pinning is first-class in routing.** When `gpu_device_ids` is provided for search modes that do not require CPU-only semantics, pipeline selection attempts pinned GPU backends first, then safely falls back to `rg`/Rust/CPU if unavailable.
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
 - **Device-ID normalization contract.** Duplicate/invalid preferred IDs are ignored during routing normalization; if all requested IDs are invalid, the scheduler falls back to the detected routable GPU set instead of disabling GPU execution.
 - **It is a drop-in replacement for ripgrep.** `tg search` accepts the exact same 70+ CLI flags (`-i`, `-v`, `-C`, `-g`, `-t`) that you already know and love from `ripgrep`.

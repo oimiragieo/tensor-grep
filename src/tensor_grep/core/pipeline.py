@@ -47,6 +47,18 @@ class Pipeline:
         large_input = config.input_total_bytes >= 256 * 1024 * 1024
         return large_input and cls._is_complex_regex(config)
 
+    @staticmethod
+    def _should_honor_explicit_gpu_ids(config: SearchConfig | None, needs_python_cpu: bool) -> bool:
+        if config is None:
+            return False
+        if not config.gpu_device_ids:
+            return False
+        if config.ast or config.count or config.fixed_strings:
+            return False
+        if needs_python_cpu:
+            return False
+        return True
+
     def __init__(self, force_cpu: bool = False, config: SearchConfig | None = None):
         self.backend: ComputeBackend
         self.config = config
@@ -80,6 +92,7 @@ class Pipeline:
 
             needs_python_cpu = self._needs_python_cpu(config)
             should_try_gpu = self._should_try_gpu(config, needs_python_cpu)
+            explicit_gpu_requested = self._should_honor_explicit_gpu_ids(config, needs_python_cpu)
             rg_available = rg_backend.is_available()
             rust_available = rust_backend.is_available()
 
@@ -148,13 +161,9 @@ class Pipeline:
                 else:
                     self.backend = rg_backend
                     selected_backend_reason = "rg_semantics_fast_path"
-            elif rg_available:
-                # Default search path: always delegate to native rg for best end-to-end CLI speed.
-                self.backend = rg_backend
-                selected_backend_reason = "rg_default_fast_path"
-            elif should_try_gpu:
-                # Heuristic GPU override for large/complex regex when rg is unavailable.
-                # Inject memory manager to get chunk sizes across all available GPUs
+            elif explicit_gpu_requested:
+                # Explicit per-request GPU routing override.
+                # Inject memory manager to get chunk sizes across selected/routable GPUs.
                 memory_manager = MemoryManager()
                 preferred_gpu_ids = config.gpu_device_ids if config else None
                 device_chunk_plan = memory_manager.get_device_chunk_plan_mb(
@@ -164,6 +173,42 @@ class Pipeline:
                 device_ids = [device_id for device_id, _ in device_chunk_plan]
 
                 # If no chunk sizes were returned but we didn't force CPU, something is wrong with CUDA, fallback
+                if not chunk_sizes:
+                    self.backend = fallback_backend
+                    selected_backend_reason = "gpu_explicit_ids_no_chunk_sizes_fallback"
+                else:
+                    cudf_backend = CuDFBackend(chunk_sizes_mb=chunk_sizes, device_ids=device_ids)
+                    if cudf_backend.is_available():
+                        self.backend = cudf_backend
+                        selected_backend_reason = "gpu_explicit_ids_cudf"
+                    else:
+                        try:
+                            from tensor_grep.backends.torch_backend import TorchBackend
+
+                            torch_backend = TorchBackend(device_ids=device_ids)
+                            if torch_backend.is_available():
+                                self.backend = torch_backend
+                                selected_backend_reason = "gpu_explicit_ids_torch"
+                            else:
+                                self.backend = fallback_backend
+                                selected_backend_reason = "gpu_explicit_ids_no_gpu_backend_fallback"
+                        except ImportError:
+                            self.backend = fallback_backend
+                            selected_backend_reason = "gpu_explicit_ids_torch_import_error_fallback"
+            elif rg_available:
+                # Default search path: always delegate to native rg for best end-to-end CLI speed.
+                self.backend = rg_backend
+                selected_backend_reason = "rg_default_fast_path"
+            elif should_try_gpu:
+                # Heuristic GPU path for large/complex regex when rg is unavailable.
+                memory_manager = MemoryManager()
+                preferred_gpu_ids = config.gpu_device_ids if config else None
+                device_chunk_plan = memory_manager.get_device_chunk_plan_mb(
+                    preferred_ids=preferred_gpu_ids
+                )
+                chunk_sizes = [chunk_mb for _, chunk_mb in device_chunk_plan]
+                device_ids = [device_id for device_id, _ in device_chunk_plan]
+
                 if not chunk_sizes:
                     self.backend = fallback_backend
                     selected_backend_reason = "gpu_selected_no_chunk_sizes_fallback"

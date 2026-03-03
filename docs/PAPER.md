@@ -63,6 +63,7 @@ To maximize hardware utilization while preserving cross-platform stability, `ten
 - **VRAM Budgeting:** The system probes the total available VRAM dynamically on each device (e.g., `cuda:0`, `cuda:1`) utilizing `pynvml` (NVIDIA Management Library) hooks to compute free memory limits at runtime.
 - **Dynamic Chunk Sharding (OOM Protection):** Massive log files (>10GB) are partitioned into PyCapsule chunks explicitly calculated against 80% of the active VRAM budget. To prevent CUDA Out-Of-Memory (OOM) exceptions when processing sequential arrays, the cuDF backend executes explicit garbage collection and re-acquires spill locks (`cudf.core.buffer.acquire_spill_lock()`) after every iteration, mathematically guaranteeing stable execution on any GPU regardless of its size limit.
 - **Explicit Device-ID Scheduling Contract:** Beyond environment-level overrides, the runtime now supports per-request GPU selection (`SearchConfig.gpu_device_ids`) that is normalized against detected devices and propagated into chunk-plan fanout. This lets schedulers and service wrappers pin individual search jobs to concrete GPU IDs while preserving safe fallback behavior when IDs are invalid.
+- **Explicit GPU-ID Routing Override:** For query modes that do not require CPU-only semantics, explicit `gpu_device_ids` now acts as a first-class routing signal: the pipeline attempts pinned GPU backends first and then safely falls back to `rg`/Rust/CPU if GPU backends are unavailable.
 - **Stable Device-ID Enumeration API:** `DeviceDetector.enumerate_device_ids()` now serves as a first-class public contract for routing/scheduling layers that need deterministic routable GPU IDs, while `list_devices()` provides `(device_id, vram_capacity_mb)` for capacity-aware sharding.
 
 ## 3. Evaluation and Benchmarks
@@ -83,18 +84,18 @@ We re-ran the benchmark suite on 2026-03-03 (latest `main` line) from repository
 
 Backend-level timings from `run_gpu_benchmarks.py`:
 
-* **AST backend:** `function_definition` query completed in **0.059 seconds** (4 matches).
+* **AST backend:** `function_definition` query completed in **0.052 seconds** (4 matches).
 * **cyBERT backend:** classified 10,000 log lines in **0.113 seconds** (2,000 ERROR labels).
-* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.244 seconds** (2,000 matches).
+* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.230 seconds** (2,000 matches).
 
 These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
 The latest full script-driven CLI benchmark (`run_benchmarks.py`) shows that on this Windows-hosted test environment, end-to-end process costs dominate most regex/text scenarios:
 
-* **Regex Match:** ripgrep **0.492s** vs tensor-grep **0.758s**
-* **Invert Match:** ripgrep **1.245s** vs tensor-grep **1.434s**
-* **Context (`-C2`):** ripgrep **1.648s** vs tensor-grep **2.002s**
+* **Regex Match:** ripgrep **0.482s** vs tensor-grep **0.756s**
+* **Invert Match:** ripgrep **1.185s** vs tensor-grep **1.717s**
+* **Context (`-C2`):** ripgrep **1.806s** vs tensor-grep **2.505s**
 
 All scenarios passed parity checks. Compared to the previous run, introducing a direct ripgrep passthrough path substantially reduced end-to-end tensor-grep overhead in text-search modes.
 
@@ -105,21 +106,21 @@ gantt
     axisFormat %S
     
     section CPU (ripgrep)
-    Native C DFA Evaluation :a1, 0, 0.492s
+    Native C DFA Evaluation :a1, 0, 0.482s
     
     section tensor-grep CLI (this run)
-    tensor-grep Regex Match :a2, 0, 0.758s
+    tensor-grep Regex Match :a2, 0, 0.756s
 ```
 
 ### 3.4 Exact String Matching (The CPU/Rust Advantage)
 In the fresh benchmark pass, the strongest `tensor-grep` result remained the Rust-backed count path:
 
-* **Count Matches:** ripgrep **0.139s** vs tensor-grep **0.083s**
+* **Count Matches:** ripgrep **0.145s** vs tensor-grep **0.078s**
 
 For other exact/fixed-string modes in this run:
 
-* **Fixed Strings (`-F`):** ripgrep **0.412s** vs tensor-grep **0.665s**
-* **Simple String Match:** ripgrep **0.440s** vs tensor-grep **0.692s**
+* **Fixed Strings (`-F`):** ripgrep **0.655s** vs tensor-grep **0.699s**
+* **Simple String Match:** ripgrep **0.455s** vs tensor-grep **0.681s**
 
 This suggests the current architecture is highly competitive when it routes to the native Rust counting backend, while general CLI text search paths still carry substantial startup/orchestration overhead.
 
@@ -130,13 +131,13 @@ gantt
     axisFormat %S
     
     section Native CPU / CLI
-    ripgrep Count              :a1, 0, 0.139s
-    tensor-grep Count          :a2, 0, 0.083s
+    ripgrep Count              :a1, 0, 0.145s
+    tensor-grep Count          :a2, 0, 0.078s
     
     section Other exact/fixed paths
-    ripgrep Fixed Strings      :a3, 0, 0.412s
-    tensor-grep Fixed Strings  :a4, 0, 0.665s
-    tensor-grep Simple String  :a5, 0, 0.692s
+    ripgrep Fixed Strings      :a3, 0, 0.655s
+    tensor-grep Fixed Strings  :a4, 0, 0.699s
+    tensor-grep Simple String  :a5, 0, 0.681s
 ```
 
 ### 3.5 OS Architectural Limitations: Windows `spawn()` vs. WSL `fork()`
