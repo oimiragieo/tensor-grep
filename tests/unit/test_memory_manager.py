@@ -120,3 +120,16 @@ class TestMemoryManager:
 
         manager = MemoryManager()
         assert manager.get_device_ids(preferred_ids=[9, 11]) == [3, 5]
+
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
+    def test_should_prefer_public_device_id_enumeration_when_available(self, mock_detect):
+        mock_instance = MagicMock()
+        mock_instance.has_gpu.return_value = True
+        mock_instance.enumerate_device_ids.return_value = [7, 3]
+        mock_instance.list_devices.side_effect = AssertionError(
+            "list_devices should not be used when enumerate_device_ids is available"
+        )
+        mock_detect.return_value = mock_instance
+
+        manager = MemoryManager()
+        assert manager.get_device_ids() == [7, 3]

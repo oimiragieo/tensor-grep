@@ -129,6 +129,20 @@ class TestDeviceDetect:
         detector = DeviceDetector()
         assert detector.list_devices() == []
 
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
+    def test_should_expose_public_device_id_enumeration_contract(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.return_value = 8
+
+        detector = DeviceDetector()
+        with patch.object(detector, "get_device_ids", return_value=[7, 3]):
+            assert detector.enumerate_device_ids() == [7, 3]
+
     @patch.dict("sys.modules", {"torch": MagicMock(), "kvikio": MagicMock()})
     def test_should_detect_gds_support(self):
         import kvikio

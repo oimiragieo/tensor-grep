@@ -39,6 +39,10 @@ class MemoryManager:
         if not self.detector.has_gpu():
             return []
         try:
+            if hasattr(self.detector, "enumerate_device_ids"):
+                enumerated_ids = list(self.detector.enumerate_device_ids())
+                if enumerated_ids:
+                    return enumerated_ids
             devices = self.detector.list_devices()
             device_ids = [device.device_id for device in devices]
             if device_ids:

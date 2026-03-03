@@ -146,6 +146,13 @@ class DeviceDetector:
         filtered_ids = [device_id for device_id in explicit_ids if device_id < count]
         return filtered_ids if filtered_ids else list(range(count))
 
+    def enumerate_device_ids(self) -> list[int]:
+        """
+        Public stable API for routing layers that only need concrete, routable
+        CUDA device IDs in selection order.
+        """
+        return self.get_device_ids()
+
     def list_devices(self) -> list[DeviceInfo]:
         """
         Public device enumeration API for routing and scheduling layers.

@@ -67,7 +67,7 @@ Environment notes:
 ## Why should I use `tensor-grep`?
 
 - **It scales linearly with hardware.** If you are dealing with massive log files (100GB+) and you have access to enterprise NVIDIA GPUs or even modern consumer cards, `tensor-grep` will automatically chunk and distribute regex matching via `cuDF` natively inside GPU VRAM, bypassing CPU entirely.
-- **Explicit multi-GPU routing contract.** Runtime scheduling now exposes concrete device enumeration (`DeviceDetector.list_devices()`), returning `(device_id, vram_capacity_mb)` for each routable GPU. This is the canonical API for sharding/routing decisions.
+- **Explicit multi-GPU routing contract.** Runtime scheduling now exposes stable ID enumeration (`DeviceDetector.enumerate_device_ids()`) and rich device enumeration (`DeviceDetector.list_devices()`), where `list_devices()` returns `(device_id, vram_capacity_mb)` for each routable GPU. This is the canonical API contract for sharding/routing decisions.
 - **Explicit device pinning override.** Set `TENSOR_GREP_DEVICE_IDS` (for example `TENSOR_GREP_DEVICE_IDS=3,7`) to constrain scheduling and fanout to specific GPUs.
 - **Per-request GPU pinning for library/runtime callers.** `SearchConfig(gpu_device_ids=[...])` now propagates through `Pipeline -> MemoryManager -> CuDFBackend` so workloads can be pinned to selected GPUs without mutating process-wide env vars.
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
