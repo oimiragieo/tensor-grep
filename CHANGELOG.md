@@ -13,6 +13,10 @@
 - **multi-gpu**: Add per-request device-id routing contract
   ([`eb249e4`](https://github.com/oimiragieo/tensor-grep/commit/eb249e43c6807eaa5c7fe36309d93b5a556282a3))
 
+### Continuous Integration
+
+- **release**: Stamp brew/winget assets from `pyproject` during semantic-release build to prevent post-bump version drift.
+
 
 ## v0.12.5 (2026-03-03)
 

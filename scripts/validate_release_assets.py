@@ -124,6 +124,11 @@ def validate_all() -> list[str]:
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
+    build_command = str(semantic_release.get("build_command", ""))
+    if "scripts/stamp_release_assets.py" not in build_command:
+        errors.append(
+            "semantic_release.build_command must run scripts/stamp_release_assets.py before build"
+        )
     version_toml = semantic_release.get("version_toml", [])
     version_variables = semantic_release.get("version_variables", [])
     required_toml_entries = {
