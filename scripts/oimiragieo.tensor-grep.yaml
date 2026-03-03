@@ -12,7 +12,7 @@ Moniker: tg
 Installers:
   - Architecture: x64
     InstallerType: portable
-InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v0.12.4/tg-windows-amd64-cpu.exe
+InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v0.12.5/tg-windows-amd64-cpu.exe
     Commands:
       - tg
 
