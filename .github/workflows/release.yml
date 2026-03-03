@@ -153,6 +153,12 @@ jobs:
           uv run python scripts/validate_release_binary_artifacts.py \
             --artifacts-dir artifacts \
             --checksums-out artifacts/CHECKSUMS.txt
+
+      - name: Smoke-verify Linux release binary version
+        run: |
+          uv run python scripts/smoke_verify_release_binary.py \
+            --artifacts-dir artifacts \
+            --expected-version "${GITHUB_REF#refs/tags/v}"
           
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
