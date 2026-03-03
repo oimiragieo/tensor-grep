@@ -122,6 +122,33 @@ def validate_all() -> list[str]:
     if ci_workflow.count("uses: astral-sh/setup-uv@v5") < 2:
         errors.append("CI workflow should install uv in package-manager/release validation paths")
 
+    pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
+    semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
+    version_toml = semantic_release.get("version_toml", [])
+    version_variables = semantic_release.get("version_variables", [])
+    required_toml_entries = {
+        "pyproject.toml:project.version",
+        "rust_core/Cargo.toml:package.version",
+    }
+    required_variable_entries = {
+        "src/tensor_grep/cli/main.py:pkg_version",
+        "npm/package.json:version",
+        "scripts/tensor-grep.rb:version",
+        "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
+        "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
+    }
+    missing_toml = sorted(required_toml_entries - set(version_toml))
+    missing_variables = sorted(required_variable_entries - set(version_variables))
+    if missing_toml:
+        errors.append(
+            "semantic_release.version_toml missing entries: " + ", ".join(missing_toml)
+        )
+    if missing_variables:
+        errors.append(
+            "semantic_release.version_variables missing entries: "
+            + ", ".join(missing_variables)
+        )
+
     return errors
 
 
