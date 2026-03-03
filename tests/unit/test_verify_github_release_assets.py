@@ -183,3 +183,22 @@ def test_validate_release_assets_payload_should_fail_when_digest_metadata_missin
         expected_assets=["tg-linux-amd64-cpu", "CHECKSUMS.txt"],
     )
     assert any("missing GitHub digest metadata" in err for err in errors)
+
+
+def test_validate_release_assets_payload_should_allow_expected_non_checksum_assets():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'b' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+        ]
+    }
+    checksums_content = f"{'a' * 64}  tg-linux-amd64-cpu\n"
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content=checksums_content,
+        expected_assets=["tg-linux-amd64-cpu", "tensor-grep.rb", "CHECKSUMS.txt"],
+        checksum_required_assets=["tg-linux-amd64-cpu", "CHECKSUMS.txt"],
+    )
+    assert errors == []

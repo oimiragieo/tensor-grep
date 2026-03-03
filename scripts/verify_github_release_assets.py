@@ -39,7 +39,11 @@ def _parse_checksums(checksums_content: str) -> dict[str, str]:
 
 
 def validate_release_assets_payload(
-    *, release_data: dict, checksums_content: str, expected_assets: list[str]
+    *,
+    release_data: dict,
+    checksums_content: str,
+    expected_assets: list[str],
+    checksum_required_assets: list[str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     assets = release_data.get("assets", [])
@@ -56,6 +60,9 @@ def validate_release_assets_payload(
     for name in missing:
         errors.append(f"Missing release asset: {name}")
     expected_set = set(expected_assets)
+    checksum_required_set = (
+        set(checksum_required_assets) if checksum_required_assets is not None else expected_set
+    )
     managed_names = {
         name for name in names if name == "CHECKSUMS.txt" or str(name).startswith("tg-")
     }
@@ -64,9 +71,9 @@ def validate_release_assets_payload(
         errors.append(f"Unexpected managed release asset: {name}")
 
     checksums = _parse_checksums(checksums_content)
-    expected_checksum_assets = {name for name in expected_assets if name != "CHECKSUMS.txt"}
-    for name in expected_assets:
-        if name == "CHECKSUMS.txt":
+    expected_checksum_assets = {name for name in checksum_required_set if name != "CHECKSUMS.txt"}
+    for name in expected_checksum_assets:
+        if name not in expected_set:
             continue
         if name not in checksums:
             errors.append(f"CHECKSUMS.txt missing digest entry for asset: {name}")
@@ -147,12 +154,24 @@ def verify_release_assets(*, repo: str, tag: str, token: str | None = None) -> l
         "tg-macos-amd64-cpu",
         "tg-windows-amd64-cpu.exe",
         "tg-windows-amd64-nvidia.exe",
+        "tensor-grep.rb",
+        "oimiragieo.tensor-grep.yaml",
+        "PUBLISH_INSTRUCTIONS.md",
+        "CHECKSUMS.txt",
+    ]
+    checksum_required_assets = [
+        "tg-linux-amd64-cpu",
+        "tg-linux-amd64-nvidia",
+        "tg-macos-amd64-cpu",
+        "tg-windows-amd64-cpu.exe",
+        "tg-windows-amd64-nvidia.exe",
         "CHECKSUMS.txt",
     ]
     return validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
         expected_assets=expected_assets,
+        checksum_required_assets=checksum_required_assets,
     )
 
 

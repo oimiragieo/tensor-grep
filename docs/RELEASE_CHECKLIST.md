@@ -61,6 +61,7 @@ This checklist reflects the current enterprise release pipeline:
 4. On tag release workflow, confirm GitHub release asset verification passes:
    - `verify-release-assets`
    - step `Verify uploaded release assets and checksum coverage`
+   - includes required package-manager bundle assets (`tensor-grep.rb`, `oimiragieo.tensor-grep.yaml`, `PUBLISH_INSTRUCTIONS.md`)
 5. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version
