@@ -14,6 +14,10 @@
 - **release**: Stamp winget header version and lock with tests
   ([`2e98eff`](https://github.com/oimiragieo/tensor-grep/commit/2e98effcc4b5283c5a0c7d497f41cb692f794cff))
 
+### Documentation
+
+- **bench**: Refresh `README.md` and `docs/PAPER.md` with latest 2026-03-03 benchmark pass (`b0c0c75`).
+
 
 ## v0.14.0 (2026-03-03)
 
