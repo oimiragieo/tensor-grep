@@ -133,6 +133,19 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
     return errors
 
 
+def validate_installation_docs(*, installation_content: str) -> list[str]:
+    errors: list[str] = []
+    for expected in (
+        "### Homebrew Tap Flow",
+        "### Winget Flow",
+        "### Repeatable Release Checklist",
+        "### Rollback Playbook",
+    ):
+        if expected not in installation_content:
+            errors.append(f"Installation docs missing package-manager section: {expected}")
+    return errors
+
+
 def validate_homebrew_formula_contract(*, brew_content: str, py_version: str) -> list[str]:
     errors: list[str] = []
     has_direct_version = f'version "{py_version}"' in brew_content
@@ -213,12 +226,14 @@ def validate_all() -> list[str]:
 
     package_manager_runbook = _read(ROOT / "docs" / "package_manager_publish.md")
     release_checklist = _read(ROOT / "docs" / "RELEASE_CHECKLIST.md")
+    installation_docs = _read(ROOT / "docs" / "installation.md")
     errors.extend(
         validate_package_manager_docs(
             runbook_content=package_manager_runbook,
             checklist_content=release_checklist,
         )
     )
+    errors.extend(validate_installation_docs(installation_content=installation_docs))
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
