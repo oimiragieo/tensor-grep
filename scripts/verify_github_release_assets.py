@@ -118,12 +118,9 @@ def validate_release_assets_payload(
         if bundle_checksum_required_assets is not None
         else set()
     )
-    managed_names = {
-        name for name in names if name == "CHECKSUMS.txt" or str(name).startswith("tg-")
-    }
-    unexpected_managed = sorted(managed_names - expected_set)
-    for name in unexpected_managed:
-        errors.append(f"Unexpected managed release asset: {name}")
+    unexpected_assets = sorted(names - expected_set)
+    for name in unexpected_assets:
+        errors.append(f"Unexpected release asset: {name}")
 
     expected_checksum_assets = {name for name in checksum_required_set if name != "CHECKSUMS.txt"}
     errors.extend(

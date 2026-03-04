@@ -109,7 +109,46 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_managed_asset
             "CHECKSUMS.txt",
         ],
     )
-    assert any("Unexpected managed release asset: tg-linux-arm64-cpu" in err for err in errors)
+    assert any("Unexpected release asset: tg-linux-arm64-cpu" in err for err in errors)
+
+
+def test_validate_release_assets_payload_should_fail_on_unexpected_non_managed_asset():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "tg-linux-amd64-nvidia", "size": 100, "digest": f"sha256:{'b' * 64}"},
+            {"name": "tg-macos-amd64-cpu", "size": 100, "digest": f"sha256:{'c' * 64}"},
+            {"name": "tg-windows-amd64-cpu.exe", "size": 100, "digest": f"sha256:{'d' * 64}"},
+            {
+                "name": "tg-windows-amd64-nvidia.exe",
+                "size": 100,
+                "digest": f"sha256:{'e' * 64}",
+            },
+            {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'f' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+        ]
+    }
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'b' * 64}  tg-linux-amd64-nvidia",
+        f"{'c' * 64}  tg-macos-amd64-cpu",
+        f"{'d' * 64}  tg-windows-amd64-cpu.exe",
+        f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
+    ])
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content=checksums_content,
+        expected_assets=[
+            "tg-linux-amd64-cpu",
+            "tg-linux-amd64-nvidia",
+            "tg-macos-amd64-cpu",
+            "tg-windows-amd64-cpu.exe",
+            "tg-windows-amd64-nvidia.exe",
+            "CHECKSUMS.txt",
+        ],
+    )
+    assert any("Unexpected release asset: tensor-grep.rb" in err for err in errors)
 
 
 def test_validate_release_assets_payload_should_fail_on_unexpected_checksum_entry():
