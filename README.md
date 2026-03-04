@@ -194,6 +194,7 @@ Inspect routable multi-GPU inventory and VRAM sizing:
 
 ```bash
 $ tg devices
+$ tg devices --format json
 $ tg devices --json
 ```
 

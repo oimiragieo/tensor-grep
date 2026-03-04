@@ -884,16 +884,27 @@ def devices(
         "--json",
         help="Emit device inventory as JSON for automation.",
     ),
+    format_type: str = typer.Option(
+        "text",
+        "--format",
+        help="Output format: text or json.",
+    ),
 ) -> None:
     """Print routable GPU device IDs and VRAM inventory."""
     import json
 
     from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 
+    normalized_format = format_type.lower().strip()
+    if json_output:
+        normalized_format = "json"
+    if normalized_format not in {"text", "json"}:
+        raise typer.BadParameter("--format must be one of: text, json")
+
     inventory = collect_device_inventory()
     payload = inventory.to_dict()
 
-    if json_output:
+    if normalized_format == "json":
         print(json.dumps(payload))
         return
 

@@ -666,6 +666,34 @@ def test_devices_command_text_outputs_device_lines(monkeypatch):
     assert "- gpu:3 vram_mb=24576" in result.output
 
 
+def test_devices_command_format_json_outputs_inventory(monkeypatch):
+    monkeypatch.setattr(
+        "tensor_grep.core.hardware.device_inventory.collect_device_inventory",
+        lambda: _MULTI_GPU_INVENTORY,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["devices", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["platform"] == "windows"
+    assert payload["device_count"] == 2
+
+
+def test_devices_command_should_fail_on_unsupported_format(monkeypatch):
+    monkeypatch.setattr(
+        "tensor_grep.core.hardware.device_inventory.collect_device_inventory",
+        lambda: _MULTI_GPU_INVENTORY,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["devices", "--format", "xml"])
+
+    assert result.exit_code == 2
+    assert "--format must be one of: text, json" in result.output
+
+
 def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
 
