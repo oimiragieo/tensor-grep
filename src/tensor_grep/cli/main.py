@@ -867,6 +867,44 @@ def search_command(
 
 
 @app.command()
+def devices(
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit device inventory as JSON for automation.",
+    ),
+) -> None:
+    """Print routable GPU device IDs and VRAM inventory."""
+    import json
+
+    from tensor_grep.core.hardware.device_detect import DeviceDetector
+
+    detector = DeviceDetector()
+    devices_info = detector.list_devices()
+    payload = {
+        "platform": detector.get_platform().name.lower(),
+        "has_gpu": detector.has_gpu(),
+        "device_count": len(devices_info),
+        "devices": [
+            {"device_id": device.device_id, "vram_capacity_mb": device.vram_capacity_mb}
+            for device in devices_info
+        ],
+    }
+
+    if json_output:
+        print(json.dumps(payload))
+        return
+
+    if not devices_info:
+        typer.echo("No routable GPUs detected.")
+        return
+
+    typer.echo(f"Detected {len(devices_info)} routable GPU(s):")
+    for device in devices_info:
+        typer.echo(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
+
+
+@app.command()
 def classify(
     file_path: str, format_type: str = typer.Option("json", "--format", help="Output format")
 ) -> None:
@@ -1234,7 +1272,18 @@ def main_entry() -> None:
         print("Arrow Zero-Copy IPC is available")
         sys.exit(0)
 
-    known_commands = {"search", "classify", "run", "scan", "test", "new", "lsp", "mcp", "upgrade"}
+    known_commands = {
+        "search",
+        "devices",
+        "classify",
+        "run",
+        "scan",
+        "test",
+        "new",
+        "lsp",
+        "mcp",
+        "upgrade",
+    }
 
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]

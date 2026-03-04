@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
+from tensor_grep.core.hardware.device_detect import DeviceInfo, Platform
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
@@ -484,6 +485,28 @@ class _FakeAstScanner:
         yield "b.py"
 
 
+class _FakeDeviceDetectorNoGpu:
+    def list_devices(self):
+        return []
+
+    def get_platform(self):
+        return Platform.WINDOWS
+
+    def has_gpu(self):
+        return False
+
+
+class _FakeDeviceDetectorMultiGpu:
+    def list_devices(self):
+        return [DeviceInfo(device_id=7, vram_capacity_mb=12288), DeviceInfo(device_id=3, vram_capacity_mb=24576)]
+
+    def get_platform(self):
+        return Platform.WINDOWS
+
+    def has_gpu(self):
+        return True
+
+
 def test_scan_executes_rules_from_sgconfig(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -508,6 +531,41 @@ def test_scan_executes_rules_from_sgconfig(monkeypatch):
     assert result.exit_code == 0
     assert "[scan] rule=error-rule lang=python matches=1 files=1" in result.output
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
+
+
+def test_devices_command_reports_no_gpu_when_none_detected(monkeypatch):
+    monkeypatch.setattr(
+        "tensor_grep.core.hardware.device_detect.DeviceDetector",
+        _FakeDeviceDetectorNoGpu,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["devices"])
+
+    assert result.exit_code == 0
+    assert "No routable GPUs detected." in result.output
+
+
+def test_devices_command_json_outputs_routable_device_inventory(monkeypatch):
+    import json
+
+    monkeypatch.setattr(
+        "tensor_grep.core.hardware.device_detect.DeviceDetector",
+        _FakeDeviceDetectorMultiGpu,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["devices", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["platform"] == "windows"
+    assert payload["has_gpu"] is True
+    assert payload["device_count"] == 2
+    assert payload["devices"] == [
+        {"device_id": 7, "vram_capacity_mb": 12288},
+        {"device_id": 3, "vram_capacity_mb": 24576},
+    ]
 
 
 def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):

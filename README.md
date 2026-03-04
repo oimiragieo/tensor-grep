@@ -190,6 +190,13 @@ Search only Python and Javascript files:
 $ tg -tpy -tjs foobar
 ```
 
+Inspect routable multi-GPU inventory and VRAM sizing:
+
+```bash
+$ tg devices
+$ tg devices --json
+```
+
 ### AI Assistant Integration (MCP)
 `tensor-grep` includes a native Model Context Protocol (MCP) server! This allows modern AI assistants (like Claude Desktop or Cursor) to directly utilize our GPU-accelerated regex engine, structural AST parsers, and cyBERT NLP log classifiers right inside their context windows.
 
