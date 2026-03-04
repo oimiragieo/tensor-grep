@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.21.0 (2026-03-04)
+
+### Continuous Integration
+
+- Upload package-manager bundle artifacts from readiness checks
+  ([`7217df5`](https://github.com/oimiragieo/tensor-grep/commit/7217df590abb6fb372fe9d5c90d1431b927c29a8))
+
+- **release**: Enforce strict release asset matrix membership
+  ([`a50b779`](https://github.com/oimiragieo/tensor-grep/commit/a50b779b7a548b27378b7f453f259f1e148a2a94))
+
+- **release**: Reject unmanaged entries in checksum manifests
+  ([`37128ac`](https://github.com/oimiragieo/tensor-grep/commit/37128ac21b7b21645646e7a40ad668dc459e611d))
+
+- **release**: Smoke-run built binaries before artifact upload
+  ([`5103aec`](https://github.com/oimiragieo/tensor-grep/commit/5103aecc733e1c0915f8ee7b257119fd6b295a9f))
+
+### Features
+
+- **obs**: Attach routing metadata to SearchResult
+  ([`985e303`](https://github.com/oimiragieo/tensor-grep/commit/985e303cf396a9a05e5ca3ab7302abdbd962891c))
+
+
 ## v0.20.0 (2026-03-03)
 
 ### Continuous Integration
