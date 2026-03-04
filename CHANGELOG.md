@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.24.0 (2026-03-04)
+
+### Features
+
+- **json**: Include routing metadata in structured output
+  ([`73b53b8`](https://github.com/oimiragieo/tensor-grep/commit/73b53b88f749c6028abafa1ba197aa0da1d456c8))
+
+### Testing
+
+- **snapshot**: Update json output snapshot for routing metadata
+  ([`87de225`](https://github.com/oimiragieo/tensor-grep/commit/87de2255708503c21185a01c7ddc32c5cd805ff6))
+
+
 ## v0.23.0 (2026-03-04)
 
 ### Code Style
