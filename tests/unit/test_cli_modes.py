@@ -28,6 +28,8 @@ class _FakePipeline:
         self.backend = _FAKE_BACKEND
         self.selected_backend_name = "FakeBackend"
         self.selected_backend_reason = "unit_test_fake_pipeline"
+        self.selected_gpu_device_ids = []
+        self.selected_gpu_chunk_plan_mb = []
 
     def get_backend(self):
         return self.backend
@@ -39,6 +41,13 @@ class _FakeScanner:
 
     def walk(self, path):
         yield from _FAKE_WALK.get(path, [])
+
+
+class _FakeGpuPipeline(_FakePipeline):
+    def __init__(self, force_cpu=False, config=None):
+        super().__init__(force_cpu=force_cpu, config=config)
+        self.selected_gpu_device_ids = [7, 3]
+        self.selected_gpu_chunk_plan_mb = [(7, 256), (3, 512)]
 
 
 @dataclass
@@ -423,6 +432,52 @@ def test_cli_stats_prints_summary_when_matches_found(monkeypatch):
     assert result.exit_code == 0
     assert "[stats] scanned_files=1 matched_files=1 total_matches=1" in result.output
     assert "[stats] backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
+
+
+def test_cli_debug_prints_gpu_routing_details_when_available(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeGpuPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+
+    assert result.exit_code == 0
+    assert "[debug] routing.gpu_device_ids=[7, 3]" in result.output
+    assert "routing.gpu_chunk_plan_mb=[(7, 256), (3, 512)]" in result.output
+
+
+def test_cli_stats_prints_gpu_routing_details_when_available(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeGpuPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "--ltl"])
+
+    assert result.exit_code == 0
+    assert "[stats] gpu_device_ids=[7, 3]" in result.output
+    assert "gpu_chunk_plan_mb=[(7, 256), (3, 512)]" in result.output
 
 
 def test_cli_stats_prints_summary_when_no_matches(monkeypatch):

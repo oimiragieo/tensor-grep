@@ -730,10 +730,17 @@ def search_command(
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+    selected_gpu_device_ids = list(getattr(pipeline, "selected_gpu_device_ids", []) or [])
+    selected_gpu_chunk_plan_mb = list(getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or [])
     if debug:
         typer.echo(
             f"[debug] routing.backend={selected_backend_name} reason={selected_backend_reason}"
         )
+        if selected_gpu_device_ids:
+            typer.echo(
+                f"[debug] routing.gpu_device_ids={selected_gpu_device_ids} "
+                f"routing.gpu_chunk_plan_mb={selected_gpu_chunk_plan_mb}"
+            )
 
     if files:
         if candidate_files_ordered:
@@ -752,12 +759,8 @@ def search_command(
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
     all_results.routing_backend = selected_backend_name
     all_results.routing_reason = selected_backend_reason
-    all_results.routing_gpu_device_ids = list(
-        getattr(pipeline, "selected_gpu_device_ids", []) or []
-    )
-    all_results.routing_gpu_chunk_plan_mb = list(
-        getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
-    )
+    all_results.routing_gpu_device_ids = selected_gpu_device_ids
+    all_results.routing_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
     search_start = time.perf_counter()
 
     # RipgrepBackend optimization: passing all paths natively
@@ -817,6 +820,14 @@ def search_command(
             f"[stats] backend={selected_backend_name} reason={selected_backend_reason}",
             err=True,
         )
+        if selected_gpu_device_ids:
+            typer.echo(
+                (
+                    f"[stats] gpu_device_ids={selected_gpu_device_ids} "
+                    f"gpu_chunk_plan_mb={selected_gpu_chunk_plan_mb}"
+                ),
+                err=True,
+            )
 
     if files_with_matches:
         if matched_files:
