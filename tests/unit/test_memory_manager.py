@@ -133,3 +133,17 @@ class TestMemoryManager:
 
         manager = MemoryManager()
         assert manager.get_device_ids() == [7, 3]
+
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
+    def test_should_prefer_get_device_ids_before_list_devices_for_efficiency(self, mock_detect):
+        mock_instance = MagicMock()
+        mock_instance.has_gpu.return_value = True
+        mock_instance.enumerate_device_ids.return_value = []
+        mock_instance.get_device_ids.return_value = [5, 2]
+        mock_instance.list_devices.side_effect = AssertionError(
+            "list_devices should not be used when get_device_ids already returns routable ids"
+        )
+        mock_detect.return_value = mock_instance
+
+        manager = MemoryManager()
+        assert manager.get_device_ids() == [5, 2]

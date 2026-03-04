@@ -43,20 +43,26 @@ class MemoryManager:
                 enumerated_ids = list(self.detector.enumerate_device_ids())
                 if enumerated_ids:
                     return enumerated_ids
-            devices = self.detector.list_devices()
-            device_ids = [device.device_id for device in devices]
-            if device_ids:
-                return device_ids
-            # Compatibility path for mocks/older detectors that don't populate list_devices yet.
+
+            # Compatibility path for detectors that expose concrete ID enumeration
+            # without requiring full device metadata collection.
             if hasattr(self.detector, "get_device_ids"):
                 legacy_ids = list(self.detector.get_device_ids())
                 if legacy_ids:
                     return legacy_ids
+
+            devices = self.detector.list_devices()
+            device_ids = [device.device_id for device in devices]
+            if device_ids:
+                return device_ids
         except Exception:
             # Backward-compatible fallback when detector does not expose IDs.
             pass
 
-        count = self.detector.get_device_count()
+        try:
+            count = int(self.detector.get_device_count())
+        except Exception:
+            count = 0
         return list(range(count)) if count > 0 else []
 
     def get_device_ids(self, preferred_ids: list[int] | None = None) -> list[int]:
