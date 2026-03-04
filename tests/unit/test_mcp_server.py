@@ -86,3 +86,25 @@ def test_tg_devices_can_emit_json_payload():
     assert payload["has_gpu"] is True
     assert payload["device_count"] == 1
     assert payload["devices"] == [{"device_id": 7, "vram_capacity_mb": 12288}]
+
+
+def test_tg_devices_text_mode_returns_human_inventory_lines():
+    from tensor_grep.cli import mcp_server
+
+    with patch(
+        "tensor_grep.cli.mcp_server.collect_device_inventory",
+        return_value=DeviceInventory(
+            platform="windows",
+            has_gpu=True,
+            device_count=2,
+            devices=[
+                DeviceInfo(device_id=7, vram_capacity_mb=12288),
+                DeviceInfo(device_id=3, vram_capacity_mb=24576),
+            ],
+        ),
+    ):
+        out = mcp_server.tg_devices(json_output=False)
+
+    assert "Detected 2 routable GPU(s):" in out
+    assert "- gpu:7 vram_mb=12288" in out
+    assert "- gpu:3 vram_mb=24576" in out

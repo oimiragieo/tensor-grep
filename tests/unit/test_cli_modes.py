@@ -651,6 +651,21 @@ def test_devices_command_json_outputs_routable_device_inventory(monkeypatch):
     ]
 
 
+def test_devices_command_text_outputs_device_lines(monkeypatch):
+    monkeypatch.setattr(
+        "tensor_grep.core.hardware.device_inventory.collect_device_inventory",
+        lambda: _MULTI_GPU_INVENTORY,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["devices"])
+
+    assert result.exit_code == 0
+    assert "Detected 2 routable GPU(s):" in result.output
+    assert "- gpu:7 vram_mb=12288" in result.output
+    assert "- gpu:3 vram_mb=24576" in result.output
+
+
 def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
 
