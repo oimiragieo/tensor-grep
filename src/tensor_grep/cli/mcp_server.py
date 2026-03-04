@@ -3,6 +3,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.hardware.device_detect import DeviceDetector
 from tensor_grep.core.pipeline import Pipeline
 from tensor_grep.core.result import SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -234,6 +235,39 @@ def tg_classify_logs(file_path: str) -> str:
         import traceback
 
         return f"Log Classification failed: {e!s}\n{traceback.format_exc()}"
+
+
+@mcp.tool()  # type: ignore
+def tg_devices(json_output: bool = False) -> str:
+    """
+    Return routable GPU inventory for scheduling and diagnostics.
+
+    Args:
+        json_output: Emit machine-readable JSON output when true.
+    """
+    import json
+
+    detector = DeviceDetector()
+    devices_info = detector.list_devices()
+    payload = {
+        "platform": detector.get_platform().name.lower(),
+        "has_gpu": detector.has_gpu(),
+        "device_count": len(devices_info),
+        "devices": [
+            {"device_id": device.device_id, "vram_capacity_mb": device.vram_capacity_mb}
+            for device in devices_info
+        ],
+    }
+    if json_output:
+        return json.dumps(payload)
+
+    if not devices_info:
+        return "No routable GPUs detected."
+
+    lines = [f"Detected {len(devices_info)} routable GPU(s):"]
+    for device in devices_info:
+        lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
+    return "\n".join(lines)
 
 
 def run_mcp_server() -> None:
