@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tensor_grep.core.hardware.device_detect import DeviceInfo, Platform
 from tensor_grep.core.hardware.device_inventory import DeviceInventory, collect_device_inventory
@@ -38,3 +38,22 @@ def test_collect_device_inventory_should_read_from_detector_contract():
     assert inventory.has_gpu is True
     assert inventory.device_count == 1
     assert inventory.devices == [DeviceInfo(device_id=1, vram_capacity_mb=8192)]
+
+
+def test_collect_device_inventory_should_construct_default_detector_when_missing():
+    fake_detector = MagicMock()
+    fake_detector.list_devices.return_value = []
+    fake_detector.get_platform.return_value = Platform.LINUX
+    fake_detector.has_gpu.return_value = False
+
+    with patch(
+        "tensor_grep.core.hardware.device_inventory.DeviceDetector",
+        return_value=fake_detector,
+    ) as detector_cls:
+        inventory = collect_device_inventory()
+
+    detector_cls.assert_called_once_with()
+    assert inventory.platform == "linux"
+    assert inventory.has_gpu is False
+    assert inventory.device_count == 0
+    assert inventory.devices == []
