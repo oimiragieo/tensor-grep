@@ -230,8 +230,7 @@ jobs:
         run: |
           python scripts/validate_release_version_parity.py \
             --expected-version "${GITHUB_REF#refs/tags/v}" \
-            --expected-tag "${GITHUB_REF#refs/tags/}" \
-            --skip-pypi
+            --expected-tag "${GITHUB_REF#refs/tags/}"
 
   publish-npm:
     needs: validate-tag-version-parity
