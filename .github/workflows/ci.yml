@@ -88,6 +88,12 @@ jobs:
       - name: Verify package-manager publish bundle checksums
         run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
 
+      - name: Upload package-manager bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-manager-bundle-${{ matrix.os }}
+          path: artifacts/package-manager-bundle/
+
   static-analysis:
     name: Formatting & Linting
     runs-on: ubuntu-latest

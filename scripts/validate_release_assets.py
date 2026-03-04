@@ -83,6 +83,8 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "Verify package-manager publish bundle checksums",
         "scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle",
         "--bundle-dir artifacts/package-manager-bundle",
+        "Upload package-manager bundle artifact",
+        "package-manager-bundle-${{ matrix.os }}",
         "validate-pypi-artifacts:",
         "Validate built PyPI artifact set",
         "Smoke-test install from built PyPI artifacts",
