@@ -151,6 +151,36 @@ def test_should_require_ci_pypi_publish_job_security_contract():
     )
 
 
+def test_should_require_ci_pypi_publish_job_url_and_skip_existing_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    publish-pypi:
+      environment:
+        name: pypi
+      permissions:
+        id-token: write
+      steps:
+        - uses: pypa/gh-action-pypi-publish@release/v1
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "publish-pypi job should set canonical PyPI project URL for deployment visibility" in err
+        for err in errors
+    )
+    assert any(
+        "publish-pypi job should pass `skip-existing: true` to avoid duplicate-upload failures"
+        in err
+        for err in errors
+    )
+
+
 def test_should_fail_ci_workflow_when_parity_gate_skips_package_managers():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
