@@ -87,6 +87,7 @@ Detailed operational steps live in `docs/package_manager_publish.md`.
    - Winget submission: create/update manifest PR in winget-pkgs for new version.
 4. Keep release artifacts canonical:
    - Build artifacts must map 1:1 to tag version and expected filenames.
+   - `release.yml` build matrix smoke-runs each renamed binary (`--version`) on Windows/Linux/macOS before upload.
    - Release job validates expected binary filename matrix and emits `CHECKSUMS.txt` (SHA256) before publishing GitHub release assets.
    - Release job also generates and publishes `package-manager-bundle/` assets (Homebrew formula + Winget manifest + instructions) for repeatable downstream submission.
 

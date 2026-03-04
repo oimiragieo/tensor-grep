@@ -122,6 +122,24 @@ jobs:
       - name: Rename Artifact (macOS)
         if: runner.os == 'macOS'
         run: mv tg tg-macos-amd64-${{ matrix.gpu }}
+
+      - name: Smoke-test Binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\tg-windows-amd64-${{ matrix.gpu }}.exe --version
+
+      - name: Smoke-test Binary (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x tg-linux-amd64-${{ matrix.gpu }}
+          ./tg-linux-amd64-${{ matrix.gpu }} --version
+
+      - name: Smoke-test Binary (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          chmod +x tg-macos-amd64-${{ matrix.gpu }}
+          ./tg-macos-amd64-${{ matrix.gpu }} --version
         
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
