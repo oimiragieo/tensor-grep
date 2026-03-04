@@ -86,3 +86,65 @@ def test_should_fail_when_pypi_never_reaches_expected_version_within_wait_window
         pypi_poll_interval_seconds=1,
     )
     assert f"pypi latest 0.0.1 != expected {expected_version}" in errors
+
+
+def test_should_fail_when_package_manager_urls_do_not_target_expected_release_version():
+    module = _load_module()
+    expected_version = "1.2.3"
+
+    module._version_from_pyproject = lambda: expected_version
+    module._version_from_cargo = lambda: expected_version
+    module._version_from_npm = lambda: expected_version
+    module._version_from_brew_formula = lambda: expected_version
+    module._version_from_winget_manifest = lambda: expected_version
+
+    def fake_read(path):
+        path_str = str(path).replace("\\", "/")
+        if path_str.endswith("scripts/tensor-grep.rb"):
+            return (
+                'url "https://github.com/oimiragieo/tensor-grep/releases/download/v9.9.9/tg-macos-amd64-cpu"\n'
+                'url "https://github.com/oimiragieo/tensor-grep/releases/download/v9.9.9/tg-linux-amd64-cpu"\n'
+            )
+        if path_str.endswith("scripts/oimiragieo.tensor-grep.yaml"):
+            return (
+                "PackageVersion: 1.2.3\n"
+                "Installers:\n"
+                "  - InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v9.9.9/tg-windows-amd64-cpu.exe\n"
+            )
+        raise AssertionError(f"Unexpected path: {path}")
+
+    module._read = fake_read
+    errors = module.validate_release_version_parity(expected_version=expected_version)
+    assert "homebrew macOS url does not target v1.2.3" in errors
+    assert "homebrew Linux url does not target v1.2.3" in errors
+    assert "winget installer url does not target expected release version" in errors
+
+
+def test_should_accept_templated_homebrew_urls_for_expected_release_version():
+    module = _load_module()
+    expected_version = "1.2.3"
+
+    module._version_from_pyproject = lambda: expected_version
+    module._version_from_cargo = lambda: expected_version
+    module._version_from_npm = lambda: expected_version
+    module._version_from_brew_formula = lambda: expected_version
+    module._version_from_winget_manifest = lambda: expected_version
+
+    def fake_read(path):
+        path_str = str(path).replace("\\", "/")
+        if path_str.endswith("scripts/tensor-grep.rb"):
+            return (
+                'url "https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/tg-macos-amd64-cpu"\n'
+                'url "https://github.com/oimiragieo/tensor-grep/releases/download/v#{version}/tg-linux-amd64-cpu"\n'
+            )
+        if path_str.endswith("scripts/oimiragieo.tensor-grep.yaml"):
+            return (
+                "PackageVersion: 1.2.3\n"
+                "Installers:\n"
+                "  - InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n"
+            )
+        raise AssertionError(f"Unexpected path: {path}")
+
+    module._read = fake_read
+    errors = module.validate_release_version_parity(expected_version=expected_version)
+    assert errors == []
