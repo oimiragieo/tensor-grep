@@ -147,3 +147,16 @@ class TestMemoryManager:
 
         manager = MemoryManager()
         assert manager.get_device_ids() == [5, 2]
+
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
+    def test_should_gracefully_return_empty_ids_when_device_count_is_unusable(self, mock_detect):
+        mock_instance = MagicMock()
+        mock_instance.has_gpu.return_value = True
+        mock_instance.enumerate_device_ids.return_value = []
+        mock_instance.get_device_ids.return_value = []
+        mock_instance.list_devices.return_value = []
+        mock_instance.get_device_count.return_value = MagicMock()
+        mock_detect.return_value = mock_instance
+
+        manager = MemoryManager()
+        assert manager.get_device_ids() == []

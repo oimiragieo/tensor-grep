@@ -60,7 +60,8 @@ class MemoryManager:
             pass
 
         try:
-            count = int(self.detector.get_device_count())
+            raw_count = self.detector.get_device_count()
+            count = raw_count if isinstance(raw_count, int) and raw_count >= 0 else 0
         except Exception:
             count = 0
         return list(range(count)) if count > 0 else []
