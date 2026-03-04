@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.23.0 (2026-03-04)
+
+### Code Style
+
+- **test**: Format cli device tests for CI
+  ([`4bf4bf4`](https://github.com/oimiragieo/tensor-grep/commit/4bf4bf4d952ba9f7c78a0efaa2c9fd4d5c5b48c2))
+
+### Documentation
+
+- **bench**: Refresh benchmark tables for 9ec43ed pass
+  ([`ebd182b`](https://github.com/oimiragieo/tensor-grep/commit/ebd182b5b44d3b9c71c6539624cbf30be3285069))
+
+### Features
+
+- **cli**: Add tg devices command for GPU inventory
+  ([`9ec43ed`](https://github.com/oimiragieo/tensor-grep/commit/9ec43edbf12cbea4a92d7a6aa283cc467ccfd866))
+
+- **mcp**: Include routing summary in tool responses
+  ([`8b921a0`](https://github.com/oimiragieo/tensor-grep/commit/8b921a0c032285e116021ec10e8de5e20be9623d))
+
+- **obs**: Surface gpu routing details in debug and stats output
+  ([`da4545f`](https://github.com/oimiragieo/tensor-grep/commit/da4545f886f91ed2dc0878d1106f77d63d9e8be2))
+
+
 ## v0.22.0 (2026-03-04)
 
 ### Code Style
