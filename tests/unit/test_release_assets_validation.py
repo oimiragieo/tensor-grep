@@ -126,6 +126,25 @@ def test_should_require_ci_terminal_publish_success_gate():
     assert any("publish-success-gate" in err for err in errors)
 
 
+def test_should_fail_ci_workflow_when_parity_gate_skips_package_managers():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    publish-pypi:
+      steps:
+        - run: |
+            python scripts/validate_release_version_parity.py --skip-package-managers
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("must not skip package-manager version checks" in err for err in errors)
+
+
 def test_should_require_package_manager_runbook_and_checklist_sections():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
@@ -226,6 +245,26 @@ def test_should_require_release_to_publish_package_manager_bundle_assets():
     assert any("Verify package-manager bundle checksums" in err for err in errors)
     assert any("Smoke-test Binary (Windows)" in err for err in errors)
     assert any("artifacts/package-manager-bundle/**" in err for err in errors)
+
+
+def test_should_fail_release_workflow_when_removed_skip_pypi_flag_is_present():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      validate-tag-version-parity:
+        steps:
+          - run: |
+              python scripts/validate_release_version_parity.py --skip-pypi
+    """
+    errors = module.validate_release_workflow_content(release_workflow=release_workflow)
+    assert any("unsupported --skip-pypi" in err for err in errors)
 
 
 def test_should_require_terminal_release_success_gate_dependencies():

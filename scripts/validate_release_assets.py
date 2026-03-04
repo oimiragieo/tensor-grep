@@ -123,6 +123,11 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     if "needs: [release, publish-pypi]" not in ci_workflow:
         errors.append("CI workflow publish-success-gate must depend on release + publish-pypi")
 
+    if "--skip-package-managers" in ci_workflow:
+        errors.append(
+            "CI workflow parity validation must not skip package-manager version checks"
+        )
+
     return errors
 
 
@@ -255,6 +260,8 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         errors.append(
             "Release workflow package-manager validation must install uv before fallback checks"
         )
+    if "--skip-pypi" in release_workflow:
+        errors.append("Release workflow must not pass unsupported --skip-pypi flag")
     return errors
 
 
