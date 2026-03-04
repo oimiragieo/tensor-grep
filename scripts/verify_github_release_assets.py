@@ -80,8 +80,9 @@ def _validate_manifest_against_assets(
     for checksum_name in sorted(checksums):
         if checksum_name in required_assets:
             continue
-        if checksum_name.startswith("tg-"):
-            errors.append(f"Unexpected checksum entry for unmanaged asset: {checksum_name}")
+        errors.append(
+            f"Unexpected checksum entry in {manifest_name} for unmanaged asset: {checksum_name}"
+        )
     return errors
 
 

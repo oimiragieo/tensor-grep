@@ -149,7 +149,8 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_checksum_entr
         ],
     )
     assert any(
-        "Unexpected checksum entry for unmanaged asset: tg-extra-experimental" in err
+        "Unexpected checksum entry in CHECKSUMS.txt for unmanaged asset: tg-extra-experimental"
+        in err
         for err in errors
     )
 
@@ -260,3 +261,46 @@ def test_validate_release_assets_payload_should_validate_bundle_checksums_agains
         ],
     )
     assert any("Checksum mismatch for PUBLISH_INSTRUCTIONS.md" in err for err in errors)
+
+
+def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksum_entry():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'a' * 64}"},
+            {"name": "oimiragieo.tensor-grep.yaml", "size": 10, "digest": f"sha256:{'b' * 64}"},
+            {"name": "PUBLISH_INSTRUCTIONS.md", "size": 10, "digest": f"sha256:{'c' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+            {"name": "BUNDLE_CHECKSUMS.txt"},
+        ]
+    }
+    bundle_checksums_content = "\n".join([
+        f"{'a' * 64}  tensor-grep.rb",
+        f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
+        f"{'c' * 64}  PUBLISH_INSTRUCTIONS.md",
+        f"{'d' * 64}  unexpected-extra.txt",
+    ])
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content="",
+        bundle_checksums_content=bundle_checksums_content,
+        expected_assets=[
+            "tensor-grep.rb",
+            "oimiragieo.tensor-grep.yaml",
+            "PUBLISH_INSTRUCTIONS.md",
+            "CHECKSUMS.txt",
+            "BUNDLE_CHECKSUMS.txt",
+        ],
+        checksum_required_assets=["CHECKSUMS.txt"],
+        bundle_checksum_required_assets=[
+            "tensor-grep.rb",
+            "oimiragieo.tensor-grep.yaml",
+            "PUBLISH_INSTRUCTIONS.md",
+            "BUNDLE_CHECKSUMS.txt",
+        ],
+    )
+    assert any(
+        "Unexpected checksum entry in BUNDLE_CHECKSUMS.txt for unmanaged asset: unexpected-extra.txt"
+        in err
+        for err in errors
+    )
