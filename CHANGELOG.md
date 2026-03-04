@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.25.0 (2026-03-04)
+
+### Features
+
+- **mcp**: Add tg_devices tool for GPU inventory
+  ([`a109b89`](https://github.com/oimiragieo/tensor-grep/commit/a109b89fd362887d2eb00fbcf497fd9408f0f42f))
+
+
 ## v0.24.0 (2026-03-04)
 
 ### Features
