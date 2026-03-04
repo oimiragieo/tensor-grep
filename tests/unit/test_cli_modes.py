@@ -498,7 +498,10 @@ class _FakeDeviceDetectorNoGpu:
 
 class _FakeDeviceDetectorMultiGpu:
     def list_devices(self):
-        return [DeviceInfo(device_id=7, vram_capacity_mb=12288), DeviceInfo(device_id=3, vram_capacity_mb=24576)]
+        return [
+            DeviceInfo(device_id=7, vram_capacity_mb=12288),
+            DeviceInfo(device_id=3, vram_capacity_mb=24576),
+        ]
 
     def get_platform(self):
         return Platform.WINDOWS
