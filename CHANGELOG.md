@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.26.2 (2026-03-04)
+
+### Performance Improvements
+
+- **memory**: Cache detected gpu ids between routing calls
+  ([`2df9fae`](https://github.com/oimiragieo/tensor-grep/commit/2df9fae5a11f1f68c10f4285e34331e0511b58dd))
+
+### Testing
+
+- **release**: Cover package-manager url parity validation paths
+  ([`e3b7d6c`](https://github.com/oimiragieo/tensor-grep/commit/e3b7d6c69c3a15bf2743925dc3a920772123ff14))
+
+
 ## v0.26.1 (2026-03-04)
 
 ### Bug Fixes
