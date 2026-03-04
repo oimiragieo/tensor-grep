@@ -1,6 +1,52 @@
 # CHANGELOG
 
 
+## v0.26.0 (2026-03-04)
+
+### Code Style
+
+- Apply ruff preview formatting to satisfy ci formatter gate
+  ([`5c90e76`](https://github.com/oimiragieo/tensor-grep/commit/5c90e76f1af035cb1dd5d95ba5e10ffd9cc51429))
+
+### Documentation
+
+- Document mcp tg_devices and json routing metadata
+  ([`84596ba`](https://github.com/oimiragieo/tensor-grep/commit/84596ba820cadaad26c24b97b87e90a3c1b7e17d))
+
+- **bench**: Refresh benchmark results for latest routing line
+  ([`cf7f2c8`](https://github.com/oimiragieo/tensor-grep/commit/cf7f2c8ea2d1a81026978cefa64383f85f4fecfe))
+
+### Features
+
+- **cli**: Add --format support to tg devices output
+  ([`2533fb6`](https://github.com/oimiragieo/tensor-grep/commit/2533fb63b48f92bbf0e5fd9f2ee1e466c4d10d47))
+
+### Refactoring
+
+- **hardware**: Unify gpu inventory contract for cli and mcp
+  ([`e5b8847`](https://github.com/oimiragieo/tensor-grep/commit/e5b88475d8644c77fb911e770cc88af72806c5e4))
+
+- **torch**: Prefer stable gpu id enumeration api for routing
+  ([`6362984`](https://github.com/oimiragieo/tensor-grep/commit/63629842f6d9a2f7841d02a04b62ec3479792278))
+
+### Testing
+
+- **cli**: Lock json routing metadata contract
+  ([`eb2823a`](https://github.com/oimiragieo/tensor-grep/commit/eb2823acde75ce98f82720dde56feae01b655bce))
+
+- **cli**: Lock main_entry routing for devices and raw patterns
+  ([`4b38bab`](https://github.com/oimiragieo/tensor-grep/commit/4b38bab38e930f62784e3b56c23319d218235041))
+
+- **cli**: Make devices format error assertion resilient to ansi rendering
+  ([`b99d4dd`](https://github.com/oimiragieo/tensor-grep/commit/b99d4dd869dc5eda3bd39d422d8362aba39620dc))
+
+- **devices**: Lock human-readable inventory output contract
+  ([`0589c7e`](https://github.com/oimiragieo/tensor-grep/commit/0589c7e46eff1454926a233d0d540923098f220b))
+
+- **hardware**: Cover default detector path in inventory helper
+  ([`00e6265`](https://github.com/oimiragieo/tensor-grep/commit/00e62655d82b3b495efcbae7bb50ebc843f2dc6a))
+
+
 ## v0.25.0 (2026-03-04)
 
 ### Features
