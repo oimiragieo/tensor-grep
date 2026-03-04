@@ -131,6 +131,18 @@ class CuDFBackend(ComputeBackend):
             file_size=file_size,
             device_chunks_mb=[(device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb],
         )
+        if len(execution_plan) == 1:
+            device_id, chunk_offset, chunk_size = execution_plan[0]
+            single_matches, _ = _process_chunk_on_device(
+                device_id,
+                file_path,
+                chunk_offset,
+                chunk_size,
+                pattern,
+                config,
+            )
+            return sorted(single_matches, key=lambda m: m.line_number)
+
         with ProcessPoolExecutor(max_workers=len(device_chunks_mb)) as executor:
             futures = []
             for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):

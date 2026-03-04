@@ -183,3 +183,30 @@ class TestCuDFBackend:
 
         submitted_device_ids = [call.args[1] for call in mock_executor.submit.call_args_list]
         assert submitted_device_ids[:2] == [3, 7]
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
+    def test_should_not_spawn_process_pool_when_multi_gpu_plan_has_single_chunk(
+        self, mock_process_chunk, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.result import MatchLine
+
+        backend = CuDFBackend(chunk_sizes_mb=[512, 512], device_ids=[3, 7])
+        mock_process_chunk.return_value = (
+            [MatchLine(line_number=1, text="ERROR", file="test.log")],
+            1,
+        )
+
+        matches = backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=1 * 1024 * 1024,  # small enough to produce exactly one chunk
+            device_chunks_mb=[(3, 512), (7, 512)],
+            config=None,
+        )
+
+        mock_pool.assert_not_called()
+        mock_process_chunk.assert_called_once()
+        assert len(matches) == 1
+        assert matches[0].line_number == 1
