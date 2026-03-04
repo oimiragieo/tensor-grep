@@ -4,6 +4,7 @@ from tensor_grep.core.hardware.device_detect import DeviceDetector
 class MemoryManager:
     def __init__(self) -> None:
         self.detector = DeviceDetector()
+        self._cached_detected_device_ids: list[int] | None = None
 
     def get_vram_budget_mb(self, device_id: int = 0) -> int:
         if not self.detector.has_gpu():
@@ -36,25 +37,32 @@ class MemoryManager:
         return [chunk_mb for _, chunk_mb in self.get_device_chunk_plan_mb()]
 
     def _get_detected_device_ids(self) -> list[int]:
+        if self._cached_detected_device_ids is not None:
+            return list(self._cached_detected_device_ids)
+
         if not self.detector.has_gpu():
+            self._cached_detected_device_ids = []
             return []
         try:
             if hasattr(self.detector, "enumerate_device_ids"):
                 enumerated_ids = list(self.detector.enumerate_device_ids())
                 if enumerated_ids:
-                    return enumerated_ids
+                    self._cached_detected_device_ids = list(enumerated_ids)
+                    return list(enumerated_ids)
 
             # Compatibility path for detectors that expose concrete ID enumeration
             # without requiring full device metadata collection.
             if hasattr(self.detector, "get_device_ids"):
                 legacy_ids = list(self.detector.get_device_ids())
                 if legacy_ids:
-                    return legacy_ids
+                    self._cached_detected_device_ids = list(legacy_ids)
+                    return list(legacy_ids)
 
             devices = self.detector.list_devices()
             device_ids = [device.device_id for device in devices]
             if device_ids:
-                return device_ids
+                self._cached_detected_device_ids = list(device_ids)
+                return list(device_ids)
         except Exception:
             # Backward-compatible fallback when detector does not expose IDs.
             pass
@@ -64,7 +72,9 @@ class MemoryManager:
             count = raw_count if isinstance(raw_count, int) and raw_count >= 0 else 0
         except Exception:
             count = 0
-        return list(range(count)) if count > 0 else []
+        fallback_ids = list(range(count)) if count > 0 else []
+        self._cached_detected_device_ids = list(fallback_ids)
+        return fallback_ids
 
     def get_device_ids(self, preferred_ids: list[int] | None = None) -> list[int]:
         detected_ids = self._get_detected_device_ids()

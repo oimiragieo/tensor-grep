@@ -160,3 +160,19 @@ class TestMemoryManager:
 
         manager = MemoryManager()
         assert manager.get_device_ids() == []
+
+    @patch("tensor_grep.core.hardware.memory_manager.DeviceDetector")
+    def test_should_cache_detected_device_ids_to_avoid_repeated_hardware_probes(self, mock_detect):
+        mock_instance = MagicMock()
+        mock_instance.has_gpu.return_value = True
+        mock_instance.enumerate_device_ids.return_value = [7, 3]
+        mock_detect.return_value = mock_instance
+
+        manager = MemoryManager()
+        first = manager.get_device_ids()
+        second = manager.get_device_ids()
+
+        assert first == [7, 3]
+        assert second == [7, 3]
+        mock_instance.has_gpu.assert_called_once()
+        mock_instance.enumerate_device_ids.assert_called_once()
