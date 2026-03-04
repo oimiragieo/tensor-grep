@@ -92,7 +92,12 @@ class TorchBackend(ComputeBackend):
 
         import torch
 
-        resolved_device_ids = self.device_ids or self.device_detector.get_device_ids()
+        if self.device_ids is not None:
+            resolved_device_ids = self.device_ids
+        elif hasattr(self.device_detector, "enumerate_device_ids"):
+            resolved_device_ids = list(self.device_detector.enumerate_device_ids())
+        else:
+            resolved_device_ids = self.device_detector.get_device_ids()
         if not resolved_device_ids:
             resolved_device_ids = [0]
         devices = [torch.device(f"cuda:{device_id}") for device_id in resolved_device_ids]

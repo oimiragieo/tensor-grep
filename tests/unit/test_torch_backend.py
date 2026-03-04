@@ -168,3 +168,31 @@ def test_torch_backend_should_fanout_work_to_executor_when_multi_gpu(tmp_path):
 
     assert result.total_matches == 4
     assert _FakeExecutor.submitted_devices == ["cuda:3", "cuda:7"]
+
+
+def test_torch_backend_should_prefer_enumerate_device_ids_when_available(tmp_path):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_enumerate.log"
+    path.write_text("ERROR A\nERROR B\n", encoding="utf-8")
+
+    fake_torch = _FakeTorch()
+    backend = TorchBackend(device_ids=None)
+
+    class _DetectorWithStableApi:
+        def enumerate_device_ids(self):
+            return [7, 3]
+
+        def get_device_ids(self):
+            raise AssertionError("get_device_ids should not be called when enumerate_device_ids exists")
+
+    backend.device_detector = _DetectorWithStableApi()
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        result = backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 2
+    assert "cuda:7" in fake_torch.device_calls
+    assert "cuda:3" in fake_torch.device_calls
