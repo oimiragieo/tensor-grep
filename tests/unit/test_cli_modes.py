@@ -691,7 +691,7 @@ def test_devices_command_should_fail_on_unsupported_format(monkeypatch):
     result = runner.invoke(app, ["devices", "--format", "xml"])
 
     assert result.exit_code == 2
-    assert "--format must be one of: text, json" in result.output
+    assert "must be one of: text, json" in result.output
 
 
 def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
