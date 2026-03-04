@@ -9,6 +9,13 @@ class JsonFormatter(OutputFormatter):
         data = {
             "total_matches": result.total_matches,
             "total_files": result.total_files,
+            "routing_backend": result.routing_backend,
+            "routing_reason": result.routing_reason,
+            "routing_gpu_device_ids": result.routing_gpu_device_ids,
+            "routing_gpu_chunk_plan_mb": [
+                {"device_id": device_id, "chunk_mb": chunk_mb}
+                for device_id, chunk_mb in result.routing_gpu_chunk_plan_mb
+            ],
             "matches": [
                 {"file": m.file, "line_number": m.line_number, "text": m.text}
                 for m in result.matches
