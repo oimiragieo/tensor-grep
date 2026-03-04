@@ -59,6 +59,13 @@ def tg_search(
     scanner = DirectoryScanner(config)
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    all_results.routing_backend = getattr(
+        pipeline, "selected_backend_name", backend.__class__.__name__
+    )
+    all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+    all_results.routing_gpu_device_ids = list(
+        getattr(pipeline, "selected_gpu_device_ids", []) or []
+    )
 
     try:
         for current_file in scanner.walk(path):
@@ -125,6 +132,13 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
 
     scanner = DirectoryScanner(config)
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    all_results.routing_backend = getattr(
+        pipeline, "selected_backend_name", backend.__class__.__name__
+    )
+    all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+    all_results.routing_gpu_device_ids = list(
+        getattr(pipeline, "selected_gpu_device_ids", []) or []
+    )
 
     try:
         for current_file in scanner.walk(path):

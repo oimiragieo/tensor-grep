@@ -750,6 +750,11 @@ def search_command(
         tracer = None
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    all_results.routing_backend = selected_backend_name
+    all_results.routing_reason = selected_backend_reason
+    all_results.routing_gpu_device_ids = list(
+        getattr(pipeline, "selected_gpu_device_ids", []) or []
+    )
     search_start = time.perf_counter()
 
     # RipgrepBackend optimization: passing all paths natively
