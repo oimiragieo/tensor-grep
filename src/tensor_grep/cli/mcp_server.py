@@ -11,6 +11,16 @@ from tensor_grep.io.directory_scanner import DirectoryScanner
 mcp = FastMCP("tensor-grep")
 
 
+def _routing_summary(result: SearchResult) -> str:
+    return (
+        "Routing: "
+        f"backend={result.routing_backend or 'unknown'} "
+        f"reason={result.routing_reason or 'unknown'} "
+        f"gpu_device_ids={result.routing_gpu_device_ids} "
+        f"gpu_chunk_plan_mb={result.routing_gpu_chunk_plan_mb}"
+    )
+
+
 @mcp.tool()  # type: ignore
 def tg_search(
     pattern: str,
@@ -79,14 +89,15 @@ def tg_search(
                 all_results.total_files += 1
 
         if all_results.is_empty:
-            return f"No matches found for '{pattern}' in {path}."
+            return f"No matches found for '{pattern}' in {path}.\n{_routing_summary(all_results)}"
 
         if count_matches:
             return f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}."
 
         # Format the results into a readable string for the LLM
         output = [
-            f"Found {all_results.total_matches} matches across {all_results.total_files} files:"
+            f"Found {all_results.total_matches} matches across {all_results.total_files} files:",
+            _routing_summary(all_results),
         ]
 
         # Group by file
@@ -155,10 +166,11 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
                 all_results.total_files += 1
 
         if all_results.is_empty:
-            return f"No AST matches found for pattern in {path}."
+            return f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
 
         output = [
-            f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:"
+            f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:",
+            _routing_summary(all_results),
         ]
 
         # Group by file
