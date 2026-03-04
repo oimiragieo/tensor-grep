@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.26.1 (2026-03-04)
+
+### Bug Fixes
+
+- **memory**: Ignore non-integer device count fallback values
+  ([`7234eee`](https://github.com/oimiragieo/tensor-grep/commit/7234eeed9b19ea15a61041d62b28f6129394e5dd))
+
+### Performance Improvements
+
+- **memory**: Prefer direct gpu id lookup before device metadata enumeration
+  ([`abf9d62`](https://github.com/oimiragieo/tensor-grep/commit/abf9d629ee51f3ab6a54f5c1d4877c48fbb4790a))
+
+### Testing
+
+- **release**: Enforce ci pypi publish job security contract
+  ([`16891a1`](https://github.com/oimiragieo/tensor-grep/commit/16891a1def2287ba3eea357866f64c8ddb3a1938))
+
+- **release**: Require ci pypi url and skip-existing publish contract
+  ([`874a7e7`](https://github.com/oimiragieo/tensor-grep/commit/874a7e7f44eeca0b88c3340a7efc67f377aa7daa))
+
+
 ## v0.26.0 (2026-03-04)
 
 ### Code Style
