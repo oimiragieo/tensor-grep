@@ -184,7 +184,9 @@ def test_torch_backend_should_prefer_enumerate_device_ids_when_available(tmp_pat
             return [7, 3]
 
         def get_device_ids(self):
-            raise AssertionError("get_device_ids should not be called when enumerate_device_ids exists")
+            raise AssertionError(
+                "get_device_ids should not be called when enumerate_device_ids exists"
+            )
 
     backend.device_detector = _DetectorWithStableApi()
     with (
