@@ -126,6 +126,16 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")
 
+    if "publish-pypi:" in ci_workflow:
+        if "name: pypi" not in ci_workflow:
+            errors.append("CI workflow publish-pypi job must target `environment: pypi`")
+        if "id-token: write" not in ci_workflow:
+            errors.append("CI workflow publish-pypi job must request `id-token: write` permission")
+        if "uses: pypa/gh-action-pypi-publish@release/v1" not in ci_workflow:
+            errors.append(
+                "CI workflow publish-pypi job must use pypa/gh-action-pypi-publish@release/v1"
+            )
+
     return errors
 
 

@@ -126,6 +126,31 @@ def test_should_require_ci_terminal_publish_success_gate():
     assert any("publish-success-gate" in err for err in errors)
 
 
+def test_should_require_ci_pypi_publish_job_security_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    publish-pypi:
+      needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]
+      steps:
+        - run: echo publish
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("publish-pypi job must target `environment: pypi`" in err for err in errors)
+    assert any(
+        "publish-pypi job must request `id-token: write` permission" in err for err in errors
+    )
+    assert any(
+        "publish-pypi job must use pypa/gh-action-pypi-publish@release/v1" in err for err in errors
+    )
+
+
 def test_should_fail_ci_workflow_when_parity_gate_skips_package_managers():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
