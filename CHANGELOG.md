@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v0.22.0 (2026-03-04)
+
+### Code Style
+
+- Format release asset validator for CI
+  ([`011c239`](https://github.com/oimiragieo/tensor-grep/commit/011c239dc8a64976ca911bfb808c93a256432b9f))
+
+### Continuous Integration
+
+- **parity**: Enforce package-manager version checks on publish gate
+  ([`fb3e4f4`](https://github.com/oimiragieo/tensor-grep/commit/fb3e4f4331a793da4cb3b54e41ece113a2cec9b8))
+
+- **release**: Remove invalid parity flag and add workflow guard tests
+  ([`abeaedf`](https://github.com/oimiragieo/tensor-grep/commit/abeaedff9af103e53db69c4a8e71c91aa6897515))
+
+### Documentation
+
+- Refresh benchmark results for 985e303 rerun
+  ([`3c3d342`](https://github.com/oimiragieo/tensor-grep/commit/3c3d342ac32613e518d07387d017426267964aa6))
+
+### Features
+
+- **obs**: Expose multi-gpu chunk plan metadata through pipeline/results
+  ([`1e1d3b7`](https://github.com/oimiragieo/tensor-grep/commit/1e1d3b723571c09fc5bb0309d44545be660b1dc5))
+
+### Testing
+
+- **release**: Guard against parity skip flags in workflows
+  ([`eaae45a`](https://github.com/oimiragieo/tensor-grep/commit/eaae45a9b7ba83bcf2a13b6b18b3ef2cd243c41b))
+
+
 ## v0.21.0 (2026-03-04)
 
 ### Continuous Integration
