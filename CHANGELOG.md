@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.26.3 (2026-03-04)
+
+### Performance Improvements
+
+- **cudf**: Skip process pool when distributed plan has one chunk
+  ([`3754ecd`](https://github.com/oimiragieo/tensor-grep/commit/3754ecd691de5d5d307c16508ec53b592fddd672))
+
+### Testing
+
+- **memory**: Ensure cached gpu id lists are returned immutably
+  ([`d45d53b`](https://github.com/oimiragieo/tensor-grep/commit/d45d53b98ba49ca5dad6022926e51d8dcf352ff5))
+
+
 ## v0.26.2 (2026-03-04)
 
 ### Performance Improvements
