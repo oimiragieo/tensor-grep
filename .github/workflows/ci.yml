@@ -461,7 +461,6 @@ jobs:
           python scripts/validate_release_version_parity.py \
             --expected-version "${{ needs.release.outputs.release_version }}" \
             --expected-tag "v${{ needs.release.outputs.release_version }}" \
-            --skip-package-managers \
             --check-pypi \
             --pypi-wait-seconds 180 \
             --pypi-poll-interval-seconds 10
