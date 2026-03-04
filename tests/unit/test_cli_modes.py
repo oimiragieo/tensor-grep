@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
-from tensor_grep.core.hardware.device_detect import DeviceInfo, Platform
+from tensor_grep.core.hardware.device_detect import DeviceInfo
+from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
@@ -571,29 +572,22 @@ class _FakeAstScanner:
         yield "b.py"
 
 
-class _FakeDeviceDetectorNoGpu:
-    def list_devices(self):
-        return []
+_NO_GPU_INVENTORY = DeviceInventory(
+    platform="windows",
+    has_gpu=False,
+    device_count=0,
+    devices=[],
+)
 
-    def get_platform(self):
-        return Platform.WINDOWS
-
-    def has_gpu(self):
-        return False
-
-
-class _FakeDeviceDetectorMultiGpu:
-    def list_devices(self):
-        return [
-            DeviceInfo(device_id=7, vram_capacity_mb=12288),
-            DeviceInfo(device_id=3, vram_capacity_mb=24576),
-        ]
-
-    def get_platform(self):
-        return Platform.WINDOWS
-
-    def has_gpu(self):
-        return True
+_MULTI_GPU_INVENTORY = DeviceInventory(
+    platform="windows",
+    has_gpu=True,
+    device_count=2,
+    devices=[
+        DeviceInfo(device_id=7, vram_capacity_mb=12288),
+        DeviceInfo(device_id=3, vram_capacity_mb=24576),
+    ],
+)
 
 
 def test_scan_executes_rules_from_sgconfig(monkeypatch):
@@ -624,8 +618,8 @@ def test_scan_executes_rules_from_sgconfig(monkeypatch):
 
 def test_devices_command_reports_no_gpu_when_none_detected(monkeypatch):
     monkeypatch.setattr(
-        "tensor_grep.core.hardware.device_detect.DeviceDetector",
-        _FakeDeviceDetectorNoGpu,
+        "tensor_grep.core.hardware.device_inventory.collect_device_inventory",
+        lambda: _NO_GPU_INVENTORY,
     )
 
     runner = CliRunner()
@@ -639,8 +633,8 @@ def test_devices_command_json_outputs_routable_device_inventory(monkeypatch):
     import json
 
     monkeypatch.setattr(
-        "tensor_grep.core.hardware.device_detect.DeviceDetector",
-        _FakeDeviceDetectorMultiGpu,
+        "tensor_grep.core.hardware.device_inventory.collect_device_inventory",
+        lambda: _MULTI_GPU_INVENTORY,
     )
 
     runner = CliRunner()

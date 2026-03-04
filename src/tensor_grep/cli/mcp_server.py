@@ -3,7 +3,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.hardware.device_detect import DeviceDetector
+from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 from tensor_grep.core.pipeline import Pipeline
 from tensor_grep.core.result import SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -247,25 +247,16 @@ def tg_devices(json_output: bool = False) -> str:
     """
     import json
 
-    detector = DeviceDetector()
-    devices_info = detector.list_devices()
-    payload = {
-        "platform": detector.get_platform().name.lower(),
-        "has_gpu": detector.has_gpu(),
-        "device_count": len(devices_info),
-        "devices": [
-            {"device_id": device.device_id, "vram_capacity_mb": device.vram_capacity_mb}
-            for device in devices_info
-        ],
-    }
+    inventory = collect_device_inventory()
+    payload = inventory.to_dict()
     if json_output:
         return json.dumps(payload)
 
-    if not devices_info:
+    if not inventory.devices:
         return "No routable GPUs detected."
 
-    lines = [f"Detected {len(devices_info)} routable GPU(s):"]
-    for device in devices_info:
+    lines = [f"Detected {inventory.device_count} routable GPU(s):"]
+    for device in inventory.devices:
         lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
     return "\n".join(lines)
 

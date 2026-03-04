@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
-from tensor_grep.core.hardware.device_detect import DeviceInfo, Platform
+from tensor_grep.core.hardware.device_detect import DeviceInfo
+from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
@@ -52,32 +53,13 @@ def test_tg_search_includes_routing_summary_in_non_empty_output():
     assert "gpu_chunk_plan_mb=[(7, 256), (3, 512)]" in out
 
 
-class _FakeDeviceDetectorNoGpu:
-    def list_devices(self):
-        return []
-
-    def get_platform(self):
-        return Platform.WINDOWS
-
-    def has_gpu(self):
-        return False
-
-
-class _FakeDeviceDetectorGpu:
-    def list_devices(self):
-        return [DeviceInfo(device_id=7, vram_capacity_mb=12288)]
-
-    def get_platform(self):
-        return Platform.WINDOWS
-
-    def has_gpu(self):
-        return True
-
-
 def test_tg_devices_returns_no_gpu_message_when_empty():
     from tensor_grep.cli import mcp_server
 
-    with patch("tensor_grep.cli.mcp_server.DeviceDetector", _FakeDeviceDetectorNoGpu):
+    with patch(
+        "tensor_grep.cli.mcp_server.collect_device_inventory",
+        return_value=DeviceInventory(platform="windows", has_gpu=False, device_count=0, devices=[]),
+    ):
         out = mcp_server.tg_devices()
 
     assert out == "No routable GPUs detected."
@@ -88,7 +70,15 @@ def test_tg_devices_can_emit_json_payload():
 
     from tensor_grep.cli import mcp_server
 
-    with patch("tensor_grep.cli.mcp_server.DeviceDetector", _FakeDeviceDetectorGpu):
+    with patch(
+        "tensor_grep.cli.mcp_server.collect_device_inventory",
+        return_value=DeviceInventory(
+            platform="windows",
+            has_gpu=True,
+            device_count=1,
+            devices=[DeviceInfo(device_id=7, vram_capacity_mb=12288)],
+        ),
+    ):
         out = mcp_server.tg_devices(json_output=True)
 
     payload = json.loads(out)

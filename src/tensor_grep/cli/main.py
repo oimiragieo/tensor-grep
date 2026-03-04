@@ -888,30 +888,21 @@ def devices(
     """Print routable GPU device IDs and VRAM inventory."""
     import json
 
-    from tensor_grep.core.hardware.device_detect import DeviceDetector
+    from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 
-    detector = DeviceDetector()
-    devices_info = detector.list_devices()
-    payload = {
-        "platform": detector.get_platform().name.lower(),
-        "has_gpu": detector.has_gpu(),
-        "device_count": len(devices_info),
-        "devices": [
-            {"device_id": device.device_id, "vram_capacity_mb": device.vram_capacity_mb}
-            for device in devices_info
-        ],
-    }
+    inventory = collect_device_inventory()
+    payload = inventory.to_dict()
 
     if json_output:
         print(json.dumps(payload))
         return
 
-    if not devices_info:
+    if not inventory.devices:
         typer.echo("No routable GPUs detected.")
         return
 
-    typer.echo(f"Detected {len(devices_info)} routable GPU(s):")
-    for device in devices_info:
+    typer.echo(f"Detected {inventory.device_count} routable GPU(s):")
+    for device in inventory.devices:
         typer.echo(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
 
 
