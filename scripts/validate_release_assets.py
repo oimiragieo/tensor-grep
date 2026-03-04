@@ -124,9 +124,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         errors.append("CI workflow publish-success-gate must depend on release + publish-pypi")
 
     if "--skip-package-managers" in ci_workflow:
-        errors.append(
-            "CI workflow parity validation must not skip package-manager version checks"
-        )
+        errors.append("CI workflow parity validation must not skip package-manager version checks")
 
     return errors
 
