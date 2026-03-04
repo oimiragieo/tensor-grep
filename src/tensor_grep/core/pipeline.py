@@ -65,6 +65,7 @@ class Pipeline:
         selected_backend_name = "unknown"
         selected_backend_reason = "unknown"
         selected_gpu_device_ids: list[int] = []
+        selected_gpu_chunk_plan_mb: list[tuple[int, int]] = []
         span_ctx: Any = nullcontext()
 
         try:
@@ -172,6 +173,7 @@ class Pipeline:
                 )
                 chunk_sizes = [chunk_mb for _, chunk_mb in device_chunk_plan]
                 device_ids = [device_id for device_id, _ in device_chunk_plan]
+                selected_gpu_chunk_plan_mb = list(device_chunk_plan)
 
                 # If no chunk sizes were returned but we didn't force CPU, something is wrong with CUDA, fallback
                 if not chunk_sizes:
@@ -211,6 +213,7 @@ class Pipeline:
                 )
                 chunk_sizes = [chunk_mb for _, chunk_mb in device_chunk_plan]
                 device_ids = [device_id for device_id, _ in device_chunk_plan]
+                selected_gpu_chunk_plan_mb = list(device_chunk_plan)
 
                 if not chunk_sizes:
                     self.backend = fallback_backend
@@ -253,10 +256,18 @@ class Pipeline:
                 span.set_attribute(
                     "backend.gpu_device_ids", ",".join(map(str, selected_gpu_device_ids))
                 )
+                span.set_attribute(
+                    "backend.gpu_chunk_plan_mb",
+                    ",".join(
+                        f"{device_id}:{chunk_mb}"
+                        for device_id, chunk_mb in selected_gpu_chunk_plan_mb
+                    ),
+                )
 
         self.selected_backend_name = selected_backend_name
         self.selected_backend_reason = selected_backend_reason
         self.selected_gpu_device_ids = selected_gpu_device_ids
+        self.selected_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
 
     def get_backend(self) -> ComputeBackend:
         return self.backend

@@ -18,6 +18,7 @@ class TestPipeline:
         assert pipeline.selected_backend_name == "MagicMock"
         assert pipeline.selected_backend_reason == "rg_default_fast_path"
         assert pipeline.selected_gpu_device_ids == []
+        assert pipeline.selected_gpu_chunk_plan_mb == []
         assert mock_rg.return_value == pipeline.backend
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
@@ -30,6 +31,7 @@ class TestPipeline:
         assert pipeline.backend == mock_rust.return_value
         assert pipeline.selected_backend_reason == "rust_secondary_fast_path"
         assert pipeline.selected_gpu_device_ids == []
+        assert pipeline.selected_gpu_chunk_plan_mb == []
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -51,6 +53,7 @@ class TestPipeline:
         assert pipeline.backend == mock_cudf.return_value
         assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
         assert pipeline.selected_gpu_device_ids == [0]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(0, 512)]
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -74,6 +77,7 @@ class TestPipeline:
         assert pipeline.backend == mock_cudf.return_value
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_cudf"
         assert pipeline.selected_gpu_device_ids == [3, 7]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(3, 512), (7, 512)]
         mock_mem.return_value.get_device_chunk_plan_mb.assert_called_once_with(preferred_ids=[3, 7])
 
     @patch("tensor_grep.backends.torch_backend.TorchBackend")
@@ -100,6 +104,7 @@ class TestPipeline:
         assert pipeline.backend == mock_rg.return_value
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_no_gpu_backend_fallback"
         assert pipeline.selected_gpu_device_ids == []
+        assert pipeline.selected_gpu_chunk_plan_mb == [(3, 512), (7, 512)]
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -121,6 +126,7 @@ class TestPipeline:
         assert pipeline.backend == mock_rg.return_value
         assert pipeline.selected_backend_reason == "rg_default_fast_path"
         assert pipeline.selected_gpu_device_ids == []
+        assert pipeline.selected_gpu_chunk_plan_mb == []
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -142,6 +148,7 @@ class TestPipeline:
         assert pipeline.backend == mock_cudf.return_value
         assert pipeline.selected_backend_reason == "gpu_heuristic_cudf"
         assert pipeline.selected_gpu_device_ids == [0]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(0, 512)]
         mock_mem.return_value.get_device_chunk_plan_mb.assert_called_once_with(preferred_ids=None)
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
@@ -165,6 +172,7 @@ class TestPipeline:
         assert pipeline.backend == mock_cudf.return_value
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_cudf"
         assert pipeline.selected_gpu_device_ids == [7, 3]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(7, 256), (3, 512)]
         mock_mem.return_value.get_device_chunk_plan_mb.assert_called_once_with(preferred_ids=[7, 3])
         mock_cudf.assert_called_once_with(chunk_sizes_mb=[256, 512], device_ids=[7, 3])
 
@@ -191,6 +199,7 @@ class TestPipeline:
         assert pipeline.backend == mock_cudf.return_value
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_cudf"
         assert pipeline.selected_gpu_device_ids == [7]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(7, 256)]
         mock_mem.return_value.get_device_chunk_plan_mb.assert_called_once_with(
             preferred_ids=[7, 99, 7]
         )
@@ -220,6 +229,7 @@ class TestPipeline:
         assert pipeline.backend == mock_torch_backend.return_value
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
         assert pipeline.selected_gpu_device_ids == [7, 3]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(7, 256), (3, 512)]
         mock_torch_backend.assert_called_once_with(device_ids=[7, 3])
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
@@ -242,6 +252,7 @@ class TestPipeline:
         assert pipeline.backend == mock_rust.return_value
         assert pipeline.selected_backend_reason == "rust_secondary_fast_path"
         assert pipeline.selected_gpu_device_ids == []
+        assert pipeline.selected_gpu_chunk_plan_mb == []
 
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_select_cudf_when_available(self, mock_mem):

@@ -66,6 +66,9 @@ def tg_search(
     all_results.routing_gpu_device_ids = list(
         getattr(pipeline, "selected_gpu_device_ids", []) or []
     )
+    all_results.routing_gpu_chunk_plan_mb = list(
+        getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
+    )
 
     try:
         for current_file in scanner.walk(path):
@@ -138,6 +141,9 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
     all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
     all_results.routing_gpu_device_ids = list(
         getattr(pipeline, "selected_gpu_device_ids", []) or []
+    )
+    all_results.routing_gpu_chunk_plan_mb = list(
+        getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
     )
 
     try:

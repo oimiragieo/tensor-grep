@@ -755,6 +755,9 @@ def search_command(
     all_results.routing_gpu_device_ids = list(
         getattr(pipeline, "selected_gpu_device_ids", []) or []
     )
+    all_results.routing_gpu_chunk_plan_mb = list(
+        getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
+    )
     search_start = time.perf_counter()
 
     # RipgrepBackend optimization: passing all paths natively

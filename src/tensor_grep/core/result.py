@@ -16,6 +16,7 @@ class SearchResult:
     routing_backend: str | None = None
     routing_reason: str | None = None
     routing_gpu_device_ids: list[int] = field(default_factory=list)
+    routing_gpu_chunk_plan_mb: list[tuple[int, int]] = field(default_factory=list)
 
     @property
     def is_empty(self) -> bool:
