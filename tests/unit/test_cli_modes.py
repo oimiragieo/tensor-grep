@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 from dataclasses import dataclass
 
 from typer.testing import CliRunner
@@ -690,3 +691,35 @@ def test_rule_test_command_executes_valid_and_invalid_cases(monkeypatch):
 
     assert result.exit_code == 0
     assert "All tests passed. cases=2" in result.output
+
+
+def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "devices", "--json"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "devices", "--json"]
+
+
+def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "ERROR", "."])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "search", "ERROR", "."]
