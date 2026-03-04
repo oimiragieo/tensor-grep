@@ -212,6 +212,18 @@ To use it with Claude Desktop, just add this to your `claude_desktop_config.json
 }
 ```
 
+Available MCP tools now include:
+- `tg_search`
+- `tg_ast_search`
+- `tg_classify_logs`
+- `tg_devices` (returns routable GPU IDs and VRAM inventory; supports JSON output)
+
+For machine consumers of CLI JSON output (`tg search ... --format json`), routing metadata is included:
+- `routing_backend`
+- `routing_reason`
+- `routing_gpu_device_ids`
+- `routing_gpu_chunk_plan_mb`
+
 **AI Prompt Configuration:**
 If you are building custom AI agents or bots, we provide an optimized prompt template explicitly outlining when and how AI models should use `tensor-grep`. Check out the [`SKILL.md`](SKILL.md) file to seamlessly inject our capabilities into your agent's system prompt!
 
