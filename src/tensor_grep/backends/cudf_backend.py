@@ -148,9 +148,9 @@ class CuDFBackend(ComputeBackend):
         config: SearchConfig | None,
     ) -> list[MatchLine]:
         matches: list[MatchLine] = []
-        normalized_device_chunks = self._normalize_device_chunks(
-            [(device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb]
-        )
+        normalized_device_chunks = self._normalize_device_chunks([
+            (device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb
+        ])
         execution_plan = self._build_execution_plan(
             file_size=file_size,
             device_chunks_mb=normalized_device_chunks,
