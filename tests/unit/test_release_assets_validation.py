@@ -126,6 +126,24 @@ def test_should_require_ci_terminal_publish_success_gate():
     assert any("publish-success-gate" in err for err in errors)
 
 
+def test_should_require_release_job_to_depend_on_benchmark_regression_gate():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [release-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, test-gpu-linux]
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("release job must depend on benchmark-regression" in err for err in errors)
+
+
 def test_should_require_ci_ruff_preview_formatter_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

@@ -123,6 +123,25 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     if "needs: [release, publish-pypi]" not in ci_workflow:
         errors.append("CI workflow publish-success-gate must depend on release + publish-pypi")
 
+    try:
+        parsed_ci = yaml.safe_load(ci_workflow) or {}
+    except yaml.YAMLError:
+        parsed_ci = {}
+    if isinstance(parsed_ci, dict):
+        jobs = parsed_ci.get("jobs")
+        if isinstance(jobs, dict):
+            release_job = jobs.get("release")
+            if isinstance(release_job, dict):
+                needs = release_job.get("needs", [])
+                if isinstance(needs, str):
+                    needs_list = [needs]
+                elif isinstance(needs, list):
+                    needs_list = [str(item) for item in needs]
+                else:
+                    needs_list = []
+                if "benchmark-regression" not in needs_list:
+                    errors.append("CI workflow release job must depend on benchmark-regression")
+
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")
 
