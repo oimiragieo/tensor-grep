@@ -14,12 +14,14 @@ def _module_available(module_name: str) -> bool:
 def _record_result(
     rows: list[dict[str, object]], name: str, time_s: float | None, details: str, status: str
 ) -> None:
-    rows.append({
-        "backend": name,
-        "time_s": round(time_s, 6) if isinstance(time_s, float) else None,
-        "status": status,
-        "details": details,
-    })
+    rows.append(
+        {
+            "backend": name,
+            "time_s": round(time_s, 6) if isinstance(time_s, float) else None,
+            "status": status,
+            "details": details,
+        }
+    )
 
 
 def main() -> int:

@@ -257,12 +257,14 @@ def main():
             parity_failures += 1
 
         print(f"{scenario['name']:<35} | {rg_time:>8.3f}s | {tg_time:>8.3f}s | {parity_str}")
-        rows.append({
-            "name": scenario["name"],
-            "rg_time_s": round(rg_time, 6),
-            "tg_time_s": round(tg_time, 6),
-            "parity": parity_str,
-        })
+        rows.append(
+            {
+                "name": scenario["name"],
+                "rg_time_s": round(rg_time, 6),
+                "tg_time_s": round(tg_time, 6),
+                "parity": parity_str,
+            }
+        )
 
     artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
     write_json(
