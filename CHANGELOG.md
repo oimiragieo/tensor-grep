@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v0.26.6 (2026-03-05)
+
+### Performance Improvements
+
+- **cudf**: Skip process pool for single-worker distributed plans
+  ([`f26cfbf`](https://github.com/oimiragieo/tensor-grep/commit/f26cfbfbad328f1c9e5422f9ecb935df9e4472c9))
+
+- add TDD coverage for multi-chunk plans that collapse to one worker/device\n- execute sequential
+  chunk processing when max_workers <= 1\n- update integration/unit assertions for new single-worker
+  fast path
+
+### Testing
+
+- **release**: Require package-manager runbook command coverage
+  ([`aa2ce9d`](https://github.com/oimiragieo/tensor-grep/commit/aa2ce9d6ef8e074768a2cbdece19fd71207a54ec))
+
+- add TDD check for required publish/verification commands in package manager runbook\n- enforce
+  command-level contract in release asset validator
+
+
 ## v0.26.5 (2026-03-05)
 
 ### Bug Fixes
