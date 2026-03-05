@@ -168,6 +168,28 @@ class CuDFBackend(ComputeBackend):
             return sorted(single_matches, key=lambda m: m.line_number)
 
         max_workers = min(len(normalized_device_chunks), len(execution_plan))
+        if max_workers <= 1:
+            # Avoid process-pool startup overhead when all planned chunks map to one worker.
+            cumulative_line_offset = 0
+            for device_id, chunk_offset, chunk_size in execution_plan:
+                chunk_matches, chunk_line_count = _process_chunk_on_device(
+                    device_id,
+                    file_path,
+                    chunk_offset,
+                    chunk_size,
+                    pattern,
+                    config,
+                )
+                for match in chunk_matches:
+                    object.__setattr__(
+                        match, "line_number", match.line_number + cumulative_line_offset
+                    )
+                    matches.append(match)
+                cumulative_line_offset += chunk_line_count
+
+            matches.sort(key=lambda m: m.line_number)
+            return matches
+
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):

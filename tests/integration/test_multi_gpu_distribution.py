@@ -284,17 +284,19 @@ class TestMultiGpuDistributionIntegration:
         assert [m.line_number for m in result.matches][:2] == [1, 4]
         assert [m.text for m in result.matches][:2] == ["3", "7"]
 
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
     @patch("tensor_grep.backends.cudf_backend.as_completed")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("os.path.getsize", return_value=4 * 1024 * 1024)
     def test_should_collapse_duplicate_device_ids_to_single_worker_in_distributed_path(
-        self, _mock_getsize, mock_pool, mock_as_completed
+        self, _mock_getsize, mock_pool, mock_as_completed, mock_process_chunk
     ):
         from tensor_grep.backends.cudf_backend import CuDFBackend
 
         fake_executor = _FakeExecutor()
         mock_pool.return_value.__enter__.return_value = fake_executor
         mock_as_completed.side_effect = lambda futures: list(reversed(futures))
+        mock_process_chunk.return_value = ([MatchLine(line_number=1, text="3", file="test.log")], 3)
 
         with patch.dict(
             "sys.modules",
@@ -303,9 +305,9 @@ class TestMultiGpuDistributionIntegration:
             backend = CuDFBackend(chunk_sizes_mb=[1, 1], device_ids=[3, 3])
             result = backend.search("test.log", "ERROR")
 
-        # Worker count should reflect unique routable devices, not duplicated config entries.
-        mock_pool.assert_called_once_with(max_workers=1)
-        assert set(fake_executor.submitted_device_ids) == {3}
+        # Single-worker plans should use the sequential fast path without spawning a process pool.
+        mock_pool.assert_not_called()
+        assert all(call.args[0] == 3 for call in mock_process_chunk.call_args_list)
         assert result.total_matches == len(result.matches)
 
     @patch("tensor_grep.backends.cudf_backend.CuDFBackend.is_available", return_value=False)

@@ -212,6 +212,34 @@ class TestCuDFBackend:
         assert matches[0].line_number == 1
 
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
+    def test_should_not_spawn_process_pool_when_plan_uses_single_worker_across_many_chunks(
+        self, mock_process_chunk, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.result import MatchLine
+
+        backend = CuDFBackend(chunk_sizes_mb=[1, 1], device_ids=[3, 3])
+        # 3 chunks: lines should be offset by returned chunk line counts.
+        mock_process_chunk.side_effect = [
+            ([MatchLine(line_number=1, text="a", file="test.log")], 2),
+            ([MatchLine(line_number=1, text="b", file="test.log")], 2),
+            ([MatchLine(line_number=1, text="c", file="test.log")], 2),
+        ]
+
+        matches = backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=3 * 1024 * 1024,
+            device_chunks_mb=[(3, 1), (3, 1)],
+            config=None,
+        )
+
+        mock_pool.assert_not_called()
+        assert [m.line_number for m in matches] == [1, 3, 5]
+        assert [m.text for m in matches] == ["a", "b", "c"]
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
     def test_should_cap_process_pool_workers_to_execution_plan_size(
         self, _mock_as_completed, mock_pool
@@ -232,15 +260,17 @@ class TestCuDFBackend:
 
         mock_pool.assert_called_once_with(max_workers=2)
 
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
     def test_should_deduplicate_duplicate_device_ids_before_worker_sizing(
-        self, _mock_as_completed, mock_pool
+        self, _mock_as_completed, mock_pool, mock_process_chunk
     ):
         from tensor_grep.backends.cudf_backend import CuDFBackend
 
         backend = CuDFBackend(chunk_sizes_mb=[256, 512], device_ids=[3, 3])
         mock_pool.return_value.__enter__.return_value = MagicMock()
+        mock_process_chunk.return_value = ([], 0)
 
         backend._search_distributed(
             file_path="test.log",
@@ -250,4 +280,5 @@ class TestCuDFBackend:
             config=None,
         )
 
-        mock_pool.assert_called_once_with(max_workers=1)
+        mock_pool.assert_not_called()
+        assert all(call.args[0] == 3 for call in mock_process_chunk.call_args_list)
