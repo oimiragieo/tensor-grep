@@ -237,6 +237,34 @@ def test_should_require_package_manager_runbook_and_checklist_sections():
     assert any("Package-manager distribution finalization" in err for err in errors)
 
 
+def test_should_require_package_manager_runbook_command_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_package_manager_docs(
+        runbook_content=(
+            "## Homebrew Tap Flow\n"
+            "## Winget Flow\n"
+            "## Rollback Procedures\n"
+            "## Verification Commands\n"
+        ),
+        checklist_content=(
+            "## 4. Package-manager distribution finalization\n"
+            "## 5. Rollback runbook\n"
+            "Homebrew\n"
+            "Winget\n"
+        ),
+    )
+    assert any("prepare_package_manager_release.py --check" in err for err in errors)
+    assert any("winget validate --manifest" in err for err in errors)
+    assert any("verify_package_manager_bundle_checksums.py --bundle-dir" in err for err in errors)
+
+
 def test_should_require_explicit_homebrew_version_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

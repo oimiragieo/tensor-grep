@@ -171,6 +171,16 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
     ):
         if marker not in checklist_content:
             errors.append(f"Release checklist missing package-manager marker: {marker}")
+
+    for required_cmd in (
+        "uv run python scripts/prepare_package_manager_release.py --check",
+        "winget validate --manifest",
+        "uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir",
+    ):
+        if required_cmd not in runbook_content:
+            errors.append(
+                f"Package manager runbook missing required verification/publish command: {required_cmd}"
+            )
     return errors
 
 
