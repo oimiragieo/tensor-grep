@@ -1,6 +1,54 @@
 # CHANGELOG
 
 
+## v0.26.5 (2026-03-05)
+
+### Bug Fixes
+
+- **ci**: Apply ruff preview formatting to tracked files
+  ([`738b073`](https://github.com/oimiragieo/tensor-grep/commit/738b073ed4d76d50a6d5d702158486f805d0a5ec))
+
+- format files using uff format --preview to match CI formatter mode\n- keep lint and targeted tests
+  green after formatting
+
+### Documentation
+
+- **bench**: Refresh benchmark results on current main
+  ([`79c7535`](https://github.com/oimiragieo/tensor-grep/commit/79c7535dda3d13702bf394d5a657f449cbaa43e9))
+
+- rerun benchmark suite and update README/PAPER metrics/date/commit\n- apply ruff formatting updates
+  required for CI format gate\n- validate with ruff check + targeted pytest modules
+
+### Performance Improvements
+
+- **cudf**: Dedupe device ids before distributed worker sizing
+  ([`ff44a21`](https://github.com/oimiragieo/tensor-grep/commit/ff44a218dea5078f037b0b667833e9a4a52a1c82))
+
+- add TDD case for duplicate GPU IDs in distributed execution\n- normalize device/chunk list by
+  device id and keep max chunk per device\n- size ProcessPool workers by unique routable GPUs
+
+- **pipeline**: Normalize gpu chunk plan before backend selection
+  ([`01997c9`](https://github.com/oimiragieo/tensor-grep/commit/01997c9ed7291106f5bf24684958a974e7fcdda7))
+
+- add TDD coverage for duplicate/invalid memory chunk plan entries\n- deduplicate device ids in
+  pipeline and drop non-positive chunk sizes\n- keep largest chunk per device for stable backend
+  worker sizing
+
+### Testing
+
+- **multi-gpu**: Assert duplicate ids collapse to single-worker fanout
+  ([`60e2ea5`](https://github.com/oimiragieo/tensor-grep/commit/60e2ea5d3719a5a54dac0c3ce5640eab5f207994))
+
+- add integration coverage for distributed cudf execution with duplicate device ids\n- verify
+  ProcessPool worker sizing uses unique routable devices
+
+- **release**: Enforce ci ruff preview formatter contract
+  ([`9352dad`](https://github.com/oimiragieo/tensor-grep/commit/9352dad9a2ecb12b45663ee381963f184dd8477c))
+
+- add release-assets validator test for CI uff format --check --preview requirement\n- enforce
+  formatter preview mode in workflow contract checks to prevent local/CI drift
+
+
 ## v0.26.4 (2026-03-05)
 
 ### Performance Improvements
