@@ -210,3 +210,24 @@ class TestCuDFBackend:
         mock_process_chunk.assert_called_once()
         assert len(matches) == 1
         assert matches[0].line_number == 1
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
+    def test_should_cap_process_pool_workers_to_execution_plan_size(
+        self, _mock_as_completed, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[512, 512, 512, 512], device_ids=[0, 1, 2, 3])
+        mock_pool.return_value.__enter__.return_value = MagicMock()
+
+        # 700MB file with 512MB chunking => exactly 2 planned tasks
+        backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=700 * 1024 * 1024,
+            device_chunks_mb=[(0, 512), (1, 512), (2, 512), (3, 512)],
+            config=None,
+        )
+
+        mock_pool.assert_called_once_with(max_workers=2)

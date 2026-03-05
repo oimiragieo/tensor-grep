@@ -143,7 +143,8 @@ class CuDFBackend(ComputeBackend):
             )
             return sorted(single_matches, key=lambda m: m.line_number)
 
-        with ProcessPoolExecutor(max_workers=len(device_chunks_mb)) as executor:
+        max_workers = min(len(device_chunks_mb), len(execution_plan))
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):
                 future = executor.submit(
