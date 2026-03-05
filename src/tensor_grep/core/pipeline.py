@@ -13,6 +13,31 @@ from tensor_grep.core.hardware.memory_manager import MemoryManager
 
 class Pipeline:
     @staticmethod
+    def _normalize_device_chunk_plan(
+        device_chunk_plan: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        """
+        Normalize scheduler-provided (device_id, chunk_mb) plan.
+        - Drop non-positive chunk entries.
+        - Deduplicate device IDs while preserving first-seen order.
+        - Keep the largest chunk size for duplicate devices.
+        """
+        normalized: list[tuple[int, int]] = []
+        index_by_device: dict[int, int] = {}
+        for device_id, chunk_mb in device_chunk_plan:
+            if chunk_mb <= 0:
+                continue
+            if device_id not in index_by_device:
+                index_by_device[device_id] = len(normalized)
+                normalized.append((device_id, chunk_mb))
+                continue
+            slot = index_by_device[device_id]
+            existing_device_id, existing_chunk_mb = normalized[slot]
+            if chunk_mb > existing_chunk_mb:
+                normalized[slot] = (existing_device_id, chunk_mb)
+        return normalized
+
+    @staticmethod
     def _needs_python_cpu(config: SearchConfig | None) -> bool:
         if config is None:
             return False
@@ -168,8 +193,8 @@ class Pipeline:
                 # Inject memory manager to get chunk sizes across selected/routable GPUs.
                 memory_manager = MemoryManager()
                 preferred_gpu_ids = config.gpu_device_ids if config else None
-                device_chunk_plan = memory_manager.get_device_chunk_plan_mb(
-                    preferred_ids=preferred_gpu_ids
+                device_chunk_plan = self._normalize_device_chunk_plan(
+                    memory_manager.get_device_chunk_plan_mb(preferred_ids=preferred_gpu_ids)
                 )
                 chunk_sizes = [chunk_mb for _, chunk_mb in device_chunk_plan]
                 device_ids = [device_id for device_id, _ in device_chunk_plan]
@@ -208,8 +233,8 @@ class Pipeline:
                 # Heuristic GPU path for large/complex regex when rg is unavailable.
                 memory_manager = MemoryManager()
                 preferred_gpu_ids = config.gpu_device_ids if config else None
-                device_chunk_plan = memory_manager.get_device_chunk_plan_mb(
-                    preferred_ids=preferred_gpu_ids
+                device_chunk_plan = self._normalize_device_chunk_plan(
+                    memory_manager.get_device_chunk_plan_mb(preferred_ids=preferred_gpu_ids)
                 )
                 chunk_sizes = [chunk_mb for _, chunk_mb in device_chunk_plan]
                 device_ids = [device_id for device_id, _ in device_chunk_plan]
