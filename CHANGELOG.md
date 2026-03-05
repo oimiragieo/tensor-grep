@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.26.4 (2026-03-05)
+
+### Performance Improvements
+
+- **cudf**: Cap distributed worker pool to planned chunk count
+  ([`c15ecd1`](https://github.com/oimiragieo/tensor-grep/commit/c15ecd1234ef7ff4c00ddebcdb736d0f9e74c5f6))
+
+
 ## v0.26.3 (2026-03-04)
 
 ### Performance Improvements
