@@ -144,6 +144,11 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                 "CI workflow publish-pypi job should pass `skip-existing: true` to avoid duplicate-upload failures"
             )
 
+    if "uv run ruff format --check --preview ." not in ci_workflow:
+        errors.append(
+            "CI workflow must run formatter with `ruff format --check --preview .` to keep local/CI formatting semantics aligned"
+        )
+
     return errors
 
 

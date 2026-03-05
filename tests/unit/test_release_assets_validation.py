@@ -126,6 +126,25 @@ def test_should_require_ci_terminal_publish_success_gate():
     assert any("publish-success-gate" in err for err in errors)
 
 
+def test_should_require_ci_ruff_preview_formatter_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      static-analysis:
+        steps:
+          - run: uv run ruff format --check .
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("ruff format --check --preview" in err for err in errors)
+
+
 def test_should_require_ci_pypi_publish_job_security_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
