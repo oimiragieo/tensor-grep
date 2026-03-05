@@ -75,6 +75,27 @@ class CuDFBackend(ComputeBackend):
         self.device_ids = device_ids or list(range(len(self.chunk_sizes_mb)))
 
     @staticmethod
+    def _normalize_device_chunks(
+        device_chunks_mb: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        """
+        Deduplicate device entries while preserving first-seen order.
+        If a device appears multiple times, keep the largest configured chunk size.
+        """
+        normalized: list[tuple[int, int]] = []
+        index_by_device: dict[int, int] = {}
+        for device_id, chunk_mb in device_chunks_mb:
+            if device_id not in index_by_device:
+                index_by_device[device_id] = len(normalized)
+                normalized.append((device_id, chunk_mb))
+                continue
+            slot = index_by_device[device_id]
+            existing_device_id, existing_chunk_mb = normalized[slot]
+            if chunk_mb > existing_chunk_mb:
+                normalized[slot] = (existing_device_id, chunk_mb)
+        return normalized
+
+    @staticmethod
     def _build_execution_plan(
         *,
         file_size: int,
@@ -127,9 +148,12 @@ class CuDFBackend(ComputeBackend):
         config: SearchConfig | None,
     ) -> list[MatchLine]:
         matches: list[MatchLine] = []
+        normalized_device_chunks = self._normalize_device_chunks(
+            [(device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb]
+        )
         execution_plan = self._build_execution_plan(
             file_size=file_size,
-            device_chunks_mb=[(device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb],
+            device_chunks_mb=normalized_device_chunks,
         )
         if len(execution_plan) == 1:
             device_id, chunk_offset, chunk_size = execution_plan[0]
@@ -143,7 +167,7 @@ class CuDFBackend(ComputeBackend):
             )
             return sorted(single_matches, key=lambda m: m.line_number)
 
-        max_workers = min(len(device_chunks_mb), len(execution_plan))
+        max_workers = min(len(normalized_device_chunks), len(execution_plan))
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):

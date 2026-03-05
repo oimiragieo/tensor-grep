@@ -231,3 +231,23 @@ class TestCuDFBackend:
         )
 
         mock_pool.assert_called_once_with(max_workers=2)
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
+    def test_should_deduplicate_duplicate_device_ids_before_worker_sizing(
+        self, _mock_as_completed, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[256, 512], device_ids=[3, 3])
+        mock_pool.return_value.__enter__.return_value = MagicMock()
+
+        backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=700 * 1024 * 1024,
+            device_chunks_mb=[(3, 256), (3, 512)],
+            config=None,
+        )
+
+        mock_pool.assert_called_once_with(max_workers=1)
