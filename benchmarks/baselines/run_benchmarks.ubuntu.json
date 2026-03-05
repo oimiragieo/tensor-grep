@@ -1,66 +1,66 @@
 {
-  "generated_at_epoch_s": 1772386209.469411,
+  "generated_at_epoch_s": 1772683216.6342633,
   "parity_failures": 0,
   "rows": [
     {
       "name": "1. Simple String Match",
       "parity": "PASS",
-      "rg_time_s": 0.443917,
-      "tg_time_s": 2.708316
+      "rg_time_s": 0.192617,
+      "tg_time_s": 0.345427
     },
     {
       "name": "2. Case-Insensitive Match",
       "parity": "PASS",
-      "rg_time_s": 0.448328,
-      "tg_time_s": 2.677528
+      "rg_time_s": 0.213613,
+      "tg_time_s": 0.282542
     },
     {
       "name": "3. Regex Match",
       "parity": "PASS",
-      "rg_time_s": 0.461841,
-      "tg_time_s": 2.697187
+      "rg_time_s": 0.215914,
+      "tg_time_s": 0.292682
     },
     {
       "name": "4. Invert Match",
       "parity": "PASS",
-      "rg_time_s": 1.055539,
-      "tg_time_s": 3.382385
+      "rg_time_s": 0.573149,
+      "tg_time_s": 0.543672
     },
     {
       "name": "5. Count Matches",
       "parity": "PASS",
-      "rg_time_s": 0.135795,
-      "tg_time_s": 0.07469
+      "rg_time_s": 0.042804,
+      "tg_time_s": 0.150406
     },
     {
       "name": "6. Context Lines (Before & After)",
       "parity": "PASS",
-      "rg_time_s": 1.703609,
-      "tg_time_s": 2.091632
+      "rg_time_s": 0.737426,
+      "tg_time_s": 0.777998
     },
     {
       "name": "7. Max Count Limit",
       "parity": "PASS",
-      "rg_time_s": 0.103724,
-      "tg_time_s": 2.587581
+      "rg_time_s": 0.004363,
+      "tg_time_s": 0.074099
     },
     {
       "name": "8. File Glob Filtering",
       "parity": "PASS",
-      "rg_time_s": 0.511754,
-      "tg_time_s": 3.181924
+      "rg_time_s": 0.183379,
+      "tg_time_s": 0.254756
     },
     {
       "name": "9. Word Boundary",
       "parity": "PASS",
-      "rg_time_s": 0.5073,
-      "tg_time_s": 0.843427
+      "rg_time_s": 0.204951,
+      "tg_time_s": 0.280033
     },
     {
       "name": "10. Fixed Strings",
       "parity": "PASS",
-      "rg_time_s": 0.445134,
-      "tg_time_s": 2.764291
+      "rg_time_s": 0.179297,
+      "tg_time_s": 0.252722
     }
   ],
   "suite": "run_benchmarks"
