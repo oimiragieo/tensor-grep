@@ -42,3 +42,24 @@ def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
     assert calls[1][-1] == "tensor-grep==0.11.1"
     assert calls[2][1] == "-c"
     assert calls[3][-1] == "--version"
+
+
+def test_should_resolve_linux_tg_shim_path(tmp_path: Path, monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(module.sys, "platform", "linux")
+
+    venv_dir = tmp_path / ".venv"
+    expected = venv_dir / "bin" / "tg"
+    assert module._venv_tg(venv_dir) == expected
+
+
+def test_should_prefer_existing_windows_tg_cmd_shim(tmp_path: Path, monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(module.sys, "platform", "win32")
+
+    venv_dir = tmp_path / ".venv"
+    scripts_dir = venv_dir / "Scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "tg.cmd").write_text("@echo off\r\n", encoding="utf-8")
+
+    assert module._venv_tg(venv_dir) == (scripts_dir / "tg.cmd")
