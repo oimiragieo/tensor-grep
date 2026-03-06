@@ -289,21 +289,25 @@ tensor-grep/
   import pytest
   import shutil
 
+
   def pytest_configure(config):
       try:
           import torch
+
           if not torch.cuda.is_available():
               raise ImportError
           config._gpu_available = True
       except ImportError:
           config._gpu_available = False
 
+
   def pytest_collection_modifyitems(config, items):
-      if not getattr(config, '_gpu_available', False):
+      if not getattr(config, "_gpu_available", False):
           skip_gpu = pytest.mark.skip(reason="CUDA GPU not available")
           for item in items:
               if "gpu" in item.keywords:
                   item.add_marker(skip_gpu)
+
 
   @pytest.fixture
   def sample_log_file(tmp_path):
@@ -316,6 +320,7 @@ tensor-grep/
           "2026-02-24 10:00:15 INFO Request GET /api/users 200 12ms\n"
       )
       return log
+
 
   @pytest.fixture
   def rg_path():
@@ -333,12 +338,14 @@ tensor-grep/
 
   pytestmark = pytest.mark.acceptance
 
+
   class TestCLISearch:
       def test_should_find_pattern_in_log_file(self, sample_log_file):
           """OUTER LOOP RED: The simplest possible E2E test."""
           result = subprocess.run(
               ["tg", "search", "ERROR", str(sample_log_file)],
-              capture_output=True, text=True,
+              capture_output=True,
+              text=True,
           )
           assert result.returncode == 0
           assert "ERROR" in result.stdout
@@ -347,7 +354,8 @@ tensor-grep/
       def test_should_exit_1_when_no_matches(self, sample_log_file):
           result = subprocess.run(
               ["tg", "search", "NONEXISTENT", str(sample_log_file)],
-              capture_output=True, text=True,
+              capture_output=True,
+              text=True,
           )
           assert result.returncode == 1
   ```
@@ -357,6 +365,7 @@ tensor-grep/
 - [ ] Step into inner loop. Write `tests/unit/test_result.py` (RED):
   ```python
   from tensor_grep.core.result import SearchResult, MatchLine
+
 
   class TestSearchResult:
       def test_should_create_result_with_matches(self):
@@ -373,11 +382,13 @@ tensor-grep/
   ```python
   from dataclasses import dataclass, field
 
+
   @dataclass(frozen=True)
   class MatchLine:
       line_number: int
       text: str
       file: str
+
 
   @dataclass
   class SearchResult:
@@ -392,6 +403,7 @@ tensor-grep/
 - [ ] Write `tests/unit/test_cpu_backend.py` (RED):
   ```python
   from tensor_grep.backends.cpu_backend import CPUBackend
+
 
   class TestCPUBackend:
       def test_should_find_simple_pattern(self, sample_log_file):
@@ -427,6 +439,7 @@ tensor-grep/
 - [ ] Write `tests/unit/test_query_analyzer.py` (RED):
   ```python
   from tensor_grep.core.query_analyzer import QueryAnalyzer, QueryType
+
 
   class TestQueryAnalyzer:
       def test_simple_string_is_fast_path(self):
@@ -475,8 +488,10 @@ tensor-grep/
   from tensor_grep.io.base import IOBackend
   from tensor_grep.io.reader_fallback import FallbackReader
 
+
   class TestIOContract:
       """Every IOBackend must satisfy these contracts."""
+
       def _check_contract(self, reader: IOBackend, file_path):
           lines = list(reader.read_lines(str(file_path)))
           assert len(lines) > 0
@@ -504,16 +519,19 @@ tensor-grep/
   ```python
   from tensor_grep.backends.base import ComputeBackend
 
+
   class TestBackendContract:
       """Every ComputeBackend must satisfy these contracts."""
+
       def _check_contract(self, backend: ComputeBackend, file_path, pattern):
           result = backend.search(str(file_path), pattern)
-          assert hasattr(result, 'matches')
-          assert hasattr(result, 'total_matches')
-          assert hasattr(result, 'is_empty')
+          assert hasattr(result, "matches")
+          assert hasattr(result, "total_matches")
+          assert hasattr(result, "is_empty")
 
       def test_cpu_backend_satisfies_contract(self, sample_log_file):
           from tensor_grep.backends.cpu_backend import CPUBackend
+
           self._check_contract(CPUBackend(), sample_log_file, "ERROR")
   ```
 
@@ -526,16 +544,19 @@ tensor-grep/
   pytestmark = pytest.mark.characterization
   PATTERNS = ["ERROR", "INFO", r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", "GET /api"]
 
+
   class TestRipgrepParity:
       @pytest.mark.parametrize("pattern", PATTERNS)
       def test_output_lines_match_ripgrep(self, sample_log_file, rg_path, pattern):
           rg = subprocess.run(
               [rg_path, pattern, str(sample_log_file)],
-              capture_output=True, text=True,
+              capture_output=True,
+              text=True,
           )
           ours = subprocess.run(
               ["tg", "search", pattern, str(sample_log_file)],
-              capture_output=True, text=True,
+              capture_output=True,
+              text=True,
           )
           rg_lines = sorted(rg.stdout.strip().splitlines())
           our_lines = sorted(ours.stdout.strip().splitlines())
@@ -551,31 +572,37 @@ tensor-grep/
 
   pytestmark = pytest.mark.property
 
+
   @given(st.text(min_size=1, max_size=50000, alphabet=st.characters(blacklist_categories=("Cs",))))
   def test_reader_never_loses_bytes(text):
       """Property: total bytes read == total bytes written."""
       import tempfile, os
-      with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False, encoding='utf-8') as f:
+
+      with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False, encoding="utf-8") as f:
           f.write(text)
           f.flush()
           path = f.name
       try:
           from tensor_grep.io.reader_fallback import FallbackReader
+
           reader = FallbackReader()
           content = "".join(reader.read_lines(path))
-          assert len(content.encode('utf-8')) == len(text.encode('utf-8'))
+          assert len(content.encode("utf-8")) == len(text.encode("utf-8"))
       finally:
           os.unlink(path)
 
-  @given(st.from_regex(r'[A-Za-z0-9.*+?\[\]{}()^$|\\]+', fullmatch=True))
+
+  @given(st.from_regex(r"[A-Za-z0-9.*+?\[\]{}()^$|\\]+", fullmatch=True))
   def test_cpu_backend_never_crashes_on_valid_regex(pattern):
       """Property: CPU backend handles any valid regex without exception."""
       import tempfile, os
-      with tempfile.NamedTemporaryFile(mode='w', suffix='.log', delete=False) as f:
+
+      with tempfile.NamedTemporaryFile(mode="w", suffix=".log", delete=False) as f:
           f.write("test line ERROR something\nanother line\n")
           path = f.name
       try:
           from tensor_grep.backends.cpu_backend import CPUBackend
+
           backend = CPUBackend()
           result = backend.search(path, pattern)
           assert result is not None
@@ -593,11 +620,13 @@ tensor-grep/
 
   pytestmark = pytest.mark.acceptance
 
+
   class TestCLIWithoutGPU:
       def test_should_work_with_cpu_flag(self, sample_log_file):
           result = subprocess.run(
               ["tg", "search", "--cpu", "ERROR", str(sample_log_file)],
-              capture_output=True, text=True,
+              capture_output=True,
+              text=True,
           )
           assert result.returncode == 0
           assert "ERROR" in result.stdout
@@ -605,10 +634,12 @@ tensor-grep/
       def test_should_output_json(self, sample_log_file):
           result = subprocess.run(
               ["tg", "search", "--cpu", "--format", "json", "ERROR", str(sample_log_file)],
-              capture_output=True, text=True,
+              capture_output=True,
+              text=True,
           )
           assert result.returncode == 0
           import json
+
           data = json.loads(result.stdout)
           assert "matches" in data
   ```
@@ -635,6 +666,7 @@ tensor-grep/
   import pytest
   from unittest.mock import MagicMock, patch
 
+
   class TestCuDFBackend:
       """Unit tests: mock cuDF so no GPU needed."""
 
@@ -645,6 +677,7 @@ tensor-grep/
           mock_cudf.read_text.return_value = mock_series
 
           from tensor_grep.backends.cudf_backend import CuDFBackend
+
           backend = CuDFBackend()
           backend.search(str(sample_log_file), "ERROR")
 
@@ -653,6 +686,7 @@ tensor-grep/
       @patch("tensor_grep.backends.cudf_backend.cudf")
       def test_should_use_byte_range_for_large_files(self, mock_cudf, tmp_path):
           from tensor_grep.backends.cudf_backend import CuDFBackend
+
           backend = CuDFBackend(chunk_size_mb=256)
           assert backend.chunk_size_mb == 256
 
@@ -662,6 +696,7 @@ tensor-grep/
           mock_cudf.read_text.return_value = mock_series
 
           from tensor_grep.backends.cudf_backend import CuDFBackend
+
           backend = CuDFBackend()
           backend.search("test.log", r"ERROR.*timeout")
 
@@ -679,6 +714,7 @@ tensor-grep/
   if TYPE_CHECKING:
       import cudf
 
+
   class CuDFBackend(ComputeBackend):
       def __init__(self, chunk_size_mb: int = 512):
           self.chunk_size_mb = chunk_size_mb
@@ -686,6 +722,7 @@ tensor-grep/
       def is_available(self) -> bool:
           try:
               import cudf as _cudf
+
               return True
           except ImportError:
               return False
@@ -710,16 +747,21 @@ tensor-grep/
               while offset < file_size:
                   size = min(chunk_bytes, file_size - offset)
                   series = cudf.read_text(
-                      file_path, delimiter="\n",
-                      byte_range=(offset, size), strip_delimiters=True,
+                      file_path,
+                      delimiter="\n",
+                      byte_range=(offset, size),
+                      strip_delimiters=True,
                   )
                   mask = series.str.contains(pattern, regex=True)
                   matched = series[mask]
                   for idx, text in zip(matched.index.to_pandas(), matched.to_pandas()):
-                      matches.append(MatchLine(
-                          line_number=line_offset + int(idx) + 1,
-                          text=str(text), file=file_path,
-                      ))
+                      matches.append(
+                          MatchLine(
+                              line_number=line_offset + int(idx) + 1,
+                              text=str(text),
+                              file=file_path,
+                          )
+                      )
                   line_offset += len(series)
                   offset += size
 
@@ -739,20 +781,24 @@ tensor-grep/
 
   pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 
+
   class TestCuDFIntegration:
       def test_cudf_read_text_returns_series(self, sample_log_file):
           import cudf
+
           series = cudf.read_text(str(sample_log_file), delimiter="\n")
           assert len(series) == 5
 
       def test_cudf_str_contains_finds_pattern(self, sample_log_file):
           import cudf
+
           series = cudf.read_text(str(sample_log_file), delimiter="\n")
           mask = series.str.contains("ERROR")
           assert mask.sum() == 2
 
       def test_cudf_byte_range_reading(self, sample_log_file):
           import cudf, os
+
           size = os.path.getsize(str(sample_log_file))
           s1 = cudf.read_text(str(sample_log_file), delimiter="\n", byte_range=(0, size))
           assert len(s1) >= 1
@@ -833,17 +879,20 @@ tensor-grep/
   ```python
   from tensor_grep.io.base import IOBackend
 
+
   class DStorageReader(IOBackend):
       def is_available(self) -> bool:
           try:
               import dstorage_gpu
               import sys
+
               return sys.platform == "win32"
           except ImportError:
               return False
 
       def read_to_gpu(self, file_path: str):
           from dstorage_gpu import DirectStorageLoader
+
           loader = DirectStorageLoader()
           return loader.load_tensor(file_path)
   ```
@@ -872,11 +921,13 @@ tensor-grep/
 
   pytestmark = pytest.mark.acceptance
 
+
   class TestCLIClassify:
       def test_should_classify_log_lines(self, sample_log_file):
           result = subprocess.run(
               ["tg", "classify", "--format", "json", str(sample_log_file)],
-              capture_output=True, text=True,
+              capture_output=True,
+              text=True,
           )
           assert result.returncode == 0
           data = json.loads(result.stdout)
@@ -911,9 +962,11 @@ tensor-grep/
   ```python
   from hypothesis import given, strategies as st
 
+
   @given(st.text(min_size=1, max_size=10000, alphabet=st.characters(blacklist_categories=("Cs",))))
   def test_tokenizer_never_crashes_on_valid_text(text):
       from tensor_grep.backends.cybert_backend import tokenize
+
       tokens = tokenize([text])
       assert tokens is not None
       assert len(tokens) > 0
@@ -941,6 +994,7 @@ tensor-grep/
 
   pytestmark = [pytest.mark.slow, pytest.mark.performance]
 
+
   class TestThroughput:
       def test_cpu_backend_throughput(self, tmp_path):
           """Baseline: CPU backend should process >100 MB/s."""
@@ -949,6 +1003,7 @@ tensor-grep/
           large.write_text(lines)
 
           from tensor_grep.backends.cpu_backend import CPUBackend
+
           start = time.perf_counter()
           CPUBackend().search(str(large), "ERROR")
           elapsed = time.perf_counter() - start
@@ -965,6 +1020,7 @@ tensor-grep/
 
   pytestmark = [pytest.mark.slow, pytest.mark.performance]
 
+
   class TestVsRipgrep:
       def test_semantic_classification_faster_than_multi_rg(self, tmp_path, rg_path):
           """GPU value prop: single classify pass vs N separate rg passes."""
@@ -973,11 +1029,11 @@ tensor-grep/
           lines = []
           for i in range(10_000):
               if i % 3 == 0:
-                  lines.append(f"2026-02-24 ERROR Connection timeout from 10.0.0.{i%256}\n")
+                  lines.append(f"2026-02-24 ERROR Connection timeout from 10.0.0.{i % 256}\n")
               elif i % 3 == 1:
-                  lines.append(f"2026-02-24 WARN Disk usage at {60+i%40}%\n")
+                  lines.append(f"2026-02-24 WARN Disk usage at {60 + i % 40}%\n")
               else:
-                  lines.append(f"2026-02-24 INFO Request processed in {i%100}ms\n")
+                  lines.append(f"2026-02-24 INFO Request processed in {i % 100}ms\n")
           log.write_text("".join(lines))
 
           patterns = ["ERROR", "WARN", "INFO", r"\d+\.\d+\.\d+\.\d+", "timeout", "Disk usage"]
