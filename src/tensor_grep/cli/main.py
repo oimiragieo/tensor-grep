@@ -763,6 +763,25 @@ def search_command(
     all_results.routing_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
     search_start = time.perf_counter()
 
+    def _merge_runtime_routing(result: SearchResult) -> None:
+        # Runtime routing metadata is authoritative when a backend internally
+        # falls back (for example Torch -> CPU for unsupported regex paths).
+        if result.routing_backend:
+            all_results.routing_backend = result.routing_backend
+            all_results.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
+            all_results.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
+        elif result.routing_gpu_device_ids or result.routing_gpu_chunk_plan_mb:
+            all_results.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
+            all_results.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
+        if result.routing_reason:
+            all_results.routing_reason = result.routing_reason
+        all_results.routing_distributed = (
+            all_results.routing_distributed or result.routing_distributed
+        )
+        all_results.routing_worker_count = max(
+            all_results.routing_worker_count, result.routing_worker_count
+        )
+
     # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
         rg_backend = cast(RipgrepBackend, backend)
@@ -779,12 +798,7 @@ def search_command(
             all_results.matches.extend(result.matches)
             all_results.total_matches += result.total_matches
             all_results.total_files += result.total_files
-            all_results.routing_distributed = (
-                all_results.routing_distributed or result.routing_distributed
-            )
-            all_results.routing_worker_count = max(
-                all_results.routing_worker_count, result.routing_worker_count
-            )
+            _merge_runtime_routing(result)
     else:
         for current_file in candidate_files_ordered:
             span_ctx = (
@@ -801,12 +815,7 @@ def search_command(
             all_results.total_matches += result.total_matches
             if result.total_matches > 0:
                 all_results.total_files += 1
-            all_results.routing_distributed = (
-                all_results.routing_distributed or result.routing_distributed
-            )
-            all_results.routing_worker_count = max(
-                all_results.routing_worker_count, result.routing_worker_count
-            )
+            _merge_runtime_routing(result)
 
     if only_matching:
         all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
@@ -829,14 +838,21 @@ def search_command(
             err=True,
         )
         typer.echo(
-            f"[stats] backend={selected_backend_name} reason={selected_backend_reason}",
+            (
+                f"[stats] backend={all_results.routing_backend or selected_backend_name} "
+                f"reason={all_results.routing_reason or selected_backend_reason}"
+            ),
             err=True,
         )
-        if selected_gpu_device_ids:
+        stats_gpu_device_ids = all_results.routing_gpu_device_ids or selected_gpu_device_ids
+        stats_gpu_chunk_plan_mb = (
+            all_results.routing_gpu_chunk_plan_mb or selected_gpu_chunk_plan_mb
+        )
+        if stats_gpu_device_ids:
             typer.echo(
                 (
-                    f"[stats] gpu_device_ids={selected_gpu_device_ids} "
-                    f"gpu_chunk_plan_mb={selected_gpu_chunk_plan_mb} "
+                    f"[stats] gpu_device_ids={stats_gpu_device_ids} "
+                    f"gpu_chunk_plan_mb={stats_gpu_chunk_plan_mb} "
                     f"distributed={all_results.routing_distributed} "
                     f"workers={all_results.routing_worker_count}"
                 ),
