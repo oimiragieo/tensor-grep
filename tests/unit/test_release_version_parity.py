@@ -57,6 +57,7 @@ def test_should_retry_pypi_check_until_expected_version_becomes_visible():
 
     module._fetch_pypi_latest = fake_fetch
     module.time.sleep = lambda _seconds: None
+    module.time.monotonic = lambda: 0.0
 
     errors = module.validate_release_version_parity(
         expected_version=expected_version,
@@ -86,6 +87,48 @@ def test_should_fail_when_pypi_never_reaches_expected_version_within_wait_window
         pypi_poll_interval_seconds=1,
     )
     assert f"pypi latest 0.0.1 != expected {expected_version}" in errors
+
+
+def test_should_retry_npm_check_until_expected_version_becomes_visible():
+    module = _load_module()
+    expected_version = module._version_from_pyproject()
+    observed = ["0.0.1", "0.0.2", expected_version]
+
+    def fake_fetch(*, package_name="tensor-grep"):
+        return observed.pop(0)
+
+    module._fetch_npm_latest = fake_fetch
+    module.time.sleep = lambda _seconds: None
+    module.time.monotonic = lambda: 0.0
+
+    errors = module.validate_release_version_parity(
+        expected_version=expected_version,
+        check_package_managers=False,
+        check_npm=True,
+        npm_wait_seconds=30,
+        npm_poll_interval_seconds=1,
+    )
+    assert errors == []
+
+
+def test_should_fail_when_npm_never_reaches_expected_version_within_wait_window():
+    module = _load_module()
+    expected_version = module._version_from_pyproject()
+
+    module._fetch_npm_latest = lambda *, package_name="tensor-grep": "0.0.1"
+    module.time.sleep = lambda _seconds: None
+
+    ticks = iter([0.0, 0.0, 0.5, 1.1])
+    module.time.monotonic = lambda: next(ticks)
+
+    errors = module.validate_release_version_parity(
+        expected_version=expected_version,
+        check_package_managers=False,
+        check_npm=True,
+        npm_wait_seconds=1,
+        npm_poll_interval_seconds=1,
+    )
+    assert f"npm latest 0.0.1 != expected {expected_version}" in errors
 
 
 def test_should_fail_when_package_manager_urls_do_not_target_expected_release_version():

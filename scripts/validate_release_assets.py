@@ -233,6 +233,8 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "verify-release-assets:",
         "validate-tag-version-parity:",
         "publish-npm:",
+        "Verify npm registry parity for release version",
+        "--check-npm",
         "publish-docs:",
         "release-success-gate:",
         "Smoke-test Binary (Windows)",
