@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
+import re
 import tarfile
 import zipfile
 from pathlib import Path
@@ -21,6 +23,30 @@ def _wheel_metadata_version(wheel_path: Path) -> str:
             raise ValueError(f"{wheel_path.name} is missing METADATA")
         metadata_text = zf.read(metadata_members[0]).decode("utf-8")
         return _parse_metadata_version(metadata_text)
+
+
+def _wheel_has_tg_console_script(wheel_path: Path) -> bool:
+    with zipfile.ZipFile(wheel_path) as zf:
+        entry_members = [
+            name for name in zf.namelist() if name.endswith(".dist-info/entry_points.txt")
+        ]
+        if not entry_members:
+            return False
+        content = zf.read(entry_members[0]).decode("utf-8")
+
+    in_console_scripts = False
+    for raw_line in io.StringIO(content):
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_console_scripts = line == "[console_scripts]"
+            continue
+        if not in_console_scripts:
+            continue
+        if re.match(r"^tg\s*=\s*.+$", line):
+            return True
+    return False
 
 
 def _sdist_metadata_version(sdist_path: Path) -> str:
@@ -77,6 +103,8 @@ def validate(
             errors.append(
                 f"Wheel metadata version mismatch: {wheel.name} has {wheel_version}, expected {version}"
             )
+        if not _wheel_has_tg_console_script(wheel):
+            errors.append(f"Wheel missing tg console script entry point: {wheel.name}")
 
     for sdist in sdists:
         if sdist.name != expected_sdist_name:

@@ -16,13 +16,21 @@ def _load_module():
     return module
 
 
-def _write_wheel(path: Path, version: str, tag: str) -> Path:
+def _write_wheel(
+    path: Path, version: str, tag: str, *, include_console_script: bool = True
+) -> Path:
     wheel_name = f"tensor_grep-{version}-cp311-abi3-{tag}.whl"
     wheel_path = path / wheel_name
     dist_info = f"tensor_grep-{version}.dist-info/METADATA"
+    entry_points = f"tensor_grep-{version}.dist-info/entry_points.txt"
     metadata = f"Metadata-Version: 2.1\nName: tensor-grep\nVersion: {version}\n"
     with zipfile.ZipFile(wheel_path, "w") as zf:
         zf.writestr(dist_info, metadata)
+        if include_console_script:
+            zf.writestr(
+                entry_points,
+                "[console_scripts]\ntg = tensor_grep.cli.main:app\n",
+            )
     return wheel_path
 
 
@@ -101,3 +109,20 @@ def test_should_build_hash_matrix_for_all_artifacts(tmp_path: Path):
     assert set(matrix.keys()) == {wheel.name, sdist.name}
     for digest in matrix.values():
         assert len(digest) == 64
+
+
+def test_should_fail_when_wheel_missing_tg_console_script(tmp_path: Path):
+    module = _load_module()
+    version = "0.11.1"
+    _write_wheel(tmp_path, version, "manylinux_2_34_x86_64", include_console_script=False)
+    _write_wheel(tmp_path, version, "macosx_11_0_x86_64")
+    _write_wheel(tmp_path, version, "win_amd64")
+    _write_sdist(tmp_path, version)
+
+    errors = module.validate(
+        dist_dir=tmp_path,
+        version=version,
+        require_platforms=["linux", "macos", "windows"],
+    )
+
+    assert any("missing tg console script entry point" in err for err in errors)
