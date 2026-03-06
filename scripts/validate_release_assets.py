@@ -272,6 +272,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "publish-docs:",
         "release-success-gate:",
         "Verify final npm parity before release success gate",
+        "Verify final PyPI parity before release success gate",
         "Smoke-test Binary (Windows)",
         "Smoke-test Binary (Linux)",
         "Smoke-test Binary (macOS)",
