@@ -100,6 +100,8 @@ class TestMultiGpuDistributionIntegration:
         assert mock_pool.called is True
         assert fake_executor.submitted_device_ids[:2] == [3, 7]
         assert result.total_matches == len(result.matches)
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
 
     @patch("tensor_grep.backends.cudf_backend.as_completed")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
@@ -144,6 +146,8 @@ class TestMultiGpuDistributionIntegration:
         assert result.total_matches == len(result.matches)
         assert [m.line_number for m in result.matches][:2] == [1, 4]
         assert [m.text for m in result.matches][:2] == ["3", "7"]
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
 
     @patch("tensor_grep.backends.cudf_backend.as_completed")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
@@ -190,6 +194,8 @@ class TestMultiGpuDistributionIntegration:
         )
         assert fake_executor.submitted_device_ids[:2] == [7, 3]
         assert result.total_matches == len(result.matches)
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
 
     @patch("tensor_grep.backends.cudf_backend.as_completed")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
@@ -233,6 +239,8 @@ class TestMultiGpuDistributionIntegration:
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_cudf"
         assert fake_executor.submitted_device_ids[:2] == [7, 3]
         assert result.total_matches == len(result.matches)
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -283,6 +291,8 @@ class TestMultiGpuDistributionIntegration:
         # 2 chunks at 1 line each with 3-line chunk offsets => line 1 then line 4.
         assert [m.line_number for m in result.matches][:2] == [1, 4]
         assert [m.text for m in result.matches][:2] == ["3", "7"]
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
 
     @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
     @patch("tensor_grep.backends.cudf_backend.as_completed")
@@ -309,6 +319,8 @@ class TestMultiGpuDistributionIntegration:
         mock_pool.assert_not_called()
         assert all(call.args[0] == 3 for call in mock_process_chunk.call_args_list)
         assert result.total_matches == len(result.matches)
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
 
     @patch("tensor_grep.backends.cudf_backend.CuDFBackend.is_available", return_value=False)
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
@@ -352,3 +364,5 @@ class TestMultiGpuDistributionIntegration:
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
         assert _TorchExecutor.submitted_devices == ["cuda:7", "cuda:3"]
         assert result.total_matches == 2
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2

@@ -146,7 +146,7 @@ class CuDFBackend(ComputeBackend):
         file_size: int,
         device_chunks_mb: list[tuple[int, int]],
         config: SearchConfig | None,
-    ) -> list[MatchLine]:
+    ) -> tuple[list[MatchLine], int]:
         matches: list[MatchLine] = []
         normalized_device_chunks = self._normalize_device_chunks([
             (device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb
@@ -165,7 +165,7 @@ class CuDFBackend(ComputeBackend):
                 pattern,
                 config,
             )
-            return sorted(single_matches, key=lambda m: m.line_number)
+            return sorted(single_matches, key=lambda m: m.line_number), 1
 
         max_workers = min(len(normalized_device_chunks), len(execution_plan))
         if max_workers <= 1:
@@ -188,7 +188,7 @@ class CuDFBackend(ComputeBackend):
                 cumulative_line_offset += chunk_line_count
 
             matches.sort(key=lambda m: m.line_number)
-            return matches
+            return matches, 1
 
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
             futures = []
@@ -222,7 +222,7 @@ class CuDFBackend(ComputeBackend):
                 cumulative_line_offset += chunk_line_count
 
         matches.sort(key=lambda m: m.line_number)
-        return matches
+        return matches, max_workers
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
@@ -310,14 +310,20 @@ class CuDFBackend(ComputeBackend):
 
             # For multi-GPU configurations, distributed fanout is the primary runtime path.
             if len(device_chunks_mb) > 1:
-                matches = self._search_distributed(
+                matches, worker_count = self._search_distributed(
                     file_path=file_path,
                     pattern=pattern,
                     file_size=file_size,
                     device_chunks_mb=device_chunks_mb,
                     config=config,
                 )
-                return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
+                return SearchResult(
+                    matches=matches,
+                    total_files=1,
+                    total_matches=len(matches),
+                    routing_distributed=worker_count > 1,
+                    routing_worker_count=worker_count,
+                )
 
             chunked_processing_succeeded = False
             try:
@@ -406,12 +412,19 @@ class CuDFBackend(ComputeBackend):
             if chunked_processing_succeeded:
                 matches.sort(key=lambda m: m.line_number)
                 return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
-            matches = self._search_distributed(
+            matches, worker_count = self._search_distributed(
                 file_path=file_path,
                 pattern=pattern,
                 file_size=file_size,
                 device_chunks_mb=device_chunks_mb,
                 config=config,
+            )
+            return SearchResult(
+                matches=matches,
+                total_files=1,
+                total_matches=len(matches),
+                routing_distributed=worker_count > 1,
+                routing_worker_count=worker_count,
             )
 
         return SearchResult(matches=matches, total_files=1, total_matches=len(matches))

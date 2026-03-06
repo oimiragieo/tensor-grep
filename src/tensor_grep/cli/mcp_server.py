@@ -18,7 +18,9 @@ def _routing_summary(result: SearchResult) -> str:
         f"backend={result.routing_backend or 'unknown'} "
         f"reason={result.routing_reason or 'unknown'} "
         f"gpu_device_ids={result.routing_gpu_device_ids} "
-        f"gpu_chunk_plan_mb={result.routing_gpu_chunk_plan_mb}"
+        f"gpu_chunk_plan_mb={result.routing_gpu_chunk_plan_mb} "
+        f"distributed={result.routing_distributed} "
+        f"workers={result.routing_worker_count}"
     )
 
 
@@ -88,6 +90,12 @@ def tg_search(
             all_results.total_matches += result.total_matches
             if result.total_matches > 0:
                 all_results.total_files += 1
+            all_results.routing_distributed = (
+                all_results.routing_distributed or result.routing_distributed
+            )
+            all_results.routing_worker_count = max(
+                all_results.routing_worker_count, result.routing_worker_count
+            )
 
         if all_results.is_empty:
             return f"No matches found for '{pattern}' in {path}.\n{_routing_summary(all_results)}"
@@ -165,6 +173,12 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
             all_results.total_matches += result.total_matches
             if result.total_matches > 0:
                 all_results.total_files += 1
+            all_results.routing_distributed = (
+                all_results.routing_distributed or result.routing_distributed
+            )
+            all_results.routing_worker_count = max(
+                all_results.routing_worker_count, result.routing_worker_count
+            )
 
         if all_results.is_empty:
             return f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"

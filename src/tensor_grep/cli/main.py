@@ -776,9 +776,15 @@ def search_command(
             result = rg_backend.search(paths_to_search, pattern, config=config)
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
-        all_results.matches.extend(result.matches)
-        all_results.total_matches += result.total_matches
-        all_results.total_files += result.total_files
+            all_results.matches.extend(result.matches)
+            all_results.total_matches += result.total_matches
+            all_results.total_files += result.total_files
+            all_results.routing_distributed = (
+                all_results.routing_distributed or result.routing_distributed
+            )
+            all_results.routing_worker_count = max(
+                all_results.routing_worker_count, result.routing_worker_count
+            )
     else:
         for current_file in candidate_files_ordered:
             span_ctx = (
@@ -795,6 +801,12 @@ def search_command(
             all_results.total_matches += result.total_matches
             if result.total_matches > 0:
                 all_results.total_files += 1
+            all_results.routing_distributed = (
+                all_results.routing_distributed or result.routing_distributed
+            )
+            all_results.routing_worker_count = max(
+                all_results.routing_worker_count, result.routing_worker_count
+            )
 
     if only_matching:
         all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
@@ -824,7 +836,9 @@ def search_command(
             typer.echo(
                 (
                     f"[stats] gpu_device_ids={selected_gpu_device_ids} "
-                    f"gpu_chunk_plan_mb={selected_gpu_chunk_plan_mb}"
+                    f"gpu_chunk_plan_mb={selected_gpu_chunk_plan_mb} "
+                    f"distributed={all_results.routing_distributed} "
+                    f"workers={all_results.routing_worker_count}"
                 ),
                 err=True,
             )

@@ -51,6 +51,8 @@ def test_tg_search_includes_routing_summary_in_non_empty_output():
     assert "Routing: backend=CuDFBackend reason=gpu_explicit_ids_cudf" in out
     assert "gpu_device_ids=[7, 3]" in out
     assert "gpu_chunk_plan_mb=[(7, 256), (3, 512)]" in out
+    assert "distributed=False" in out
+    assert "workers=0" in out
 
 
 def test_tg_devices_returns_no_gpu_message_when_empty():

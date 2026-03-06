@@ -31,6 +31,9 @@
 - **devices**: Expose routable device-id contract in inventory API
   ([`b2a95e1`](https://github.com/oimiragieo/tensor-grep/commit/b2a95e18e721613117743bb381b747ccee128f63))
 
+- **torch**: Weight multi-gpu shard fanout by chunk-plan sizes
+  ([`13a82d1`](https://github.com/oimiragieo/tensor-grep/commit/13a82d1513f5ad48005cd44e2a3a961e5ed26ddd))
+
 ### Testing
 
 - **ci-release**: Require benchmark-regression dependency for release job

@@ -21,6 +21,8 @@ class TestFormatters:
             routing_reason="gpu_explicit_ids_cudf",
             routing_gpu_device_ids=[7, 3],
             routing_gpu_chunk_plan_mb=[(7, 256), (3, 512)],
+            routing_distributed=True,
+            routing_worker_count=2,
         )
 
     def test_should_format_lines(self):
@@ -41,6 +43,8 @@ class TestFormatters:
             {"device_id": 7, "chunk_mb": 256},
             {"device_id": 3, "chunk_mb": 512},
         ]
+        assert parsed["routing_distributed"] is True
+        assert parsed["routing_worker_count"] == 2
 
     def test_table_output_has_headers(self):
         fmt = TableFormatter()

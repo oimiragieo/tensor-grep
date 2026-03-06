@@ -198,7 +198,7 @@ class TestCuDFBackend:
             1,
         )
 
-        matches = backend._search_distributed(
+        matches, worker_count = backend._search_distributed(
             file_path="test.log",
             pattern="ERROR",
             file_size=1 * 1024 * 1024,  # small enough to produce exactly one chunk
@@ -210,6 +210,7 @@ class TestCuDFBackend:
         mock_process_chunk.assert_called_once()
         assert len(matches) == 1
         assert matches[0].line_number == 1
+        assert worker_count == 1
 
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
@@ -227,7 +228,7 @@ class TestCuDFBackend:
             ([MatchLine(line_number=1, text="c", file="test.log")], 2),
         ]
 
-        matches = backend._search_distributed(
+        matches, worker_count = backend._search_distributed(
             file_path="test.log",
             pattern="ERROR",
             file_size=3 * 1024 * 1024,
@@ -238,6 +239,7 @@ class TestCuDFBackend:
         mock_pool.assert_not_called()
         assert [m.line_number for m in matches] == [1, 3, 5]
         assert [m.text for m in matches] == ["a", "b", "c"]
+        assert worker_count == 1
 
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])

@@ -217,4 +217,6 @@ class TorchBackend(ComputeBackend):
             matches=matches,
             total_files=1 if matches else 0,
             total_matches=len(matches),
+            routing_distributed=len(devices) > 1,
+            routing_worker_count=len(devices) if len(devices) > 1 else 0,
         )

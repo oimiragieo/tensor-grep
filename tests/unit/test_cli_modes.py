@@ -510,6 +510,8 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
         {"device_id": 7, "chunk_mb": 256},
         {"device_id": 3, "chunk_mb": 512},
     ]
+    assert payload["routing_distributed"] is False
+    assert payload["routing_worker_count"] == 0
 
 
 def test_cli_stats_prints_summary_when_no_matches(monkeypatch):

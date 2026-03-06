@@ -16,6 +16,8 @@ class JsonFormatter(OutputFormatter):
                 {"device_id": device_id, "chunk_mb": chunk_mb}
                 for device_id, chunk_mb in result.routing_gpu_chunk_plan_mb
             ],
+            "routing_distributed": result.routing_distributed,
+            "routing_worker_count": result.routing_worker_count,
             "matches": [
                 {"file": m.file, "line_number": m.line_number, "text": m.text}
                 for m in result.matches

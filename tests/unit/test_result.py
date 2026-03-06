@@ -21,8 +21,12 @@ class TestSearchResult:
             routing_reason="gpu_explicit_ids_cudf",
             routing_gpu_device_ids=[3, 7],
             routing_gpu_chunk_plan_mb=[(3, 256), (7, 512)],
+            routing_distributed=True,
+            routing_worker_count=2,
         )
         assert result.routing_backend == "CuDFBackend"
         assert result.routing_reason == "gpu_explicit_ids_cudf"
         assert result.routing_gpu_device_ids == [3, 7]
         assert result.routing_gpu_chunk_plan_mb == [(3, 256), (7, 512)]
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
