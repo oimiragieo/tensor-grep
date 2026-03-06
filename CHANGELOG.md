@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v0.29.1 (2026-03-06)
+
+### Bug Fixes
+
+- **rust**: Align arrow crates with pyo3-arrow to resolve chrono conflict
+  ([`09c5aaa`](https://github.com/oimiragieo/tensor-grep/commit/09c5aaafe9f6681eb41ec06d395813778ed89413))
+
+- **rust**: Migrate PyO3 API calls for 0.24 compatibility
+  ([`7681998`](https://github.com/oimiragieo/tensor-grep/commit/7681998b5fc255a9a91d5aa12e8ee3519e10208c))
+
+### Continuous Integration
+
+- Add dependency install retries for python matrix
+  ([`4b63af8`](https://github.com/oimiragieo/tensor-grep/commit/4b63af84989ab675a2aec136b45b1198a56bee1f))
+
+- Enforce always-run pypi parity gate for release version
+  ([`64e97e5`](https://github.com/oimiragieo/tensor-grep/commit/64e97e5d30a4ad331da3032b4e6b71ca847e44e8))
+
+- Skip publish parity gate when no release version is produced
+  ([`c1def82`](https://github.com/oimiragieo/tensor-grep/commit/c1def829509413d88493ef4ab181db131cd72465))
+
+### Documentation
+
+- **bench**: Refresh benchmark results from latest local pass
+  ([`20f0868`](https://github.com/oimiragieo/tensor-grep/commit/20f0868ff5410b626d6cff6bb53041ffdfc4cfe9))
+
+- **release**: Codify npm parity and rollback runbook
+  ([`d64d1fc`](https://github.com/oimiragieo/tensor-grep/commit/d64d1fce41121472ee2eebe7daf28ac841bd031c))
+
+
 ## v0.29.0 (2026-03-06)
 
 ### Features
