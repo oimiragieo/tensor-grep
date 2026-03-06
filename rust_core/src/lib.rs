@@ -28,7 +28,7 @@ fn read_mmap_to_arrow(py: Python<'_>, filepath: &str) -> PyArrowResult<PyObject>
 
     // 3. Export to a Python Arrow object (returns a PyCapsule wrapping the C Data Interface)
     let exported = py_array.to_pyarrow(py)?;
-    Ok(exported)
+    Ok(exported.into())
 }
 
 /// Reads a file into a zero-copy Arrow StringArray and yields it in chunks (slices)
@@ -75,7 +75,7 @@ fn read_mmap_to_arrow_chunked(
         let py_array = pyo3_arrow::PyArray::from_array_ref(Arc::new(sliced_array));
 
         let exported = py_array.to_pyarrow(py)?;
-        py_chunks.push(exported);
+        py_chunks.push(exported.into());
 
         current_idx += slice_len;
     }

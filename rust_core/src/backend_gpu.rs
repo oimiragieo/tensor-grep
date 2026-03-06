@@ -13,13 +13,13 @@ pub struct CliFlags {
 pub fn should_use_gpu_pipeline() -> bool {
     Python::with_gil(|py| -> PyResult<bool> {
         // Attempt to import tensor_grep's existing device detector
-        let sys = py.import_bound("sys")?;
+        let sys = py.import("sys")?;
         let _path = sys.getattr("path")?;
 
-        let _builtins = py.import_bound("builtins")?;
+        let _builtins = py.import("builtins")?;
 
         // Let's try importing tensor_grep
-        let tg_module = match py.import_bound("tensor_grep.core.hardware.device_detect") {
+        let tg_module = match py.import("tensor_grep.core.hardware.device_detect") {
             Ok(m) => m,
             Err(_) => return Ok(false), // Not installed in python environment
         };
@@ -36,14 +36,14 @@ pub fn should_use_gpu_pipeline() -> bool {
 /// Fallback mechanism to invoke specific Python Typer subcommands directly from Rust
 pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyhow::Result<()> {
     Python::with_gil(|py| -> PyResult<()> {
-        let sys = py.import_bound("sys")?;
+        let sys = py.import("sys")?;
 
         // Emulate sys.argv for the Typer entrypoint
         let mut sys_argv = vec!["tg".to_string(), command.to_string()];
         sys_argv.extend(args);
         sys.setattr("argv", sys_argv)?;
 
-        let main_module = py.import_bound("tensor_grep.cli.main")?;
+        let main_module = py.import("tensor_grep.cli.main")?;
         main_module.call_method0("main_entry")?;
 
         Ok(())
@@ -54,15 +54,15 @@ pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyho
 /// Executes the cuDF Python Pipeline dynamically from Rust!
 pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> anyhow::Result<()> {
     Python::with_gil(|py| -> PyResult<()> {
-        let pipeline_module = py.import_bound("tensor_grep.core.pipeline")?;
+        let pipeline_module = py.import("tensor_grep.core.pipeline")?;
         let pipeline_class = pipeline_module.getattr("Pipeline")?;
 
         // Import config
-        let config_module = py.import_bound("tensor_grep.core.config")?;
+        let config_module = py.import("tensor_grep.core.config")?;
         let config_class = config_module.getattr("SearchConfig")?;
 
         // kwargs for config
-        let kwargs = PyDict::new_bound(py);
+        let kwargs = PyDict::new(py);
         kwargs.set_item("count", config.count)?;
         kwargs.set_item("fixed_strings", config.fixed_strings)?;
         kwargs.set_item("invert_match", config.invert_match)?;
@@ -71,7 +71,7 @@ pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> any
         let search_config = config_class.call((), Some(&kwargs))?;
 
         // kwargs for pipeline
-        let pipe_kwargs = PyDict::new_bound(py);
+        let pipe_kwargs = PyDict::new(py);
         pipe_kwargs.set_item("force_cpu", false)?;
         pipe_kwargs.set_item("config", search_config.clone())?;
 
