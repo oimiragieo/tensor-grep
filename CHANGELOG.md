@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.30.0 (2026-03-06)
+
+### Bug Fixes
+
+- **cli**: Prefer runtime routing metadata over planned backend
+  ([`62dcc54`](https://github.com/oimiragieo/tensor-grep/commit/62dcc54b32f0c169d8bdb8777f2f0aec19f41b98))
+
+### Features
+
+- **debug**: Emit runtime routing fallback metadata
+  ([`034d71c`](https://github.com/oimiragieo/tensor-grep/commit/034d71cfa105dab42c7e5dc89a4d3e29675d1322))
+
+### Testing
+
+- **cli**: Lock distributed routing metadata in json output
+  ([`73082bd`](https://github.com/oimiragieo/tensor-grep/commit/73082bd1145c2a2824676ceaad1ac23912d3fa11))
+
+
 ## v0.29.3 (2026-03-06)
 
 ### Performance Improvements
