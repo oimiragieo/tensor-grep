@@ -20,10 +20,12 @@ class DeviceDetector:
     def __init__(self) -> None:
         self._has_gpu_cache: bool | None = None
         self._device_count_cache: int | None = None
+        self._vram_capacity_cache_mb: dict[int, int] = {}
 
     def clear_cache(self) -> None:
         self._has_gpu_cache = None
         self._device_count_cache = None
+        self._vram_capacity_cache_mb.clear()
 
     @staticmethod
     def _parse_explicit_device_ids() -> list[int] | None:
@@ -195,6 +197,10 @@ class DeviceDetector:
         return devices
 
     def get_vram_capacity_mb(self, device_id: int = 0) -> int:
+        cached = self._vram_capacity_cache_mb.get(device_id)
+        if cached is not None:
+            return cached
+
         if not self.has_gpu():
             return 0
 
@@ -238,7 +244,9 @@ class DeviceDetector:
             memInfo = c_nvmlMemory()
             nvml.nvmlDeviceGetMemoryInfo(handle, ctypes.byref(memInfo))
 
-            return int(memInfo.total // (1024 * 1024))
+            vram_mb = int(memInfo.total // (1024 * 1024))
+            self._vram_capacity_cache_mb[device_id] = vram_mb
+            return vram_mb
         except Exception:
             pass
 
@@ -246,7 +254,9 @@ class DeviceDetector:
             import torch
 
             props = torch.cuda.get_device_properties(device_id)
-            return int(props.total_memory // (1024 * 1024))
+            vram_mb = int(props.total_memory // (1024 * 1024))
+            self._vram_capacity_cache_mb[device_id] = vram_mb
+            return vram_mb
         except Exception:
             return 0
 

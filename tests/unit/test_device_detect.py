@@ -130,6 +130,51 @@ class TestDeviceDetect:
     @patch("tensor_grep.core.hardware.device_detect.sys")
     @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
     @patch("os.path.exists", return_value=False)
+    def test_should_cache_vram_capacity_per_device(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.return_value = True
+
+        props_0 = MagicMock(total_memory=8 * 1024 * 1024 * 1024)  # 8GB
+        props_1 = MagicMock(total_memory=12 * 1024 * 1024 * 1024)  # 12GB
+        torch.cuda.get_device_properties.side_effect = [props_0, props_1]
+
+        detector = DeviceDetector()
+        assert detector.get_vram_capacity_mb(0) == 8192
+        assert detector.get_vram_capacity_mb(0) == 8192
+        assert detector.get_vram_capacity_mb(1) == 12288
+        assert torch.cuda.get_device_properties.call_count == 2
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
+    def test_should_clear_all_detection_caches(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.side_effect = [True, True]
+        torch.cuda.device_count.side_effect = [2, 0]
+        props_0 = MagicMock(total_memory=8 * 1024 * 1024 * 1024)  # 8GB
+        props_1 = MagicMock(total_memory=4 * 1024 * 1024 * 1024)  # 4GB
+        torch.cuda.get_device_properties.side_effect = [props_0, props_1]
+
+        detector = DeviceDetector()
+        assert detector.has_gpu() is True
+        assert detector.get_device_count() == 2
+        assert detector.get_vram_capacity_mb(0) == 8192
+
+        detector.clear_cache()
+
+        # Recompute after cache clear should read fresh values from torch.
+        assert detector.has_gpu() is True
+        assert detector.get_device_count() == 0
+        assert detector.get_vram_capacity_mb(0) == 4096
+        assert torch.cuda.is_available.call_count == 2
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
     def test_should_expose_public_device_enumeration_contract(self, mock_exists, mock_sys):
         import torch
 
