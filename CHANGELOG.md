@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.29.3 (2026-03-06)
+
+### Performance Improvements
+
+- **torch**: Skip detector probe when gpu ids are explicitly pinned
+  ([`5da4c0b`](https://github.com/oimiragieo/tensor-grep/commit/5da4c0bb17be1bc720008d2617547849257fa650))
+
+### Testing
+
+- **release**: Cover tg shim resolution for smoke installer
+  ([`d4456c2`](https://github.com/oimiragieo/tensor-grep/commit/d4456c2b3f5da0364ac638c69f9f74d90dc4d482))
+
+
 ## v0.29.2 (2026-03-06)
 
 ### Documentation
