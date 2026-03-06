@@ -88,6 +88,17 @@ SCENARIOS = [
 ]
 
 
+def resolve_bench_data_dir() -> Path:
+    """
+    Resolve benchmark data location. Defaults to artifacts to avoid mutating
+    tracked repository fixtures during repeated local/CI benchmark runs.
+    """
+    override = os.environ.get("TENSOR_GREP_BENCH_DATA_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    return ROOT_DIR / "artifacts" / "bench_data"
+
+
 def generate_test_data(directory: str, num_files: int = 5, lines_per_file: int = 100000):
     print(f"Generating synthetic log data in '{directory}'...")
     os.makedirs(directory, exist_ok=True)
@@ -112,7 +123,7 @@ def generate_test_data(directory: str, num_files: int = 5, lines_per_file: int =
 
 
 def run_cmd_capture(cmd):
-    start = time.time()
+    start = time.perf_counter()
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
@@ -133,7 +144,7 @@ def run_cmd_capture(cmd):
     except Exception as e:
         print(f"Failed to run {' '.join(cmd)}: {e}")
         stdout = ""
-    return time.time() - start, stdout
+    return time.perf_counter() - start, stdout
 
 
 def resolve_rg_binary() -> str:
@@ -194,7 +205,7 @@ def compare_results(rg_out, tg_out, scenario_name):
 def main():
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
 
-    bench_dir = Path(__file__).resolve().parent / "bench_data"
+    bench_dir = resolve_bench_data_dir()
     generate_test_data(
         str(bench_dir), num_files=2, lines_per_file=2_000_000
     )  # ~240MB total, triggers 50MB GPU chunking bypass
@@ -232,6 +243,10 @@ def main():
             "--no-ignore",
             *tg_args,
         ]
+
+        # Warmup to reduce first-run jitter (regex compilation/import effects).
+        run_cmd_capture(rg_cmd)
+        run_cmd_capture(actual_tg_cmd)
 
         # Actual benchmark
         rg_time, rg_out = run_cmd_capture(rg_cmd)

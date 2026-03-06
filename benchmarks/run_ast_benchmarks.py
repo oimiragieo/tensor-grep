@@ -35,6 +35,17 @@ SCENARIOS = [
 ]
 
 
+def resolve_ast_bench_data_dir() -> Path:
+    """
+    Resolve AST benchmark data location. Defaults to artifacts to avoid mutating
+    tracked repository fixtures during repeated local/CI benchmark runs.
+    """
+    override = os.environ.get("TENSOR_GREP_AST_BENCH_DATA_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    return ROOT_DIR / "artifacts" / "bench_ast_data"
+
+
 def generate_ast_data(directory: str, num_files: int = 10, funcs_per_file: int = 500):
     print(f"Generating synthetic Python code data in '{directory}'...")
     os.makedirs(directory, exist_ok=True)
@@ -64,7 +75,7 @@ class DataProcessor_{idx}:
 
 
 def run_cmd_capture(cmd):
-    start = time.time()
+    start = time.perf_counter()
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
@@ -84,7 +95,7 @@ def run_cmd_capture(cmd):
     except Exception as e:
         print(f"Failed to run {' '.join(cmd)}: {e}")
         stdout = ""
-    return time.time() - start, stdout
+    return time.perf_counter() - start, stdout
 
 
 def resolve_ast_grep_binary() -> str | None:
@@ -112,7 +123,7 @@ def compare_results(ast_out, tg_out, scenario_name):
 def main():
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
 
-    bench_dir = Path(__file__).resolve().parent / "bench_ast_data"
+    bench_dir = resolve_ast_bench_data_dir()
     # Generates 10 files, each with 500 classes and 1000 functions
     generate_ast_data(str(bench_dir), num_files=10, funcs_per_file=500)
 
