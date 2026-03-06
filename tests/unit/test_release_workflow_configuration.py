@@ -22,3 +22,10 @@ def test_ci_publish_parity_gate_should_validate_package_manager_versions() -> No
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "python scripts/validate_release_version_parity.py" in workflow
     assert "--skip-package-managers" not in workflow
+
+
+def test_ci_workflow_should_keep_dependency_install_retry_guards() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "Install Dependencies (Unix with retry)" in workflow
+    assert "Install Dependencies (Windows with retry)" in workflow
+    assert "Dependency install failed after 3 attempts." in workflow
