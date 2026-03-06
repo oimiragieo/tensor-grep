@@ -825,6 +825,40 @@ def search_command(
     matched_files = {m.file for m in all_results.matches}
     elapsed_ms = (time.perf_counter() - search_start) * 1000.0
 
+    def _emit_runtime_debug() -> None:
+        if not debug:
+            return
+        runtime_backend = all_results.routing_backend or selected_backend_name
+        runtime_reason = all_results.routing_reason or selected_backend_reason
+        runtime_gpu_device_ids = all_results.routing_gpu_device_ids or selected_gpu_device_ids
+        runtime_gpu_chunk_plan_mb = (
+            all_results.routing_gpu_chunk_plan_mb or selected_gpu_chunk_plan_mb
+        )
+
+        runtime_differs = (
+            runtime_backend != selected_backend_name
+            or runtime_reason != selected_backend_reason
+            or runtime_gpu_device_ids != selected_gpu_device_ids
+            or runtime_gpu_chunk_plan_mb != selected_gpu_chunk_plan_mb
+        )
+        if not runtime_differs:
+            return
+
+        typer.echo(
+            f"[debug] routing.runtime backend={runtime_backend} reason={runtime_reason}",
+            err=True,
+        )
+        if runtime_gpu_device_ids:
+            typer.echo(
+                (
+                    f"[debug] routing.runtime.gpu_device_ids={runtime_gpu_device_ids} "
+                    f"routing.runtime.gpu_chunk_plan_mb={runtime_gpu_chunk_plan_mb} "
+                    f"distributed={all_results.routing_distributed} "
+                    f"workers={all_results.routing_worker_count}"
+                ),
+                err=True,
+            )
+
     def _emit_stats() -> None:
         if not stats:
             return
@@ -858,6 +892,8 @@ def search_command(
                 ),
                 err=True,
             )
+
+    _emit_runtime_debug()
 
     if files_with_matches:
         if matched_files:
