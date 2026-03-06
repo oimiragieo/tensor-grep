@@ -214,7 +214,10 @@ class Pipeline:
                         try:
                             from tensor_grep.backends.torch_backend import TorchBackend
 
-                            torch_backend = TorchBackend(device_ids=device_ids)
+                            torch_backend = TorchBackend(
+                                device_ids=device_ids,
+                                chunk_sizes_mb=chunk_sizes,
+                            )
                             if torch_backend.is_available():
                                 self.backend = torch_backend
                                 selected_backend_reason = "gpu_explicit_ids_torch"
@@ -253,7 +256,10 @@ class Pipeline:
                         try:
                             from tensor_grep.backends.torch_backend import TorchBackend
 
-                            torch_backend = TorchBackend(device_ids=device_ids)
+                            torch_backend = TorchBackend(
+                                device_ids=device_ids,
+                                chunk_sizes_mb=chunk_sizes,
+                            )
                             if torch_backend.is_available():
                                 self.backend = torch_backend
                                 selected_backend_reason = "gpu_heuristic_torch"

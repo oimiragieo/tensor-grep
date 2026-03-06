@@ -261,7 +261,7 @@ class TestPipeline:
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
         assert pipeline.selected_gpu_device_ids == [7, 3]
         assert pipeline.selected_gpu_chunk_plan_mb == [(7, 256), (3, 512)]
-        mock_torch_backend.assert_called_once_with(device_ids=[7, 3])
+        mock_torch_backend.assert_called_once_with(device_ids=[7, 3], chunk_sizes_mb=[256, 512])
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")

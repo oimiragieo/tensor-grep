@@ -15,9 +15,52 @@ class TorchBackend(ComputeBackend):
     Uses tensor operations for literal substring matching on GPU.
     """
 
-    def __init__(self, device_ids: list[int] | None = None) -> None:
+    def __init__(
+        self,
+        device_ids: list[int] | None = None,
+        chunk_sizes_mb: list[int] | None = None,
+    ) -> None:
         self.device_detector = DeviceDetector()
         self.device_ids = device_ids
+        self.chunk_sizes_mb = chunk_sizes_mb
+
+    @staticmethod
+    def _build_round_robin_shards(
+        numbered_lines: list[tuple[int, str]], shard_count: int
+    ) -> list[list[tuple[int, str]]]:
+        shards: list[list[tuple[int, str]]] = [[] for _ in range(shard_count)]
+        for index, item in enumerate(numbered_lines):
+            shards[index % shard_count].append(item)
+        return shards
+
+    @staticmethod
+    def _build_weighted_shards(
+        numbered_lines: list[tuple[int, str]], weights: list[int]
+    ) -> list[list[tuple[int, str]]]:
+        shard_count = len(weights)
+        shards: list[list[tuple[int, str]]] = [[] for _ in range(shard_count)]
+        if not numbered_lines or shard_count == 0:
+            return shards
+
+        safe_weights = [max(0, int(weight)) for weight in weights]
+        total_weight = sum(safe_weights)
+        if total_weight <= 0:
+            return TorchBackend._build_round_robin_shards(numbered_lines, shard_count)
+
+        total_lines = len(numbered_lines)
+        targets = [(total_lines * weight) // total_weight for weight in safe_weights]
+        remainder = total_lines - sum(targets)
+        for slot in range(remainder):
+            targets[slot % shard_count] += 1
+
+        cursor = 0
+        for slot, target in enumerate(targets):
+            next_cursor = cursor + target
+            shards[slot] = numbered_lines[cursor:next_cursor]
+            cursor = next_cursor
+        if cursor < total_lines:
+            shards[-1].extend(numbered_lines[cursor:])
+        return shards
 
     def is_available(self) -> bool:
         try:
@@ -123,9 +166,10 @@ class TorchBackend(ComputeBackend):
 
         numbered_lines = list(enumerate(lines, 1))
         if len(devices) > 1:
-            shards: list[list[tuple[int, str]]] = [[] for _ in devices]
-            for index, item in enumerate(numbered_lines):
-                shards[index % len(devices)].append(item)
+            if self.chunk_sizes_mb and len(self.chunk_sizes_mb) == len(devices):
+                shards = self._build_weighted_shards(numbered_lines, self.chunk_sizes_mb)
+            else:
+                shards = self._build_round_robin_shards(numbered_lines, len(devices))
 
             with ThreadPoolExecutor(max_workers=len(devices)) as executor:
                 futures = []

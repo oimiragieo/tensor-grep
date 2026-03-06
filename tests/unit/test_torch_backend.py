@@ -198,3 +198,23 @@ def test_torch_backend_should_prefer_enumerate_device_ids_when_available(tmp_pat
     assert result.total_matches == 2
     assert "cuda:7" in fake_torch.device_calls
     assert "cuda:3" in fake_torch.device_calls
+
+
+def test_torch_backend_should_weight_multi_gpu_shards_by_chunk_plan(tmp_path):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_weighted.log"
+    path.write_text("ERROR 1\nERROR 2\nERROR 3\nERROR 4\n", encoding="utf-8")
+
+    fake_torch = _FakeTorch()
+    backend = TorchBackend(device_ids=[3, 7], chunk_sizes_mb=[3, 1])
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+        patch("tensor_grep.backends.torch_backend.ThreadPoolExecutor", _FakeExecutor),
+    ):
+        result = backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 4
+    # Weighted shards (3:1) route 3 lines to cuda:3 and 1 line to cuda:7.
+    assert fake_torch.tensor_device_calls[-4:] == ["cuda:3", "cuda:3", "cuda:3", "cuda:7"]
