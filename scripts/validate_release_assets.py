@@ -220,6 +220,16 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
                 f"Package manager runbook missing required verification/publish command: {required_cmd}"
             )
 
+    for required_smoke_cmd in (
+        "brew install oimiragieo/tap/tensor-grep",
+        "winget install oimiragieo.tensor-grep",
+        "tg --version",
+    ):
+        if required_smoke_cmd not in runbook_content:
+            errors.append(
+                f"Package manager runbook missing required smoke-install command: {required_smoke_cmd}"
+            )
+
     if "npm/GitHub mismatch" not in runbook_content:
         errors.append("Package manager runbook missing npm/GitHub rollback guidance")
     return errors
