@@ -283,6 +283,7 @@ def test_should_require_package_manager_runbook_command_contract():
     assert any("prepare_package_manager_release.py --check" in err for err in errors)
     assert any("winget validate --manifest" in err for err in errors)
     assert any("verify_package_manager_bundle_checksums.py --bundle-dir" in err for err in errors)
+    assert any("npm/GitHub rollback guidance" in err for err in errors)
 
 
 def test_should_require_explicit_homebrew_version_contract():
@@ -314,6 +315,8 @@ def test_should_require_package_manager_sections_in_installation_docs():
     )
     assert any("### Repeatable Release Checklist" in err for err in errors)
     assert any("### Rollback Playbook" in err for err in errors)
+    assert any("oimiragieo/tensor-grep" in err for err in errors)
+    assert any("npm parity checks" in err for err in errors)
 
 
 def test_should_require_publish_jobs_to_depend_on_tag_version_parity():

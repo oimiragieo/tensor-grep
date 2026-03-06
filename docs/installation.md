@@ -21,7 +21,7 @@ tg search "ERROR" app.log
 
 We provide pre-compiled binaries for Windows, Linux, and macOS.
 
-1. Go to the [GitHub Releases](https://github.com/tensor-grep/tensor-grep/releases) page.
+1. Go to the [GitHub Releases](https://github.com/oimiragieo/tensor-grep/releases) page.
 2. Download the binary for your platform (e.g., `tg-windows-amd64.exe`).
 3. Add it to your system PATH.
 

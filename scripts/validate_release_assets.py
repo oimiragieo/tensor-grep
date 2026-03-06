@@ -216,6 +216,9 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
             errors.append(
                 f"Package manager runbook missing required verification/publish command: {required_cmd}"
             )
+
+    if "npm/GitHub mismatch" not in runbook_content:
+        errors.append("Package manager runbook missing npm/GitHub rollback guidance")
     return errors
 
 
@@ -229,6 +232,12 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
     ):
         if expected not in installation_content:
             errors.append(f"Installation docs missing package-manager section: {expected}")
+
+    if "https://github.com/oimiragieo/tensor-grep/releases" not in installation_content:
+        errors.append("Installation docs must point GitHub Releases link to oimiragieo/tensor-grep")
+
+    if "--check-npm" not in installation_content:
+        errors.append("Installation docs release automation notes must mention npm parity checks")
     return errors
 
 
