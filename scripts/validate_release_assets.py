@@ -91,6 +91,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "publish-success-gate:",
         "Confirm publish job result when publishing is required",
         "Verify PyPI parity for semantic-release version (always)",
+        "Skip publish parity gate when semantic-release produced no version",
         "Verify release version parity across tag/assets/PyPI",
         "scripts/validate_release_version_parity.py",
     ):
@@ -126,6 +127,16 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
 
     if "if: always()" not in ci_workflow:
         errors.append("CI workflow publish-success-gate must run with if: always()")
+
+    if "if: needs.release.outputs.release_version == ''" not in ci_workflow:
+        errors.append(
+            "CI workflow publish-success-gate must explicitly handle empty release_version output"
+        )
+
+    if "if: needs.release.outputs.release_version != ''" not in ci_workflow:
+        errors.append(
+            "CI workflow publish-success-gate must guard checkout/parity steps behind non-empty release_version"
+        )
 
     try:
         parsed_ci = yaml.safe_load(ci_workflow) or {}

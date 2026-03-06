@@ -124,6 +124,8 @@ def test_should_require_ci_terminal_publish_success_gate():
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any("publish-success-gate" in err for err in errors)
+    assert any("empty release_version output" in err for err in errors)
+    assert any("non-empty release_version" in err for err in errors)
 
 
 def test_should_require_release_job_to_depend_on_benchmark_regression_gate():
