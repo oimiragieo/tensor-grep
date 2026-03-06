@@ -576,6 +576,7 @@ _NO_GPU_INVENTORY = DeviceInventory(
     platform="windows",
     has_gpu=False,
     device_count=0,
+    routable_device_ids=[],
     devices=[],
 )
 
@@ -583,6 +584,7 @@ _MULTI_GPU_INVENTORY = DeviceInventory(
     platform="windows",
     has_gpu=True,
     device_count=2,
+    routable_device_ids=[7, 3],
     devices=[
         DeviceInfo(device_id=7, vram_capacity_mb=12288),
         DeviceInfo(device_id=3, vram_capacity_mb=24576),
@@ -645,6 +647,7 @@ def test_devices_command_json_outputs_routable_device_inventory(monkeypatch):
     assert payload["platform"] == "windows"
     assert payload["has_gpu"] is True
     assert payload["device_count"] == 2
+    assert payload["routable_device_ids"] == [7, 3]
     assert payload["devices"] == [
         {"device_id": 7, "vram_capacity_mb": 12288},
         {"device_id": 3, "vram_capacity_mb": 24576},

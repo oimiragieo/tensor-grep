@@ -58,7 +58,13 @@ def test_tg_devices_returns_no_gpu_message_when_empty():
 
     with patch(
         "tensor_grep.cli.mcp_server.collect_device_inventory",
-        return_value=DeviceInventory(platform="windows", has_gpu=False, device_count=0, devices=[]),
+        return_value=DeviceInventory(
+            platform="windows",
+            has_gpu=False,
+            device_count=0,
+            routable_device_ids=[],
+            devices=[],
+        ),
     ):
         out = mcp_server.tg_devices()
 
@@ -76,6 +82,7 @@ def test_tg_devices_can_emit_json_payload():
             platform="windows",
             has_gpu=True,
             device_count=1,
+            routable_device_ids=[7],
             devices=[DeviceInfo(device_id=7, vram_capacity_mb=12288)],
         ),
     ):
@@ -97,6 +104,7 @@ def test_tg_devices_text_mode_returns_human_inventory_lines():
             platform="windows",
             has_gpu=True,
             device_count=2,
+            routable_device_ids=[7, 3],
             devices=[
                 DeviceInfo(device_id=7, vram_capacity_mb=12288),
                 DeviceInfo(device_id=3, vram_capacity_mb=24576),
