@@ -18,43 +18,43 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Quick examples comparing tools
 
-Fresh benchmark pass results (2026-03-06, local run after benchmark-script hardening) from this repository's benchmark scripts are below.
+Fresh benchmark pass results (2026-03-06, local run after CI/PyO3 compatibility fixes) from this repository's benchmark scripts are below.
 
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
-- These figures are from a local `uv run python benchmarks/run_benchmarks.py` / `run_ast_benchmarks.py` execution.
+- These figures are from a local `uv run python benchmarks/run_benchmarks.py` / `run_ast_benchmarks.py` / `run_gpu_benchmarks.py` execution.
 - `ripgrep` remains faster on most text-search scenarios in this local benchmark setup.
 
 ### ripgrep vs tensor-grep (`benchmarks/run_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.438s | 0.671s | Parity PASS |
-| Case-Insensitive Match | 0.495s | 0.742s | Parity PASS |
-| Regex Match | 0.502s | 0.738s | Parity PASS |
-| Invert Match | 1.181s | 1.449s | Parity PASS |
-| Count Matches | 0.145s | 0.094s | Parity PASS |
-| Context Lines (`-C2`) | 1.915s | 2.193s | Parity PASS |
-| Max Count (`-m 5`) | 0.105s | 0.382s | Parity PASS |
-| File Glob Filtering | 0.427s | 0.703s | Parity PASS |
-| Word Boundary | 0.446s | 0.914s | Parity PASS |
-| Fixed Strings (`-F`) | 0.475s | 0.730s | Parity PASS |
+| Simple String Match | 0.423s | 0.687s | Parity PASS |
+| Case-Insensitive Match | 0.438s | 0.694s | Parity PASS |
+| Regex Match | 0.450s | 0.726s | Parity PASS |
+| Invert Match | 0.998s | 1.253s | Parity PASS |
+| Count Matches | 0.144s | 0.080s | Parity PASS |
+| Context Lines (`-C2`) | 1.613s | 1.887s | Parity PASS |
+| Max Count (`-m 5`) | 0.109s | 0.360s | Parity PASS |
+| File Glob Filtering | 0.553s | 0.766s | Parity PASS |
+| Word Boundary | 0.431s | 0.713s | Parity PASS |
+| Fixed Strings (`-F`) | 0.405s | 0.660s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.124s | 0.433s | Parity PASS |
-| Try/Except Block | 0.111s | 0.405s | Parity PASS |
-| Class Declaration | 0.112s | 0.385s | Parity PASS |
+| Simple Function Def | 0.136s | 0.403s | Parity PASS |
+| Try/Except Block | 0.106s | 0.389s | Parity PASS |
+| Class Declaration | 0.118s | 0.402s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | **0.064s** | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | 0.504s | 2,000 ERROR labels |
-| Torch backend | Exact match on 10,000 log lines | 0.550s | 2,000 matches |
+| AST backend | `function_definition` on test module | **0.058s** | 4 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | 0.517s | 2,000 ERROR labels |
+| Torch backend | Exact match on 10,000 log lines | 0.676s | 2,000 matches |
 
 ### Benchmark Governance (Regression Protection)
 
