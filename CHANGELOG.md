@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.28.0 (2026-03-06)
+
+### Features
+
+- **torch**: Weight multi-gpu shard fanout by chunk-plan sizes
+  ([`13a82d1`](https://github.com/oimiragieo/tensor-grep/commit/13a82d1513f5ad48005cd44e2a3a961e5ed26ddd))
+
+
 ## v0.27.0 (2026-03-06)
 
 ### Chores
