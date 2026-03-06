@@ -213,6 +213,7 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
         "uv run python scripts/prepare_package_manager_release.py --check",
         "winget validate --manifest",
         "uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir",
+        "python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-pypi",
         "python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-npm",
     ):
         if required_cmd not in runbook_content:
