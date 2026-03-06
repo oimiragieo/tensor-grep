@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.30.1 (2026-03-06)
+
+### Bug Fixes
+
+- **stats**: Hide planned gpu ids when runtime falls back
+  ([`6d3d0e6`](https://github.com/oimiragieo/tensor-grep/commit/6d3d0e623ed4f5d0fd3141619a0d211b1ba54914))
+
+
 ## v0.30.0 (2026-03-06)
 
 ### Bug Fixes
