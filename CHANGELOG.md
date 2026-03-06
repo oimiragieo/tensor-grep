@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.29.0 (2026-03-06)
+
+### Features
+
+- **obs**: Expose distributed worker metadata across search outputs
+  ([`79a973b`](https://github.com/oimiragieo/tensor-grep/commit/79a973b7719b7c4c0fdf099ff5a24674c32c4619))
+
+
 ## v0.28.0 (2026-03-06)
 
 ### Features
@@ -30,9 +38,6 @@
 
 - **devices**: Expose routable device-id contract in inventory API
   ([`b2a95e1`](https://github.com/oimiragieo/tensor-grep/commit/b2a95e18e721613117743bb381b747ccee128f63))
-
-- **torch**: Weight multi-gpu shard fanout by chunk-plan sizes
-  ([`13a82d1`](https://github.com/oimiragieo/tensor-grep/commit/13a82d1513f5ad48005cd44e2a3a961e5ed26ddd))
 
 ### Testing
 
