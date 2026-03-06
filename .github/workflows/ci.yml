@@ -170,10 +170,34 @@ jobs:
       - name: Install Rust dependencies (for PyO3 fallback)
         uses: dtolnay/rust-toolchain@stable
         
-      - name: Install Dependencies
+      - name: Install Dependencies (Unix with retry)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv --python ${{ matrix.python-version }}
+          for attempt in 1 2 3; do
+            if uv pip install -e ".[dev,ast]"; then
+              exit 0
+            fi
+            echo "Dependency install failed (attempt ${attempt}/3); retrying after backoff..."
+            sleep $((attempt * 5))
+          done
+          echo "Dependency install failed after 3 attempts."
+          exit 1
+
+      - name: Install Dependencies (Windows with retry)
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
           uv venv --python ${{ matrix.python-version }}
-          uv pip install -e ".[dev,ast]"
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            uv pip install -e ".[dev,ast]"
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Warning "Dependency install failed (attempt $attempt/3); retrying after backoff..."
+            Start-Sleep -Seconds (5 * $attempt)
+          }
+          throw "Dependency install failed after 3 attempts."
           
       - name: Run Pytest
         run: uv run pytest tests -v --tb=short
