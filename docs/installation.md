@@ -98,6 +98,8 @@ Release automation notes:
   - SHA256 hash matrix generation for all built artifacts.
 - Main CI also runs `scripts/smoke_test_pypi_artifacts.py` to install from local `dist/` artifacts in an isolated virtual environment before publish.
 - `publish-pypi` now verifies PyPI's latest version matches the semantic-release tag version before the job is marked successful.
+- `publish-success-gate` in main CI always verifies PyPI latest parity for the semantic-release version, even when publish is skipped.
+- `release.yml` now verifies npm registry latest parity (`--check-npm`) after `npm publish` before release success gate completion.
 
 ### Repeatable Release Checklist
 

@@ -69,6 +69,7 @@ This checklist reflects the current enterprise release pipeline:
 5. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version
+   - npm registry `latest` equals `X.Y.Z` (verified by release workflow parity step)
 
 ## 4. Package-manager distribution finalization
 
