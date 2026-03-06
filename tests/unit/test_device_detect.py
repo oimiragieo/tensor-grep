@@ -101,6 +101,35 @@ class TestDeviceDetect:
     @patch("tensor_grep.core.hardware.device_detect.sys")
     @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
     @patch("os.path.exists", return_value=False)
+    def test_should_cache_has_gpu_result(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.side_effect = [True, False]
+
+        detector = DeviceDetector()
+        assert detector.has_gpu() is True
+        assert detector.has_gpu() is True
+        assert torch.cuda.is_available.call_count == 1
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
+    def test_should_cache_device_count_result(self, mock_exists, mock_sys):
+        import torch
+
+        mock_sys.platform = "linux"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.device_count.side_effect = [2, 0]
+
+        detector = DeviceDetector()
+        assert detector.get_device_count() == 2
+        assert detector.get_device_count() == 2
+        assert torch.cuda.device_count.call_count == 1
+
+    @patch("tensor_grep.core.hardware.device_detect.sys")
+    @patch.dict("sys.modules", {"torch": MagicMock(), "ctypes": MagicMock()})
+    @patch("os.path.exists", return_value=False)
     def test_should_expose_public_device_enumeration_contract(self, mock_exists, mock_sys):
         import torch
 

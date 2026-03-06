@@ -17,6 +17,14 @@ class DeviceInfo:
 
 
 class DeviceDetector:
+    def __init__(self) -> None:
+        self._has_gpu_cache: bool | None = None
+        self._device_count_cache: int | None = None
+
+    def clear_cache(self) -> None:
+        self._has_gpu_cache = None
+        self._device_count_cache = None
+
     @staticmethod
     def _parse_explicit_device_ids() -> list[int] | None:
         """
@@ -45,6 +53,9 @@ class DeviceDetector:
         return ids
 
     def has_gpu(self) -> bool:
+        if self._has_gpu_cache is not None:
+            return self._has_gpu_cache
+
         # Fast path: check if NVML library exists without loading torch
         if sys.platform == "win32":
             nvml_path = os.path.join(
@@ -59,6 +70,7 @@ class DeviceDetector:
                     count = ctypes.c_uint()
                     nvml.nvmlDeviceGetCount_v2(ctypes.byref(count))
                     if count.value > 0:
+                        self._has_gpu_cache = True
                         return True
                 except Exception:
                     pass
@@ -78,6 +90,7 @@ class DeviceDetector:
                         count = ctypes.c_uint()
                         nvml.nvmlDeviceGetCount_v2(ctypes.byref(count))
                         if count.value > 0:
+                            self._has_gpu_cache = True
                             return True
                     except Exception:
                         pass
@@ -86,12 +99,18 @@ class DeviceDetector:
         try:
             import torch
 
-            return bool(torch.cuda.is_available())
+            self._has_gpu_cache = bool(torch.cuda.is_available())
+            return self._has_gpu_cache
         except ImportError:
+            self._has_gpu_cache = False
             return False
 
     def get_device_count(self) -> int:
+        if self._device_count_cache is not None:
+            return self._device_count_cache
+
         if not self.has_gpu():
+            self._device_count_cache = 0
             return 0
 
         # Try fast NVML binding first to avoid torch overhead
@@ -120,15 +139,18 @@ class DeviceDetector:
             nvml.nvmlInit_v2()
             count = ctypes.c_uint()
             nvml.nvmlDeviceGetCount_v2(ctypes.byref(count))
-            return int(count.value)
+            self._device_count_cache = int(count.value)
+            return self._device_count_cache
         except Exception:
             pass
 
         try:
             import torch
 
-            return int(torch.cuda.device_count())
+            self._device_count_cache = int(torch.cuda.device_count())
+            return self._device_count_cache
         except Exception:
+            self._device_count_cache = 0
             return 0
 
     def get_device_ids(self) -> list[int]:
