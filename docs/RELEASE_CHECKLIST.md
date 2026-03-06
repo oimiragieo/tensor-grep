@@ -66,6 +66,7 @@ This checklist reflects the current enterprise release pipeline:
    - includes `BUNDLE_CHECKSUMS.txt` parity validation for package-manager bundle assets
 5. Confirm terminal publish gate is green:
    - `release-success-gate` (depends on parity + npm publish + docs deploy)
+   - includes final npm registry parity re-check before success confirmation
 5. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version
