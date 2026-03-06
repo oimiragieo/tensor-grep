@@ -89,7 +89,8 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "Validate built PyPI artifact set",
         "Smoke-test install from built PyPI artifacts",
         "publish-success-gate:",
-        "Confirm publish and parity gates",
+        "Confirm publish job result when publishing is required",
+        "Verify PyPI parity for semantic-release version (always)",
         "Verify release version parity across tag/assets/PyPI",
         "scripts/validate_release_version_parity.py",
     ):
@@ -122,6 +123,9 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
 
     if "needs: [release, publish-pypi]" not in ci_workflow:
         errors.append("CI workflow publish-success-gate must depend on release + publish-pypi")
+
+    if "if: always()" not in ci_workflow:
+        errors.append("CI workflow publish-success-gate must run with if: always()")
 
     try:
         parsed_ci = yaml.safe_load(ci_workflow) or {}

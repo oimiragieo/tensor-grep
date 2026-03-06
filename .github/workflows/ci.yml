@@ -468,15 +468,36 @@ jobs:
   publish-success-gate:
     name: publish-success-gate
     needs: [release, publish-pypi]
-    if: always() && needs.release.outputs.publish_pypi == 'true'
+    if: always()
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - name: Confirm publish and parity gates
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.release_version }}
+
+      - name: Confirm publish job result when publishing is required
         run: |
+          if [ "${{ needs.release.result }}" != "success" ]; then
+            echo "release job did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.release.outputs.publish_pypi }}" != "true" ]; then
+            echo "publish_pypi=false, skipping publish-pypi job result check."
+            exit 0
+          fi
           if [ "${{ needs.publish-pypi.result }}" != "success" ]; then
             echo "publish-pypi job did not succeed."
             exit 1
           fi
-          echo "publish-pypi and version parity gates succeeded."
+          echo "publish-pypi job succeeded."
+
+      - name: Verify PyPI parity for semantic-release version (always)
+        run: |
+          python scripts/validate_release_version_parity.py \
+            --expected-version "${{ needs.release.outputs.release_version }}" \
+            --expected-tag "v${{ needs.release.outputs.release_version }}" \
+            --check-pypi \
+            --pypi-wait-seconds 180 \
+            --pypi-poll-interval-seconds 10
