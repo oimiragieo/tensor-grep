@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.29.2 (2026-03-06)
+
+### Documentation
+
+- **bench**: Refresh benchmark tables from latest full local pass
+  ([`10759c1`](https://github.com/oimiragieo/tensor-grep/commit/10759c1b95a4dc86334ab2b566ac77e318fd286d))
+
+- **bench**: Refresh README and paper with latest benchmark run
+  ([`5e98cfc`](https://github.com/oimiragieo/tensor-grep/commit/5e98cfcedc3a6f434530cd029c18835d41577cf8))
+
+- **release**: Document final npm parity success gate
+  ([`2a25af2`](https://github.com/oimiragieo/tensor-grep/commit/2a25af2f2cd56df1dead92c1f796fec65a4c1330))
+
+### Performance Improvements
+
+- **device**: Cache gpu availability and device count
+  ([`30c1fc9`](https://github.com/oimiragieo/tensor-grep/commit/30c1fc9225c16486877c56b926906167d4fff462))
+
+- **device**: Cache per-device vram capacity lookups
+  ([`d4d0c94`](https://github.com/oimiragieo/tensor-grep/commit/d4d0c9428b25976d0c475346b65caa5f8fe88f21))
+
+
 ## v0.29.1 (2026-03-06)
 
 ### Bug Fixes
