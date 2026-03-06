@@ -220,6 +220,36 @@ def test_should_require_ci_pypi_publish_job_url_and_skip_existing_contract():
     )
 
 
+def test_should_fail_when_npm_repository_url_is_not_canonical():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    module._version_from_pyproject = lambda: "1.2.3"
+    module._version_from_cargo = lambda: "1.2.3"
+
+    real_read = module._read
+
+    def fake_read(path):
+        path_str = str(path).replace("\\", "/")
+        if path_str.endswith("npm/package.json"):
+            return (
+                "{"
+                '"version":"1.2.3",'
+                '"repository":{"type":"git","url":"git+https://github.com/tensor-grep/tensor-grep.git"}'
+                "}"
+            )
+        return real_read(path)
+
+    module._read = fake_read
+    errors = module.validate_all()
+    assert any("npm/package.json repository.url must be" in err for err in errors)
+
+
 def test_should_fail_ci_workflow_when_parity_gate_skips_package_managers():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

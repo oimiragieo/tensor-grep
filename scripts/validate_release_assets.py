@@ -365,7 +365,8 @@ def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
     cargo_version = _version_from_cargo()
-    npm_version = _version_from_npm()
+    npm_manifest = json.loads(_read(ROOT / "npm" / "package.json"))
+    npm_version = str(npm_manifest["version"])
 
     if cargo_version != py_version:
         errors.append(
@@ -373,6 +374,14 @@ def validate_all() -> list[str]:
         )
     if npm_version != py_version:
         errors.append(f"Version mismatch: npm/package.json={npm_version} != pyproject={py_version}")
+
+    npm_repository_url = str((npm_manifest.get("repository") or {}).get("url") or "")
+    expected_npm_repo_url = "git+https://github.com/oimiragieo/tensor-grep.git"
+    if npm_repository_url != expected_npm_repo_url:
+        errors.append(
+            "npm/package.json repository.url must be "
+            f"{expected_npm_repo_url}, got {npm_repository_url or '<empty>'}"
+        )
 
     winget_path = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
     winget = _read(winget_path)
