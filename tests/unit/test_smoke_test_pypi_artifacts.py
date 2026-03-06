@@ -31,7 +31,7 @@ def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
         work_dir=tmp_path / "work",
     )
 
-    assert len(calls) == 3
+    assert len(calls) == 4
     assert calls[0][:3] == [module.sys.executable, "-m", "venv"]
     assert calls[1][2:6] == [
         "pip",
@@ -41,3 +41,4 @@ def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
     ]
     assert calls[1][-1] == "tensor-grep==0.11.1"
     assert calls[2][1] == "-c"
+    assert calls[3][-1] == "--version"

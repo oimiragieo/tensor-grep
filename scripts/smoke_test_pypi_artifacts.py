@@ -13,6 +13,17 @@ def _venv_python(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "python"
 
 
+def _venv_tg(venv_dir: Path) -> Path:
+    if sys.platform.startswith("win"):
+        scripts = venv_dir / "Scripts"
+        for candidate in ("tg.exe", "tg.cmd", "tg-script.py"):
+            path = scripts / candidate
+            if path.exists():
+                return path
+        return scripts / "tg.exe"
+    return venv_dir / "bin" / "tg"
+
+
 def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
     resolved_dist = dist_dir.resolve()
     venv_dir = work_dir / ".pypi-smoke-venv"
@@ -43,6 +54,13 @@ def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
                 f"assert m.version('tensor-grep') == '{version}'; "
                 "import tensor_grep"
             ),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            str(_venv_tg(venv_dir)),
+            "--version",
         ],
         check=True,
     )
