@@ -18,6 +18,14 @@ def test_release_workflow_should_verify_npm_registry_parity_after_publish() -> N
     assert "--check-npm" in workflow
 
 
+def test_release_success_gate_should_recheck_npm_parity_before_success() -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "Verify final npm parity before release success gate" in workflow
+    assert '--expected-version "${GITHUB_REF#refs/tags/v}"' in workflow
+    assert '--expected-tag "${GITHUB_REF#refs/tags/}"' in workflow
+    assert "--check-npm" in workflow
+
+
 def test_ci_publish_parity_gate_should_validate_package_manager_versions() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "python scripts/validate_release_version_parity.py" in workflow

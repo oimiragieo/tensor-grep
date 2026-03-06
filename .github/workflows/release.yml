@@ -302,6 +302,23 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Setup Python
+        run: uv python install 3.12
+
+      - name: Verify final npm parity before release success gate
+        run: |
+          python scripts/validate_release_version_parity.py \
+            --expected-version "${GITHUB_REF#refs/tags/v}" \
+            --expected-tag "${GITHUB_REF#refs/tags/}" \
+            --check-npm \
+            --npm-wait-seconds 180 \
+            --npm-poll-interval-seconds 10
+
       - name: Confirm release publication gates
         run: |
           echo "Release publication gates passed: parity, npm, docs."
