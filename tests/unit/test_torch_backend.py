@@ -236,3 +236,23 @@ def test_torch_backend_should_weight_multi_gpu_shards_by_chunk_plan(tmp_path):
     assert result.routing_gpu_chunk_plan_mb == [(3, 3), (7, 1)]
     assert result.routing_distributed is True
     assert result.routing_worker_count == 2
+
+
+def test_torch_backend_is_available_should_skip_detector_probe_when_device_ids_provided():
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    class _DetectorProbeGuard:
+        def get_device_count(self):
+            raise AssertionError("detector probe should not run when explicit device ids are set")
+
+    fake_torch = _FakeTorch()
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+
+    backend = TorchBackend(device_ids=[7, 3])
+    backend.device_detector = _DetectorProbeGuard()
+
+    with (
+        patch("importlib.util.find_spec", return_value=object()),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        assert backend.is_available() is True

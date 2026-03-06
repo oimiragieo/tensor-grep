@@ -75,6 +75,9 @@ class TorchBackend(ComputeBackend):
         except Exception:
             return False
 
+        if self.device_ids:
+            return True
+
         return self.device_detector.get_device_count() > 0
 
     def _contains_literal_torch(
