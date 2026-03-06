@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v0.27.0 (2026-03-06)
+
+### Chores
+
+- **format**: Fix ruff preview formatting in project plan
+  ([`b0593dd`](https://github.com/oimiragieo/tensor-grep/commit/b0593dd352e020c39fe746e98257dfae8b6d3ba3))
+
+### Continuous Integration
+
+- **bench**: Relax regression threshold to 20 percent to reduce runner jitter flake
+  ([`2115b8d`](https://github.com/oimiragieo/tensor-grep/commit/2115b8dd3c2968e22c05c9068f24c3ddd2bce195))
+
+### Documentation
+
+- **bench**: Refresh README and paper with latest CI benchmark artifacts
+  ([`25c4ac8`](https://github.com/oimiragieo/tensor-grep/commit/25c4ac8ea12ca8bbe111a9c623f33b8101f957c5))
+
+### Features
+
+- **devices**: Expose routable device-id contract in inventory API
+  ([`b2a95e1`](https://github.com/oimiragieo/tensor-grep/commit/b2a95e18e721613117743bb381b747ccee128f63))
+
+### Testing
+
+- **ci-release**: Require benchmark-regression dependency for release job
+  ([`c071302`](https://github.com/oimiragieo/tensor-grep/commit/c0713022c5ed268568188a0dfcaf58ba8d96dbf5))
+
+- add validator test for missing benchmark-regression in jobs.release.needs\n- enforce check via
+  YAML parsing in release asset validator
+
+
 ## v0.26.6 (2026-03-05)
 
 ### Performance Improvements
