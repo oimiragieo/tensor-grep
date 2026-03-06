@@ -107,6 +107,12 @@ def test_torch_backend_uses_gpu_literal_matching(tmp_path):
 
     assert result.total_matches == 1
     assert result.matches[0].line_number == 2
+    assert result.routing_backend == "TorchBackend"
+    assert result.routing_reason == "torch_single_gpu"
+    assert result.routing_gpu_device_ids == [0]
+    assert result.routing_gpu_chunk_plan_mb == []
+    assert result.routing_distributed is False
+    assert result.routing_worker_count == 1
 
 
 def test_torch_backend_regex_falls_back_to_cpu(tmp_path):
@@ -168,6 +174,12 @@ def test_torch_backend_should_fanout_work_to_executor_when_multi_gpu(tmp_path):
 
     assert result.total_matches == 4
     assert _FakeExecutor.submitted_devices == ["cuda:3", "cuda:7"]
+    assert result.routing_backend == "TorchBackend"
+    assert result.routing_reason == "torch_multi_gpu_fanout"
+    assert result.routing_gpu_device_ids == [3, 7]
+    assert result.routing_gpu_chunk_plan_mb == []
+    assert result.routing_distributed is True
+    assert result.routing_worker_count == 2
 
 
 def test_torch_backend_should_prefer_enumerate_device_ids_when_available(tmp_path):
@@ -218,3 +230,9 @@ def test_torch_backend_should_weight_multi_gpu_shards_by_chunk_plan(tmp_path):
     assert result.total_matches == 4
     # Weighted shards (3:1) route 3 lines to cuda:3 and 1 line to cuda:7.
     assert fake_torch.tensor_device_calls[-4:] == ["cuda:3", "cuda:3", "cuda:3", "cuda:7"]
+    assert result.routing_backend == "TorchBackend"
+    assert result.routing_reason == "torch_multi_gpu_fanout"
+    assert result.routing_gpu_device_ids == [3, 7]
+    assert result.routing_gpu_chunk_plan_mb == [(3, 3), (7, 1)]
+    assert result.routing_distributed is True
+    assert result.routing_worker_count == 2

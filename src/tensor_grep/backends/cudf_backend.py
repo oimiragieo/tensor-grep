@@ -234,6 +234,11 @@ class CuDFBackend(ComputeBackend):
 
         file_size = os.path.getsize(file_path)
         matches: list[MatchLine] = []
+        device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
+        if not device_chunks_mb:
+            device_chunks_mb = [(0, 512)]
+        normalized_device_chunks = self._normalize_device_chunks(device_chunks_mb)
+        routing_gpu_device_ids = [device_id for device_id, _ in normalized_device_chunks]
 
         total_capacity_bytes = sum(self.chunk_sizes_mb) * 1024 * 1024
 
@@ -302,11 +307,20 @@ class CuDFBackend(ComputeBackend):
                         MatchLine(line_number=int(idx) + 1, text=str(text), file=file_path)
                     )
 
+            return SearchResult(
+                matches=matches,
+                total_files=1,
+                total_matches=len(matches),
+                routing_backend="CuDFBackend",
+                routing_reason="cudf_single_gpu_read_text",
+                routing_gpu_device_ids=routing_gpu_device_ids,
+                routing_gpu_chunk_plan_mb=normalized_device_chunks,
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
         else:
             # PHASE 3.1: VRAM Chunking for Large Files
-            device_chunks_mb = list(zip(self.device_ids, self.chunk_sizes_mb, strict=False))
-            if not device_chunks_mb:
-                device_chunks_mb = [(0, 512)]
 
             # For multi-GPU configurations, distributed fanout is the primary runtime path.
             if len(device_chunks_mb) > 1:
@@ -321,6 +335,10 @@ class CuDFBackend(ComputeBackend):
                     matches=matches,
                     total_files=1,
                     total_matches=len(matches),
+                    routing_backend="CuDFBackend",
+                    routing_reason="cudf_distributed_fanout",
+                    routing_gpu_device_ids=routing_gpu_device_ids,
+                    routing_gpu_chunk_plan_mb=normalized_device_chunks,
                     routing_distributed=worker_count > 1,
                     routing_worker_count=worker_count,
                 )
@@ -411,7 +429,17 @@ class CuDFBackend(ComputeBackend):
 
             if chunked_processing_succeeded:
                 matches.sort(key=lambda m: m.line_number)
-                return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
+                return SearchResult(
+                    matches=matches,
+                    total_files=1,
+                    total_matches=len(matches),
+                    routing_backend="CuDFBackend",
+                    routing_reason="cudf_chunked_zero_copy",
+                    routing_gpu_device_ids=routing_gpu_device_ids,
+                    routing_gpu_chunk_plan_mb=normalized_device_chunks,
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                )
             matches, worker_count = self._search_distributed(
                 file_path=file_path,
                 pattern=pattern,
@@ -423,8 +451,22 @@ class CuDFBackend(ComputeBackend):
                 matches=matches,
                 total_files=1,
                 total_matches=len(matches),
+                routing_backend="CuDFBackend",
+                routing_reason="cudf_chunked_process_pool_fallback",
+                routing_gpu_device_ids=routing_gpu_device_ids,
+                routing_gpu_chunk_plan_mb=normalized_device_chunks,
                 routing_distributed=worker_count > 1,
                 routing_worker_count=worker_count,
             )
 
-        return SearchResult(matches=matches, total_files=1, total_matches=len(matches))
+        return SearchResult(
+            matches=matches,
+            total_files=1,
+            total_matches=len(matches),
+            routing_backend="CuDFBackend",
+            routing_reason="cudf_single_gpu_read_text",
+            routing_gpu_device_ids=routing_gpu_device_ids,
+            routing_gpu_chunk_plan_mb=normalized_device_chunks,
+            routing_distributed=False,
+            routing_worker_count=1,
+        )

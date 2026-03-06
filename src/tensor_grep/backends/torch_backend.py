@@ -210,13 +210,23 @@ class TorchBackend(ComputeBackend):
 
                 if is_match:
                     matches.append(MatchLine(line_number=line_number, text=line, file=file_path))
-                    if cfg.max_count and len(matches) >= cfg.max_count:
-                        break
+                if cfg.max_count and len(matches) >= cfg.max_count:
+                    break
+
+        routing_chunk_plan_mb: list[tuple[int, int]] = []
+        if self.chunk_sizes_mb and len(self.chunk_sizes_mb) == len(resolved_device_ids):
+            routing_chunk_plan_mb = list(
+                zip(resolved_device_ids, self.chunk_sizes_mb, strict=False)
+            )
 
         return SearchResult(
             matches=matches,
             total_files=1 if matches else 0,
             total_matches=len(matches),
+            routing_backend="TorchBackend",
+            routing_reason="torch_multi_gpu_fanout" if len(devices) > 1 else "torch_single_gpu",
+            routing_gpu_device_ids=list(resolved_device_ids),
+            routing_gpu_chunk_plan_mb=routing_chunk_plan_mb,
             routing_distributed=len(devices) > 1,
-            routing_worker_count=len(devices) if len(devices) > 1 else 0,
+            routing_worker_count=len(devices),
         )

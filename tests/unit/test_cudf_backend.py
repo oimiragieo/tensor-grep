@@ -156,6 +156,12 @@ class TestCuDFBackend:
 
         mock_pool.assert_not_called()
         assert result.total_matches == 1
+        assert result.routing_backend == "CuDFBackend"
+        assert result.routing_reason == "cudf_chunked_zero_copy"
+        assert result.routing_gpu_device_ids == [0]
+        assert result.routing_gpu_chunk_plan_mb == [(0, 1)]
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
 
     def test_should_build_execution_plan_with_explicit_device_ids(self):
         from tensor_grep.backends.cudf_backend import CuDFBackend
