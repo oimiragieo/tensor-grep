@@ -15,21 +15,21 @@ uv run python benchmarks/run_ast_benchmarks.py
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.438s | 0.671s | Parity PASS |
-| Case-Insensitive Match | 0.495s | 0.742s | Parity PASS |
-| Regex Match | 0.502s | 0.738s | Parity PASS |
-| Invert Match | 1.181s | 1.449s | Parity PASS |
-| Count Matches | 0.145s | 0.094s | Parity PASS |
-| Context Lines (`-C2`) | 1.915s | 2.193s | Parity PASS |
-| Max Count (`-m 5`) | 0.105s | 0.382s | Parity PASS |
-| File Glob Filtering | 0.427s | 0.703s | Parity PASS |
-| Word Boundary | 0.446s | 0.914s | Parity PASS |
-| Fixed Strings (`-F`) | 0.475s | 0.730s | Parity PASS |
+| Simple String Match | 0.430s | 0.728s | Parity PASS |
+| Case-Insensitive Match | 0.479s | 0.711s | Parity PASS |
+| Regex Match | 0.463s | 0.705s | Parity PASS |
+| Invert Match | 1.127s | 1.377s | Parity PASS |
+| Count Matches | 0.159s | 0.086s | Parity PASS |
+| Context Lines (`-C2`) | 1.784s | 2.078s | Parity PASS |
+| Max Count (`-m 5`) | 0.126s | 0.384s | Parity PASS |
+| File Glob Filtering | 0.458s | 0.744s | Parity PASS |
+| Word Boundary | 0.509s | 0.732s | Parity PASS |
+| Fixed Strings (`-F`) | 0.515s | 0.704s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.124s | 0.433s | Parity PASS |
-| Try/Except Block | 0.111s | 0.405s | Parity PASS |
-| Class Declaration | 0.112s | 0.385s | Parity PASS |
+| Simple Function Def | 0.161s | 0.466s | Parity PASS |
+| Try/Except Block | 0.107s | 0.404s | Parity PASS |
+| Class Declaration | 0.128s | 0.513s | Parity PASS |
