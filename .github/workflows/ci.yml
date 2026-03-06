@@ -473,11 +473,18 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Skip publish parity gate when semantic-release produced no version
+        if: needs.release.outputs.release_version == ''
+        run: |
+          echo "No semantic-release version for this commit; skipping publish parity gate."
+
       - uses: actions/checkout@v4
+        if: needs.release.outputs.release_version != ''
         with:
           ref: v${{ needs.release.outputs.release_version }}
 
       - name: Confirm publish job result when publishing is required
+        if: needs.release.outputs.release_version != ''
         run: |
           if [ "${{ needs.release.result }}" != "success" ]; then
             echo "release job did not succeed."
@@ -494,6 +501,7 @@ jobs:
           echo "publish-pypi job succeeded."
 
       - name: Verify PyPI parity for semantic-release version (always)
+        if: needs.release.outputs.release_version != ''
         run: |
           python scripts/validate_release_version_parity.py \
             --expected-version "${{ needs.release.outputs.release_version }}" \
