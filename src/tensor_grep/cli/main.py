@@ -878,10 +878,21 @@ def search_command(
             ),
             err=True,
         )
-        stats_gpu_device_ids = all_results.routing_gpu_device_ids or selected_gpu_device_ids
-        stats_gpu_chunk_plan_mb = (
-            all_results.routing_gpu_chunk_plan_mb or selected_gpu_chunk_plan_mb
+        runtime_override_active = (
+            all_results.routing_backend is not None
+            and all_results.routing_backend != selected_backend_name
+        ) or (
+            all_results.routing_reason is not None
+            and all_results.routing_reason != selected_backend_reason
         )
+        if runtime_override_active:
+            stats_gpu_device_ids = list(all_results.routing_gpu_device_ids)
+            stats_gpu_chunk_plan_mb = list(all_results.routing_gpu_chunk_plan_mb)
+        else:
+            stats_gpu_device_ids = all_results.routing_gpu_device_ids or selected_gpu_device_ids
+            stats_gpu_chunk_plan_mb = (
+                all_results.routing_gpu_chunk_plan_mb or selected_gpu_chunk_plan_mb
+            )
         if stats_gpu_device_ids:
             typer.echo(
                 (
