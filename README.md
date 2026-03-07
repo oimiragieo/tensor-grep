@@ -29,32 +29,32 @@ Environment notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.468s | 0.768s | Parity PASS |
-| Case-Insensitive Match | 0.507s | 0.891s | Parity PASS |
-| Regex Match | 0.492s | 0.807s | Parity PASS |
-| Invert Match | 1.197s | 1.517s | Parity PASS |
-| Count Matches | 0.153s | 0.090s | Parity PASS |
-| Context Lines (`-C2`) | 1.914s | 2.278s | Parity PASS |
-| Max Count (`-m 5`) | 0.143s | 0.428s | Parity PASS |
-| File Glob Filtering | 0.532s | 0.886s | Parity PASS |
-| Word Boundary | 0.496s | 0.739s | Parity PASS |
-| Fixed Strings (`-F`) | 0.456s | 0.732s | Parity PASS |
+| Simple String Match | 0.663s | 0.960s | Parity PASS |
+| Case-Insensitive Match | 0.671s | 0.904s | Parity PASS |
+| Regex Match | 0.699s | 1.030s | Parity PASS |
+| Invert Match | 1.239s | 1.640s | Parity PASS |
+| Count Matches | 0.167s | 0.100s | Parity PASS |
+| Context Lines (`-C2`) | 1.974s | 2.431s | Parity PASS |
+| Max Count (`-m 5`) | 0.119s | 0.432s | Parity PASS |
+| File Glob Filtering | 0.525s | 0.802s | Parity PASS |
+| Word Boundary | 0.539s | 0.840s | Parity PASS |
+| Fixed Strings (`-F`) | 0.511s | 0.792s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.133s | 0.469s | Parity PASS |
-| Try/Except Block | 0.111s | 0.427s | Parity PASS |
-| Class Declaration | 0.135s | 0.470s | Parity PASS |
+| Simple Function Def | 0.142s | 0.469s | Parity PASS |
+| Try/Except Block | 0.125s | 0.551s | Parity PASS |
+| Class Declaration | 0.154s | 0.601s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | 0.061s | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | 0.127s | 2,000 ERROR labels |
-| Torch backend | Exact match on 10,000 log lines | 0.662s | 2,000 matches |
+| AST backend | `function_definition` on test module | 0.075s | 4 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | 0.674s | 2,000 ERROR labels |
+| Torch backend | Exact match on 10,000 log lines | 0.669s | 2,000 matches |
 
 ### Benchmark Governance (Regression Protection)
 
