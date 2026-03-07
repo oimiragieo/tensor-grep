@@ -52,3 +52,10 @@ def test_ci_benchmark_regression_jobs_should_use_auto_baseline_resolution() -> N
     assert "benchmarks/check_regression.py" in workflow
     assert "benchmarks/summarize_benchmarks.py" in workflow
     assert "--baseline auto" in workflow
+
+
+def test_release_workflow_should_smoke_test_package_manager_bundle_before_publish() -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "Smoke-test package-manager bundle contracts" in workflow
+    assert "scripts/smoke_test_package_manager_bundle.py" in workflow
+    assert "--bundle-dir artifacts/package-manager-bundle" in workflow
