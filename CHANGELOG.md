@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.30.2 (2026-03-07)
+
+### Bug Fixes
+
+- **bench**: Always emit ast benchmark artifact when sg is missing
+  ([`fc34cd9`](https://github.com/oimiragieo/tensor-grep/commit/fc34cd9659137e613af2d897f18722eaba88cbc6))
+
+### Documentation
+
+- **bench**: Refresh benchmark tables and test counts
+  ([`dae15a6`](https://github.com/oimiragieo/tensor-grep/commit/dae15a631a6de52689cf7ec7ed59bcacfceb1cbe))
+
+### Testing
+
+- **bench**: Lock environment-aware baseline and regression guard behavior
+  ([`515585d`](https://github.com/oimiragieo/tensor-grep/commit/515585dbe5a6d959d18601405f75af23a5edcaeb))
+
+- **cudf**: Lock distributed routing metadata contract
+  ([`dafbe3f`](https://github.com/oimiragieo/tensor-grep/commit/dafbe3fcbba9017add076aa9c10a12f6cba69c4a))
+
+- **installer**: Lock directory-restore contract for install scripts
+  ([`ef21b6e`](https://github.com/oimiragieo/tensor-grep/commit/ef21b6ef28ec079d199aed7f826f09b8ffdfe77d))
+
+
 ## v0.30.1 (2026-03-06)
 
 ### Bug Fixes
