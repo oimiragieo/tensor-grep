@@ -1,5 +1,10 @@
 {
   "generated_at_epoch_s": 1772714915.311119,
+  "environment": {
+    "machine": "amd64",
+    "platform": "windows",
+    "python_version": "3.12"
+  },
   "parity_failures": 0,
   "rows": [
     {

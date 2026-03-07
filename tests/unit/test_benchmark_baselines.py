@@ -11,6 +11,10 @@ def test_benchmark_baselines_should_exist_and_use_expected_schema():
         assert baseline_path.exists(), f"Missing benchmark baseline: {baseline_path}"
         payload = json.loads(baseline_path.read_text(encoding="utf-8"))
         assert payload.get("suite") == "run_benchmarks"
+        environment = payload.get("environment")
+        assert isinstance(environment, dict)
+        assert environment.get("platform")
+        assert environment.get("machine")
         rows = payload.get("rows")
         assert isinstance(rows, list) and len(rows) >= 5
         for row in rows:
