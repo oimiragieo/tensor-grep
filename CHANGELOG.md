@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.31.0 (2026-03-07)
+
+### Continuous Integration
+
+- **bench**: Switch regression jobs to auto baseline resolution
+  ([`baa9974`](https://github.com/oimiragieo/tensor-grep/commit/baa997473f7d2d29c3f377f896c7a63b8f2e90e6))
+
+### Features
+
+- **bench**: Add auto baseline selection for regression checks
+  ([`aabb593`](https://github.com/oimiragieo/tensor-grep/commit/aabb59307e619f830f6a304dc33dcc0d36ed5278))
+
+### Testing
+
+- **pipeline**: Lock non-gpu routing guards for fixed/count/context modes
+  ([`b0be220`](https://github.com/oimiragieo/tensor-grep/commit/b0be220ff39e1b7ad44d48ddc60e1092c1206c55))
+
+
 ## v0.30.4 (2026-03-07)
 
 ### Bug Fixes
