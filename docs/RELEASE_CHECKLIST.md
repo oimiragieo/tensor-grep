@@ -84,6 +84,7 @@ Detailed operational steps live in `docs/package_manager_publish.md`.
    - Ensure `PackageVersion` and nested `Installers[0].InstallerUrl` in `scripts/oimiragieo.tensor-grep.yaml` match release version.
    - CI also builds `artifacts/package-manager-bundle` and verifies `BUNDLE_CHECKSUMS.txt` parity in `package-manager-readiness`.
    - CI uploads `package-manager-bundle-<os>` artifacts for operator inspection/download from each green run.
+   - Tag release workflow preflights package-manager bundle generation/verification/smoke checks in `validate-package-managers` before binary builds start.
 3. Post-release operational publish:
    - Homebrew tap update: open/update PR in tap repo with new formula.
    - Winget submission: create/update manifest PR in winget-pkgs for new version.

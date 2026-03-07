@@ -66,3 +66,10 @@ def test_release_workflow_should_smoke_test_package_manager_bundle_before_publis
     assert "Smoke-test package-manager bundle contracts" in workflow
     assert "scripts/smoke_test_package_manager_bundle.py" in workflow
     assert "--bundle-dir artifacts/package-manager-bundle" in workflow
+
+
+def test_release_workflow_should_preflight_build_and_verify_package_manager_bundle() -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "Preflight build package-manager publish bundle artifact" in workflow
+    assert "Preflight verify package-manager bundle checksums" in workflow
+    assert "Preflight smoke-test package-manager bundle contracts" in workflow

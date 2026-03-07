@@ -331,6 +331,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "scripts/smoke_test_package_manager_bundle.py \\",
         "artifacts/package-manager-bundle/**",
         "Validate package-manager publish bundle source state",
+        "Preflight build package-manager publish bundle artifact",
+        "Preflight verify package-manager bundle checksums",
+        "Preflight smoke-test package-manager bundle contracts",
         "scripts/prepare_package_manager_release.py --check",
         "Confirm release publication gates",
     ):

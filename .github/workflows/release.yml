@@ -70,6 +70,24 @@ jobs:
           uv python install 3.12
           uv run python scripts/prepare_package_manager_release.py --check
 
+      - name: Preflight build package-manager publish bundle artifact
+        run: |
+          uv python install 3.12
+          uv run python scripts/prepare_package_manager_release.py \
+            --output-dir artifacts/package-manager-bundle
+
+      - name: Preflight verify package-manager bundle checksums
+        run: |
+          uv python install 3.12
+          uv run python scripts/verify_package_manager_bundle_checksums.py \
+            --bundle-dir artifacts/package-manager-bundle
+
+      - name: Preflight smoke-test package-manager bundle contracts
+        run: |
+          uv python install 3.12
+          uv run python scripts/smoke_test_package_manager_bundle.py \
+            --bundle-dir artifacts/package-manager-bundle
+
   build-binaries:
     needs: [validate-release-assets, validate-package-managers]
     name: Build on ${{ matrix.os }} - ${{ matrix.gpu }}
