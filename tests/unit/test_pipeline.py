@@ -285,6 +285,80 @@ class TestPipeline:
         assert pipeline.selected_gpu_device_ids == []
         assert pipeline.selected_gpu_chunk_plan_mb == []
 
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    @patch("tensor_grep.core.pipeline.StringZillaBackend")
+    def test_should_not_try_gpu_for_fixed_strings_when_rg_and_rust_are_unavailable(
+        self, mock_sz, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = False
+        mock_sz.return_value.is_available.return_value = False
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
+        mock_cudf.return_value.is_available.return_value = True
+
+        config = SearchConfig(
+            query_pattern="ERROR",
+            fixed_strings=True,
+            input_total_bytes=512 * 1024 * 1024,
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+
+        assert pipeline.backend.__class__.__name__ == "CPUBackend"
+        assert pipeline.selected_backend_reason == "fallback_backend"
+        mock_mem.return_value.get_device_chunk_plan_mb.assert_not_called()
+        mock_cudf.assert_not_called()
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_should_not_try_gpu_for_count_queries_when_rg_is_unavailable(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
+        mock_cudf.return_value.is_available.return_value = True
+
+        config = SearchConfig(
+            query_pattern="ERROR",
+            count=True,
+            input_total_bytes=512 * 1024 * 1024,
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+
+        assert pipeline.backend == mock_rust.return_value
+        assert pipeline.selected_backend_reason == "count_rust_fast_path"
+        mock_mem.return_value.get_device_chunk_plan_mb.assert_not_called()
+        mock_cudf.assert_not_called()
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_should_not_try_gpu_for_python_semantics_when_rg_missing(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
+        mock_cudf.return_value.is_available.return_value = True
+
+        config = SearchConfig(
+            query_pattern=r"(ERROR|WARN).*timeout\s+\d+",
+            context=2,
+            input_total_bytes=512 * 1024 * 1024,
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+
+        assert pipeline.backend.__class__.__name__ == "CPUBackend"
+        assert pipeline.selected_backend_reason == "python_cpu_semantics_required"
+        mock_mem.return_value.get_device_chunk_plan_mb.assert_not_called()
+        mock_cudf.assert_not_called()
+
     @patch("tensor_grep.core.pipeline.MemoryManager")
     def test_should_select_cudf_when_available(self, mock_mem):
         mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(0, 512)]
