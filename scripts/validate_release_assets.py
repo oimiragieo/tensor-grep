@@ -219,6 +219,32 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             f"`{step_name}` step must pass `--baseline auto`"
                         )
 
+            publish_pypi_job = jobs.get("publish-pypi")
+            if isinstance(publish_pypi_job, dict):
+                publish_steps = publish_pypi_job.get("steps", [])
+                publish_run_by_name: dict[str, str] = {}
+                if isinstance(publish_steps, list):
+                    for step in publish_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        run = step.get("run")
+                        if isinstance(name, str) and isinstance(run, str):
+                            publish_run_by_name[name] = run
+                parity_step = "Verify release version parity across tag/assets/PyPI"
+                parity_run = publish_run_by_name.get(parity_step)
+                if parity_run is not None:
+                    for required_flag in (
+                        "--check-pypi",
+                        "--pypi-wait-seconds",
+                        "--pypi-poll-interval-seconds",
+                    ):
+                        if required_flag not in parity_run:
+                            errors.append(
+                                "CI workflow publish-pypi "
+                                f"`{parity_step}` step must include `{required_flag}`"
+                            )
+
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")
 
