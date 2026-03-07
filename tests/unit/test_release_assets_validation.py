@@ -146,6 +146,34 @@ def test_should_require_release_job_to_depend_on_benchmark_regression_gate():
     assert any("release job must depend on benchmark-regression" in err for err in errors)
 
 
+def test_should_require_ci_benchmark_jobs_to_use_auto_baseline_resolution():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      benchmark-regression:
+        steps:
+          - run: |
+              uv run python benchmarks/check_regression.py \
+                --baseline benchmarks/baselines/run_benchmarks.ubuntu.json \
+                --current artifacts/bench_run_benchmarks.json
+          - run: |
+              uv run python benchmarks/summarize_benchmarks.py \
+                --baseline benchmarks/baselines/run_benchmarks.ubuntu.json \
+                --current artifacts/bench_run_benchmarks.json \
+                --output artifacts/benchmark_summary.md
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("check_regression.py" in err and "--baseline auto" in err for err in errors)
+    assert any("summarize_benchmarks.py" in err and "--baseline auto" in err for err in errors)
+
+
 def test_should_require_ci_ruff_preview_formatter_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

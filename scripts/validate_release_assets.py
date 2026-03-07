@@ -186,6 +186,16 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "CI workflow must run formatter with `ruff format --check --preview .` to keep local/CI formatting semantics aligned"
         )
 
+    if "benchmarks/check_regression.py" in ci_workflow and "--baseline auto" not in ci_workflow:
+        errors.append(
+            "CI workflow benchmark regression gate must pass `--baseline auto` to check_regression.py"
+        )
+
+    if "benchmarks/summarize_benchmarks.py" in ci_workflow and "--baseline auto" not in ci_workflow:
+        errors.append(
+            "CI workflow benchmark summary generation must pass `--baseline auto` to summarize_benchmarks.py"
+        )
+
     return errors
 
 
