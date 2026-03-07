@@ -779,3 +779,71 @@ def test_should_require_create_release_bundle_steps_to_invoke_expected_scripts()
         in err
         for err in errors
     )
+
+
+def test_should_require_release_parity_steps_to_include_registry_check_flags_and_retries():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      validate-package-managers:
+        steps:
+          - name: Preflight build package-manager publish bundle artifact
+          - name: Preflight verify package-manager bundle checksums
+          - name: Preflight smoke-test package-manager bundle contracts
+      build-binaries:
+        needs: [validate-release-assets, validate-package-managers]
+      create-release:
+        steps:
+          - name: Build package-manager publish bundle
+            run: uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
+          - name: Verify package-manager bundle checksums
+            run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
+          - name: Smoke-test package-manager bundle contracts
+            run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
+      verify-release-assets:
+        needs: create-release
+      validate-tag-version-parity:
+        needs: verify-release-assets
+      publish-docs:
+        needs: validate-tag-version-parity
+      publish-npm:
+        needs: validate-tag-version-parity
+        steps:
+          - name: Verify npm registry parity for release version
+            run: python scripts/validate_release_version_parity.py --expected-version "${GITHUB_REF#refs/tags/v}"
+      release-success-gate:
+        needs: [validate-tag-version-parity, publish-npm, publish-docs]
+        steps:
+          - name: Verify final npm parity before release success gate
+            run: python scripts/validate_release_version_parity.py --expected-version "${GITHUB_REF#refs/tags/v}"
+          - name: Verify final PyPI parity before release success gate
+            run: python scripts/validate_release_version_parity.py --expected-version "${GITHUB_REF#refs/tags/v}"
+    """
+    errors = module.validate_release_workflow_content(release_workflow=release_workflow)
+    assert any(
+        "publish-npm `Verify npm registry parity for release version` step must include `--check-npm`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-npm `Verify npm registry parity for release version` step must include `--npm-wait-seconds`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "release-success-gate `Verify final npm parity before release success gate` step must include `--check-npm`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "release-success-gate `Verify final PyPI parity before release success gate` step must include `--check-pypi`"
+        in err
+        for err in errors
+    )

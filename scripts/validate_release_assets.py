@@ -521,6 +521,62 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     f"`{step_name}` step must pass `{required_flag}`"
                 )
 
+    def _step_runs_by_name(job_name: str) -> dict[str, str]:
+        job = jobs.get(job_name)
+        if not isinstance(job, dict):
+            return {}
+        raw_steps = job.get("steps", [])
+        runs: dict[str, str] = {}
+        if not isinstance(raw_steps, list):
+            return runs
+        for step in raw_steps:
+            if not isinstance(step, dict):
+                continue
+            name = step.get("name")
+            run = step.get("run")
+            if isinstance(name, str) and isinstance(run, str):
+                runs[name] = run
+        return runs
+
+    publish_npm_runs = _step_runs_by_name("publish-npm")
+    npm_verify_step = "Verify npm registry parity for release version"
+    npm_verify_run = publish_npm_runs.get(npm_verify_step)
+    if npm_verify_run is not None:
+        for required_flag in (
+            "--check-npm",
+            "--npm-wait-seconds",
+            "--npm-poll-interval-seconds",
+        ):
+            if required_flag not in npm_verify_run:
+                errors.append(
+                    "Release workflow publish-npm "
+                    f"`{npm_verify_step}` step must include `{required_flag}`"
+                )
+
+    release_gate_runs = _step_runs_by_name("release-success-gate")
+    release_gate_step_contracts = {
+        "Verify final npm parity before release success gate": (
+            "--check-npm",
+            "--npm-wait-seconds",
+            "--npm-poll-interval-seconds",
+        ),
+        "Verify final PyPI parity before release success gate": (
+            "--check-pypi",
+            "--pypi-wait-seconds",
+            "--pypi-poll-interval-seconds",
+        ),
+    }
+    for step_name, required_flags in release_gate_step_contracts.items():
+        step_run = release_gate_runs.get(step_name)
+        if step_run is None:
+            continue
+        for required_flag in required_flags:
+            if required_flag not in step_run:
+                errors.append(
+                    "Release workflow release-success-gate "
+                    f"`{step_name}` step must include `{required_flag}`"
+                )
+
     if "uses: astral-sh/setup-uv@v5" not in release_workflow:
         errors.append(
             "Release workflow package-manager validation must install uv before fallback checks"
