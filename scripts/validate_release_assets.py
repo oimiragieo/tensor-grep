@@ -165,6 +165,26 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                 if "benchmark-regression" not in needs_list:
                     errors.append("CI workflow release job must depend on benchmark-regression")
 
+            gpu_job = jobs.get("test-gpu-linux")
+            if isinstance(gpu_job, dict):
+                raw_steps = gpu_job.get("steps", [])
+                step_names: set[str] = set()
+                if isinstance(raw_steps, list):
+                    for step in raw_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        if isinstance(name, str):
+                            step_names.add(name)
+                for required_step in (
+                    "Verify cuDF / RAPIDS Configuration (with retry)",
+                    "Run Pytest with GPU Hooks",
+                ):
+                    if required_step not in step_names:
+                        errors.append(
+                            f"CI workflow test-gpu-linux job must include step `{required_step}`"
+                        )
+
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")
 

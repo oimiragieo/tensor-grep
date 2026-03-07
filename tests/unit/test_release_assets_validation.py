@@ -202,6 +202,34 @@ def test_should_require_auto_baseline_per_benchmark_command_invocation():
     assert not any("summarize_benchmarks.py" in err and "--baseline auto" in err for err in errors)
 
 
+def test_should_require_structural_gpu_ci_steps_for_retry_and_gpu_pytest():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      test-gpu-linux:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Verify cuDF / RAPIDS Configuration
+            run: uv pip install cudf-cu12
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "test-gpu-linux job must include step `Verify cuDF / RAPIDS Configuration (with retry)`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "test-gpu-linux job must include step `Run Pytest with GPU Hooks`" in err for err in errors
+    )
+
+
 def test_should_require_ci_ruff_preview_formatter_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
