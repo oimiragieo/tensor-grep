@@ -441,6 +441,42 @@ def test_should_require_package_manager_sections_in_installation_docs():
     assert any("npm parity checks" in err for err in errors)
 
 
+def test_should_require_smoke_test_package_manager_bundle_command_in_runbook():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    runbook = """
+    ## Homebrew Tap Flow
+    ## Winget Flow
+    ## Rollback Procedures
+    ## Verification Commands
+    uv run python scripts/prepare_package_manager_release.py --check
+    winget validate --manifest
+    uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
+    python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-pypi
+    python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-npm
+    brew install oimiragieo/tap/tensor-grep
+    winget install oimiragieo.tensor-grep
+    tg --version
+    """
+    checklist = """
+    ## 4. Package-manager distribution finalization
+    ## 5. Rollback runbook
+    Homebrew
+    Winget
+    """
+    errors = module.validate_package_manager_docs(
+        runbook_content=runbook,
+        checklist_content=checklist,
+    )
+    assert any("smoke_test_package_manager_bundle.py" in err for err in errors)
+
+
 def test_should_require_publish_jobs_to_depend_on_tag_version_parity():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
