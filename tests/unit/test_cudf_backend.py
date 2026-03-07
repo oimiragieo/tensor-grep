@@ -185,10 +185,16 @@ class TestCuDFBackend:
         mock_pool.return_value.__enter__.return_value = mock_executor
 
         with patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[]):
-            backend.search("test.log", "ERROR")
+            result = backend.search("test.log", "ERROR")
 
         submitted_device_ids = [call.args[1] for call in mock_executor.submit.call_args_list]
         assert submitted_device_ids[:2] == [3, 7]
+        assert result.routing_backend == "CuDFBackend"
+        assert result.routing_reason == "cudf_distributed_fanout"
+        assert result.routing_gpu_device_ids == [3, 7]
+        assert result.routing_gpu_chunk_plan_mb == [(3, 2), (7, 2)]
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
 
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
