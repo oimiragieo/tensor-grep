@@ -383,6 +383,47 @@ def test_should_require_ci_publish_pypi_parity_step_to_include_check_and_retry_f
     )
 
 
+def test_should_require_ci_publish_success_gate_pypi_parity_step_flags():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [benchmark-regression]
+      publish-success-gate:
+        if: always()
+        needs: [release, publish-pypi]
+        steps:
+          - name: Verify PyPI parity for semantic-release version (always)
+            run: |
+              python scripts/validate_release_version_parity.py \
+                --expected-version "${{ needs.release.outputs.release_version }}" \
+                --expected-tag "v${{ needs.release.outputs.release_version }}"
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--check-pypi`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--pypi-wait-seconds`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--pypi-poll-interval-seconds`"
+        in err
+        for err in errors
+    )
+
+
 def test_should_fail_when_npm_repository_url_is_not_canonical():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
