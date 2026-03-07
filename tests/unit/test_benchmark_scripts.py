@@ -150,6 +150,84 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     assert exit_code == 0
 
 
+def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "check_regression_script_auto_windows", "benchmarks/check_regression.py"
+    )
+    baselines_dir = tmp_path / "benchmarks" / "baselines"
+    baselines_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = baselines_dir / "run_benchmarks.windows.json"
+    baseline_path.write_text(
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
+        encoding="utf-8",
+    )
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_regression.py",
+            "--baseline",
+            "auto",
+            "--current",
+            str(current_path),
+            "--max-regression-pct",
+            "20",
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+
+
+def test_check_regression_should_fail_when_auto_baseline_platform_is_unavailable(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "check_regression_script_auto_missing", "benchmarks/check_regression.py"
+    )
+    (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_regression.py",
+            "--baseline",
+            "auto",
+            "--current",
+            str(current_path),
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 2
+
+
 def test_run_ast_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(
     monkeypatch, tmp_path
 ):

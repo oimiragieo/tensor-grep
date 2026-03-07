@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import sys
 from pathlib import Path
 
@@ -12,7 +13,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Compare current benchmark JSON against a baseline."
     )
-    parser.add_argument("--baseline", required=True, help="Path to baseline benchmark JSON")
+    parser.add_argument(
+        "--baseline",
+        default="auto",
+        help=(
+            "Path to baseline benchmark JSON, or `auto` to resolve "
+            "benchmarks/baselines/run_benchmarks.<platform>.json"
+        ),
+    )
     parser.add_argument("--current", required=True, help="Path to current benchmark JSON")
     parser.add_argument(
         "--max-regression-pct",
@@ -33,17 +41,37 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    baseline_path = Path(args.baseline)
     current_path = Path(args.current)
-    if not baseline_path.exists():
-        print(f"Baseline not found: {baseline_path}", file=sys.stderr)
-        return 2
     if not current_path.exists():
         print(f"Current result not found: {current_path}", file=sys.stderr)
         return 2
 
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     current = json.loads(current_path.read_text(encoding="utf-8"))
+    baseline_path = Path(args.baseline)
+    if args.baseline == "auto":
+        current_env = current.get("environment", {})
+        current_platform = (
+            str(current_env.get("platform")).lower()
+            if isinstance(current_env, dict) and current_env.get("platform")
+            else platform.system().lower()
+        )
+        if current_platform.startswith("win"):
+            baseline_path = Path("benchmarks/baselines/run_benchmarks.windows.json")
+        elif current_platform.startswith("linux"):
+            baseline_path = Path("benchmarks/baselines/run_benchmarks.ubuntu.json")
+        else:
+            print(
+                "Unsupported platform for --baseline auto: "
+                f"{current_platform}. Provide --baseline explicitly.",
+                file=sys.stderr,
+            )
+            return 2
+
+    if not baseline_path.exists():
+        print(f"Baseline not found: {baseline_path}", file=sys.stderr)
+        return 2
+
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
 
     env_mismatch = detect_environment_mismatch(baseline=baseline, current=current)
     if env_mismatch and not args.allow_env_mismatch:
