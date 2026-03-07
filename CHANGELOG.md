@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.30.3 (2026-03-07)
+
+### Bug Fixes
+
+- **cpu**: Suppress regex futurewarnings in python fallback
+  ([`924a6e9`](https://github.com/oimiragieo/tensor-grep/commit/924a6e93058ebb0ea1782b4969fbd1d249cb6827))
+
+
 ## v0.30.2 (2026-03-07)
 
 ### Bug Fixes
