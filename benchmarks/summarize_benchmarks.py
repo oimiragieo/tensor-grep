@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 from pathlib import Path
 
 from tensor_grep.perf_guard import check_regressions, detect_environment_mismatch
@@ -20,15 +21,39 @@ def _find_row(rows: list[dict], name: str) -> dict | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render benchmark summary in markdown.")
-    parser.add_argument("--baseline", required=True)
+    parser.add_argument(
+        "--baseline",
+        default="auto",
+        help=(
+            "Path to baseline benchmark JSON, or `auto` to resolve "
+            "benchmarks/baselines/run_benchmarks.<platform>.json"
+        ),
+    )
     parser.add_argument("--current", required=True)
     parser.add_argument("--max-regression-pct", type=float, default=10.0)
     parser.add_argument("--min-baseline-time-s", type=float, default=0.2)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
-    baseline = _load_json(Path(args.baseline))
     current = _load_json(Path(args.current))
+    baseline_path = Path(args.baseline)
+    if args.baseline == "auto":
+        current_env = current.get("environment", {})
+        current_platform = (
+            str(current_env.get("platform")).lower()
+            if isinstance(current_env, dict) and current_env.get("platform")
+            else platform.system().lower()
+        )
+        if current_platform.startswith("win"):
+            baseline_path = Path("benchmarks/baselines/run_benchmarks.windows.json")
+        elif current_platform.startswith("linux"):
+            baseline_path = Path("benchmarks/baselines/run_benchmarks.ubuntu.json")
+        else:
+            raise SystemExit(
+                "Unsupported platform for --baseline auto: "
+                f"{current_platform}. Provide --baseline explicitly."
+            )
+    baseline = _load_json(baseline_path)
 
     regressions = check_regressions(
         baseline=baseline,
@@ -44,7 +69,7 @@ def main() -> int:
     lines = [
         "## Benchmark Regression Report",
         "",
-        f"- Baseline: `{args.baseline}`",
+        f"- Baseline: `{baseline_path}`",
         f"- Current: `{args.current}`",
         f"- Max regression threshold: `{args.max_regression_pct:.1f}%`",
         f"- Min baseline time: `{args.min_baseline_time_s:.3f}s`",

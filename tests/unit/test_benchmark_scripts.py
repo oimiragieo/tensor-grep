@@ -228,6 +228,94 @@ def test_check_regression_should_fail_when_auto_baseline_platform_is_unavailable
     assert exit_code == 2
 
 
+def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "summarize_benchmarks_auto_windows", "benchmarks/summarize_benchmarks.py"
+    )
+    baselines_dir = tmp_path / "benchmarks" / "baselines"
+    baselines_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = baselines_dir / "run_benchmarks.windows.json"
+    baseline_path.write_text(
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
+        encoding="utf-8",
+    )
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "summary.md"
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "summarize_benchmarks.py",
+            "--baseline",
+            "auto",
+            "--current",
+            str(current_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert output_path.exists()
+    assert "run_benchmarks.windows.json" in output_path.read_text(encoding="utf-8")
+
+
+def test_summarize_benchmarks_should_fail_when_auto_baseline_platform_is_unavailable(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "summarize_benchmarks_auto_missing", "benchmarks/summarize_benchmarks.py"
+    )
+    (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "summary.md"
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "summarize_benchmarks.py",
+            "--baseline",
+            "auto",
+            "--current",
+            str(current_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    try:
+        module.main()
+        raise AssertionError("Expected SystemExit for unsupported auto baseline platform")
+    except SystemExit as exc:
+        assert "Unsupported platform for --baseline auto" in str(exc)
+
+
 def test_run_ast_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(
     monkeypatch, tmp_path
 ):
