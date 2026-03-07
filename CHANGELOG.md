@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.31.1 (2026-03-07)
+
+### Bug Fixes
+
+- **release**: Correctly scope baseline-auto checks per ci step
+  ([`a593d83`](https://github.com/oimiragieo/tensor-grep/commit/a593d83b1c99d659848655057752d30a177aaf04))
+
+### Testing
+
+- **release**: Enforce auto baseline contract in ci validator
+  ([`540236c`](https://github.com/oimiragieo/tensor-grep/commit/540236c6474ee018718ddf88fb6aa8050cdd8dc2))
+
+
 ## v0.31.0 (2026-03-07)
 
 ### Continuous Integration
