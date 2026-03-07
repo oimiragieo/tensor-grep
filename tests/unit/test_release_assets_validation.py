@@ -99,6 +99,7 @@ def test_should_require_ci_package_manager_bundle_build_and_checksum_verificatio
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any("Build package-manager publish bundle artifact" in err for err in errors)
     assert any("Verify package-manager publish bundle checksums" in err for err in errors)
+    assert any("Smoke-test package-manager bundle contracts" in err for err in errors)
     assert any("Upload package-manager bundle artifact" in err for err in errors)
 
 
