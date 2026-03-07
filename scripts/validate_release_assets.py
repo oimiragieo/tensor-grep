@@ -468,6 +468,27 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     f"step `{required_step}`"
                 )
 
+    create_release_job = jobs.get("create-release")
+    if isinstance(create_release_job, dict):
+        create_release_steps = create_release_job.get("steps", [])
+        create_release_step_names: set[str] = set()
+        if isinstance(create_release_steps, list):
+            for step in create_release_steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                if isinstance(name, str):
+                    create_release_step_names.add(name)
+        for required_step in (
+            "Build package-manager publish bundle",
+            "Verify package-manager bundle checksums",
+            "Smoke-test package-manager bundle contracts",
+        ):
+            if required_step not in create_release_step_names:
+                errors.append(
+                    f"Release workflow create-release job must include step `{required_step}`"
+                )
+
     if "uses: astral-sh/setup-uv@v5" not in release_workflow:
         errors.append(
             "Release workflow package-manager validation must install uv before fallback checks"
