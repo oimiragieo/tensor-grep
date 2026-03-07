@@ -1,8 +1,22 @@
+import os
 import platform
 import sys
 import time
 from importlib.util import find_spec
 from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
+
+def resolve_gpu_bench_data_dir() -> Path:
+    """
+    Resolve GPU benchmark data location. Defaults to artifacts to avoid mutating
+    tracked repository fixtures during repeated local/CI benchmark runs.
+    """
+    override = os.environ.get("TENSOR_GREP_GPU_BENCH_DATA_DIR")
+    if override:
+        return Path(override).expanduser().resolve()
+    return ROOT_DIR / "artifacts" / "gpu_bench_data"
 
 
 def _module_available(module_name: str) -> bool:
@@ -25,7 +39,7 @@ def _record_result(
 
 def main() -> int:
     # Ensure local `src/` imports work when running this script directly.
-    root_dir = Path(__file__).resolve().parents[1]
+    root_dir = ROOT_DIR
     src_dir = root_dir / "src"
     if str(src_dir) not in sys.path:
         sys.path.insert(0, str(src_dir))
@@ -33,8 +47,8 @@ def main() -> int:
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
 
     # Setup minimal data for GPU benchmark if not exists
-    bench_dir = Path("gpu_bench_data")
-    bench_dir.mkdir(exist_ok=True)
+    bench_dir = resolve_gpu_bench_data_dir()
+    bench_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. AST Data (Python)
     ast_file = bench_dir / "test_api.py"

@@ -52,6 +52,25 @@ def test_run_ast_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
     assert path == override.resolve()
 
 
+def test_run_gpu_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
+    module = _load_script_module("run_gpu_benchmarks_script", "benchmarks/run_gpu_benchmarks.py")
+    monkeypatch.delenv("TENSOR_GREP_GPU_BENCH_DATA_DIR", raising=False)
+
+    path = module.resolve_gpu_bench_data_dir()
+
+    assert path.parts[-2:] == ("artifacts", "gpu_bench_data")
+
+
+def test_run_gpu_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path):
+    module = _load_script_module("run_gpu_benchmarks_script", "benchmarks/run_gpu_benchmarks.py")
+    override = tmp_path / "bench_gpu_override"
+    monkeypatch.setenv("TENSOR_GREP_GPU_BENCH_DATA_DIR", str(override))
+
+    path = module.resolve_gpu_bench_data_dir()
+
+    assert path == override.resolve()
+
+
 def test_check_regression_should_refuse_cross_environment_comparison_by_default(
     monkeypatch, tmp_path
 ):
