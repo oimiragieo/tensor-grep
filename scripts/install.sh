@@ -6,6 +6,13 @@ ORIGINAL_DIR="$(pwd)"
 INSTALL_CHANNEL="${TENSOR_GREP_CHANNEL:-stable}"
 REQUESTED_VERSION="${TENSOR_GREP_VERSION:-}"
 
+restore_original_dir() {
+    cd "$ORIGINAL_DIR" || return
+    echo "Returned to original directory: $ORIGINAL_DIR"
+}
+
+trap restore_original_dir EXIT
+
 echo "=========================================================="
 echo "           TENSOR-GREP LINUX/MACOS INSTALLER              "
 echo "=========================================================="
@@ -152,6 +159,3 @@ echo "=========================================================="
 echo " Installation complete! Try running: tg search \"ERROR\" ."
 ./.venv/bin/tg --version || true
 echo "=========================================================="
-
-cd "$ORIGINAL_DIR"
-echo "Returned to original directory: $ORIGINAL_DIR"

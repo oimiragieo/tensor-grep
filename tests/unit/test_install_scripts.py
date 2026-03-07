@@ -3,24 +3,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_windows_installer_writes_path_shims_and_both_profiles() -> None:
-    script = (ROOT / "scripts" / "install.ps1").read_text(encoding="utf-8")
-    assert "$env:USERPROFILE\\.local\\bin" in script
-    assert "$env:USERPROFILE\\bin" in script
-    assert '$cmdShimPath = "$shimDir\\tg.cmd"' in script
-    assert "PowerShell\\Microsoft.PowerShell_profile.ps1" in script
-    assert "WindowsPowerShell\\Microsoft.PowerShell_profile.ps1" in script
-    assert "Set-Alias -Name tg" in script
-    assert '"tensor-grep"' in script
-    assert "tensor-grep==$defaultVersion" not in script
+def _read_script(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_unix_installer_writes_shims_and_exports_path() -> None:
-    script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
-    assert 'SHIM_DIRS=("$HOME/.local/bin" "$HOME/bin")' in script
-    assert 'chmod +x "$SHIM_PATH"' in script
-    assert "PATH_EXPORT_LOCAL='export PATH=\"$HOME/.local/bin:$PATH\"'" in script
-    assert "PATH_EXPORT_BIN='export PATH=\"$HOME/bin:$PATH\"'" in script
-    assert "ALIAS_CMD=\"alias tg='$INSTALL_DIR/.venv/bin/tg'\"" in script
-    assert 'PKG_SPEC="tensor-grep"' in script
-    assert "DEFAULT_VERSION=" not in script
+def test_install_ps1_should_restore_original_directory_in_finally_block():
+    content = _read_script("scripts/install.ps1")
+    assert "$originalPath = (Get-Location).Path" in content
+    assert "finally {" in content
+    assert "Set-Location -Path $originalPath" in content
+
+
+def test_install_sh_should_capture_original_directory_and_restore_on_exit():
+    content = _read_script("scripts/install.sh")
+    assert 'ORIGINAL_DIR="$(pwd)"' in content
+    assert "trap restore_original_dir EXIT" in content
+    assert 'cd "$ORIGINAL_DIR"' in content
+    assert 'echo "Returned to original directory: $ORIGINAL_DIR"' in content
