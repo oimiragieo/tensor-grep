@@ -139,7 +139,22 @@ def main():
     if not ast_bin:
         print("ast-grep binary not found on PATH. Skipping ast-grep parity baseline.")
         print("Run `cargo install ast-grep` or install ast-grep binary to enable this benchmark.")
-        return
+        artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
+        write_json(
+            artifacts_dir / "bench_run_ast_benchmarks.json",
+            {
+                "suite": "run_ast_benchmarks",
+                "generated_at_epoch_s": time.time(),
+                "environment": {
+                    "platform": platform.system().lower(),
+                    "machine": platform.machine().lower(),
+                    "python_version": platform.python_version(),
+                },
+                "rows": rows,
+                "parity_failures": parity_failures,
+            },
+        )
+        return 0
 
     tg_cmd = [sys.executable, "-m", "tensor_grep.cli.main", "run"]
 
@@ -200,4 +215,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

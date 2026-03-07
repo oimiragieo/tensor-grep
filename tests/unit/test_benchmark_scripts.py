@@ -129,3 +129,33 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     exit_code = module.main()
 
     assert exit_code == 0
+
+
+def test_run_ast_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_ast_benchmarks_missing_ast", "benchmarks/run_ast_benchmarks.py"
+    )
+    monkeypatch.setattr(module, "resolve_ast_grep_binary", lambda: None)
+    monkeypatch.setattr(module, "generate_ast_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_ast_bench_data_dir", lambda: tmp_path / "bench_ast_data")
+
+    captured: dict[str, object] = {}
+
+    def _fake_write_json(path, payload):
+        captured["path"] = path
+        captured["payload"] = payload
+
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr("tensor_grep.perf_guard.write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured["path"] == tmp_path / "bench_run_ast_benchmarks.json"
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["suite"] == "run_ast_benchmarks"
+    assert payload["rows"] == []
+    assert payload["parity_failures"] == 0
