@@ -541,3 +541,48 @@ def test_should_require_terminal_release_success_gate_dependencies():
         "release-success-gate must depend on parity + publish-npm + publish-docs" in err
         for err in errors
     )
+
+
+def test_should_require_validate_package_managers_job_to_include_preflight_bundle_steps():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      validate-package-managers:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Validate package-manager publish bundle source state
+            run: uv run python scripts/prepare_package_manager_release.py --check
+      build-binaries:
+        needs: [validate-release-assets, validate-package-managers]
+      validate-tag-version-parity:
+        needs: verify-release-assets
+      publish-docs:
+        needs: validate-tag-version-parity
+      publish-npm:
+        needs: validate-tag-version-parity
+      release-success-gate:
+        needs: [validate-tag-version-parity, publish-npm, publish-docs]
+    """
+    errors = module.validate_release_workflow_content(release_workflow=release_workflow)
+    assert any(
+        "validate-package-managers job must include step `Preflight build package-manager publish bundle artifact`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-package-managers job must include step `Preflight verify package-manager bundle checksums`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-package-managers job must include step `Preflight smoke-test package-manager bundle contracts`"
+        in err
+        for err in errors
+    )

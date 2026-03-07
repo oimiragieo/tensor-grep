@@ -390,6 +390,29 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             "Release workflow release-success-gate must depend on parity + publish-npm + publish-docs"
         )
 
+    validate_pm_job = jobs.get("validate-package-managers")
+    if isinstance(validate_pm_job, dict):
+        steps = validate_pm_job.get("steps", [])
+        step_names: set[str] = set()
+        if isinstance(steps, list):
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                if isinstance(name, str):
+                    step_names.add(name)
+
+        for required_step in (
+            "Preflight build package-manager publish bundle artifact",
+            "Preflight verify package-manager bundle checksums",
+            "Preflight smoke-test package-manager bundle contracts",
+        ):
+            if required_step not in step_names:
+                errors.append(
+                    "Release workflow validate-package-managers job must include "
+                    f"step `{required_step}`"
+                )
+
     if "uses: astral-sh/setup-uv@v5" not in release_workflow:
         errors.append(
             "Release workflow package-manager validation must install uv before fallback checks"
