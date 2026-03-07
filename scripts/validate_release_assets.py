@@ -185,6 +185,40 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             f"CI workflow test-gpu-linux job must include step `{required_step}`"
                         )
 
+            benchmark_job = jobs.get("benchmark-regression")
+            if isinstance(benchmark_job, dict):
+                benchmark_steps = benchmark_job.get("steps", [])
+                benchmark_run_by_name: dict[str, str] = {}
+                if isinstance(benchmark_steps, list):
+                    for step in benchmark_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        run = step.get("run")
+                        if isinstance(name, str) and isinstance(run, str):
+                            benchmark_run_by_name[name] = run
+                required_benchmark_steps = {
+                    "Enforce benchmark regression gate": "benchmarks/check_regression.py",
+                    "Build benchmark markdown summary": "benchmarks/summarize_benchmarks.py",
+                }
+                for step_name, command in required_benchmark_steps.items():
+                    run_script = benchmark_run_by_name.get(step_name)
+                    if run_script is None:
+                        errors.append(
+                            f"CI workflow benchmark-regression job must include step `{step_name}`"
+                        )
+                        continue
+                    if command not in run_script:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            f"`{step_name}` step must invoke `{command}`"
+                        )
+                    if "--baseline auto" not in run_script:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            f"`{step_name}` step must pass `--baseline auto`"
+                        )
+
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")
 

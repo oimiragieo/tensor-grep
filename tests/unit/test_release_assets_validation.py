@@ -230,6 +230,40 @@ def test_should_require_structural_gpu_ci_steps_for_retry_and_gpu_pytest():
     )
 
 
+def test_should_require_structural_benchmark_regression_steps_with_auto_baseline():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      benchmark-regression:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Enforce benchmark regression gate
+            run: |
+              uv run python benchmarks/check_regression.py --current artifacts/bench_run_benchmarks.json
+          - name: Build benchmark markdown summary
+            run: |
+              uv run python benchmarks/summarize_benchmarks.py --current artifacts/bench_run_benchmarks.json
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "benchmark-regression `Enforce benchmark regression gate` step must pass `--baseline auto`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression `Build benchmark markdown summary` step must pass `--baseline auto`"
+        in err
+        for err in errors
+    )
+
+
 def test_should_require_ci_ruff_preview_formatter_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
