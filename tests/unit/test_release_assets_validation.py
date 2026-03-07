@@ -424,6 +424,47 @@ def test_should_require_ci_publish_success_gate_pypi_parity_step_flags():
     )
 
 
+def test_should_require_ci_publish_pypi_and_publish_success_gate_parity_step_presence():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [benchmark-regression]
+      publish-pypi:
+        environment:
+          name: pypi
+          url: https://pypi.org/p/tensor-grep
+        permissions:
+          id-token: write
+        steps:
+          - uses: pypa/gh-action-pypi-publish@release/v1
+      publish-success-gate:
+        if: always()
+        needs: [release, publish-pypi]
+        steps:
+          - name: Confirm publish job result when publishing is required
+            run: echo ok
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "publish-pypi job must include step `Verify release version parity across tag/assets/PyPI`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-success-gate job must include step `Verify PyPI parity for semantic-release version (always)`"
+        in err
+        for err in errors
+    )
+
+
 def test_should_fail_when_npm_repository_url_is_not_canonical():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

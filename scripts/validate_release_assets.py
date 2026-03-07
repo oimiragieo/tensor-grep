@@ -223,15 +223,20 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             if isinstance(publish_pypi_job, dict):
                 publish_steps = publish_pypi_job.get("steps", [])
                 publish_run_by_name: dict[str, str] = {}
+                publish_step_names: set[str] = set()
                 if isinstance(publish_steps, list):
                     for step in publish_steps:
                         if not isinstance(step, dict):
                             continue
                         name = step.get("name")
+                        if isinstance(name, str):
+                            publish_step_names.add(name)
                         run = step.get("run")
                         if isinstance(name, str) and isinstance(run, str):
                             publish_run_by_name[name] = run
                 parity_step = "Verify release version parity across tag/assets/PyPI"
+                if parity_step not in publish_step_names:
+                    errors.append(f"CI workflow publish-pypi job must include step `{parity_step}`")
                 parity_run = publish_run_by_name.get(parity_step)
                 if parity_run is not None:
                     for required_flag in (
@@ -249,15 +254,23 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             if isinstance(publish_success_gate_job, dict):
                 gate_steps = publish_success_gate_job.get("steps", [])
                 gate_run_by_name: dict[str, str] = {}
+                gate_step_names: set[str] = set()
                 if isinstance(gate_steps, list):
                     for step in gate_steps:
                         if not isinstance(step, dict):
                             continue
                         name = step.get("name")
+                        if isinstance(name, str):
+                            gate_step_names.add(name)
                         run = step.get("run")
                         if isinstance(name, str) and isinstance(run, str):
                             gate_run_by_name[name] = run
                 gate_parity_step = "Verify PyPI parity for semantic-release version (always)"
+                if gate_parity_step not in gate_step_names:
+                    errors.append(
+                        "CI workflow publish-success-gate job must include "
+                        f"step `{gate_parity_step}`"
+                    )
                 gate_parity_run = gate_run_by_name.get(gate_parity_step)
                 if gate_parity_run is not None:
                     for required_flag in (
