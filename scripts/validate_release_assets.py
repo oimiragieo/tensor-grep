@@ -586,6 +586,28 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     f"`{step_name}` step must pass `{required_flag}`"
                 )
 
+    validate_tag_parity_job = jobs.get("validate-tag-version-parity")
+    if isinstance(validate_tag_parity_job, dict):
+        tag_steps = validate_tag_parity_job.get("steps", [])
+        tag_run_by_name: dict[str, str] = {}
+        if isinstance(tag_steps, list):
+            for step in tag_steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                run = step.get("run")
+                if isinstance(name, str) and isinstance(run, str):
+                    tag_run_by_name[name] = run
+        tag_parity_step = "Validate release tag/version parity across package metadata"
+        tag_parity_run = tag_run_by_name.get(tag_parity_step)
+        if tag_parity_run is not None:
+            for required_flag in ("--expected-version", "--expected-tag"):
+                if required_flag not in tag_parity_run:
+                    errors.append(
+                        "Release workflow validate-tag-version-parity "
+                        f"`{tag_parity_step}` step must include `{required_flag}`"
+                    )
+
     def _step_runs_by_name(job_name: str) -> dict[str, str]:
         job = jobs.get(job_name)
         if not isinstance(job, dict):

@@ -908,6 +908,59 @@ def test_should_require_create_release_bundle_steps_to_invoke_expected_scripts()
     )
 
 
+def test_should_require_validate_tag_version_parity_step_contracts():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      validate-package-managers:
+        steps:
+          - name: Preflight build package-manager publish bundle artifact
+          - name: Preflight verify package-manager bundle checksums
+          - name: Preflight smoke-test package-manager bundle contracts
+      build-binaries:
+        needs: [validate-release-assets, validate-package-managers]
+      create-release:
+        steps:
+          - name: Build package-manager publish bundle
+            run: uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
+          - name: Verify package-manager bundle checksums
+            run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
+          - name: Smoke-test package-manager bundle contracts
+            run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
+      verify-release-assets:
+        needs: create-release
+      validate-tag-version-parity:
+        needs: verify-release-assets
+        steps:
+          - name: Validate release tag/version parity across package metadata
+            run: python scripts/validate_release_version_parity.py
+      publish-docs:
+        needs: validate-tag-version-parity
+      publish-npm:
+        needs: validate-tag-version-parity
+      release-success-gate:
+        needs: [validate-tag-version-parity, publish-npm, publish-docs]
+    """
+    errors = module.validate_release_workflow_content(release_workflow=release_workflow)
+    assert any(
+        "validate-tag-version-parity `Validate release tag/version parity across package metadata` step must include `--expected-version`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-tag-version-parity `Validate release tag/version parity across package metadata` step must include `--expected-tag`"
+        in err
+        for err in errors
+    )
+
+
 def test_should_require_release_parity_steps_to_include_registry_check_flags_and_retries():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
