@@ -490,6 +490,7 @@ def test_should_require_release_to_publish_package_manager_bundle_assets():
     errors = module.validate_release_workflow_content(release_workflow=bad_release_workflow)
     assert any("Build package-manager publish bundle" in err for err in errors)
     assert any("Verify package-manager bundle checksums" in err for err in errors)
+    assert any("Smoke-test package-manager bundle contracts" in err for err in errors)
     assert any("Smoke-test Binary (Windows)" in err for err in errors)
     assert any("artifacts/package-manager-bundle/**" in err for err in errors)
 

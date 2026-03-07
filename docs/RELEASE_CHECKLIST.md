@@ -92,6 +92,9 @@ Detailed operational steps live in `docs/package_manager_publish.md`.
    - `release.yml` build matrix smoke-runs each renamed binary (`--version`) on Windows/Linux/macOS before upload.
    - Release job validates expected binary filename matrix and emits `CHECKSUMS.txt` (SHA256) before publishing GitHub release assets.
    - Release job also generates and publishes `package-manager-bundle/` assets (Homebrew formula + Winget manifest + instructions) for repeatable downstream submission.
+   - Release job runs both bundle integrity and content smoke checks before publish:
+     - `scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle`
+     - `scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle`
 
 ## 5. Rollback runbook
 
