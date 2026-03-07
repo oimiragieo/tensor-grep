@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from tensor_grep.perf_guard import check_regressions
+from tensor_grep.perf_guard import check_regressions, detect_environment_mismatch
 
 
 def _load_json(path: Path) -> dict:
@@ -36,6 +36,7 @@ def main() -> int:
         max_regression_pct=args.max_regression_pct,
         min_baseline_time_s=args.min_baseline_time_s,
     )
+    env_mismatch = detect_environment_mismatch(baseline=baseline, current=current)
 
     baseline_rows = baseline.get("rows", [])
     current_rows = current.get("rows", [])
@@ -47,6 +48,11 @@ def main() -> int:
         f"- Current: `{args.current}`",
         f"- Max regression threshold: `{args.max_regression_pct:.1f}%`",
         f"- Min baseline time: `{args.min_baseline_time_s:.3f}s`",
+        (
+            f"- Environment mismatch: `{env_mismatch}`"
+            if env_mismatch
+            else "- Environment mismatch: `none`"
+        ),
         "",
         "| Scenario | Baseline tg (s) | Current tg (s) | Delta |",
         "| --- | ---: | ---: | ---: |",

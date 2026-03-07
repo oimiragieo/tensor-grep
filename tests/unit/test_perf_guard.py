@@ -1,4 +1,4 @@
-from tensor_grep.perf_guard import check_regressions
+from tensor_grep.perf_guard import check_regressions, detect_environment_mismatch
 
 
 def test_check_regressions_reports_slowdowns_over_threshold():
@@ -34,3 +34,21 @@ def test_check_regressions_ignores_tiny_baselines_by_default():
 
     regressions = check_regressions(baseline=baseline, current=current, max_regression_pct=10.0)
     assert regressions == []
+
+
+def test_detect_environment_mismatch_reports_platform_difference():
+    baseline = {"environment": {"platform": "linux", "machine": "x86_64"}}
+    current = {"environment": {"platform": "windows", "machine": "amd64"}}
+
+    mismatch = detect_environment_mismatch(baseline=baseline, current=current)
+
+    assert mismatch == "platform mismatch: baseline=linux current=windows"
+
+
+def test_detect_environment_mismatch_ignores_missing_metadata():
+    baseline = {"rows": []}
+    current = {"environment": {"platform": "linux"}}
+
+    mismatch = detect_environment_mismatch(baseline=baseline, current=current)
+
+    assert mismatch is None

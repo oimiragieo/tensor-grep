@@ -51,3 +51,26 @@ def check_regressions(
                 f"(baseline={base_time:.3f}s current={cur_time:.3f}s)"
             )
     return regressions
+
+
+def detect_environment_mismatch(baseline: dict[str, Any], current: dict[str, Any]) -> str | None:
+    """
+    Return a mismatch description when benchmark environments are both known but incompatible.
+    Missing metadata is treated as unknown and does not trigger a mismatch.
+    """
+    baseline_env = baseline.get("environment")
+    current_env = current.get("environment")
+    if not isinstance(baseline_env, dict) or not isinstance(current_env, dict):
+        return None
+
+    baseline_platform = baseline_env.get("platform")
+    current_platform = current_env.get("platform")
+    if baseline_platform and current_platform and baseline_platform != current_platform:
+        return f"platform mismatch: baseline={baseline_platform} current={current_platform}"
+
+    baseline_machine = baseline_env.get("machine")
+    current_machine = current_env.get("machine")
+    if baseline_machine and current_machine and baseline_machine != current_machine:
+        return f"machine mismatch: baseline={baseline_machine} current={current_machine}"
+
+    return None

@@ -1,3 +1,4 @@
+import platform
 import sys
 import time
 from importlib.util import find_spec
@@ -196,6 +197,11 @@ class DataManager:
         {
             "suite": "run_gpu_benchmarks",
             "generated_at_epoch_s": time.time(),
+            "environment": {
+                "platform": platform.system().lower(),
+                "machine": platform.machine().lower(),
+                "python_version": platform.python_version(),
+            },
             "rows": rows,
             "failures": failures,
         },

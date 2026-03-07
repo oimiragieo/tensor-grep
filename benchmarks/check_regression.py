@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from tensor_grep.perf_guard import check_regressions
+from tensor_grep.perf_guard import check_regressions, detect_environment_mismatch
 
 
 def main() -> int:
@@ -26,6 +26,11 @@ def main() -> int:
         default=0.2,
         help="Ignore scenarios with baseline time below this threshold to reduce CI jitter",
     )
+    parser.add_argument(
+        "--allow-env-mismatch",
+        action="store_true",
+        help="Allow baseline/current benchmark comparison across different recorded environments",
+    )
     args = parser.parse_args()
 
     baseline_path = Path(args.baseline)
@@ -39,6 +44,15 @@ def main() -> int:
 
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     current = json.loads(current_path.read_text(encoding="utf-8"))
+
+    env_mismatch = detect_environment_mismatch(baseline=baseline, current=current)
+    if env_mismatch and not args.allow_env_mismatch:
+        print(
+            "Benchmark environment mismatch detected "
+            f"({env_mismatch}). Refusing regression comparison. "
+            "Use --allow-env-mismatch to override."
+        )
+        return 2
 
     regressions = check_regressions(
         baseline=baseline,

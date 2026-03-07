@@ -29,16 +29,16 @@ Environment notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.466s | 0.751s | Parity PASS |
-| Case-Insensitive Match | 0.548s | 0.801s | Parity PASS |
-| Regex Match | 0.541s | 0.795s | Parity PASS |
-| Invert Match | 1.169s | 1.532s | Parity PASS |
-| Count Matches | 0.149s | 0.083s | Parity PASS |
-| Context Lines (`-C2`) | 2.231s | 2.515s | Parity PASS |
-| Max Count (`-m 5`) | 0.116s | 0.435s | Parity PASS |
-| File Glob Filtering | 0.497s | 0.778s | Parity PASS |
-| Word Boundary | 0.497s | 0.785s | Parity PASS |
-| Fixed Strings (`-F`) | 0.492s | 0.796s | Parity PASS |
+| Simple String Match | 0.468s | 0.768s | Parity PASS |
+| Case-Insensitive Match | 0.507s | 0.891s | Parity PASS |
+| Regex Match | 0.492s | 0.807s | Parity PASS |
+| Invert Match | 1.197s | 1.517s | Parity PASS |
+| Count Matches | 0.153s | 0.090s | Parity PASS |
+| Context Lines (`-C2`) | 1.914s | 2.278s | Parity PASS |
+| Max Count (`-m 5`) | 0.143s | 0.428s | Parity PASS |
+| File Glob Filtering | 0.532s | 0.886s | Parity PASS |
+| Word Boundary | 0.496s | 0.739s | Parity PASS |
+| Fixed Strings (`-F`) | 0.456s | 0.732s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
@@ -60,6 +60,7 @@ Environment notes:
 
 - Benchmark scripts now emit machine-readable JSON artifacts in `artifacts/`.
 - Use `benchmarks/check_regression.py` to compare current runs against a baseline and fail if regression exceeds threshold.
+- Regression checks are now environment-aware (platform/machine metadata); cross-OS comparisons are rejected by default unless explicitly overridden.
 - Main CI (`.github/workflows/ci.yml`) now includes a required `benchmark-regression` job on Ubuntu that runs `benchmarks/run_benchmarks.py`, enforces baseline regression thresholds, and publishes a markdown summary + JSON/text artifacts.
 - Standalone benchmark workflow (`.github/workflows/benchmark.yml`) remains available for manual and scheduled deep benchmark passes.
 - Release workflow now validates the full GitHub binary artifact filename matrix and publishes `CHECKSUMS.txt` (SHA256) alongside release binaries for reproducible integrity checks.

@@ -1,4 +1,5 @@
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -185,6 +186,11 @@ def main():
         {
             "suite": "run_ast_benchmarks",
             "generated_at_epoch_s": time.time(),
+            "environment": {
+                "platform": platform.system().lower(),
+                "machine": platform.machine().lower(),
+                "python_version": platform.python_version(),
+            },
             "rows": rows,
             "parity_failures": parity_failures,
         },
