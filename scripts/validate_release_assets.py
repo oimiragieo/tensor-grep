@@ -186,12 +186,33 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "CI workflow must run formatter with `ruff format --check --preview .` to keep local/CI formatting semantics aligned"
         )
 
-    if "benchmarks/check_regression.py" in ci_workflow and "--baseline auto" not in ci_workflow:
+    def _command_invocations_have_flag(command: str, required: str) -> bool:
+        command_indexes = [m.start() for m in re.finditer(re.escape(command), ci_workflow)]
+        if not command_indexes:
+            return False
+
+        for idx in command_indexes:
+            # Restrict inspection to the current YAML step block; do not confuse
+            # command flags like `--baseline` with a new `- <step>` entry.
+            next_step_match = re.search(
+                r"\n\s{6,}-\s+(?:name|run|uses|if|with|env|id|working-directory|shell)\s*:",
+                ci_workflow[idx + len(command) :],
+            )
+            if next_step_match:
+                next_step_idx = idx + len(command) + next_step_match.start()
+            else:
+                next_step_idx = len(ci_workflow)
+            block = ci_workflow[idx:next_step_idx]
+            if required not in block:
+                return False
+        return True
+
+    if not _command_invocations_have_flag("benchmarks/check_regression.py", "--baseline auto"):
         errors.append(
             "CI workflow benchmark regression gate must pass `--baseline auto` to check_regression.py"
         )
 
-    if "benchmarks/summarize_benchmarks.py" in ci_workflow and "--baseline auto" not in ci_workflow:
+    if not _command_invocations_have_flag("benchmarks/summarize_benchmarks.py", "--baseline auto"):
         errors.append(
             "CI workflow benchmark summary generation must pass `--baseline auto` to summarize_benchmarks.py"
         )
