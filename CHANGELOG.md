@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.30.4 (2026-03-07)
+
+### Bug Fixes
+
+- **bench**: Default gpu benchmark data path to artifacts
+  ([`d3ccd8a`](https://github.com/oimiragieo/tensor-grep/commit/d3ccd8a7bb13573421cf22acd3dafb07525a4f6f))
+
+
 ## v0.30.3 (2026-03-07)
 
 ### Bug Fixes
