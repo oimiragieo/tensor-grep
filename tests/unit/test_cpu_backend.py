@@ -1,4 +1,5 @@
 import types
+import warnings
 from unittest.mock import patch
 
 from tensor_grep.backends.cpu_backend import CPUBackend
@@ -189,3 +190,28 @@ class TestCPUBackend:
             raise AssertionError("Expected ValueError for invalid LTL expression")
         except ValueError as exc:
             assert "Unsupported LTL query" in str(exc)
+
+    def test_should_suppress_non_fatal_regex_futurewarnings_in_python_fallback(self, tmp_path):
+        from tensor_grep.core.config import SearchConfig
+
+        log = tmp_path / "warning_regex.log"
+        log.write_text("literal [text]\n")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        backend = CPUBackend()
+        with (
+            patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}),
+            warnings.catch_warnings(record=True) as captured,
+        ):
+            warnings.simplefilter("always")
+            result = backend.search(str(log), "[[]", config=SearchConfig())
+
+        assert result.total_matches == 1
+        assert not any(isinstance(warning.message, FutureWarning) for warning in captured)

@@ -1,5 +1,6 @@
 import logging
 import re
+import warnings
 from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
@@ -10,6 +11,27 @@ logger = logging.getLogger(__name__)
 
 
 class CPUBackend(ComputeBackend):
+    @staticmethod
+    def _compile_regexes(
+        pattern: str, flags: int, config: SearchConfig
+    ) -> tuple[re.Pattern[str], re.Pattern[bytes]]:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            try:
+                if config.fixed_strings:
+                    escaped = re.escape(pattern)
+                    return re.compile(escaped, flags), re.compile(escaped.encode("utf-8"), flags)
+                if config.line_regexp:
+                    wrapped = f"^{pattern}$"
+                    return re.compile(wrapped, flags), re.compile(wrapped.encode(), flags)
+                if config.word_regexp:
+                    wrapped = f"\\b{pattern}\\b"
+                    return re.compile(wrapped, flags), re.compile(wrapped.encode(), flags)
+                return re.compile(pattern, flags), re.compile(pattern.encode("utf-8"), flags)
+            except re.error:
+                escaped = re.escape(pattern)
+                return re.compile(escaped, flags), re.compile(escaped.encode("utf-8"), flags)
+
     def is_available(self) -> bool:
         return True
 
@@ -92,22 +114,7 @@ class CPUBackend(ComputeBackend):
         if config.ignore_case or (config.smart_case and pattern.islower()):
             flags |= re.IGNORECASE
 
-        try:
-            if config.fixed_strings:
-                regex_str = re.compile(re.escape(pattern), flags)
-                regex = re.compile(re.escape(pattern).encode("utf-8"), flags)
-            elif config.line_regexp:
-                regex_str = re.compile(f"^{pattern}$", flags)
-                regex = re.compile(f"^{pattern}$".encode(), flags)
-            elif config.word_regexp:
-                regex_str = re.compile(f"\\b{pattern}\\b", flags)
-                regex = re.compile(f"\\b{pattern}\\b".encode(), flags)
-            else:
-                regex_str = re.compile(pattern, flags)
-                regex = re.compile(pattern.encode("utf-8"), flags)
-        except re.error:
-            regex_str = re.compile(re.escape(pattern), flags)
-            regex = re.compile(re.escape(pattern).encode("utf-8"), flags)
+        regex_str, regex = self._compile_regexes(pattern=pattern, flags=flags, config=config)
 
         total_matches_count = 0
         before_lines = getattr(config, "before_context", 0) or 0
