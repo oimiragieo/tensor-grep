@@ -178,7 +178,14 @@ class TorchBackend(ComputeBackend):
             # Regex execution is delegated to CPU backend until a true GPU regex kernel exists.
             from tensor_grep.backends.cpu_backend import CPUBackend
 
-            return CPUBackend().search(file_path, pattern, cfg)
+            result = CPUBackend().search(file_path, pattern, cfg)
+            result.routing_backend = "CPUBackend"
+            result.routing_reason = "torch_regex_cpu_fallback"
+            result.routing_gpu_device_ids = []
+            result.routing_gpu_chunk_plan_mb = []
+            result.routing_distributed = False
+            result.routing_worker_count = 1
+            return result
 
         import torch
 

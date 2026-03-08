@@ -38,6 +38,7 @@ class CPUBackend(ComputeBackend):
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
+        routing_reason = "cpu_python_regex"
         if config is None:
             from tensor_grep.core.config import SearchConfig
 
@@ -48,7 +49,12 @@ class CPUBackend(ComputeBackend):
             return SearchResult(matches=[], total_files=0, total_matches=0)
 
         if config.ltl:
-            return self._search_ltl(path, pattern, config)
+            result = self._search_ltl(path, pattern, config)
+            result.routing_backend = "CPUBackend"
+            result.routing_reason = "cpu_ltl_python"
+            result.routing_distributed = False
+            result.routing_worker_count = 1
+            return result
 
         # ReDoS Protection:
         # Instead of using Python's standard `re` module (which uses backtracking and is vulnerable
@@ -99,7 +105,13 @@ class CPUBackend(ComputeBackend):
             matches = [MatchLine(line_number=r[0], text=r[1], file=file_path) for r in rust_results]
 
             return SearchResult(
-                matches=matches, total_files=1 if matches else 0, total_matches=len(matches)
+                matches=matches,
+                total_files=1 if matches else 0,
+                total_matches=len(matches),
+                routing_backend="CPUBackend",
+                routing_reason="cpu_rust_regex",
+                routing_distributed=False,
+                routing_worker_count=1,
             )
 
         except Exception as exc:
@@ -197,7 +209,13 @@ class CPUBackend(ComputeBackend):
             raise RuntimeError(f"CPU backend search failed for {file_path}: {exc}") from exc
 
         return SearchResult(
-            matches=matches, total_files=1 if matches else 0, total_matches=total_matches_count
+            matches=matches,
+            total_files=1 if matches else 0,
+            total_matches=total_matches_count,
+            routing_backend="CPUBackend",
+            routing_reason=routing_reason,
+            routing_distributed=False,
+            routing_worker_count=1,
         )
 
     @staticmethod

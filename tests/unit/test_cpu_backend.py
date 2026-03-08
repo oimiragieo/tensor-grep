@@ -149,6 +149,8 @@ class TestCPUBackend:
         assert result.total_matches == 1
         assert result.matches[0].line_number == 2
         assert result.matches[0].text == "FROM_RUST"
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_rust_regex"
 
     def test_should_match_ltl_eventually_sequence_when_ordered(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
@@ -162,6 +164,30 @@ class TestCPUBackend:
 
         assert result.total_matches == 1
         assert [m.line_number for m in result.matches] == [2, 4]
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_ltl_python"
+
+    def test_should_emit_python_fallback_routing_metadata_when_rust_fails(self, tmp_path):
+        from tensor_grep.core.config import SearchConfig
+
+        log = tmp_path / "python_fallback.log"
+        log.write_text("ERROR one\nINFO two\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "ERROR", config=SearchConfig())
+
+        assert result.total_matches == 1
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_python_regex"
 
     def test_should_not_match_ltl_when_order_is_wrong(self, tmp_path):
         from tensor_grep.core.config import SearchConfig

@@ -122,16 +122,16 @@ def test_torch_backend_regex_falls_back_to_cpu(tmp_path):
     path.write_text("ERROR timeout\n", encoding="utf-8")
 
     backend = TorchBackend()
-    sentinel = object()
-
-    with (
-        patch.object(TorchBackend, "is_available", return_value=True),
-        patch("tensor_grep.backends.cpu_backend.CPUBackend.search", return_value=sentinel) as cpu,
-    ):
+    with patch.object(TorchBackend, "is_available", return_value=True):
         result = backend.search(str(path), r"ERROR.*timeout", SearchConfig(fixed_strings=False))
 
-    assert result is sentinel
-    cpu.assert_called_once()
+    assert result.total_matches == 1
+    assert result.routing_backend == "CPUBackend"
+    assert result.routing_reason == "torch_regex_cpu_fallback"
+    assert result.routing_gpu_device_ids == []
+    assert result.routing_gpu_chunk_plan_mb == []
+    assert result.routing_distributed is False
+    assert result.routing_worker_count == 1
 
 
 def test_torch_backend_should_distribute_device_selection_when_ids_provided(tmp_path):
