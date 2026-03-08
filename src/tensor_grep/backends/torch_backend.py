@@ -25,6 +25,34 @@ class TorchBackend(ComputeBackend):
         self.chunk_sizes_mb = chunk_sizes_mb
 
     @staticmethod
+    def _normalize_device_plan(
+        device_ids: list[int],
+        chunk_sizes_mb: list[int] | None = None,
+    ) -> tuple[list[int], list[int] | None]:
+        normalized_ids: list[int] = []
+        normalized_chunk_sizes: list[int] = []
+        index_by_device: dict[int, int] = {}
+
+        for index, device_id in enumerate(device_ids):
+            chunk_mb = None
+            if chunk_sizes_mb is not None and index < len(chunk_sizes_mb):
+                chunk_mb = int(chunk_sizes_mb[index])
+            if device_id not in index_by_device:
+                index_by_device[device_id] = len(normalized_ids)
+                normalized_ids.append(device_id)
+                if chunk_sizes_mb is not None:
+                    normalized_chunk_sizes.append(max(0, chunk_mb or 0))
+                continue
+            if chunk_sizes_mb is None:
+                continue
+            slot = index_by_device[device_id]
+            normalized_chunk_sizes[slot] = max(normalized_chunk_sizes[slot], max(0, chunk_mb or 0))
+
+        if chunk_sizes_mb is None:
+            return normalized_ids, None
+        return normalized_ids, normalized_chunk_sizes
+
+    @staticmethod
     def _build_round_robin_shards(
         numbered_lines: list[tuple[int, str]], shard_count: int
     ) -> list[list[tuple[int, str]]]:
@@ -154,6 +182,10 @@ class TorchBackend(ComputeBackend):
             resolved_device_ids = self.device_detector.get_device_ids()
         if not resolved_device_ids:
             resolved_device_ids = [0]
+        resolved_device_ids, normalized_chunk_sizes = self._normalize_device_plan(
+            list(resolved_device_ids),
+            self.chunk_sizes_mb,
+        )
         devices = [torch.device(f"cuda:{device_id}") for device_id in resolved_device_ids]
 
         with open(file_path, encoding="utf-8", errors="replace") as handle:
@@ -177,8 +209,8 @@ class TorchBackend(ComputeBackend):
 
         numbered_lines = list(enumerate(lines, 1))
         if len(devices) > 1:
-            if self.chunk_sizes_mb and len(self.chunk_sizes_mb) == len(devices):
-                shards = self._build_weighted_shards(numbered_lines, self.chunk_sizes_mb)
+            if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(devices):
+                shards = self._build_weighted_shards(numbered_lines, normalized_chunk_sizes)
             else:
                 shards = self._build_round_robin_shards(numbered_lines, len(devices))
 
@@ -225,9 +257,9 @@ class TorchBackend(ComputeBackend):
                     break
 
         routing_chunk_plan_mb: list[tuple[int, int]] = []
-        if self.chunk_sizes_mb and len(self.chunk_sizes_mb) == len(resolved_device_ids):
+        if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(resolved_device_ids):
             routing_chunk_plan_mb = list(
-                zip(resolved_device_ids, self.chunk_sizes_mb, strict=False)
+                zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
             )
 
         return SearchResult(

@@ -238,6 +238,31 @@ def test_torch_backend_should_weight_multi_gpu_shards_by_chunk_plan(tmp_path):
     assert result.routing_worker_count == 2
 
 
+def test_torch_backend_should_deduplicate_duplicate_device_ids_before_fanout(tmp_path):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_duplicate_device_ids.log"
+    path.write_text("ERROR A\nERROR B\nERROR C\n", encoding="utf-8")
+
+    fake_torch = _FakeTorch()
+    _FakeExecutor.submitted_devices = []
+    backend = TorchBackend(device_ids=[3, 3], chunk_sizes_mb=[1, 4])
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+        patch("tensor_grep.backends.torch_backend.ThreadPoolExecutor", _FakeExecutor),
+    ):
+        result = backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 3
+    assert _FakeExecutor.submitted_devices == []
+    assert result.routing_reason == "torch_single_gpu"
+    assert result.routing_gpu_device_ids == [3]
+    assert result.routing_gpu_chunk_plan_mb == [(3, 4)]
+    assert result.routing_distributed is False
+    assert result.routing_worker_count == 1
+
+
 def test_torch_backend_is_available_should_skip_detector_probe_when_device_ids_provided():
     from tensor_grep.backends.torch_backend import TorchBackend
 
