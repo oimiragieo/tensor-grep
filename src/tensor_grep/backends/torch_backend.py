@@ -122,7 +122,7 @@ class TorchBackend(ComputeBackend):
             except Exception:
                 return False
 
-        return self.device_detector.get_device_count() > 0
+        return False
 
     def _contains_literal_torch(
         self, torch: Any, line: str, pattern_tensor: Any, pattern_len: int, device: Any
@@ -195,12 +195,20 @@ class TorchBackend(ComputeBackend):
             try:
                 if hasattr(self.device_detector, "enumerate_device_ids"):
                     resolved_device_ids = list(self.device_detector.enumerate_device_ids())
-                else:
+                elif hasattr(self.device_detector, "get_device_ids"):
                     resolved_device_ids = self.device_detector.get_device_ids()
+                else:
+                    resolved_device_ids = []
             except Exception:
-                resolved_device_ids = self.device_detector.get_device_ids()
+                if hasattr(self.device_detector, "get_device_ids"):
+                    resolved_device_ids = self.device_detector.get_device_ids()
+                else:
+                    resolved_device_ids = []
         if not resolved_device_ids:
-            resolved_device_ids = [0]
+            raise RuntimeError(
+                "TorchBackend requires concrete CUDA device IDs for routing; "
+                "detector returned no routable devices."
+            )
         resolved_device_ids, normalized_chunk_sizes = self._normalize_device_plan(
             list(resolved_device_ids),
             self.chunk_sizes_mb,
