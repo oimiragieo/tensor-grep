@@ -714,6 +714,8 @@ def test_should_require_installation_docs_to_include_package_manager_commands():
     assert any("winget-pkgs" in err for err in errors)
     assert any("winget install oimiragieo.tensor-grep" in err for err in errors)
     assert any("tg --version" in err for err in errors)
+    assert any("git revert <tap-formula-commit>" in err for err in errors)
+    assert any("winget uninstall oimiragieo.tensor-grep" in err for err in errors)
 
 
 def test_should_require_smoke_test_package_manager_bundle_command_in_runbook():

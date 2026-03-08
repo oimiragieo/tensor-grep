@@ -123,5 +123,16 @@ If a publish is bad or inconsistent:
 2. Ship an immediate patch release (`X.Y.(Z+1)`) with corrected artifacts. Do not attempt to overwrite an existing PyPI version.
 3. For package managers:
    - Homebrew: update formula to corrected version and re-run tap tests.
+     ```bash
+     git revert <tap-formula-commit>
+     brew update
+     brew install tensor-grep
+     tg --version
+     ```
    - Winget: submit corrected manifest version to `winget-pkgs`.
+     ```powershell
+     winget uninstall oimiragieo.tensor-grep
+     winget install oimiragieo.tensor-grep
+     tg --version
+     ```
 4. Update `CHANGELOG.md` with rollback reason and remediation commit hash.

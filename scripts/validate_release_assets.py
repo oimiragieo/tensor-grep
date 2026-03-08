@@ -450,6 +450,8 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
         "winget-pkgs",
         "winget install oimiragieo.tensor-grep",
         "tg --version",
+        "git revert <tap-formula-commit>",
+        "winget uninstall oimiragieo.tensor-grep",
     ):
         if required_cmd not in installation_content:
             errors.append(
