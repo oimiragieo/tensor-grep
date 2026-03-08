@@ -558,6 +558,8 @@ def test_should_require_package_manager_runbook_command_contract():
     assert any("prepare_package_manager_release.py --check" in err for err in errors)
     assert any("winget validate --manifest" in err for err in errors)
     assert any("verify_package_manager_bundle_checksums.py --bundle-dir" in err for err in errors)
+    assert any("git revert <tap-formula-commit>" in err for err in errors)
+    assert any("winget uninstall oimiragieo.tensor-grep" in err for err in errors)
     assert any(
         "--expected-version X.Y.Z --expected-tag vX.Y.Z --check-pypi" in err for err in errors
     )

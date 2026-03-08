@@ -387,6 +387,16 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
                 f"Package manager runbook missing required smoke-install command: {required_smoke_cmd}"
             )
 
+    for required_rollback_cmd in (
+        "git revert <tap-formula-commit>",
+        "winget uninstall oimiragieo.tensor-grep",
+    ):
+        if required_rollback_cmd not in runbook_content:
+            errors.append(
+                "Package manager runbook missing required rollback command: "
+                f"{required_rollback_cmd}"
+            )
+
     if "npm/GitHub mismatch" not in runbook_content:
         errors.append("Package manager runbook missing npm/GitHub rollback guidance")
     return errors
