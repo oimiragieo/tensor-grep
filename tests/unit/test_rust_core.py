@@ -24,6 +24,8 @@ def test_rust_backend_search(tmp_path: Path):
 
     assert result.total_matches == 1
     assert "ERROR: database connection failed" in result.matches[0].text
+    assert result.routing_backend == "RustCoreBackend"
+    assert result.routing_reason == "rust_regex"
 
 
 def test_rust_backend_respects_invert_and_skips_count_fast_path(monkeypatch, tmp_path: Path):
@@ -53,3 +55,26 @@ def test_rust_backend_respects_invert_and_skips_count_fast_path(monkeypatch, tmp
     assert result.total_matches == 1
     assert result.matches[0].line_number == 7
     assert result.matches[0].text == "FROM_RUST_WRAPPER"
+    assert result.routing_backend == "RustCoreBackend"
+    assert result.routing_reason == "rust_regex"
+
+
+def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_path: Path):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    class FakeNativeRustBackend:
+        def count_matches(self, pattern, path, ignore_case, fixed_strings):
+            return 4
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "count.log"
+    log_file.write_text("ERROR\nERROR\nERROR\nERROR\n")
+    result = backend.search(str(log_file), "ERROR", config=SearchConfig(count=True))
+
+    assert result.total_matches == 4
+    assert result.routing_backend == "RustCoreBackend"
+    assert result.routing_reason == "rust_count"

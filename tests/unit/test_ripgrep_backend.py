@@ -107,3 +107,27 @@ def test_passthrough_should_forward_count_flag_and_exit_code():
     assert "-c" in cmd
     assert "--no-ignore" in cmd
     assert exit_code == 0
+
+
+def test_search_should_emit_runtime_routing_metadata():
+    backend = RipgrepBackend()
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = (
+        '{"type":"match","data":{"path":{"text":"a.log"},"lines":{"text":"ERROR one\\n"},'
+        '"line_number":2}}\n'
+    )
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch("tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result),
+    ):
+        result = backend.search("a.log", "ERROR", config=SearchConfig())
+
+    assert result.total_matches == 1
+    assert result.routing_backend == "RipgrepBackend"
+    assert result.routing_reason == "rg_json"
+    assert result.routing_distributed is False
+    assert result.routing_worker_count == 1

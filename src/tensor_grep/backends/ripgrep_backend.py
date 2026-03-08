@@ -87,6 +87,10 @@ class RipgrepBackend(ComputeBackend):
                 matches=matches,
                 total_files=len(files_set),
                 total_matches=len(matches),
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_json",
+                routing_distributed=False,
+                routing_worker_count=1,
             )
 
         except Exception as e:

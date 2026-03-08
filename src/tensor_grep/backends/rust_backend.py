@@ -52,6 +52,10 @@ class RustCoreBackend(ComputeBackend):
                     matches=[],  # No lines needed for count
                     total_files=1 if total_count > 0 else 0,
                     total_matches=total_count,
+                    routing_backend="RustCoreBackend",
+                    routing_reason="rust_count",
+                    routing_distributed=False,
+                    routing_worker_count=1,
                 )
 
             # Support older signature and new signature smoothly
@@ -72,5 +76,11 @@ class RustCoreBackend(ComputeBackend):
         total_matches = len(matches)
 
         return SearchResult(
-            matches=matches, total_files=1 if total_matches > 0 else 0, total_matches=total_matches
+            matches=matches,
+            total_files=1 if total_matches > 0 else 0,
+            total_matches=total_matches,
+            routing_backend="RustCoreBackend",
+            routing_reason="rust_regex",
+            routing_distributed=False,
+            routing_worker_count=1,
         )
