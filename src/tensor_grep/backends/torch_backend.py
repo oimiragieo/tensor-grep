@@ -78,6 +78,14 @@ class TorchBackend(ComputeBackend):
         if self.device_ids:
             return True
 
+        try:
+            if hasattr(self.device_detector, "enumerate_device_ids"):
+                return bool(list(self.device_detector.enumerate_device_ids()))
+            if hasattr(self.device_detector, "get_device_ids"):
+                return bool(list(self.device_detector.get_device_ids()))
+        except Exception:
+            return False
+
         return self.device_detector.get_device_count() > 0
 
     def _contains_literal_torch(

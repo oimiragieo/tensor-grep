@@ -256,3 +256,53 @@ def test_torch_backend_is_available_should_skip_detector_probe_when_device_ids_p
         patch.dict("sys.modules", {"torch": fake_torch}),
     ):
         assert backend.is_available() is True
+
+
+def test_torch_backend_is_available_should_prefer_enumerated_device_ids():
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    class _DetectorWithStableIds:
+        def enumerate_device_ids(self):
+            return [7, 3]
+
+        def get_device_count(self):
+            raise AssertionError(
+                "get_device_count should not be used when enumerate_device_ids is available"
+            )
+
+    fake_torch = _FakeTorch()
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+
+    backend = TorchBackend(device_ids=None)
+    backend.device_detector = _DetectorWithStableIds()
+
+    with (
+        patch("importlib.util.find_spec", return_value=object()),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        assert backend.is_available() is True
+
+
+def test_torch_backend_is_available_should_return_false_when_enumerated_ids_empty():
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    class _DetectorWithNoRoutableIds:
+        def enumerate_device_ids(self):
+            return []
+
+        def get_device_count(self):
+            raise AssertionError(
+                "count probing should not run when enumerate_device_ids resolves the route set"
+            )
+
+    fake_torch = _FakeTorch()
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+
+    backend = TorchBackend(device_ids=None)
+    backend.device_detector = _DetectorWithNoRoutableIds()
+
+    with (
+        patch("importlib.util.find_spec", return_value=object()),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        assert backend.is_available() is False
