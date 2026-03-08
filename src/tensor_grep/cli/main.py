@@ -782,6 +782,7 @@ def search_command(
     all_results.routing_gpu_device_ids = selected_gpu_device_ids
     all_results.routing_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
     search_start = time.perf_counter()
+    matched_file_paths: set[str] = set()
 
     def _merge_runtime_routing(result: SearchResult) -> None:
         # Runtime routing metadata is authoritative when a backend internally
@@ -818,6 +819,7 @@ def search_command(
             all_results.matches.extend(result.matches)
             all_results.total_matches += result.total_matches
             all_results.total_files += result.total_files
+            matched_file_paths.update(m.file for m in result.matches)
             _merge_runtime_routing(result)
     else:
         for current_file in candidate_files_ordered:
@@ -833,16 +835,19 @@ def search_command(
                     span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
             all_results.total_matches += result.total_matches
-            if result.total_matches > 0:
+            if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
+                matched_file_paths.add(current_file)
+            matched_file_paths.update(m.file for m in result.matches)
             _merge_runtime_routing(result)
 
     if only_matching:
         all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
         all_results.total_matches = len(all_results.matches)
         all_results.total_files = len({m.file for m in all_results.matches})
+        matched_file_paths = {m.file for m in all_results.matches}
 
-    matched_files = {m.file for m in all_results.matches}
+    matched_files = set(matched_file_paths)
     elapsed_ms = (time.perf_counter() - search_start) * 1000.0
     runtime_override_active = (
         all_results.routing_backend is not None
