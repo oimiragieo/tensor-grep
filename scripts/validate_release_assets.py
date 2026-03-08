@@ -387,6 +387,7 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
             )
 
     for required_cmd in (
+        "gh run list --limit 10",
         "uv run python scripts/prepare_package_manager_release.py --check",
         "winget validate --manifest",
         "uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir",
