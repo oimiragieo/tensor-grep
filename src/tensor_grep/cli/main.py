@@ -829,6 +829,7 @@ def search_command(
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
+            matched_file_paths.update(result.matched_file_paths)
             all_results.total_matches += result.total_matches
             all_results.total_files += result.total_files
             matched_file_paths.update(m.file for m in result.matches)
@@ -846,6 +847,7 @@ def search_command(
                 if span is not None:
                     span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
+            matched_file_paths.update(result.matched_file_paths)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1

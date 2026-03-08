@@ -93,6 +93,7 @@ class _FakeRipgrepPipeline:
         self.backend = RipgrepBackend(
             SearchResult(
                 matches=[],
+                matched_file_paths=["a.py"],
                 total_files=1,
                 total_matches=3,
                 routing_backend="RipgrepBackend",
@@ -213,6 +214,19 @@ def test_cli_stats_should_respect_count_only_ripgrep_results(monkeypatch):
 
     assert result.exit_code == 0
     assert "[stats] scanned_files=2 matched_files=1 total_matches=3" in result.output
+
+
+def test_files_with_matches_should_use_count_only_ripgrep_file_paths(monkeypatch):
+    global _FAKE_WALK
+    _FAKE_WALK = {".": ["a.py", "b.py"]}
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeRipgrepPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--files-with-matches", "-c"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "a.py"
 
 
 def test_files_without_match_lists_unmatched_files(monkeypatch):
