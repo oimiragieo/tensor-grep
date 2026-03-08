@@ -117,6 +117,7 @@ class RipgrepBackend(ComputeBackend):
             total_matches = 0
             total_files = 0
             matched_file_paths: list[str] = []
+            match_counts_by_file: dict[str, int] = {}
 
             multi_file = isinstance(file_path, list) and len(file_path) > 1
             for line in lines:
@@ -134,13 +135,16 @@ class RipgrepBackend(ComputeBackend):
                     total_files += 1
                     if matched_path:
                         matched_file_paths.append(matched_path)
+                        match_counts_by_file[matched_path] = count_value
                     elif isinstance(file_path, str):
                         matched_file_paths.append(file_path)
+                        match_counts_by_file[file_path] = count_value
 
             routing_reason = "rg_count_matches" if config.count_matches else "rg_count"
             return SearchResult(
                 matches=[],
                 matched_file_paths=matched_file_paths,
+                match_counts_by_file=match_counts_by_file,
                 total_files=total_files,
                 total_matches=total_matches,
                 routing_backend="RipgrepBackend",

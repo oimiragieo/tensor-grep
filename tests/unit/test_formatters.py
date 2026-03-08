@@ -66,3 +66,16 @@ class TestFormatters:
         fmt = RipgrepFormatter(config=config)
         output = fmt.format(self.result)
         assert output == "1"
+
+    def test_count_mode_outputs_per_file_counts_when_available(self):
+        result = SearchResult(
+            matches=[],
+            matched_file_paths=["a.log", "b.log"],
+            total_files=2,
+            total_matches=3,
+            match_counts_by_file={"a.log": 2, "b.log": 1},
+        )
+        config = SearchConfig(count=True)
+        fmt = RipgrepFormatter(config=config)
+        output = fmt.format(result)
+        assert output.splitlines() == ["a.log:2", "b.log:1"]

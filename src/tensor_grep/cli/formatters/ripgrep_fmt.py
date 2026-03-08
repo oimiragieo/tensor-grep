@@ -16,8 +16,11 @@ class RipgrepFormatter(OutputFormatter):
             if result.total_matches > 0 or self.config.include_zero:
                 # Group counts by file to match ripgrep output
                 counts_by_file: dict[str, int] = defaultdict(int)
-                for match in result.matches:
-                    counts_by_file[match.file] += 1
+                if result.match_counts_by_file:
+                    counts_by_file.update(result.match_counts_by_file)
+                else:
+                    for match in result.matches:
+                        counts_by_file[match.file] += 1
 
                 if not counts_by_file and result.total_matches > 0:
                     # Fallback if result matches aren't populated but total is
