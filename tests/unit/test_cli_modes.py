@@ -867,6 +867,24 @@ def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
     assert "Warning:" not in result.output
 
 
+def test_run_should_report_ast_wrapper_backend_mode(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["run", "ERROR", "."])
+
+    assert result.exit_code == 0
+    assert "Executing ast-grep structural matching run..." in result.output
+    assert "GPU-Accelerated AST-Grep Run" not in result.output
+
+
 def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
 
