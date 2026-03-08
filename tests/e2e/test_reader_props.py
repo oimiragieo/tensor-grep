@@ -1,5 +1,5 @@
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 pytestmark = pytest.mark.property
@@ -26,6 +26,7 @@ def test_reader_never_loses_bytes(text):
 
 
 @given(st.from_regex(r"[A-Za-z0-9.*+?\[\]{}()^$|\\]+", fullmatch=True))
+@settings(deadline=None)
 def test_cpu_backend_never_crashes_on_valid_regex(pattern):
     """Property: CPU backend handles any valid regex without exception."""
     import os

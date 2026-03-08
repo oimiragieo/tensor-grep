@@ -56,6 +56,10 @@ class TestCPUBackend:
         backend = CPUBackend()
         result = backend.search("nonexistent_file.log", "ERROR")
         assert result.is_empty is True
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_missing_file"
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
 
     def test_should_report_line_numbers(self, sample_log_file):
         backend = CPUBackend()
@@ -201,6 +205,8 @@ class TestCPUBackend:
 
         assert result.total_matches == 0
         assert result.matches == []
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_ltl_python"
 
     def test_should_error_for_unsupported_ltl_syntax(self, tmp_path):
         from tensor_grep.core.config import SearchConfig

@@ -78,3 +78,42 @@ def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_
     assert result.total_matches == 4
     assert result.routing_backend == "RustCoreBackend"
     assert result.routing_reason == "rust_count"
+
+
+def test_rust_backend_unavailable_should_report_routing_metadata(monkeypatch, tmp_path: Path):
+    from tensor_grep.backends import rust_backend as rb
+
+    monkeypatch.setattr(rb, "HAVE_RUST", False)
+
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "missing_rust.log"
+    log_file.write_text("ERROR\n")
+    result = backend.search(str(log_file), "ERROR")
+
+    assert result.total_matches == 0
+    assert result.routing_backend == "RustCoreBackend"
+    assert result.routing_reason == "rust_unavailable"
+    assert result.routing_distributed is False
+    assert result.routing_worker_count == 1
+
+
+def test_rust_backend_exception_should_report_routing_metadata(monkeypatch, tmp_path: Path):
+    from tensor_grep.backends import rust_backend as rb
+
+    class FailingNativeRustBackend:
+        def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FailingNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "rust_fail.log"
+    log_file.write_text("ERROR\n")
+    result = backend.search(str(log_file), "ERROR")
+
+    assert result.total_matches == 0
+    assert result.routing_backend == "RustCoreBackend"
+    assert result.routing_reason == "rust_exception"
+    assert result.routing_distributed is False
+    assert result.routing_worker_count == 1

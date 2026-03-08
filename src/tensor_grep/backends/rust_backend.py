@@ -26,7 +26,15 @@ class RustCoreBackend(ComputeBackend):
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
         if not self.inner:
-            return SearchResult(matches=[], total_files=0, total_matches=0)
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="RustCoreBackend",
+                routing_reason="rust_unavailable",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
 
         ignore_case = False
         count_only = False
@@ -66,7 +74,15 @@ class RustCoreBackend(ComputeBackend):
             except TypeError:
                 results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings)
         except Exception:
-            return SearchResult(matches=[], total_files=0, total_matches=0)
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="RustCoreBackend",
+                routing_reason="rust_exception",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
 
         matches = []
         for line_num, text in results:

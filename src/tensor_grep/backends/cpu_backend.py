@@ -46,7 +46,15 @@ class CPUBackend(ComputeBackend):
 
         path = Path(file_path)
         if not path.exists() or not path.is_file():
-            return SearchResult(matches=[], total_files=0, total_matches=0)
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="CPUBackend",
+                routing_reason="cpu_missing_file",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
 
         if config.ltl:
             result = self._search_ltl(path, pattern, config)
@@ -274,4 +282,8 @@ class CPUBackend(ComputeBackend):
             matches=matches,
             total_files=1 if sequence_count > 0 else 0,
             total_matches=sequence_count,
+            routing_backend="CPUBackend",
+            routing_reason="cpu_ltl_python",
+            routing_distributed=False,
+            routing_worker_count=1,
         )
