@@ -114,6 +114,7 @@ uv run python scripts/prepare_package_manager_release.py --check
 uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
 uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
 uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
+python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z
 python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z
 python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-pypi --pypi-wait-seconds 180 --pypi-poll-interval-seconds 10
 python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-npm --npm-wait-seconds 180 --npm-poll-interval-seconds 10

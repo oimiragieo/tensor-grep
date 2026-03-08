@@ -561,11 +561,17 @@ def test_should_require_package_manager_runbook_command_contract():
             "## 5. Rollback runbook\n"
             "Homebrew\n"
             "Winget\n"
+            "gh run list --limit 10\n"
+            "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z\n"
         ),
     )
     assert any("prepare_package_manager_release.py --check" in err for err in errors)
     assert any("winget validate --manifest" in err for err in errors)
     assert any("verify_package_manager_bundle_checksums.py --bundle-dir" in err for err in errors)
+    assert any(
+        "verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z" in err
+        for err in errors
+    )
     assert any("git revert <tap-formula-commit>" in err for err in errors)
     assert any("winget uninstall oimiragieo.tensor-grep" in err for err in errors)
     assert any(
