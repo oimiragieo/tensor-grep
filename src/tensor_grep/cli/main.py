@@ -1128,9 +1128,15 @@ def scan(
     root_dir = cast(Path, project_cfg["root_dir"])
     candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
 
-    typer.echo(
-        f"Scanning project using GPU-Accelerated GNNs based on {project_cfg['config_path']}..."
-    )
+    backend_name = type(backend).__name__
+    if backend_name == "AstBackend":
+        scan_banner = "Scanning project using GPU-Accelerated GNNs"
+    elif backend_name == "AstGrepWrapperBackend":
+        scan_banner = "Scanning project using ast-grep structural matching"
+    else:
+        scan_banner = f"Scanning project using {backend_name}"
+
+    typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
 
     total_matches = 0
     matched_rules = 0
