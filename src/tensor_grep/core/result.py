@@ -11,6 +11,7 @@ class MatchLine:
 @dataclass
 class SearchResult:
     matches: list[MatchLine] = field(default_factory=list)
+    matched_file_paths: list[str] = field(default_factory=list)
     total_files: int = 0
     total_matches: int = 0
     routing_backend: str | None = None

@@ -116,11 +116,13 @@ class RipgrepBackend(ComputeBackend):
             lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
             total_matches = 0
             total_files = 0
+            matched_file_paths: list[str] = []
 
             multi_file = isinstance(file_path, list) and len(file_path) > 1
             for line in lines:
+                matched_path: str | None = None
                 if multi_file and ":" in line:
-                    _path, count_text = line.rsplit(":", 1)
+                    matched_path, count_text = line.rsplit(":", 1)
                 else:
                     count_text = line
                 try:
@@ -130,10 +132,15 @@ class RipgrepBackend(ComputeBackend):
                 total_matches += count_value
                 if count_value > 0:
                     total_files += 1
+                    if matched_path:
+                        matched_file_paths.append(matched_path)
+                    elif isinstance(file_path, str):
+                        matched_file_paths.append(file_path)
 
             routing_reason = "rg_count_matches" if config.count_matches else "rg_count"
             return SearchResult(
                 matches=[],
+                matched_file_paths=matched_file_paths,
                 total_files=total_files,
                 total_matches=total_matches,
                 routing_backend="RipgrepBackend",

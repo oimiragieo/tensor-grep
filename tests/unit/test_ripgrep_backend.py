@@ -155,6 +155,7 @@ def test_search_should_parse_plain_count_output_without_json():
     assert "-c" in cmd
     assert result.total_matches == 3
     assert result.total_files == 2
+    assert result.matched_file_paths == ["a.log", "b.log"]
     assert result.routing_backend == "RipgrepBackend"
     assert result.routing_reason == "rg_count"
 
@@ -181,5 +182,6 @@ def test_search_should_parse_plain_count_matches_output_without_json():
     assert "--count-matches" in cmd
     assert result.total_matches == 4
     assert result.total_files == 1
+    assert result.matched_file_paths == ["a.log"]
     assert result.routing_backend == "RipgrepBackend"
     assert result.routing_reason == "rg_count_matches"
