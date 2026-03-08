@@ -33,6 +33,18 @@ Combines raw regex speed with semantic understanding (cyBERT) while maintaining 
 )
 
 
+def _read_project_version_fallback() -> str:
+    try:
+        pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
+        for line in pyproject_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("version = "):
+                return stripped.split('"', 2)[1]
+    except Exception:
+        pass
+    return "0.0.0"
+
+
 def _collect_candidate_files(
     scanner: "DirectoryScanner", paths: list[str]
 ) -> tuple[list[str], set[str]]:
@@ -1392,7 +1404,7 @@ def main_entry() -> None:
 
             pkg_version = version("tensor-grep")
         except Exception:
-            pkg_version = "0.31.1"  # Fallback if not installed via package manager
+            pkg_version = _read_project_version_fallback()
 
         print(f"tensor-grep {pkg_version}")
         print()
