@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.31.3 (2026-03-08)
+
+### Bug Fixes
+
+- **cli**: Infer gpu worker metadata from selected routing
+  ([`6f20fc6`](https://github.com/oimiragieo/tensor-grep/commit/6f20fc6e6d749db648d47ab8f49fc328324e0aa8))
+
+### Testing
+
+- **gpu**: Lock torch multi-gpu routing metadata
+  ([`02a605a`](https://github.com/oimiragieo/tensor-grep/commit/02a605ab8aff7e5a7ecac7af80a2afbbaac40bcf))
+
+
 ## v0.31.2 (2026-03-08)
 
 ### Bug Fixes
