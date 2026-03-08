@@ -1,6 +1,152 @@
 # CHANGELOG
 
 
+## v0.31.2 (2026-03-08)
+
+### Bug Fixes
+
+- **inventory**: Honor authoritative empty gpu enumeration
+  ([`91ed5b4`](https://github.com/oimiragieo/tensor-grep/commit/91ed5b493f72c9d5af58ed1ce690444789b70efd))
+
+- **mcp**: Report runtime routing overrides
+  ([`c4f9686`](https://github.com/oimiragieo/tensor-grep/commit/c4f9686c90822c91150c9c557b2263ae12f49432))
+
+- **memory**: Treat empty gpu enumeration as authoritative
+  ([`ad67866`](https://github.com/oimiragieo/tensor-grep/commit/ad67866bfd44dd17fe9e5b7aa1ba807a1dada351))
+
+- **routing**: Emit runtime metadata for cpu fallbacks
+  ([`5c4aae3`](https://github.com/oimiragieo/tensor-grep/commit/5c4aae3e3d73e47a766a82ad8d0d77243a3b02c6))
+
+- **routing**: Stamp ast and string backends
+  ([`b8297fd`](https://github.com/oimiragieo/tensor-grep/commit/b8297fd674776ab2555eca26c73363fff60e6e8c))
+
+- **routing**: Stamp rg and rust backend metadata
+  ([`c9d6aea`](https://github.com/oimiragieo/tensor-grep/commit/c9d6aea6e114a51aeca302691734f2cc081f0710))
+
+- **torch**: Deduplicate duplicate gpu ids before fanout
+  ([`3658891`](https://github.com/oimiragieo/tensor-grep/commit/365889160a0723186b2dccbf61ea8f1e5b14552c))
+
+- **torch**: Fallback cleanly when gpu enumeration fails
+  ([`b000373`](https://github.com/oimiragieo/tensor-grep/commit/b0003739f6f916b6a79d0aac7331eff9513d17aa))
+
+- **torch**: Honor enumerated gpu ids in availability checks
+  ([`f7f2599`](https://github.com/oimiragieo/tensor-grep/commit/f7f2599ccfe03e030b9ecb6d8c53ff583c3fb30d))
+
+- **torch**: Require concrete gpu ids for routing
+  ([`c75907f`](https://github.com/oimiragieo/tensor-grep/commit/c75907fa8d407890186abc0f6f3d3572d0b20a5c))
+
+### Continuous Integration
+
+- **gpu**: Add retry/backoff for cudf dependency install
+  ([`755df5a`](https://github.com/oimiragieo/tensor-grep/commit/755df5a9e1c65d0b982070a22a7507e259f1c423))
+
+- **pkg**: Smoke-test package-manager bundle contracts
+  ([`e902ef7`](https://github.com/oimiragieo/tensor-grep/commit/e902ef7e16a5361e0f41573cec28b4dfa52d0f9c))
+
+- **release**: Preflight package-manager bundle checks before build
+  ([`a63e607`](https://github.com/oimiragieo/tensor-grep/commit/a63e60746eb6e4418178a9ce2d1f7ee6a0a48e8a))
+
+- **release**: Smoke-test package-manager bundle in tag workflow
+  ([`84cf28b`](https://github.com/oimiragieo/tensor-grep/commit/84cf28b5845bac5953fe7880ffbca124888385a3))
+
+### Documentation
+
+- **bench**: Refresh README and paper with latest benchmark pass
+  ([`f7bf455`](https://github.com/oimiragieo/tensor-grep/commit/f7bf455bbf732ca444c169e1288ec934738d3712))
+
+- **benchmark**: Refresh measured results on current line
+  ([`7e00bc9`](https://github.com/oimiragieo/tensor-grep/commit/7e00bc90c447c292272c5a28c3f70499c2208826))
+
+- **benchmark**: Refresh README and paper with 2026-03-08 results
+  ([`da7164f`](https://github.com/oimiragieo/tensor-grep/commit/da7164f43a87b2b813bf1be3fbc8f63db7072126))
+
+- **install**: Add explicit rollback smoke commands
+  ([`ec2cac3`](https://github.com/oimiragieo/tensor-grep/commit/ec2cac33a381fdc4f7382a3923820fe8ebd6acb8))
+
+- **install**: Require package-manager smoke commands
+  ([`aea93bd`](https://github.com/oimiragieo/tensor-grep/commit/aea93bd6a667650a1728e99e8304ba7c4ef37924))
+
+- **install**: Require tap install and asset verification commands
+  ([`5306115`](https://github.com/oimiragieo/tensor-grep/commit/5306115bcc6a011d06bf7769cd85e3ee3618c185))
+
+- **release**: Document bundle smoke-test gate and lock validator
+  ([`8ff6a78`](https://github.com/oimiragieo/tensor-grep/commit/8ff6a781ed317496b272512686127b9bc7ed43f0))
+
+- **runbook**: Standardize operator run listing command
+  ([`8e3280a`](https://github.com/oimiragieo/tensor-grep/commit/8e3280a6149cf4828a0ca4f7926c4fc300844f74))
+
+### Testing
+
+- **ci**: Enforce publish-pypi parity step check and retry flags
+  ([`687539c`](https://github.com/oimiragieo/tensor-grep/commit/687539ca5a2537a363f33353b0c0c3f3363ced88))
+
+- **ci**: Enforce publish-success-gate pypi parity step flags
+  ([`a47f64d`](https://github.com/oimiragieo/tensor-grep/commit/a47f64d920ac29e4e225e15739caef3a7650813c))
+
+- **ci**: Enforce structural benchmark-regression baseline-auto steps
+  ([`4ffa609`](https://github.com/oimiragieo/tensor-grep/commit/4ffa60982962f7bb8f1814874c9881b2294ecd6d))
+
+- **ci**: Enforce structural gpu job retry and pytest steps
+  ([`8a56fd3`](https://github.com/oimiragieo/tensor-grep/commit/8a56fd3ece65d00e6dc29dd9463e079c5f39f515))
+
+- **ci**: Require parity identity flags in pypi gate steps
+  ([`cf7b7aa`](https://github.com/oimiragieo/tensor-grep/commit/cf7b7aa4c33f8da73f18bb79964d66fd9a71f21f))
+
+- **ci**: Require publish parity step presence in pypi and success gate
+  ([`7af07e7`](https://github.com/oimiragieo/tensor-grep/commit/7af07e77e46b9a7cc9131187c5f9af0d39ab7e87))
+
+- **docs**: Require bundle smoke-test command in publish runbook
+  ([`bd43aea`](https://github.com/oimiragieo/tensor-grep/commit/bd43aeaed8f0192875e955da7f5fbb4924e73082))
+
+- **docs**: Require install docs package-manager commands
+  ([`dda7bf9`](https://github.com/oimiragieo/tensor-grep/commit/dda7bf978539cb00efccc71de2f97645ea5c2805))
+
+- **docs**: Require release asset verification in runbook
+  ([`db9992b`](https://github.com/oimiragieo/tensor-grep/commit/db9992ba3f2aa441d2be9e08850fdb4fbcfaf640))
+
+- **pipeline**: Lock explicit multi-gpu torch fanout path
+  ([`e02f2e8`](https://github.com/oimiragieo/tensor-grep/commit/e02f2e8a4175b14778c6da3a2b13465d618fbd60))
+
+- **release**: Detect duplicate release assets and checksums
+  ([`54a1473`](https://github.com/oimiragieo/tensor-grep/commit/54a1473a84af17dc1edfd2c9f4bd48d2eed78ded))
+
+- **release**: Enforce create-release bundle step command contracts
+  ([`9824305`](https://github.com/oimiragieo/tensor-grep/commit/98243053cbcc4ad54aa0e35b96d3d7ac655e41a3))
+
+- **release**: Enforce create-release bundle verify and smoke steps
+  ([`5d6b261`](https://github.com/oimiragieo/tensor-grep/commit/5d6b261dfe81cdc296a8fee96f5939b25ca6a45a))
+
+- **release**: Enforce parity step flags in publish and release gate
+  ([`db1c5a7`](https://github.com/oimiragieo/tensor-grep/commit/db1c5a7c3a22623e8b1f75b67cd47fadd79bfb9e))
+
+- **release**: Enforce preflight bundle steps in validate-package-managers job
+  ([`10570c3`](https://github.com/oimiragieo/tensor-grep/commit/10570c30c60c919f2e204222b4f6d371763728d8))
+
+- **release**: Enforce validate-tag-version-parity step flags
+  ([`5ca5c14`](https://github.com/oimiragieo/tensor-grep/commit/5ca5c147fdeabdd0a46eafece2cd9f480ba58001))
+
+- **release**: Enforce verify-release-assets step contracts
+  ([`8224690`](https://github.com/oimiragieo/tensor-grep/commit/822469015615bf06e715d9a35e5c5a745bbdb329))
+
+- **release**: Require checklist verification commands
+  ([`6699fc4`](https://github.com/oimiragieo/tensor-grep/commit/6699fc4adaf049733497d023cfa53066401ce87f))
+
+- **release**: Require explicit package-manager rollback commands
+  ([`881dd04`](https://github.com/oimiragieo/tensor-grep/commit/881dd047254bb46592d08e00ad980aaaf77a4116))
+
+- **release**: Require release parity step presence in validator
+  ([`2c555db`](https://github.com/oimiragieo/tensor-grep/commit/2c555dbef3bb88a75b5fdebd7e4345a9f5c0c9bb))
+
+- **release**: Require tag/version flags in final parity steps
+  ([`90bce79`](https://github.com/oimiragieo/tensor-grep/commit/90bce7963dffb365436a7a94d1ba234759d86493))
+
+- **release**: Require verify-release-assets dependency contract
+  ([`1328408`](https://github.com/oimiragieo/tensor-grep/commit/1328408e40d9e029c667350d5ac6899275f16937))
+
+- **runbook**: Require executable rollback commands
+  ([`627a7ab`](https://github.com/oimiragieo/tensor-grep/commit/627a7ab54f6802071510631c87cdf94e9b934ac3))
+
+
 ## v0.31.1 (2026-03-07)
 
 ### Bug Fixes
