@@ -23,8 +23,9 @@ def _normalize_digest(raw_digest: str) -> str | None:
     return digest
 
 
-def _parse_checksums(checksums_content: str) -> dict[str, str]:
+def _parse_checksums(checksums_content: str) -> tuple[dict[str, str], list[str]]:
     result: dict[str, str] = {}
+    duplicates: list[str] = []
     for raw_line in checksums_content.splitlines():
         line = raw_line.strip()
         if not line:
@@ -34,8 +35,10 @@ def _parse_checksums(checksums_content: str) -> dict[str, str]:
             continue
         digest = parts[0]
         filename = parts[-1]
+        if filename in result:
+            duplicates.append(filename)
         result[filename] = digest
-    return result
+    return result, duplicates
 
 
 def _validate_manifest_against_assets(
@@ -46,7 +49,9 @@ def _validate_manifest_against_assets(
     named_assets: dict[str, dict],
 ) -> list[str]:
     errors: list[str] = []
-    checksums = _parse_checksums(manifest_content)
+    checksums, duplicate_entries = _parse_checksums(manifest_content)
+    for entry in duplicate_entries:
+        errors.append(f"Duplicate checksum entry in {manifest_name} for asset: {entry}")
 
     for name in required_assets:
         if name not in checksums:
@@ -100,11 +105,16 @@ def validate_release_assets_payload(
     if not isinstance(assets, list):
         return ["GitHub release payload assets field must be a list"]
 
-    named_assets = {
-        str(asset["name"]): asset
-        for asset in assets
-        if isinstance(asset, dict) and isinstance(asset.get("name"), str)
-    }
+    named_assets: dict[str, dict] = {}
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = asset.get("name")
+        if not isinstance(name, str):
+            continue
+        if name in named_assets:
+            errors.append(f"Duplicate release asset entry: {name}")
+        named_assets[name] = asset
     names = set(named_assets.keys())
     missing = [name for name in expected_assets if name not in names]
     for name in missing:

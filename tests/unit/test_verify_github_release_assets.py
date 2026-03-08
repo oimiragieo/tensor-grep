@@ -194,6 +194,47 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_checksum_entr
     )
 
 
+def test_validate_release_assets_payload_should_fail_on_duplicate_asset_name_entries():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "tg-linux-amd64-cpu", "size": 101, "digest": f"sha256:{'b' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+        ]
+    }
+    checksums_content = f"{'a' * 64}  tg-linux-amd64-cpu\n"
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content=checksums_content,
+        expected_assets=["tg-linux-amd64-cpu", "CHECKSUMS.txt"],
+    )
+    assert any("Duplicate release asset entry: tg-linux-amd64-cpu" in err for err in errors)
+
+
+def test_validate_release_assets_payload_should_fail_on_duplicate_checksum_manifest_entries():
+    module = _load_module()
+    release_data = {
+        "assets": [
+            {"name": "tg-linux-amd64-cpu", "size": 100, "digest": f"sha256:{'a' * 64}"},
+            {"name": "CHECKSUMS.txt"},
+        ]
+    }
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+    ])
+    errors = module.validate_release_assets_payload(
+        release_data=release_data,
+        checksums_content=checksums_content,
+        expected_assets=["tg-linux-amd64-cpu", "CHECKSUMS.txt"],
+    )
+    assert any(
+        "Duplicate checksum entry in CHECKSUMS.txt for asset: tg-linux-amd64-cpu" in err
+        for err in errors
+    )
+
+
 def test_validate_release_assets_payload_should_fail_on_digest_mismatch():
     module = _load_module()
     release_data = {
