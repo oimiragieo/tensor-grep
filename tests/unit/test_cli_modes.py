@@ -3,6 +3,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
@@ -995,3 +996,22 @@ def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch)
     cli_main.main_entry()
 
     assert seen["argv"] == ["tg", "search", "ERROR", "."]
+
+
+def test_main_entry_should_fallback_to_pyproject_version_when_metadata_missing(monkeypatch, capsys):
+    import importlib.metadata as importlib_metadata
+
+    from tensor_grep.cli import main as cli_main
+
+    def _raise_version(_dist_name: str) -> str:
+        raise RuntimeError("metadata unavailable")
+
+    monkeypatch.setattr(sys, "argv", ["tg", "--version"])
+    monkeypatch.setattr(importlib_metadata, "version", _raise_version)
+    monkeypatch.setattr(cli_main, "_read_project_version_fallback", lambda: "0.31.4")
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.main_entry()
+
+    assert excinfo.value.code == 0
+    assert "tensor-grep 0.31.4" in capsys.readouterr().out
