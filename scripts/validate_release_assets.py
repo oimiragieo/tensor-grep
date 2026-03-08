@@ -446,10 +446,12 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
     for required_cmd in (
         "brew tap oimiragieo/tap",
         "brew install tensor-grep",
+        "brew install oimiragieo/tap/tensor-grep",
         "winget validate --manifest",
         "winget-pkgs",
         "winget install oimiragieo.tensor-grep",
         "tg --version",
+        "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z",
         "git revert <tap-formula-commit>",
         "winget uninstall oimiragieo.tensor-grep",
     ):

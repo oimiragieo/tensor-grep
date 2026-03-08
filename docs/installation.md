@@ -67,6 +67,7 @@ ruby -c scripts/tensor-grep.rb
 ```bash
 brew tap oimiragieo/tap
 brew install tensor-grep
+brew install oimiragieo/tap/tensor-grep
 tg --version
 ```
 
@@ -114,6 +115,11 @@ Release automation notes:
 3. Confirm CI `validate-pypi-artifacts` is green before `publish-pypi`.
 4. Confirm PyPI latest version is exactly `X.Y.Z`.
 5. Confirm `scripts/tensor-grep.rb` and `scripts/oimiragieo.tensor-grep.yaml` reference `vX.Y.Z` assets.
+6. Confirm the uploaded GitHub release assets and checksum coverage:
+
+```bash
+python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z
+```
 
 ### Rollback Playbook
 

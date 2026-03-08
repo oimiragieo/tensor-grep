@@ -710,10 +710,16 @@ def test_should_require_installation_docs_to_include_package_manager_commands():
     )
     assert any("brew tap oimiragieo/tap" in err for err in errors)
     assert any("brew install tensor-grep" in err for err in errors)
+    assert any("brew install oimiragieo/tap/tensor-grep" in err for err in errors)
     assert any("winget validate --manifest" in err for err in errors)
     assert any("winget-pkgs" in err for err in errors)
     assert any("winget install oimiragieo.tensor-grep" in err for err in errors)
     assert any("tg --version" in err for err in errors)
+    assert any(
+        "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z"
+        in err
+        for err in errors
+    )
     assert any("git revert <tap-formula-commit>" in err for err in errors)
     assert any("winget uninstall oimiragieo.tensor-grep" in err for err in errors)
 
