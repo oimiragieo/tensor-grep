@@ -152,6 +152,24 @@ def test_files_with_matches_lists_unique_matched_files(monkeypatch):
     assert result.stdout.strip() == "a.py"
 
 
+def test_files_with_matches_should_respect_total_files_without_materialized_matches(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.py", "b.py"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.py": SearchResult(matches=[], total_files=1, total_matches=3),
+            "b.py": SearchResult(matches=[], total_files=0, total_matches=0),
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--files-with-matches", "-c"])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "a.py"
+
+
 def test_files_without_match_lists_unmatched_files(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.py", "b.py"]}
