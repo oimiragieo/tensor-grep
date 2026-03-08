@@ -494,6 +494,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             "Release workflow validate-tag-version-parity must depend on verify-release-assets"
         )
 
+    verify_assets_needs = _needs("verify-release-assets")
+    if "create-release" not in verify_assets_needs:
+        errors.append("Release workflow verify-release-assets must depend on create-release")
+
     docs_needs = _needs("publish-docs")
     if "validate-tag-version-parity" not in docs_needs:
         errors.append("Release workflow publish-docs must depend on validate-tag-version-parity")

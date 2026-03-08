@@ -692,6 +692,42 @@ def test_should_require_publish_jobs_to_depend_on_tag_version_parity():
     assert any("publish-npm must depend on validate-tag-version-parity" in err for err in errors)
 
 
+def test_should_require_verify_release_assets_to_depend_on_create_release():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    bad_release_workflow = """
+    jobs:
+      create-release:
+        runs-on: ubuntu-latest
+      verify-release-assets:
+        needs: build-binaries
+        runs-on: ubuntu-latest
+        steps:
+          - name: Verify uploaded release assets and checksum coverage
+            run: |
+              python scripts/verify_github_release_assets.py \
+                --repo "${{ github.repository }}" \
+                --tag "${GITHUB_REF#refs/tags/}" \
+                --token "${{ secrets.GITHUB_TOKEN }}"
+      validate-tag-version-parity:
+        needs: verify-release-assets
+      publish-docs:
+        needs: validate-tag-version-parity
+      publish-npm:
+        needs: validate-tag-version-parity
+      release-success-gate:
+        needs: [validate-tag-version-parity, publish-npm, publish-docs]
+    """
+    errors = module.validate_release_workflow_content(release_workflow=bad_release_workflow)
+    assert any("verify-release-assets must depend on create-release" in err for err in errors)
+
+
 def test_should_require_release_to_publish_package_manager_bundle_assets():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
