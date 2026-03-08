@@ -309,7 +309,7 @@ class CuDFBackend(ComputeBackend):
 
             return SearchResult(
                 matches=matches,
-                total_files=1,
+                total_files=1 if matches else 0,
                 total_matches=len(matches),
                 routing_backend="CuDFBackend",
                 routing_reason="cudf_single_gpu_read_text",
@@ -333,7 +333,7 @@ class CuDFBackend(ComputeBackend):
                 )
                 return SearchResult(
                     matches=matches,
-                    total_files=1,
+                    total_files=1 if matches else 0,
                     total_matches=len(matches),
                     routing_backend="CuDFBackend",
                     routing_reason="cudf_distributed_fanout",
@@ -431,7 +431,7 @@ class CuDFBackend(ComputeBackend):
                 matches.sort(key=lambda m: m.line_number)
                 return SearchResult(
                     matches=matches,
-                    total_files=1,
+                    total_files=1 if matches else 0,
                     total_matches=len(matches),
                     routing_backend="CuDFBackend",
                     routing_reason="cudf_chunked_zero_copy",
@@ -449,7 +449,7 @@ class CuDFBackend(ComputeBackend):
             )
             return SearchResult(
                 matches=matches,
-                total_files=1,
+                total_files=1 if matches else 0,
                 total_matches=len(matches),
                 routing_backend="CuDFBackend",
                 routing_reason="cudf_chunked_process_pool_fallback",
@@ -461,7 +461,7 @@ class CuDFBackend(ComputeBackend):
 
         return SearchResult(
             matches=matches,
-            total_files=1,
+            total_files=1 if matches else 0,
             total_matches=len(matches),
             routing_backend="CuDFBackend",
             routing_reason="cudf_single_gpu_read_text",
