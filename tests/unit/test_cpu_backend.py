@@ -3,6 +3,7 @@ import warnings
 from unittest.mock import patch
 
 from tensor_grep.backends.cpu_backend import CPUBackend
+from tensor_grep.core.config import SearchConfig
 
 
 class TestCPUBackend:
@@ -172,8 +173,6 @@ class TestCPUBackend:
         assert result.routing_reason == "cpu_ltl_python"
 
     def test_should_emit_python_fallback_routing_metadata_when_rust_fails(self, tmp_path):
-        from tensor_grep.core.config import SearchConfig
-
         log = tmp_path / "python_fallback.log"
         log.write_text("ERROR one\nINFO two\n", encoding="utf-8")
 
@@ -190,6 +189,27 @@ class TestCPUBackend:
             result = backend.search(str(log), "ERROR", config=SearchConfig())
 
         assert result.total_matches == 1
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_python_regex"
+
+    def test_should_report_total_files_for_count_mode_without_materialized_matches(self, tmp_path):
+        log = tmp_path / "count_mode.log"
+        log.write_text("ERROR one\nERROR two\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "ERROR", config=SearchConfig(count=True))
+
+        assert result.total_matches == 2
+        assert result.total_files == 1
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_python_regex"
 

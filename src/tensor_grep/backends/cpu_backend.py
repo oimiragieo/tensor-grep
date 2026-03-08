@@ -218,7 +218,7 @@ class CPUBackend(ComputeBackend):
 
         return SearchResult(
             matches=matches,
-            total_files=1 if matches else 0,
+            total_files=1 if total_matches_count > 0 else 0,
             total_matches=total_matches_count,
             routing_backend="CPUBackend",
             routing_reason=routing_reason,
