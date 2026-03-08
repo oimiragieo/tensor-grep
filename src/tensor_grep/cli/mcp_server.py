@@ -24,6 +24,22 @@ def _routing_summary(result: SearchResult) -> str:
     )
 
 
+def _merge_runtime_routing(all_results: SearchResult, result: SearchResult) -> None:
+    if result.routing_backend:
+        all_results.routing_backend = result.routing_backend
+        all_results.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
+        all_results.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
+    elif result.routing_gpu_device_ids or result.routing_gpu_chunk_plan_mb:
+        all_results.routing_gpu_device_ids = list(result.routing_gpu_device_ids)
+        all_results.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
+    if result.routing_reason:
+        all_results.routing_reason = result.routing_reason
+    all_results.routing_distributed = all_results.routing_distributed or result.routing_distributed
+    all_results.routing_worker_count = max(
+        all_results.routing_worker_count, result.routing_worker_count
+    )
+
+
 @mcp.tool()  # type: ignore
 def tg_search(
     pattern: str,
@@ -90,12 +106,7 @@ def tg_search(
             all_results.total_matches += result.total_matches
             if result.total_matches > 0:
                 all_results.total_files += 1
-            all_results.routing_distributed = (
-                all_results.routing_distributed or result.routing_distributed
-            )
-            all_results.routing_worker_count = max(
-                all_results.routing_worker_count, result.routing_worker_count
-            )
+            _merge_runtime_routing(all_results, result)
 
         if all_results.is_empty:
             return f"No matches found for '{pattern}' in {path}.\n{_routing_summary(all_results)}"
@@ -173,12 +184,7 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
             all_results.total_matches += result.total_matches
             if result.total_matches > 0:
                 all_results.total_files += 1
-            all_results.routing_distributed = (
-                all_results.routing_distributed or result.routing_distributed
-            )
-            all_results.routing_worker_count = max(
-                all_results.routing_worker_count, result.routing_worker_count
-            )
+            _merge_runtime_routing(all_results, result)
 
         if all_results.is_empty:
             return f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"

@@ -55,6 +55,43 @@ def test_tg_search_includes_routing_summary_in_non_empty_output():
     assert "workers=0" in out
 
 
+def test_tg_search_should_report_runtime_routing_override_when_backend_falls_back():
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.return_value = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        total_files=1,
+        total_matches=1,
+        routing_backend="CPUBackend",
+        routing_reason="torch_regex_cpu_fallback",
+        routing_gpu_device_ids=[],
+        routing_gpu_chunk_plan_mb=[],
+        routing_distributed=False,
+        routing_worker_count=1,
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "TorchBackend"
+        pipeline.selected_backend_reason = "gpu_explicit_ids_torch"
+        pipeline.selected_gpu_device_ids = [7, 3]
+        pipeline.selected_gpu_chunk_plan_mb = [(7, 256), (3, 512)]
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search("ERROR.*timeout", ".")
+
+    assert "Routing: backend=CPUBackend reason=torch_regex_cpu_fallback" in out
+    assert "gpu_device_ids=[]" in out
+    assert "gpu_chunk_plan_mb=[]" in out
+    assert "distributed=False" in out
+    assert "workers=1" in out
+
+
 def test_tg_devices_returns_no_gpu_message_when_empty():
     from tensor_grep.cli import mcp_server
 
