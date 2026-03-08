@@ -1079,7 +1079,7 @@ def run(
     pipeline = Pipeline(config=cfg)
     backend = pipeline.get_backend()
 
-    if not type(backend).__name__ == "AstBackend":
+    if type(backend).__name__ not in {"AstBackend", "AstGrepWrapperBackend"}:
         typer.echo(
             "Warning: AstBackend not available (requires torch_geometric/tree_sitter). Falling back to CPU regex.",
             err=True,

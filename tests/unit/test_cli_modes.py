@@ -687,9 +687,21 @@ class _FakeAstBackend:
         )
 
 
+class AstGrepWrapperBackend(_FakeAstBackend):
+    pass
+
+
 class _FakeAstPipeline:
     def __init__(self, force_cpu=False, config=None):
         self._backend = _FakeAstBackend()
+
+    def get_backend(self):
+        return self._backend
+
+
+class _FakeAstWrapperPipeline:
+    def __init__(self, force_cpu=False, config=None):
+        self._backend = AstGrepWrapperBackend()
 
     def get_backend(self):
         return self._backend
@@ -748,6 +760,23 @@ def test_scan_executes_rules_from_sgconfig(monkeypatch):
     assert result.exit_code == 0
     assert "[scan] rule=error-rule lang=python matches=1 files=1" in result.output
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
+
+
+def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["run", "ERROR", "."])
+
+    assert result.exit_code == 0
+    assert "Warning:" not in result.output
 
 
 def test_devices_command_reports_no_gpu_when_none_detected(monkeypatch):
