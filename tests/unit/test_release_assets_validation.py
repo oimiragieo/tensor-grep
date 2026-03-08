@@ -574,6 +574,8 @@ def test_should_require_package_manager_runbook_command_contract():
         for err in errors
     )
     assert any("git revert <tap-formula-commit>" in err for err in errors)
+    assert any("git push origin <rollback-branch>" in err for err in errors)
+    assert any("brew update" in err for err in errors)
     assert any("winget uninstall oimiragieo.tensor-grep" in err for err in errors)
     assert any(
         "--expected-version X.Y.Z --expected-tag vX.Y.Z --check-pypi" in err for err in errors

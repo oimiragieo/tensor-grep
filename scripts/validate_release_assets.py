@@ -413,6 +413,8 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
 
     for required_rollback_cmd in (
         "git revert <tap-formula-commit>",
+        "git push origin <rollback-branch>",
+        "brew update",
         "winget uninstall oimiragieo.tensor-grep",
     ):
         if required_rollback_cmd not in runbook_content:
