@@ -433,8 +433,11 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
 
     for required_cmd in (
         "brew tap oimiragieo/tap",
+        "brew install tensor-grep",
         "winget validate --manifest",
         "winget-pkgs",
+        "winget install oimiragieo.tensor-grep",
+        "tg --version",
     ):
         if required_cmd not in installation_content:
             errors.append(

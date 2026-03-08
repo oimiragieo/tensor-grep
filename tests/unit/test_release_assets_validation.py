@@ -660,8 +660,11 @@ def test_should_require_installation_docs_to_include_package_manager_commands():
         )
     )
     assert any("brew tap oimiragieo/tap" in err for err in errors)
+    assert any("brew install tensor-grep" in err for err in errors)
     assert any("winget validate --manifest" in err for err in errors)
     assert any("winget-pkgs" in err for err in errors)
+    assert any("winget install oimiragieo.tensor-grep" in err for err in errors)
+    assert any("tg --version" in err for err in errors)
 
 
 def test_should_require_smoke_test_package_manager_bundle_command_in_runbook():

@@ -79,7 +79,12 @@ tg --version
 winget validate --manifest scripts\oimiragieo.tensor-grep.yaml
 ```
 
-3. Submit/update the manifest in `microsoft/winget-pkgs`.
+3. Submit/update the manifest in `microsoft/winget-pkgs`, then smoke-test install:
+
+```powershell
+winget install oimiragieo.tensor-grep
+tg --version
+```
 
 CI coverage:
 - `ci.yml` now includes `package-manager-readiness` on Linux + Windows.
