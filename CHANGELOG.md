@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.4 (2026-03-08)
+
+### Bug Fixes
+
+- **routing**: Preserve backend identity on empty paths
+  ([`8c8e7da`](https://github.com/oimiragieo/tensor-grep/commit/8c8e7da2d19d8ca8132a32fbd70797cefab84bfe))
+
+
 ## v0.31.3 (2026-03-08)
 
 ### Bug Fixes
