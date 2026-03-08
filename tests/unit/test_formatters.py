@@ -15,6 +15,8 @@ class TestFormatters:
         match = MatchLine(line_number=2, text="ERROR test", file="test.log")
         self.result = SearchResult(
             matches=[match],
+            matched_file_paths=["test.log"],
+            match_counts_by_file={"test.log": 1},
             total_files=1,
             total_matches=1,
             routing_backend="CuDFBackend",
@@ -35,6 +37,8 @@ class TestFormatters:
         output = fmt.format(self.result)
         parsed = json.loads(output)
         assert parsed["total_matches"] == 1
+        assert parsed["matched_file_paths"] == ["test.log"]
+        assert parsed["match_counts_by_file"] == {"test.log": 1}
         assert parsed["matches"][0]["text"] == "ERROR test"
         assert parsed["routing_backend"] == "CuDFBackend"
         assert parsed["routing_reason"] == "gpu_explicit_ids_cudf"
