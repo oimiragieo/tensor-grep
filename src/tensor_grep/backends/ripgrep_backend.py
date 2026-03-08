@@ -37,6 +37,9 @@ class RipgrepBackend(ComputeBackend):
     def search(
         self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
+        if config and (config.count or config.count_matches):
+            return self._search_counts(file_path=file_path, pattern=pattern, config=config)
+
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=True)
         try:
             # We use check=False because rg exits with 1 if no matches are found
@@ -93,6 +96,51 @@ class RipgrepBackend(ComputeBackend):
                 routing_worker_count=1,
             )
 
+        except Exception as e:
+            raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+
+    def _search_counts(
+        self, file_path: str | list[str], pattern: str, config: SearchConfig
+    ) -> SearchResult:
+        cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=False)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, encoding="utf-8"
+            )
+            if result.returncode > 1:
+                stderr = result.stderr.strip()
+                raise RuntimeError(
+                    f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
+                )
+
+            lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+            total_matches = 0
+            total_files = 0
+
+            multi_file = isinstance(file_path, list) and len(file_path) > 1
+            for line in lines:
+                if multi_file and ":" in line:
+                    _path, count_text = line.rsplit(":", 1)
+                else:
+                    count_text = line
+                try:
+                    count_value = int(count_text.strip())
+                except ValueError:
+                    continue
+                total_matches += count_value
+                if count_value > 0:
+                    total_files += 1
+
+            routing_reason = "rg_count_matches" if config.count_matches else "rg_count"
+            return SearchResult(
+                matches=[],
+                total_files=total_files,
+                total_matches=total_matches,
+                routing_backend="RipgrepBackend",
+                routing_reason=routing_reason,
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
 

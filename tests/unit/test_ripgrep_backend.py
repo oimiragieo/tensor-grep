@@ -131,3 +131,55 @@ def test_search_should_emit_runtime_routing_metadata():
     assert result.routing_reason == "rg_json"
     assert result.routing_distributed is False
     assert result.routing_worker_count == 1
+
+
+def test_search_should_parse_plain_count_output_without_json():
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = "a.log:2\nb.log:1\n"
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search(["a.log", "b.log"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--json" not in cmd
+    assert "-c" in cmd
+    assert result.total_matches == 3
+    assert result.total_files == 2
+    assert result.routing_backend == "RipgrepBackend"
+    assert result.routing_reason == "rg_count"
+
+
+def test_search_should_parse_plain_count_matches_output_without_json():
+    backend = RipgrepBackend()
+    config = SearchConfig(count_matches=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = "4\n"
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search("a.log", "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--json" not in cmd
+    assert "--count-matches" in cmd
+    assert result.total_matches == 4
+    assert result.total_files == 1
+    assert result.routing_backend == "RipgrepBackend"
+    assert result.routing_reason == "rg_count_matches"
