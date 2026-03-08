@@ -430,6 +430,17 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
 
     if "--check-npm" not in installation_content:
         errors.append("Installation docs release automation notes must mention npm parity checks")
+
+    for required_cmd in (
+        "brew tap oimiragieo/tap",
+        "winget validate --manifest",
+        "winget-pkgs",
+    ):
+        if required_cmd not in installation_content:
+            errors.append(
+                "Installation docs missing required package-manager command/reference: "
+                f"{required_cmd}"
+            )
     return errors
 
 

@@ -640,6 +640,30 @@ def test_should_require_package_manager_sections_in_installation_docs():
     assert any("npm parity checks" in err for err in errors)
 
 
+def test_should_require_installation_docs_to_include_package_manager_commands():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_installation_docs(
+        installation_content=(
+            "### Homebrew Tap Flow\n"
+            "### Winget Flow\n"
+            "### Repeatable Release Checklist\n"
+            "### Rollback Playbook\n"
+            "https://github.com/oimiragieo/tensor-grep/releases\n"
+            "--check-npm\n"
+        )
+    )
+    assert any("brew tap oimiragieo/tap" in err for err in errors)
+    assert any("winget validate --manifest" in err for err in errors)
+    assert any("winget-pkgs" in err for err in errors)
+
+
 def test_should_require_smoke_test_package_manager_bundle_command_in_runbook():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
