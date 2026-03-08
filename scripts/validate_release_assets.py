@@ -571,20 +571,22 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 "--bundle-dir artifacts/package-manager-bundle",
             ),
         }
-        for step_name, (required_command, required_flag) in create_release_step_contracts.items():
+        for step_name, required_contract_tokens in create_release_step_contracts.items():
             run_script = create_release_run_by_name.get(step_name)
             if run_script is None:
                 continue
+            required_command = required_contract_tokens[0]
             if required_command not in run_script:
                 errors.append(
                     "Release workflow create-release "
                     f"`{step_name}` step must invoke `{required_command}`"
                 )
-            if required_flag not in run_script:
-                errors.append(
-                    "Release workflow create-release "
-                    f"`{step_name}` step must pass `{required_flag}`"
-                )
+            for required_flag in required_contract_tokens[1:]:
+                if required_flag not in run_script:
+                    errors.append(
+                        "Release workflow create-release "
+                        f"`{step_name}` step must pass `{required_flag}`"
+                    )
 
     validate_tag_parity_job = jobs.get("validate-tag-version-parity")
     if isinstance(validate_tag_parity_job, dict):
@@ -624,6 +626,26 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             if isinstance(name, str) and isinstance(run, str):
                 runs[name] = run
         return runs
+
+    verify_release_assets_runs = _step_runs_by_name("verify-release-assets")
+    verify_assets_step = "Verify uploaded release assets and checksum coverage"
+    verify_assets_run = verify_release_assets_runs.get(verify_assets_step)
+    if verify_assets_run is None:
+        errors.append(
+            f"Release workflow verify-release-assets job must include step `{verify_assets_step}`"
+        )
+    else:
+        if "scripts/verify_github_release_assets.py" not in verify_assets_run:
+            errors.append(
+                "Release workflow verify-release-assets "
+                f"`{verify_assets_step}` step must invoke `scripts/verify_github_release_assets.py`"
+            )
+        for required_flag in ("--repo", "--tag", "--token"):
+            if required_flag not in verify_assets_run:
+                errors.append(
+                    "Release workflow verify-release-assets "
+                    f"`{verify_assets_step}` step must include `{required_flag}`"
+                )
 
     publish_npm_runs = _step_runs_by_name("publish-npm")
     npm_verify_step = "Verify npm registry parity for release version"
