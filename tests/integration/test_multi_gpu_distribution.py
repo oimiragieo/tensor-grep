@@ -362,7 +362,13 @@ class TestMultiGpuDistributionIntegration:
             result = pipeline.get_backend().search(str(log_path), "ERROR")
 
         assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
+        assert pipeline.selected_gpu_device_ids == [7, 3]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(7, 128), (3, 128)]
         assert _TorchExecutor.submitted_devices == ["cuda:7", "cuda:3"]
         assert result.total_matches == 2
+        assert result.routing_backend == "TorchBackend"
+        assert result.routing_reason == "torch_multi_gpu_fanout"
+        assert result.routing_gpu_device_ids == [7, 3]
+        assert result.routing_gpu_chunk_plan_mb == [(7, 128), (3, 128)]
         assert result.routing_distributed is True
         assert result.routing_worker_count == 2
