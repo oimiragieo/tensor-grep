@@ -1,3 +1,4 @@
+import inspect
 from dataclasses import dataclass
 
 from tensor_grep.core.hardware.device_detect import DeviceDetector, DeviceInfo
@@ -28,10 +29,12 @@ def collect_device_inventory(detector: DeviceDetector | None = None) -> DeviceIn
     resolved_detector = detector or DeviceDetector()
 
     routable_device_ids: list[int] = []
+    used_enumeration_contract = False
     try:
-        if hasattr(resolved_detector, "enumerate_device_ids"):
+        if _has_detector_method(resolved_detector, "enumerate_device_ids"):
             routable_device_ids = list(resolved_detector.enumerate_device_ids())
-        elif hasattr(resolved_detector, "get_device_ids"):
+            used_enumeration_contract = True
+        elif _has_detector_method(resolved_detector, "get_device_ids"):
             routable_device_ids = list(resolved_detector.get_device_ids())
     except Exception:
         routable_device_ids = []
@@ -51,8 +54,10 @@ def collect_device_inventory(detector: DeviceDetector | None = None) -> DeviceIn
                 )
             )
         devices_info = normalized_devices
-    else:
+    elif not used_enumeration_contract:
         routable_device_ids = [device.device_id for device in devices_info]
+    else:
+        devices_info = []
 
     return DeviceInventory(
         platform=resolved_detector.get_platform().name.lower(),
@@ -61,3 +66,11 @@ def collect_device_inventory(detector: DeviceDetector | None = None) -> DeviceIn
         routable_device_ids=routable_device_ids,
         devices=devices_info,
     )
+
+
+def _has_detector_method(detector: DeviceDetector, name: str) -> bool:
+    try:
+        inspect.getattr_static(detector, name)
+    except AttributeError:
+        return False
+    return callable(getattr(detector, name, None))

@@ -31,7 +31,7 @@ def test_device_inventory_to_dict_should_serialize_devices():
 def test_collect_device_inventory_should_read_from_detector_contract():
     detector = MagicMock()
     detector.list_devices.return_value = [DeviceInfo(device_id=1, vram_capacity_mb=8192)]
-    detector.enumerate_device_ids.return_value = [1]
+    detector.enumerate_device_ids = MagicMock(return_value=[1])
     detector.get_platform.return_value = Platform.WINDOWS
     detector.has_gpu.return_value = True
 
@@ -47,7 +47,7 @@ def test_collect_device_inventory_should_read_from_detector_contract():
 def test_collect_device_inventory_should_construct_default_detector_when_missing():
     fake_detector = MagicMock()
     fake_detector.list_devices.return_value = []
-    fake_detector.enumerate_device_ids.return_value = []
+    fake_detector.enumerate_device_ids = MagicMock(return_value=[])
     fake_detector.get_platform.return_value = Platform.LINUX
     fake_detector.has_gpu.return_value = False
 
@@ -67,7 +67,7 @@ def test_collect_device_inventory_should_construct_default_detector_when_missing
 
 def test_collect_device_inventory_should_preserve_explicit_device_id_order_for_routing():
     detector = MagicMock()
-    detector.enumerate_device_ids.return_value = [7, 3]
+    detector.enumerate_device_ids = MagicMock(return_value=[7, 3])
     detector.list_devices.return_value = [
         DeviceInfo(device_id=3, vram_capacity_mb=24576),
         DeviceInfo(device_id=7, vram_capacity_mb=12288),
@@ -81,3 +81,22 @@ def test_collect_device_inventory_should_preserve_explicit_device_id_order_for_r
     assert inventory.routable_device_ids == [7, 3]
     assert inventory.device_count == 2
     assert [d.device_id for d in inventory.devices] == [7, 3]
+
+
+def test_collect_device_inventory_should_treat_empty_enumeration_as_authoritative():
+    detector = MagicMock()
+    detector.enumerate_device_ids = MagicMock(return_value=[])
+    detector.list_devices.return_value = [
+        DeviceInfo(device_id=0, vram_capacity_mb=8192),
+        DeviceInfo(device_id=1, vram_capacity_mb=16384),
+    ]
+    detector.get_platform.return_value = Platform.LINUX
+    detector.has_gpu.return_value = True
+
+    inventory = collect_device_inventory(detector)
+
+    assert inventory.platform == "linux"
+    assert inventory.has_gpu is True
+    assert inventory.device_count == 0
+    assert inventory.routable_device_ids == []
+    assert inventory.devices == []
