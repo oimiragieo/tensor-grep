@@ -1109,12 +1109,27 @@ def test_should_require_release_parity_steps_to_include_registry_check_flags_and
         for err in errors
     )
     assert any(
+        "publish-npm `Verify npm registry parity for release version` step must include `--expected-tag`"
+        in err
+        for err in errors
+    )
+    assert any(
         "release-success-gate `Verify final npm parity before release success gate` step must include `--check-npm`"
         in err
         for err in errors
     )
     assert any(
+        "release-success-gate `Verify final npm parity before release success gate` step must include `--expected-tag`"
+        in err
+        for err in errors
+    )
+    assert any(
         "release-success-gate `Verify final PyPI parity before release success gate` step must include `--check-pypi`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "release-success-gate `Verify final PyPI parity before release success gate` step must include `--expected-tag`"
         in err
         for err in errors
     )
