@@ -376,6 +376,16 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
         if marker not in checklist_content:
             errors.append(f"Release checklist missing package-manager marker: {marker}")
 
+    for required_checklist_cmd in (
+        "gh run list --limit 10",
+        "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z",
+    ):
+        if required_checklist_cmd not in checklist_content:
+            errors.append(
+                "Release checklist missing required operator verification command: "
+                f"{required_checklist_cmd}"
+            )
+
     for required_cmd in (
         "uv run python scripts/prepare_package_manager_release.py --check",
         "winget validate --manifest",

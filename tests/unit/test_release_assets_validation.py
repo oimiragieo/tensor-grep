@@ -574,6 +574,48 @@ def test_should_require_package_manager_runbook_command_contract():
     assert any("npm/GitHub rollback guidance" in err for err in errors)
 
 
+def test_should_require_release_checklist_to_include_operator_verification_commands():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_package_manager_docs(
+        runbook_content=(
+            "## Homebrew Tap Flow\n"
+            "## Winget Flow\n"
+            "## Rollback Procedures\n"
+            "## Verification Commands\n"
+            "uv run python scripts/prepare_package_manager_release.py --check\n"
+            "winget validate --manifest\n"
+            "uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle\n"
+            "uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle\n"
+            "python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-pypi\n"
+            "python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-npm\n"
+            "brew install oimiragieo/tap/tensor-grep\n"
+            "winget install oimiragieo.tensor-grep\n"
+            "tg --version\n"
+            "git revert <tap-formula-commit>\n"
+            "winget uninstall oimiragieo.tensor-grep\n"
+            "npm/GitHub mismatch\n"
+        ),
+        checklist_content=(
+            "## 4. Package-manager distribution finalization\n"
+            "## 5. Rollback runbook\n"
+            "Homebrew\n"
+            "Winget\n"
+        ),
+    )
+    assert any("gh run list --limit 10" in err for err in errors)
+    assert any(
+        "verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z" in err
+        for err in errors
+    )
+
+
 def test_should_require_package_manager_runbook_smoke_install_commands():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
