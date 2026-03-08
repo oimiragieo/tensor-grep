@@ -138,13 +138,12 @@ def tg_search(
     all_results.routing_gpu_chunk_plan_mb = list(
         getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
     )
-
     try:
         for current_file in scanner.walk(path):
             result = backend.search(current_file, pattern, config=config)
             all_results.matches.extend(result.matches)
             all_results.total_matches += result.total_matches
-            if result.total_matches > 0:
+            if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
             _merge_runtime_routing(all_results, result)
 
@@ -224,13 +223,12 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
     all_results.routing_gpu_chunk_plan_mb = list(
         getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
     )
-
     try:
         for current_file in scanner.walk(path):
             result = backend.search(current_file, pattern, config=config)
             all_results.matches.extend(result.matches)
             all_results.total_matches += result.total_matches
-            if result.total_matches > 0:
+            if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
             _merge_runtime_routing(all_results, result)
 
