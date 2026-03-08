@@ -44,6 +44,10 @@ class StringZillaBackend(ComputeBackend):
                 matches=matches,
                 total_files=1 if matches else 0,
                 total_matches=len(matches),
+                routing_backend="StringZillaBackend",
+                routing_reason="stringzilla_fixed_strings",
+                routing_distributed=False,
+                routing_worker_count=1,
             )
 
         except Exception as e:

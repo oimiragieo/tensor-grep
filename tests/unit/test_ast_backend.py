@@ -122,3 +122,5 @@ class TestAstBackend:
             str(file_path), "function_definition", SearchConfig(ast=True, lang="python")
         )
         assert result.total_matches == 1
+        assert result.routing_backend == "AstBackend"
+        assert result.routing_reason == "ast_structural_match"

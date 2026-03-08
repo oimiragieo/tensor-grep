@@ -171,5 +171,11 @@ class AstBackend(ComputeBackend):
         matches.sort(key=lambda m: m.line_number)
 
         return SearchResult(
-            matches=matches, total_files=1 if matches else 0, total_matches=len(matches)
+            matches=matches,
+            total_files=1 if matches else 0,
+            total_matches=len(matches),
+            routing_backend="AstBackend",
+            routing_reason="ast_structural_match",
+            routing_distributed=False,
+            routing_worker_count=1,
         )

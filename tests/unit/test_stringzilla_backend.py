@@ -25,6 +25,10 @@ def test_stringzilla_exact_match(backend, tmp_path):
     assert len(result.matches) == 2
     assert result.matches[0].line_number == 2
     assert result.matches[1].line_number == 4
+    assert result.routing_backend == "StringZillaBackend"
+    assert result.routing_reason == "stringzilla_fixed_strings"
+    assert result.routing_distributed is False
+    assert result.routing_worker_count == 1
 
 
 def test_stringzilla_no_matches(backend, tmp_path):
