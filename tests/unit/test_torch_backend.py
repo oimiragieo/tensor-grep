@@ -438,3 +438,27 @@ def test_torch_backend_search_should_fallback_to_get_device_ids_when_enumeration
     assert result.routing_gpu_device_ids == [5, 2]
     assert "cuda:5" in fake_torch.device_calls
     assert "cuda:2" in fake_torch.device_calls
+
+
+def test_torch_backend_empty_pattern_should_preserve_routing_metadata(tmp_path):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_empty_pattern.log"
+    path.write_text("ERROR A\n", encoding="utf-8")
+
+    fake_torch = _FakeTorch()
+    backend = TorchBackend(device_ids=[7, 3], chunk_sizes_mb=[3, 1])
+
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        result = backend.search(str(path), "", SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 0
+    assert result.routing_backend == "TorchBackend"
+    assert result.routing_reason == "torch_multi_gpu_fanout"
+    assert result.routing_gpu_device_ids == [7, 3]
+    assert result.routing_gpu_chunk_plan_mb == [(7, 3), (3, 1)]
+    assert result.routing_distributed is True
+    assert result.routing_worker_count == 2

@@ -227,7 +227,24 @@ class TorchBackend(ComputeBackend):
 
         pattern_bytes = query.encode("utf-8", errors="replace")
         if not pattern_bytes:
-            return SearchResult(matches=[], total_files=0, total_matches=0)
+            routing_chunk_plan_mb: list[tuple[int, int]] = []
+            if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(resolved_device_ids):
+                routing_chunk_plan_mb = list(
+                    zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
+                )
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="TorchBackend",
+                routing_reason=(
+                    "torch_multi_gpu_fanout" if len(devices) > 1 else "torch_single_gpu"
+                ),
+                routing_gpu_device_ids=list(resolved_device_ids),
+                routing_gpu_chunk_plan_mb=routing_chunk_plan_mb,
+                routing_distributed=len(devices) > 1,
+                routing_worker_count=len(devices),
+            )
         pattern_len = len(pattern_bytes)
         pattern_tensors = [
             torch.tensor(list(pattern_bytes), dtype=torch.uint8, device=device)
