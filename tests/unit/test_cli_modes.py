@@ -804,6 +804,34 @@ def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
     assert "Warning:" not in result.output
 
 
+def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+            encoding="utf-8",
+        )
+        Path("rules").mkdir()
+        Path("tests").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("tests/error.yml").write_text(
+            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "Testing AST rules using ast-grep structural matching" in result.output
+
+
 def test_devices_command_reports_no_gpu_when_none_detected(monkeypatch):
     monkeypatch.setattr(
         "tensor_grep.core.hardware.device_inventory.collect_device_inventory",

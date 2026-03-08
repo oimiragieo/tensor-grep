@@ -263,6 +263,14 @@ def _suffix_for_language(language: str) -> str:
     return ".py"
 
 
+def _describe_ast_backend_mode(backend_name: str) -> str:
+    if backend_name == "AstBackend":
+        return "GPU-Accelerated GNNs"
+    if backend_name == "AstGrepWrapperBackend":
+        return "ast-grep structural matching"
+    return backend_name
+
+
 @app.command(
     name="search",
     help="""Search files for a regex pattern, with GPU acceleration when applicable.
@@ -1129,13 +1137,7 @@ def scan(
     candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
 
     backend_name = type(backend).__name__
-    if backend_name == "AstBackend":
-        scan_banner = "Scanning project using GPU-Accelerated GNNs"
-    elif backend_name == "AstGrepWrapperBackend":
-        scan_banner = "Scanning project using ast-grep structural matching"
-    else:
-        scan_banner = f"Scanning project using {backend_name}"
-
+    scan_banner = f"Scanning project using {_describe_ast_backend_mode(backend_name)}"
     typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
 
     total_matches = 0
@@ -1248,7 +1250,11 @@ def test(
                             f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
                         )
 
-    typer.echo(f"Testing AST rules from {project_cfg['config_path']}...")
+    backend_name = type(backend).__name__
+    typer.echo(
+        f"Testing AST rules using {_describe_ast_backend_mode(backend_name)} "
+        f"from {project_cfg['config_path']}..."
+    )
     if failures:
         for failure in failures:
             typer.echo(f"[test] FAIL {failure}", err=True)
