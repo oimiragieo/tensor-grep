@@ -47,6 +47,28 @@ class TestCuDFBackend:
 
     @patch.dict("sys.modules", {"cudf": MagicMock()})
     @patch("os.path.getsize", return_value=1024)
+    def test_should_report_zero_total_files_when_single_gpu_path_has_no_matches(self, mock_getsize):
+        import cudf
+
+        mock_series = MagicMock()
+        mock_series.str.contains.return_value = MagicMock()
+        mock_matched = MagicMock()
+        mock_matched.index.to_pandas.return_value = []
+        mock_matched.to_pandas.return_value = []
+        mock_series.__getitem__.return_value = mock_matched
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+            result = backend.search("test.log", "ERROR")
+
+        assert result.total_matches == 0
+        assert result.total_files == 0
+
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
     def test_should_ignoreCase_when_usingCudfBackend(self, mock_getsize):
         import re
 
@@ -106,6 +128,24 @@ class TestCuDFBackend:
 
         # It should have mapped chunks across the pool
         mock_executor.submit.assert_called()
+
+    @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
+    @patch("os.path.getsize", return_value=1024 * 1024 * 10)  # 10 MB file
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_report_zero_total_files_when_distributed_path_has_no_matches(
+        self, mock_pool, mock_getsize
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[2, 2], device_ids=[3, 7])
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+
+        with patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[]):
+            result = backend.search("test.log", "ERROR")
+
+        assert result.total_matches == 0
+        assert result.total_files == 0
 
     @patch("os.path.getsize", return_value=1024 * 1024 * 10)
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
