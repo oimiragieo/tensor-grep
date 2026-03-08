@@ -1120,8 +1120,9 @@ def run(
     for current_file in scanner.walk(path):
         result = backend.search(current_file, pattern, config=cfg)
         all_results.matches.extend(result.matches)
+        all_results.matched_file_paths.extend(result.matched_file_paths)
         all_results.total_matches += result.total_matches
-        if result.total_matches > 0:
+        if result.total_files > 0 or result.total_matches > 0:
             all_results.total_files += 1
 
     formatter = RipgrepFormatter()
@@ -1170,7 +1171,7 @@ def scan(
         for current_file in candidate_files:
             result = backend.search(current_file, rule["pattern"], config=rule_cfg)
             rule_matches += result.total_matches
-            if result.total_matches > 0:
+            if result.total_files > 0 or result.total_matches > 0:
                 matched_files.add(current_file)
         total_matches += rule_matches
         if rule_matches > 0:
@@ -1257,7 +1258,11 @@ def test(
                         result = backend.search(
                             str(temp_name), pattern, config=replace(cfg, lang=language)
                         )
-                        has_match = result.total_matches > 0
+                        has_match = bool(
+                            result.total_files > 0
+                            or result.total_matches > 0
+                            or result.matched_file_paths
+                        )
                     except Exception as exc:
                         failures.append(f"{test_file}:{case_id}: backend error: {exc}")
                         has_match = expected_match
