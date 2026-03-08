@@ -239,6 +239,12 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     errors.append(f"CI workflow publish-pypi job must include step `{parity_step}`")
                 parity_run = publish_run_by_name.get(parity_step)
                 if parity_run is not None:
+                    for required_flag in ("--expected-version", "--expected-tag"):
+                        if required_flag not in parity_run:
+                            errors.append(
+                                "CI workflow publish-pypi "
+                                f"`{parity_step}` step must include `{required_flag}`"
+                            )
                     for required_flag in (
                         "--check-pypi",
                         "--pypi-wait-seconds",
@@ -273,6 +279,12 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     )
                 gate_parity_run = gate_run_by_name.get(gate_parity_step)
                 if gate_parity_run is not None:
+                    for required_flag in ("--expected-version", "--expected-tag"):
+                        if required_flag not in gate_parity_run:
+                            errors.append(
+                                "CI workflow publish-success-gate "
+                                f"`{gate_parity_step}` step must include `{required_flag}`"
+                            )
                     for required_flag in (
                         "--check-pypi",
                         "--pypi-wait-seconds",

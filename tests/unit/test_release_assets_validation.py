@@ -362,8 +362,7 @@ def test_should_require_ci_publish_pypi_parity_step_to_include_check_and_retry_f
           - name: Verify release version parity across tag/assets/PyPI
             run: |
               python scripts/validate_release_version_parity.py \
-                --expected-version "${{ needs.release.outputs.release_version }}" \
-                --expected-tag "v${{ needs.release.outputs.release_version }}"
+                --expected-version "${{ needs.release.outputs.release_version }}"
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any(
@@ -378,6 +377,11 @@ def test_should_require_ci_publish_pypi_parity_step_to_include_check_and_retry_f
     )
     assert any(
         "publish-pypi `Verify release version parity across tag/assets/PyPI` step must include `--pypi-poll-interval-seconds`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-pypi `Verify release version parity across tag/assets/PyPI` step must include `--expected-tag`"
         in err
         for err in errors
     )
@@ -403,8 +407,7 @@ def test_should_require_ci_publish_success_gate_pypi_parity_step_flags():
           - name: Verify PyPI parity for semantic-release version (always)
             run: |
               python scripts/validate_release_version_parity.py \
-                --expected-version "${{ needs.release.outputs.release_version }}" \
-                --expected-tag "v${{ needs.release.outputs.release_version }}"
+                --expected-version "${{ needs.release.outputs.release_version }}"
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any(
@@ -419,6 +422,11 @@ def test_should_require_ci_publish_success_gate_pypi_parity_step_flags():
     )
     assert any(
         "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--pypi-poll-interval-seconds`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--expected-tag`"
         in err
         for err in errors
     )
