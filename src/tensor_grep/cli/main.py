@@ -151,6 +151,18 @@ def _parse_gpu_device_ids_cli(raw: str | None) -> list[int] | None:
     return parsed
 
 
+def _selected_gpu_execution_defaults(
+    gpu_device_ids: list[int], gpu_chunk_plan_mb: list[tuple[int, int]]
+) -> tuple[bool, int]:
+    if gpu_device_ids:
+        worker_count = len(dict.fromkeys(gpu_device_ids))
+    else:
+        worker_count = len(dict.fromkeys(device_id for device_id, _ in gpu_chunk_plan_mb))
+    if worker_count <= 0:
+        return False, 0
+    return worker_count > 1, worker_count
+
+
 def _load_yaml_dict(path: Path) -> dict[str, object]:
     import yaml
 
@@ -824,6 +836,25 @@ def search_command(
 
     matched_files = {m.file for m in all_results.matches}
     elapsed_ms = (time.perf_counter() - search_start) * 1000.0
+    runtime_override_active = (
+        all_results.routing_backend is not None
+        and all_results.routing_backend != selected_backend_name
+    ) or (
+        all_results.routing_reason is not None
+        and all_results.routing_reason != selected_backend_reason
+    )
+    if (
+        not runtime_override_active
+        and all_results.routing_worker_count == 0
+        and (all_results.routing_gpu_device_ids or all_results.routing_gpu_chunk_plan_mb)
+    ):
+        (
+            all_results.routing_distributed,
+            all_results.routing_worker_count,
+        ) = _selected_gpu_execution_defaults(
+            list(all_results.routing_gpu_device_ids),
+            list(all_results.routing_gpu_chunk_plan_mb),
+        )
 
     def _emit_runtime_debug() -> None:
         if not debug:
@@ -877,13 +908,6 @@ def search_command(
                 f"reason={all_results.routing_reason or selected_backend_reason}"
             ),
             err=True,
-        )
-        runtime_override_active = (
-            all_results.routing_backend is not None
-            and all_results.routing_backend != selected_backend_name
-        ) or (
-            all_results.routing_reason is not None
-            and all_results.routing_reason != selected_backend_reason
         )
         if runtime_override_active:
             stats_gpu_device_ids = list(all_results.routing_gpu_device_ids)

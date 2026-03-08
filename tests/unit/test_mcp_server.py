@@ -51,8 +51,8 @@ def test_tg_search_includes_routing_summary_in_non_empty_output():
     assert "Routing: backend=CuDFBackend reason=gpu_explicit_ids_cudf" in out
     assert "gpu_device_ids=[7, 3]" in out
     assert "gpu_chunk_plan_mb=[(7, 256), (3, 512)]" in out
-    assert "distributed=False" in out
-    assert "workers=0" in out
+    assert "distributed=True" in out
+    assert "workers=2" in out
 
 
 def test_tg_search_should_report_runtime_routing_override_when_backend_falls_back():

@@ -510,8 +510,8 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
         {"device_id": 7, "chunk_mb": 256},
         {"device_id": 3, "chunk_mb": 512},
     ]
-    assert payload["routing_distributed"] is False
-    assert payload["routing_worker_count"] == 0
+    assert payload["routing_distributed"] is True
+    assert payload["routing_worker_count"] == 2
 
 
 def test_cli_json_output_should_surface_distributed_worker_metadata_from_backend(monkeypatch):

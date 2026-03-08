@@ -24,6 +24,18 @@ def _routing_summary(result: SearchResult) -> str:
     )
 
 
+def _selected_gpu_execution_defaults(
+    gpu_device_ids: list[int], gpu_chunk_plan_mb: list[tuple[int, int]]
+) -> tuple[bool, int]:
+    if gpu_device_ids:
+        worker_count = len(dict.fromkeys(gpu_device_ids))
+    else:
+        worker_count = len(dict.fromkeys(device_id for device_id, _ in gpu_chunk_plan_mb))
+    if worker_count <= 0:
+        return False, 0
+    return worker_count > 1, worker_count
+
+
 def _merge_runtime_routing(all_results: SearchResult, result: SearchResult) -> None:
     if result.routing_backend:
         all_results.routing_backend = result.routing_backend
@@ -37,6 +49,34 @@ def _merge_runtime_routing(all_results: SearchResult, result: SearchResult) -> N
     all_results.routing_distributed = all_results.routing_distributed or result.routing_distributed
     all_results.routing_worker_count = max(
         all_results.routing_worker_count, result.routing_worker_count
+    )
+
+
+def _apply_selected_gpu_defaults(
+    *,
+    all_results: SearchResult,
+    selected_backend_name: str,
+    selected_backend_reason: str,
+) -> None:
+    runtime_override_active = (
+        all_results.routing_backend is not None
+        and all_results.routing_backend != selected_backend_name
+    ) or (
+        all_results.routing_reason is not None
+        and all_results.routing_reason != selected_backend_reason
+    )
+    if runtime_override_active:
+        return
+    if all_results.routing_worker_count != 0:
+        return
+    if not (all_results.routing_gpu_device_ids or all_results.routing_gpu_chunk_plan_mb):
+        return
+    (
+        all_results.routing_distributed,
+        all_results.routing_worker_count,
+    ) = _selected_gpu_execution_defaults(
+        list(all_results.routing_gpu_device_ids),
+        list(all_results.routing_gpu_chunk_plan_mb),
     )
 
 
@@ -107,6 +147,14 @@ def tg_search(
             if result.total_matches > 0:
                 all_results.total_files += 1
             _merge_runtime_routing(all_results, result)
+
+        _apply_selected_gpu_defaults(
+            all_results=all_results,
+            selected_backend_name=getattr(
+                pipeline, "selected_backend_name", backend.__class__.__name__
+            ),
+            selected_backend_reason=getattr(pipeline, "selected_backend_reason", "unknown"),
+        )
 
         if all_results.is_empty:
             return f"No matches found for '{pattern}' in {path}.\n{_routing_summary(all_results)}"
@@ -185,6 +233,14 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
             if result.total_matches > 0:
                 all_results.total_files += 1
             _merge_runtime_routing(all_results, result)
+
+        _apply_selected_gpu_defaults(
+            all_results=all_results,
+            selected_backend_name=getattr(
+                pipeline, "selected_backend_name", backend.__class__.__name__
+            ),
+            selected_backend_reason=getattr(pipeline, "selected_backend_reason", "unknown"),
+        )
 
         if all_results.is_empty:
             return f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
