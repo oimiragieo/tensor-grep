@@ -67,6 +67,17 @@ class _FakeRipgrepBackend:
         return 0
 
 
+class RipgrepBackend:
+    def __init__(self, result: SearchResult):
+        self._result = result
+
+    def search(self, file_path, pattern, config=None) -> SearchResult:
+        return self._result
+
+    def search_passthrough(self, paths, pattern, config=None):
+        return 0
+
+
 _FAKE_BACKEND = _FakeBackend(results_by_file={})
 _FAKE_WALK: dict[str, list[str]] = {}
 _LAST_PIPELINE_CONFIG = None
@@ -75,6 +86,26 @@ _LAST_PIPELINE_CONFIG = None
 def _patch_cli_dependencies(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakePipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+
+class _FakeRipgrepPipeline:
+    def __init__(self, force_cpu=False, config=None):
+        self.backend = RipgrepBackend(
+            SearchResult(
+                matches=[],
+                total_files=1,
+                total_matches=3,
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_count",
+            )
+        )
+        self.selected_backend_name = "RipgrepBackend"
+        self.selected_backend_reason = "rg_count"
+        self.selected_gpu_device_ids = []
+        self.selected_gpu_chunk_plan_mb = []
+
+    def get_backend(self):
+        return self.backend
 
 
 def test_files_mode_lists_candidates(monkeypatch):
@@ -169,6 +200,19 @@ def test_files_with_matches_should_respect_total_files_without_materialized_matc
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "a.py"
+
+
+def test_cli_stats_should_respect_count_only_ripgrep_results(monkeypatch):
+    global _FAKE_WALK
+    _FAKE_WALK = {".": ["a.py", "b.py"]}
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeRipgrepPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "-c"])
+
+    assert result.exit_code == 0
+    assert "[stats] scanned_files=2 matched_files=1 total_matches=3" in result.output
 
 
 def test_files_without_match_lists_unmatched_files(monkeypatch):
