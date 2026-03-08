@@ -92,6 +92,32 @@ def test_tg_search_should_report_runtime_routing_override_when_backend_falls_bac
     assert "workers=1" in out
 
 
+def test_tg_search_count_matches_should_respect_total_files_without_materialized_matches():
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.side_effect = [
+        SearchResult(matches=[], total_files=1, total_matches=3),
+        SearchResult(matches=[], total_files=0, total_matches=0),
+    ]
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "RustCoreBackend"
+        pipeline.selected_backend_reason = "rust_count"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.log", "b.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", count_matches=True)
+
+    assert out == "Found a total of 3 matches across 1 files in .."
+
+
 def test_tg_devices_returns_no_gpu_message_when_empty():
     from tensor_grep.cli import mcp_server
 
