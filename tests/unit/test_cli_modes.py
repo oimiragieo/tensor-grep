@@ -768,6 +768,21 @@ class AstGrepWrapperBackend(_FakeAstBackend):
     pass
 
 
+class _FakeCountOnlyAstBackend:
+    def search(self, file_path: str, pattern: str, config=None) -> SearchResult:
+        try:
+            content = open(file_path, encoding="utf-8").read()
+        except OSError:
+            content = ""
+        has_match = pattern in content
+        return SearchResult(
+            matches=[],
+            matched_file_paths=[file_path] if has_match else [],
+            total_files=1 if has_match else 0,
+            total_matches=1 if has_match else 0,
+        )
+
+
 class _FakeAstPipeline:
     def __init__(self, force_cpu=False, config=None):
         self._backend = _FakeAstBackend()
@@ -779,6 +794,14 @@ class _FakeAstPipeline:
 class _FakeAstWrapperPipeline:
     def __init__(self, force_cpu=False, config=None):
         self._backend = AstGrepWrapperBackend()
+
+    def get_backend(self):
+        return self._backend
+
+
+class _FakeCountOnlyAstPipeline:
+    def __init__(self, force_cpu=False, config=None):
+        self._backend = _FakeCountOnlyAstBackend()
 
     def get_backend(self):
         return self._backend
@@ -864,6 +887,31 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
     assert "GPU-Accelerated GNNs" not in result.output
 
 
+def test_scan_should_count_files_from_count_only_ast_results(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeCountOnlyAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+        )
+        Path("rules").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "[scan] rule=error-rule lang=python matches=1 files=1" in result.output
+
+
 def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -925,6 +973,34 @@ def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
 
     assert result.exit_code == 0
     assert "Testing AST rules using ast-grep structural matching" in result.output
+
+
+def test_test_command_should_use_total_file_contract_for_match_detection(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeCountOnlyAstPipeline)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+            encoding="utf-8",
+        )
+        Path("rules").mkdir()
+        Path("tests").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("tests/error.yml").write_text(
+            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "All tests passed. cases=2" in result.output
 
 
 def test_devices_command_reports_no_gpu_when_none_detected(monkeypatch):

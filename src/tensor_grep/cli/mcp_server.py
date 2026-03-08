@@ -142,6 +142,7 @@ def tg_search(
         for current_file in scanner.walk(path):
             result = backend.search(current_file, pattern, config=config)
             all_results.matches.extend(result.matches)
+            all_results.matched_file_paths.extend(result.matched_file_paths)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
@@ -227,6 +228,7 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
         for current_file in scanner.walk(path):
             result = backend.search(current_file, pattern, config=config)
             all_results.matches.extend(result.matches)
+            all_results.matched_file_paths.extend(result.matched_file_paths)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
