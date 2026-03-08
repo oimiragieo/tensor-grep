@@ -460,3 +460,104 @@ class TestPipeline:
         )
         assert pipeline.backend.__class__.__name__ == "CPUBackend"
         assert pipeline.selected_backend_reason == "python_cpu_semantics_required"
+
+    def test_should_preserve_explicit_multi_gpu_ids_through_torch_execution(self, tmp_path):
+        import types
+
+        path = tmp_path / "torch_pipeline.log"
+        path.write_text("ERROR A\nERROR B\nERROR C\nERROR D\n", encoding="utf-8")
+
+        class _FakeScalar:
+            def __init__(self, value: bool):
+                self._value = value
+
+            def item(self):
+                return self._value
+
+        class _FakeAny:
+            def __init__(self, values: list[bool]):
+                self._values = values
+
+            def any(self):
+                return _FakeScalar(any(self._values))
+
+        class _FakeCompare:
+            def __init__(self, windows: list[list[int]], pattern: list[int]):
+                self._windows = windows
+                self._pattern = pattern
+
+            def all(self, dim=1):
+                _ = dim
+                return _FakeAny([window == self._pattern for window in self._windows])
+
+        class _FakeWindows:
+            def __init__(self, windows: list[list[int]]):
+                self._windows = windows
+
+            def __eq__(self, other):
+                return _FakeCompare(self._windows, other.data)
+
+        class _FakeTensor:
+            def __init__(self, data: list[int]):
+                self.data = data
+
+            def unfold(self, dim: int, size: int, step: int):
+                _ = dim
+                windows: list[list[int]] = []
+                for i in range(0, max(len(self.data) - size + 1, 0), step):
+                    windows.append(self.data[i : i + size])
+                return _FakeWindows(windows)
+
+        class _FakeTorch(types.ModuleType):
+            uint8 = "uint8"
+
+            def __init__(self):
+                super().__init__("torch")
+
+            def device(self, value: str):
+                return value
+
+            def tensor(self, values, dtype=None, device=None):
+                _ = (dtype, device)
+                return _FakeTensor(list(values))
+
+        fake_torch = _FakeTorch()
+        fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+
+        config = SearchConfig(
+            query_pattern="ERROR",
+            fixed_strings=False,
+            gpu_device_ids=[7, 3],
+        )
+
+        with (
+            patch.dict("sys.modules", {"torch": fake_torch}),
+            patch("tensor_grep.core.pipeline.RipgrepBackend.is_available", return_value=False),
+            patch("tensor_grep.core.pipeline.StringZillaBackend.is_available", return_value=False),
+            patch("tensor_grep.core.pipeline.RustCoreBackend.is_available", return_value=False),
+            patch("tensor_grep.core.pipeline.CuDFBackend.is_available", return_value=False),
+            patch(
+                "tensor_grep.backends.torch_backend.TorchBackend.is_available", return_value=True
+            ),
+            patch(
+                "tensor_grep.core.hardware.memory_manager.MemoryManager.get_device_chunk_plan_mb",
+                return_value=[(7, 3), (3, 1)],
+            ),
+        ):
+            from tensor_grep.backends.torch_backend import TorchBackend
+
+            pipeline = Pipeline(force_cpu=False, config=config)
+            assert isinstance(pipeline.get_backend(), TorchBackend)
+
+            result = pipeline.get_backend().search(str(path), "ERROR", config)
+
+        assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
+        assert pipeline.selected_gpu_device_ids == [7, 3]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(7, 3), (3, 1)]
+        assert result.total_matches == 4
+        assert result.routing_backend == "TorchBackend"
+        assert result.routing_reason == "torch_multi_gpu_fanout"
+        assert result.routing_gpu_device_ids == [7, 3]
+        assert result.routing_gpu_chunk_plan_mb == [(7, 3), (3, 1)]
+        assert result.routing_distributed is True
+        assert result.routing_worker_count == 2
