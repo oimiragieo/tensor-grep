@@ -628,7 +628,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     publish_npm_runs = _step_runs_by_name("publish-npm")
     npm_verify_step = "Verify npm registry parity for release version"
     npm_verify_run = publish_npm_runs.get(npm_verify_step)
-    if npm_verify_run is not None:
+    if npm_verify_run is None:
+        errors.append(f"Release workflow publish-npm job must include step `{npm_verify_step}`")
+    else:
         for required_flag in (
             "--check-npm",
             "--npm-wait-seconds",
@@ -656,6 +658,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     for step_name, required_flags in release_gate_step_contracts.items():
         step_run = release_gate_runs.get(step_name)
         if step_run is None:
+            errors.append(
+                f"Release workflow release-success-gate job must include step `{step_name}`"
+            )
             continue
         for required_flag in required_flags:
             if required_flag not in step_run:
