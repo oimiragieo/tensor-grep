@@ -108,11 +108,19 @@ class TorchBackend(ComputeBackend):
 
         try:
             if hasattr(self.device_detector, "enumerate_device_ids"):
-                return bool(list(self.device_detector.enumerate_device_ids()))
+                enumerated_ids = list(self.device_detector.enumerate_device_ids())
+                if enumerated_ids:
+                    return True
+                if not hasattr(self.device_detector, "get_device_ids"):
+                    return False
             if hasattr(self.device_detector, "get_device_ids"):
                 return bool(list(self.device_detector.get_device_ids()))
         except Exception:
-            return False
+            try:
+                if hasattr(self.device_detector, "get_device_ids"):
+                    return bool(list(self.device_detector.get_device_ids()))
+            except Exception:
+                return False
 
         return self.device_detector.get_device_count() > 0
 
@@ -176,10 +184,14 @@ class TorchBackend(ComputeBackend):
 
         if self.device_ids is not None:
             resolved_device_ids = self.device_ids
-        elif hasattr(self.device_detector, "enumerate_device_ids"):
-            resolved_device_ids = list(self.device_detector.enumerate_device_ids())
         else:
-            resolved_device_ids = self.device_detector.get_device_ids()
+            try:
+                if hasattr(self.device_detector, "enumerate_device_ids"):
+                    resolved_device_ids = list(self.device_detector.enumerate_device_ids())
+                else:
+                    resolved_device_ids = self.device_detector.get_device_ids()
+            except Exception:
+                resolved_device_ids = self.device_detector.get_device_ids()
         if not resolved_device_ids:
             resolved_device_ids = [0]
         resolved_device_ids, normalized_chunk_sizes = self._normalize_device_plan(

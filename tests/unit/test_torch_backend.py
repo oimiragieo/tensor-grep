@@ -331,3 +331,60 @@ def test_torch_backend_is_available_should_return_false_when_enumerated_ids_empt
         patch.dict("sys.modules", {"torch": fake_torch}),
     ):
         assert backend.is_available() is False
+
+
+def test_torch_backend_is_available_should_fallback_to_get_device_ids_when_enumeration_raises():
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    class _DetectorWithEnumerationFailure:
+        def enumerate_device_ids(self):
+            raise RuntimeError("enumeration failed")
+
+        def get_device_ids(self):
+            return [5, 2]
+
+        def get_device_count(self):
+            raise AssertionError(
+                "raw count probing should not run when get_device_ids can recover the route set"
+            )
+
+    fake_torch = _FakeTorch()
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+
+    backend = TorchBackend(device_ids=None)
+    backend.device_detector = _DetectorWithEnumerationFailure()
+
+    with (
+        patch("importlib.util.find_spec", return_value=object()),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        assert backend.is_available() is True
+
+
+def test_torch_backend_search_should_fallback_to_get_device_ids_when_enumeration_raises(tmp_path):
+    from tensor_grep.backends.torch_backend import TorchBackend
+
+    path = tmp_path / "torch_enumeration_fallback.log"
+    path.write_text("ERROR A\nERROR B\n", encoding="utf-8")
+
+    class _DetectorWithEnumerationFailure:
+        def enumerate_device_ids(self):
+            raise RuntimeError("enumeration failed")
+
+        def get_device_ids(self):
+            return [5, 2]
+
+    fake_torch = _FakeTorch()
+    backend = TorchBackend(device_ids=None)
+    backend.device_detector = _DetectorWithEnumerationFailure()
+
+    with (
+        patch.object(TorchBackend, "is_available", return_value=True),
+        patch.dict("sys.modules", {"torch": fake_torch}),
+    ):
+        result = backend.search(str(path), "ERROR", SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 2
+    assert result.routing_gpu_device_ids == [5, 2]
+    assert "cuda:5" in fake_torch.device_calls
+    assert "cuda:2" in fake_torch.device_calls
