@@ -860,6 +860,7 @@ def search_command(
         matched_file_paths = {m.file for m in all_results.matches}
 
     matched_files = set(matched_file_paths)
+    matched_file_count = len(matched_files) or all_results.total_files
     elapsed_ms = (time.perf_counter() - search_start) * 1000.0
     runtime_override_active = (
         all_results.routing_backend is not None
@@ -921,7 +922,7 @@ def search_command(
         typer.echo(
             (
                 f"[stats] scanned_files={len(candidate_files_ordered)} "
-                f"matched_files={len(matched_files)} "
+                f"matched_files={matched_file_count} "
                 f"total_matches={all_results.total_matches} "
                 f"elapsed_ms={elapsed_ms:.2f}"
             ),
