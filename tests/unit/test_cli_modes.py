@@ -762,6 +762,31 @@ def test_scan_executes_rules_from_sgconfig(monkeypatch):
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
+def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+        )
+        Path("rules").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "GPU-Accelerated GNNs" not in result.output
+
+
 def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
