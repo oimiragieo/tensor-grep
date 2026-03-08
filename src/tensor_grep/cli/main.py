@@ -815,6 +815,12 @@ def search_command(
             all_results.routing_worker_count, result.routing_worker_count
         )
 
+    def _merge_count_metadata(result: SearchResult) -> None:
+        for file_path, count in result.match_counts_by_file.items():
+            all_results.match_counts_by_file[file_path] = (
+                all_results.match_counts_by_file.get(file_path, 0) + count
+            )
+
     # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
         rg_backend = cast(RipgrepBackend, backend)
@@ -830,6 +836,7 @@ def search_command(
                 span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
             matched_file_paths.update(result.matched_file_paths)
+            _merge_count_metadata(result)
             all_results.total_matches += result.total_matches
             all_results.total_files += result.total_files
             matched_file_paths.update(m.file for m in result.matches)
@@ -848,6 +855,7 @@ def search_command(
                     span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
             matched_file_paths.update(result.matched_file_paths)
+            _merge_count_metadata(result)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1

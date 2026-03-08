@@ -52,6 +52,13 @@ def _merge_runtime_routing(all_results: SearchResult, result: SearchResult) -> N
     )
 
 
+def _merge_count_metadata(all_results: SearchResult, result: SearchResult) -> None:
+    for file_path, count in result.match_counts_by_file.items():
+        all_results.match_counts_by_file[file_path] = (
+            all_results.match_counts_by_file.get(file_path, 0) + count
+        )
+
+
 def _apply_selected_gpu_defaults(
     *,
     all_results: SearchResult,
@@ -143,6 +150,7 @@ def tg_search(
             result = backend.search(current_file, pattern, config=config)
             all_results.matches.extend(result.matches)
             all_results.matched_file_paths.extend(result.matched_file_paths)
+            _merge_count_metadata(all_results, result)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
@@ -229,6 +237,7 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
             result = backend.search(current_file, pattern, config=config)
             all_results.matches.extend(result.matches)
             all_results.matched_file_paths.extend(result.matched_file_paths)
+            _merge_count_metadata(all_results, result)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1

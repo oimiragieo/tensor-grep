@@ -16,6 +16,7 @@ class TestSearchResult:
         result = SearchResult(
             matches=[],
             matched_file_paths=["a.log", "b.log"],
+            match_counts_by_file={"a.log": 2, "b.log": 1},
             total_files=0,
             total_matches=0,
             routing_backend="CuDFBackend",
@@ -28,6 +29,7 @@ class TestSearchResult:
         assert result.routing_backend == "CuDFBackend"
         assert result.routing_reason == "gpu_explicit_ids_cudf"
         assert result.matched_file_paths == ["a.log", "b.log"]
+        assert result.match_counts_by_file == {"a.log": 2, "b.log": 1}
         assert result.routing_gpu_device_ids == [3, 7]
         assert result.routing_gpu_chunk_plan_mb == [(3, 256), (7, 512)]
         assert result.routing_distributed is True
