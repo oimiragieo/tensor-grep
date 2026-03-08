@@ -125,7 +125,7 @@ class TestMemoryManager:
     def test_should_prefer_public_device_id_enumeration_when_available(self, mock_detect):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = True
-        mock_instance.enumerate_device_ids.return_value = [7, 3]
+        mock_instance.enumerate_device_ids = MagicMock(return_value=[7, 3])
         mock_instance.list_devices.side_effect = AssertionError(
             "list_devices should not be used when enumerate_device_ids is available"
         )
@@ -138,8 +138,8 @@ class TestMemoryManager:
     def test_should_prefer_get_device_ids_before_list_devices_for_efficiency(self, mock_detect):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = True
-        mock_instance.enumerate_device_ids.return_value = []
-        mock_instance.get_device_ids.return_value = [5, 2]
+        mock_instance.enumerate_device_ids = MagicMock(return_value=[])
+        mock_instance.get_device_ids = MagicMock(return_value=[5, 2])
         mock_instance.list_devices.side_effect = AssertionError(
             "list_devices should not be used when get_device_ids already returns routable ids"
         )
@@ -152,8 +152,8 @@ class TestMemoryManager:
     def test_should_gracefully_return_empty_ids_when_device_count_is_unusable(self, mock_detect):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = True
-        mock_instance.enumerate_device_ids.return_value = []
-        mock_instance.get_device_ids.return_value = []
+        mock_instance.enumerate_device_ids = MagicMock(return_value=[])
+        mock_instance.get_device_ids = MagicMock(return_value=[])
         mock_instance.list_devices.return_value = []
         mock_instance.get_device_count.return_value = MagicMock()
         mock_detect.return_value = mock_instance
@@ -165,7 +165,7 @@ class TestMemoryManager:
     def test_should_cache_detected_device_ids_to_avoid_repeated_hardware_probes(self, mock_detect):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = True
-        mock_instance.enumerate_device_ids.return_value = [7, 3]
+        mock_instance.enumerate_device_ids = MagicMock(return_value=[7, 3])
         mock_detect.return_value = mock_instance
 
         manager = MemoryManager()
@@ -183,7 +183,7 @@ class TestMemoryManager:
     ):
         mock_instance = MagicMock()
         mock_instance.has_gpu.return_value = True
-        mock_instance.enumerate_device_ids.return_value = [7, 3]
+        mock_instance.enumerate_device_ids = MagicMock(return_value=[7, 3])
         mock_detect.return_value = mock_instance
 
         manager = MemoryManager()
@@ -193,3 +193,31 @@ class TestMemoryManager:
 
         assert first == [7, 3, 99]
         assert second == [7, 3]
+
+    def test_should_treat_empty_enumeration_as_authoritative_no_routable_devices(self):
+        class _DetectorWithAuthoritativeEmptyEnumeration:
+            def __init__(self):
+                self.list_devices_calls = 0
+                self.get_device_count_calls = 0
+
+            def has_gpu(self):
+                return True
+
+            def enumerate_device_ids(self):
+                return []
+
+            def get_device_count(self):
+                self.get_device_count_calls += 1
+                return 2
+
+            def list_devices(self):
+                self.list_devices_calls += 1
+                return [MagicMock(device_id=0), MagicMock(device_id=1)]
+
+        detector = _DetectorWithAuthoritativeEmptyEnumeration()
+        manager = MemoryManager()
+        manager.detector = detector
+
+        assert manager.get_device_ids() == []
+        assert detector.list_devices_calls == 0
+        assert detector.get_device_count_calls == 0

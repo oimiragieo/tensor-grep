@@ -1,3 +1,5 @@
+import inspect
+
 from tensor_grep.core.hardware.device_detect import DeviceDetector
 
 
@@ -44,15 +46,22 @@ class MemoryManager:
             self._cached_detected_device_ids = []
             return []
         try:
-            if hasattr(self.detector, "enumerate_device_ids"):
+            if self._has_detector_method("enumerate_device_ids"):
                 enumerated_ids = list(self.detector.enumerate_device_ids())
                 if enumerated_ids:
                     self._cached_detected_device_ids = list(enumerated_ids)
                     return list(enumerated_ids)
+                if self._has_detector_method("get_device_ids"):
+                    legacy_ids = list(self.detector.get_device_ids())
+                    if legacy_ids:
+                        self._cached_detected_device_ids = list(legacy_ids)
+                        return list(legacy_ids)
+                self._cached_detected_device_ids = []
+                return []
 
             # Compatibility path for detectors that expose concrete ID enumeration
             # without requiring full device metadata collection.
-            if hasattr(self.detector, "get_device_ids"):
+            if self._has_detector_method("get_device_ids"):
                 legacy_ids = list(self.detector.get_device_ids())
                 if legacy_ids:
                     self._cached_detected_device_ids = list(legacy_ids)
@@ -75,6 +84,13 @@ class MemoryManager:
         fallback_ids = list(range(count)) if count > 0 else []
         self._cached_detected_device_ids = list(fallback_ids)
         return fallback_ids
+
+    def _has_detector_method(self, name: str) -> bool:
+        try:
+            inspect.getattr_static(self.detector, name)
+        except AttributeError:
+            return False
+        return callable(getattr(self.detector, name, None))
 
     def get_device_ids(self, preferred_ids: list[int] | None = None) -> list[int]:
         detected_ids = self._get_detected_device_ids()
