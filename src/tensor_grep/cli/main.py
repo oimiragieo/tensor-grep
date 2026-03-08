@@ -1092,7 +1092,6 @@ def run(
     ),
 ) -> None:
     """Run one time search or rewrite in command line (ast-grep parity)"""
-    typer.echo("Executing GPU-Accelerated AST-Grep Run...")
     if not path:
         path = "."
 
@@ -1104,8 +1103,10 @@ def run(
     cfg = SearchConfig(ast=True, lang=lang)
     pipeline = Pipeline(config=cfg)
     backend = pipeline.get_backend()
+    backend_name = type(backend).__name__
+    typer.echo(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
 
-    if type(backend).__name__ not in {"AstBackend", "AstGrepWrapperBackend"}:
+    if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
         typer.echo(
             "Warning: AstBackend not available (requires torch_geometric/tree_sitter). Falling back to CPU regex.",
             err=True,
