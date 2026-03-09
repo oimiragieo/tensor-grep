@@ -152,7 +152,12 @@ def test_tg_search_count_matches_should_respect_total_files_without_materialized
 
         out = mcp_server.tg_search("ERROR", ".", count_matches=True)
 
-    assert out == "Found a total of 3 matches across 1 files in .."
+    assert out.startswith("Found a total of 3 matches across 1 files in ..")
+    assert "Routing: backend=RustCoreBackend reason=rust_count" in out
+    assert "gpu_device_ids=[]" in out
+    assert "gpu_chunk_plan_mb=[]" in out
+    assert "distributed=False" in out
+    assert "workers=0" in out
 
 
 def test_tg_search_should_render_count_only_file_summary_without_materialized_matches():
