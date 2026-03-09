@@ -648,6 +648,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                         step_runs_by_name[name] = run
 
         for required_step in (
+            "Validate package-manager publish bundle source state",
             "Preflight build package-manager publish bundle artifact",
             "Preflight verify package-manager bundle checksums",
             "Preflight smoke-test package-manager bundle contracts",
@@ -658,6 +659,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     f"step `{required_step}`"
                 )
         validate_pm_step_contracts = {
+            "Validate package-manager publish bundle source state": (
+                "scripts/prepare_package_manager_release.py",
+                "--check",
+            ),
             "Preflight build package-manager publish bundle artifact": (
                 "scripts/prepare_package_manager_release.py",
                 "--output-dir artifacts/package-manager-bundle",
