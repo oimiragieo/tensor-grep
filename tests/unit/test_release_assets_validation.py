@@ -1501,3 +1501,61 @@ def test_should_require_validate_pypi_artifacts_job_step_commands():
         in err
         for err in errors
     )
+
+
+def test_should_require_release_validate_package_managers_step_commands():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      validate-package-managers:
+        steps:
+          - name: Preflight build package-manager publish bundle artifact
+            run: uv run python scripts/build_bundle.py --output-dir artifacts/package-manager-bundle
+          - name: Preflight verify package-manager bundle checksums
+            run: uv run python scripts/check_bundle.py --bundle-dir artifacts/package-manager-bundle
+          - name: Preflight smoke-test package-manager bundle contracts
+            run: uv run python scripts/check_bundle_smoke.py --bundle-dir artifacts/package-manager-bundle
+      build-binaries:
+        needs: [validate-release-assets, validate-package-managers]
+      create-release:
+        steps:
+          - name: Build package-manager publish bundle
+            run: uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
+          - name: Verify package-manager bundle checksums
+            run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
+          - name: Smoke-test package-manager bundle contracts
+            run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
+      verify-release-assets:
+        needs: create-release
+      validate-tag-version-parity:
+        needs: verify-release-assets
+      publish-docs:
+        needs: validate-tag-version-parity
+      publish-npm:
+        needs: validate-tag-version-parity
+      release-success-gate:
+        needs: [validate-tag-version-parity, publish-npm, publish-docs]
+    """
+    errors = module.validate_release_workflow_content(release_workflow=release_workflow)
+    assert any(
+        "validate-package-managers `Preflight build package-manager publish bundle artifact` step must invoke `scripts/prepare_package_manager_release.py`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-package-managers `Preflight verify package-manager bundle checksums` step must invoke `scripts/verify_package_manager_bundle_checksums.py`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-package-managers `Preflight smoke-test package-manager bundle contracts` step must invoke `scripts/smoke_test_package_manager_bundle.py`"
+        in err
+        for err in errors
+    )

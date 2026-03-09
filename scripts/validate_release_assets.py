@@ -635,6 +635,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     if isinstance(validate_pm_job, dict):
         steps = validate_pm_job.get("steps", [])
         step_names: set[str] = set()
+        step_runs_by_name: dict[str, str] = {}
         if isinstance(steps, list):
             for step in steps:
                 if not isinstance(step, dict):
@@ -642,6 +643,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 name = step.get("name")
                 if isinstance(name, str):
                     step_names.add(name)
+                    run = step.get("run")
+                    if isinstance(run, str):
+                        step_runs_by_name[name] = run
 
         for required_step in (
             "Preflight build package-manager publish bundle artifact",
@@ -653,6 +657,36 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     "Release workflow validate-package-managers job must include "
                     f"step `{required_step}`"
                 )
+        validate_pm_step_contracts = {
+            "Preflight build package-manager publish bundle artifact": (
+                "scripts/prepare_package_manager_release.py",
+                "--output-dir artifacts/package-manager-bundle",
+            ),
+            "Preflight verify package-manager bundle checksums": (
+                "scripts/verify_package_manager_bundle_checksums.py",
+                "--bundle-dir artifacts/package-manager-bundle",
+            ),
+            "Preflight smoke-test package-manager bundle contracts": (
+                "scripts/smoke_test_package_manager_bundle.py",
+                "--bundle-dir artifacts/package-manager-bundle",
+            ),
+        }
+        for step_name, required_contract_tokens in validate_pm_step_contracts.items():
+            run_script = step_runs_by_name.get(step_name)
+            if run_script is None:
+                continue
+            required_command = required_contract_tokens[0]
+            if required_command not in run_script:
+                errors.append(
+                    "Release workflow validate-package-managers "
+                    f"`{step_name}` step must invoke `{required_command}`"
+                )
+            for required_flag in required_contract_tokens[1:]:
+                if required_flag not in run_script:
+                    errors.append(
+                        "Release workflow validate-package-managers "
+                        f"`{step_name}` step must pass `{required_flag}`"
+                    )
 
     create_release_job = jobs.get("create-release")
     if isinstance(create_release_job, dict):
