@@ -178,7 +178,10 @@ def tg_search(
             return f"No matches found for '{pattern}' in {path}.\n{_routing_summary(all_results)}"
 
         if count_matches:
-            return f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}."
+            return (
+                f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
+                f"{_routing_summary(all_results)}"
+            )
 
         # Format the results into a readable string for the LLM
         output = [
