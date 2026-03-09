@@ -728,6 +728,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         create_release_steps = create_release_job.get("steps", [])
         create_release_step_names: set[str] = set()
         create_release_run_by_name: dict[str, str] = {}
+        create_release_steps_by_name: dict[str, dict[str, object]] = {}
         if isinstance(create_release_steps, list):
             for step in create_release_steps:
                 if not isinstance(step, dict):
@@ -735,6 +736,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 name = step.get("name")
                 if isinstance(name, str):
                     create_release_step_names.add(name)
+                    create_release_steps_by_name[name] = step
                     run = step.get("run")
                     if isinstance(run, str):
                         create_release_run_by_name[name] = run
@@ -786,6 +788,39 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     errors.append(
                         "Release workflow create-release "
                         f"`{step_name}` step must pass `{required_flag}`"
+                    )
+        github_release_step = create_release_steps_by_name.get("Create GitHub Release")
+        if github_release_step is None:
+            errors.append(
+                "Release workflow create-release job must include step `Create GitHub Release`"
+            )
+        else:
+            uses_value = github_release_step.get("uses")
+            if uses_value != "softprops/action-gh-release@v2":
+                errors.append(
+                    "Release workflow create-release `Create GitHub Release` step must use `softprops/action-gh-release@v2`"
+                )
+            with_block = github_release_step.get("with")
+            if not isinstance(with_block, dict):
+                errors.append(
+                    "Release workflow create-release `Create GitHub Release` step must define a `with` mapping"
+                )
+            else:
+                files_value = with_block.get("files")
+                files_text = files_value if isinstance(files_value, str) else ""
+                for required_asset in (
+                    "artifacts/**/tg-*",
+                    "artifacts/CHECKSUMS.txt",
+                    "artifacts/package-manager-bundle/**",
+                ):
+                    if required_asset not in files_text:
+                        errors.append(
+                            "Release workflow create-release "
+                            f"`Create GitHub Release` step must include `{required_asset}`"
+                        )
+                if with_block.get("generate_release_notes") is not True:
+                    errors.append(
+                        "Release workflow create-release `Create GitHub Release` step must set `generate_release_notes: true`"
                     )
 
     validate_tag_parity_job = jobs.get("validate-tag-version-parity")
