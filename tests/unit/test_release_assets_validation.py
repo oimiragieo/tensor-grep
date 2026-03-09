@@ -579,6 +579,11 @@ def test_should_require_package_manager_runbook_command_contract():
     assert any("prepare_package_manager_release.py --check" in err for err in errors)
     assert any("winget validate --manifest" in err for err in errors)
     assert any("verify_package_manager_bundle_checksums.py --bundle-dir" in err for err in errors)
+    assert any("ruby -c Formula/tensor-grep.rb" in err for err in errors)
+    assert any(
+        "winget validate --manifest .\\manifests\\o\\oimiragieo\\tensor-grep\\X.Y.Z\\" in err
+        for err in errors
+    )
     assert any(
         "verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z" in err
         for err in errors
