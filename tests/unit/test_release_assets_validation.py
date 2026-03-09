@@ -385,6 +385,11 @@ def test_should_require_ci_publish_pypi_parity_step_to_include_check_and_retry_f
         in err
         for err in errors
     )
+    assert any(
+        "publish-pypi `Verify release version parity across tag/assets/PyPI` step must include `--dist-dir`"
+        in err
+        for err in errors
+    )
 
 
 def test_should_require_ci_publish_success_gate_pypi_parity_step_flags():
