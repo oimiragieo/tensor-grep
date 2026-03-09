@@ -96,6 +96,12 @@ class CuDFBackend(ComputeBackend):
         return normalized
 
     @staticmethod
+    def _multi_worker_routing_reason(*, worker_count: int, fallback: bool = False) -> str:
+        if worker_count <= 1:
+            return "cudf_single_worker_plan" if not fallback else "cudf_chunked_single_worker_plan"
+        return "cudf_distributed_fanout" if not fallback else "cudf_chunked_process_pool_fallback"
+
+    @staticmethod
     def _build_execution_plan(
         *,
         file_size: int,
@@ -336,7 +342,7 @@ class CuDFBackend(ComputeBackend):
                     total_files=1 if matches else 0,
                     total_matches=len(matches),
                     routing_backend="CuDFBackend",
-                    routing_reason="cudf_distributed_fanout",
+                    routing_reason=self._multi_worker_routing_reason(worker_count=worker_count),
                     routing_gpu_device_ids=routing_gpu_device_ids,
                     routing_gpu_chunk_plan_mb=normalized_device_chunks,
                     routing_distributed=worker_count > 1,
@@ -452,7 +458,9 @@ class CuDFBackend(ComputeBackend):
                 total_files=1 if matches else 0,
                 total_matches=len(matches),
                 routing_backend="CuDFBackend",
-                routing_reason="cudf_chunked_process_pool_fallback",
+                routing_reason=self._multi_worker_routing_reason(
+                    worker_count=worker_count, fallback=True
+                ),
                 routing_gpu_device_ids=routing_gpu_device_ids,
                 routing_gpu_chunk_plan_mb=normalized_device_chunks,
                 routing_distributed=worker_count > 1,
