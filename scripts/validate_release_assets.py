@@ -636,6 +636,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 "scripts/smoke_test_package_manager_bundle.py",
                 "--bundle-dir artifacts/package-manager-bundle",
             ),
+            "Smoke-verify Linux release binary version": (
+                "scripts/smoke_verify_release_binary.py",
+                "--expected-version",
+            ),
         }
         for step_name, required_contract_tokens in create_release_step_contracts.items():
             run_script = create_release_run_by_name.get(step_name)
