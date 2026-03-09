@@ -2022,6 +2022,21 @@ def test_should_require_release_build_binaries_step_contracts():
         1,
     )
     release_workflow = release_workflow.replace(
+        "mv tg.exe tg-windows-amd64-${{ matrix.gpu }}.exe",
+        "mv tg.exe tg.exe",
+        1,
+    )
+    release_workflow = release_workflow.replace(
+        "mv tg tg-linux-amd64-${{ matrix.gpu }}",
+        "mv tg tg-linux",
+        1,
+    )
+    release_workflow = release_workflow.replace(
+        "mv tg tg-macos-amd64-${{ matrix.gpu }}",
+        "mv tg tg-macos",
+        1,
+    )
+    release_workflow = release_workflow.replace(
         r".\tg-windows-amd64-${{ matrix.gpu }}.exe --version",
         r".\tg.exe --version",
         1,
@@ -2053,6 +2068,18 @@ def test_should_require_release_build_binaries_step_contracts():
         in joined_errors
     )
     assert "build-binaries `Upload Artifact` step must include `path: tg-*`" in joined_errors
+    assert (
+        "build-binaries `Rename Artifact (Windows)` step must invoke "
+        "`mv tg.exe tg-windows-amd64-${{ matrix.gpu }}.exe`" in joined_errors
+    )
+    assert (
+        "build-binaries `Rename Artifact (Linux)` step must invoke "
+        "`mv tg tg-linux-amd64-${{ matrix.gpu }}`" in joined_errors
+    )
+    assert (
+        "build-binaries `Rename Artifact (macOS)` step must invoke "
+        "`mv tg tg-macos-amd64-${{ matrix.gpu }}`" in joined_errors
+    )
     assert "build-binaries `Smoke-test Binary (Windows)` step must invoke" in joined_errors
     assert "tg-windows-amd64-${{ matrix.gpu }}.exe --version" in joined_errors
     assert (
