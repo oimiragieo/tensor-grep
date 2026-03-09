@@ -2017,6 +2017,21 @@ def test_should_require_release_build_binaries_step_contracts():
 
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     release_workflow = release_workflow.replace(
+        'uv pip install -e ".[dev]"',
+        'uv pip install -e "."',
+        1,
+    )
+    release_workflow = release_workflow.replace(
+        "uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124",
+        "uv pip install torch torchvision torchaudio",
+        1,
+    )
+    release_workflow = release_workflow.replace(
+        'uv pip install -e ".[gpu-win,nlp,ast,dev]"',
+        'uv pip install -e ".[dev]"',
+        1,
+    )
+    release_workflow = release_workflow.replace(
         "uv run python scripts/build_binaries.py",
         "python scripts/build.py",
         1,
@@ -2061,6 +2076,19 @@ def test_should_require_release_build_binaries_step_contracts():
     joined_errors = "\n".join(errors)
     assert (
         "build-binaries `Build Binary` step must invoke `scripts/build_binaries.py`"
+        in joined_errors
+    )
+    assert (
+        'build-binaries `Install dependencies (CPU)` step must invoke `uv pip install -e ".[dev]"`'
+        in joined_errors
+    )
+    assert (
+        "build-binaries `Install dependencies (NVIDIA)` step must invoke "
+        "`uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124`"
+        in joined_errors
+    )
+    assert (
+        'build-binaries `Install dependencies (NVIDIA)` step must invoke `uv pip install -e ".[gpu-win,nlp,ast,dev]"`'
         in joined_errors
     )
     assert (
