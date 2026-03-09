@@ -417,3 +417,51 @@ class TestMultiGpuDistributionIntegration:
         assert result.routing_gpu_chunk_plan_mb == [(3, 1)]
         assert result.routing_distributed is False
         assert result.routing_worker_count == 1
+
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.backends.torch_backend.ThreadPoolExecutor", _TorchExecutor)
+    @patch("tensor_grep.backends.torch_backend.TorchBackend.is_available", return_value=True)
+    def test_should_report_cpu_fallback_through_pipeline_when_selected_torch_plan_hits_regex_path(
+        self,
+        _mock_torch_available,
+        mock_memory,
+        mock_rust,
+        mock_rg,
+        mock_cudf,
+        tmp_path,
+    ):
+        from tensor_grep.core.pipeline import Pipeline
+
+        log_path = tmp_path / "torch_regex_fallback.log"
+        log_path.write_text("ERROR timeout 1\nINFO ok\n", encoding="utf-8")
+
+        mock_cudf.return_value.is_available.return_value = False
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = False
+        mock_memory.return_value.get_device_chunk_plan_mb.return_value = [(7, 128), (3, 128)]
+
+        config = SearchConfig(
+            query_pattern=r"ERROR.*timeout\s+\d+",
+            input_total_bytes=8 * 1024 * 1024,
+            gpu_device_ids=[7, 3],
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+        _TorchExecutor.submitted_devices = []
+
+        with patch.dict("sys.modules", {"torch": _FakeTorchModule()}):
+            result = pipeline.get_backend().search(str(log_path), r"ERROR.*timeout\s+\d+")
+
+        assert pipeline.selected_backend_reason == "gpu_explicit_ids_torch"
+        assert pipeline.selected_gpu_device_ids == [7, 3]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(7, 128), (3, 128)]
+        assert _TorchExecutor.submitted_devices == []
+        assert result.total_matches == 1
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "torch_regex_cpu_fallback"
+        assert result.routing_gpu_device_ids == []
+        assert result.routing_gpu_chunk_plan_mb == []
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
