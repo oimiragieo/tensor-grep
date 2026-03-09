@@ -848,6 +848,34 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 )
 
     publish_npm_runs = _step_runs_by_name("publish-npm")
+    npm_version_match_step = "Verify Version Match"
+    npm_version_match_run = publish_npm_runs.get(npm_version_match_step)
+    if npm_version_match_run is None:
+        errors.append(
+            f"Release workflow publish-npm job must include step `{npm_version_match_step}`"
+        )
+    else:
+        required_tokens = (
+            "node -p \"require('./npm/package.json').version\"",
+            'if [ "$TAG_VERSION" != "$NPM_VERSION" ]',
+        )
+        for required_token in required_tokens:
+            if required_token not in npm_version_match_run:
+                errors.append(
+                    "Release workflow publish-npm "
+                    f"`{npm_version_match_step}` step must invoke `{required_token}`"
+                )
+
+    npm_publish_step = "Publish NPM Package"
+    npm_publish_run = publish_npm_runs.get(npm_publish_step)
+    if npm_publish_run is None:
+        errors.append(f"Release workflow publish-npm job must include step `{npm_publish_step}`")
+    elif "npm publish --access public" not in npm_publish_run:
+        errors.append(
+            "Release workflow publish-npm "
+            f"`{npm_publish_step}` step must invoke `npm publish --access public`"
+        )
+
     npm_verify_step = "Verify npm registry parity for release version"
     npm_verify_run = publish_npm_runs.get(npm_verify_step)
     release_identity_flags = ("--expected-version", "--expected-tag")
