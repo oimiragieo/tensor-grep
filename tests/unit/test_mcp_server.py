@@ -92,6 +92,43 @@ def test_tg_search_should_report_runtime_routing_override_when_backend_falls_bac
     assert "workers=1" in out
 
 
+def test_tg_search_should_prefer_runtime_single_worker_gpu_metadata_over_selected_plan():
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.return_value = SearchResult(
+        matches=[MatchLine(line_number=1, text="ERROR here", file="a.log")],
+        total_files=1,
+        total_matches=1,
+        routing_backend="CuDFBackend",
+        routing_reason="cudf_chunked_single_worker_plan",
+        routing_gpu_device_ids=[3],
+        routing_gpu_chunk_plan_mb=[(3, 1)],
+        routing_distributed=False,
+        routing_worker_count=1,
+    )
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "CuDFBackend"
+        pipeline.selected_backend_reason = "gpu_explicit_ids_cudf"
+        pipeline.selected_gpu_device_ids = [7, 3]
+        pipeline.selected_gpu_chunk_plan_mb = [(7, 256), (3, 512)]
+        mock_scanner.return_value.walk.return_value = ["a.log"]
+
+        out = mcp_server.tg_search("ERROR", ".")
+
+    assert "Routing: backend=CuDFBackend reason=cudf_chunked_single_worker_plan" in out
+    assert "gpu_device_ids=[3]" in out
+    assert "gpu_chunk_plan_mb=[(3, 1)]" in out
+    assert "distributed=False" in out
+    assert "workers=1" in out
+
+
 def test_tg_search_count_matches_should_respect_total_files_without_materialized_matches():
     from tensor_grep.cli import mcp_server
 
