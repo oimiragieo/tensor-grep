@@ -624,6 +624,34 @@ def test_cli_json_output_should_surface_distributed_worker_metadata_from_backend
     assert payload["routing_worker_count"] == 2
 
 
+def test_cli_json_output_should_include_aggregated_matched_file_metadata(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log", "b.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR one", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            ),
+            "b.log": SearchResult(
+                matches=[MatchLine(line_number=2, text="ERROR two", file="b.log")],
+                total_files=1,
+                total_matches=1,
+            ),
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert sorted(payload["matched_file_paths"]) == ["a.log", "b.log"]
+    assert payload["match_counts_by_file"] == {"a.log": 1, "b.log": 1}
+
+
 def test_cli_json_output_should_prefer_runtime_backend_metadata_over_pipeline_selection(
     monkeypatch,
 ):

@@ -870,6 +870,12 @@ def search_command(
         matched_file_paths = {m.file for m in all_results.matches}
 
     matched_files = set(matched_file_paths)
+    all_results.matched_file_paths = sorted(matched_files)
+    if not all_results.match_counts_by_file and all_results.matches:
+        for match in all_results.matches:
+            all_results.match_counts_by_file[match.file] = (
+                all_results.match_counts_by_file.get(match.file, 0) + 1
+            )
     matched_file_count = len(matched_files) or all_results.total_files
     elapsed_ms = (time.perf_counter() - search_start) * 1000.0
     runtime_override_active = (
