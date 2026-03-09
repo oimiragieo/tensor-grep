@@ -749,6 +749,77 @@ def test_cli_stats_should_prefer_runtime_backend_metadata_when_backend_falls_bac
     assert "[stats] gpu_device_ids=" not in result.output
 
 
+def test_cli_json_output_should_prefer_runtime_single_worker_gpu_metadata_over_selected_plan(
+    monkeypatch,
+):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+                routing_backend="CuDFBackend",
+                routing_reason="cudf_chunked_single_worker_plan",
+                routing_gpu_device_ids=[3],
+                routing_gpu_chunk_plan_mb=[(3, 1)],
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+        }
+    )
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeGpuPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--ltl", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["routing_backend"] == "CuDFBackend"
+    assert payload["routing_reason"] == "cudf_chunked_single_worker_plan"
+    assert payload["routing_gpu_device_ids"] == [3]
+    assert payload["routing_gpu_chunk_plan_mb"] == [{"device_id": 3, "chunk_mb": 1}]
+    assert payload["routing_distributed"] is False
+    assert payload["routing_worker_count"] == 1
+
+
+def test_cli_debug_should_prefer_runtime_single_worker_gpu_metadata_over_selected_plan(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+                routing_backend="CuDFBackend",
+                routing_reason="cudf_chunked_single_worker_plan",
+                routing_gpu_device_ids=[3],
+                routing_gpu_chunk_plan_mb=[(3, 1)],
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+        }
+    )
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeGpuPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+
+    assert result.exit_code == 0
+    assert (
+        "[debug] routing.runtime backend=CuDFBackend reason=cudf_chunked_single_worker_plan"
+        in result.output
+    )
+    assert (
+        "[debug] routing.runtime.gpu_device_ids=[3] routing.runtime.gpu_chunk_plan_mb=[(3, 1)] distributed=False workers=1"
+        in result.output
+    )
+
+
 def test_cli_stats_prints_summary_when_no_matches(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.log"]}
