@@ -257,6 +257,51 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                                 f"`{parity_step}` step must include `{required_flag}`"
                             )
 
+            validate_pypi_job = jobs.get("validate-pypi-artifacts")
+            if isinstance(validate_pypi_job, dict):
+                validate_steps = validate_pypi_job.get("steps", [])
+                validate_run_by_name: dict[str, str] = {}
+                validate_step_names: set[str] = set()
+                if isinstance(validate_steps, list):
+                    for step in validate_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        if isinstance(name, str):
+                            validate_step_names.add(name)
+                        run = step.get("run")
+                        if isinstance(name, str) and isinstance(run, str):
+                            validate_run_by_name[name] = run
+
+                validate_step = "Validate built PyPI artifact set"
+                if validate_step not in validate_step_names:
+                    errors.append(
+                        "CI workflow validate-pypi-artifacts job must include "
+                        f"step `{validate_step}`"
+                    )
+                validate_run = validate_run_by_name.get(validate_step)
+                if validate_run is not None:
+                    for required_flag in ("--dist-dir", "--version", "--require-platforms"):
+                        if required_flag not in validate_run:
+                            errors.append(
+                                "CI workflow validate-pypi-artifacts "
+                                f"`{validate_step}` step must include `{required_flag}`"
+                            )
+
+                smoke_step = "Smoke-test install from built PyPI artifacts"
+                if smoke_step not in validate_step_names:
+                    errors.append(
+                        f"CI workflow validate-pypi-artifacts job must include step `{smoke_step}`"
+                    )
+                smoke_run = validate_run_by_name.get(smoke_step)
+                if smoke_run is not None:
+                    for required_flag in ("--dist-dir", "--version", "--work-dir"):
+                        if required_flag not in smoke_run:
+                            errors.append(
+                                "CI workflow validate-pypi-artifacts "
+                                f"`{smoke_step}` step must include `{required_flag}`"
+                            )
+
             publish_success_gate_job = jobs.get("publish-success-gate")
             if isinstance(publish_success_gate_job, dict):
                 gate_steps = publish_success_gate_job.get("steps", [])
