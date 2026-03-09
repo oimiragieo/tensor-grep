@@ -1462,3 +1462,42 @@ def test_should_require_validate_pypi_artifacts_job_step_flags():
         in err
         for err in errors
     )
+
+
+def test_should_require_validate_pypi_artifacts_job_step_commands():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      validate-pypi-artifacts:
+        steps:
+          - name: Validate built PyPI artifact set
+            run: |
+              python scripts/check_dist.py \
+                --dist-dir dist \
+                --version "${{ needs.release.outputs.release_version }}" \
+                --require-platforms "linux,macos,windows"
+          - name: Smoke-test install from built PyPI artifacts
+            run: |
+              python scripts/install_from_dist.py \
+                --dist-dir dist \
+                --version "${{ needs.release.outputs.release_version }}" \
+                --work-dir .tmp
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "validate-pypi-artifacts `Validate built PyPI artifact set` step must invoke `scripts/validate_pypi_artifacts.py`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-pypi-artifacts `Smoke-test install from built PyPI artifacts` step must invoke `scripts/smoke_test_pypi_artifacts.py`"
+        in err
+        for err in errors
+    )
