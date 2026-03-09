@@ -56,10 +56,13 @@ def _write_bundle(tmp_path: Path, version: str) -> Path:
             "# Package Manager Publish Bundle v1.2.3\n\n"
             "homebrew-tap/Formula/tensor-grep.rb\n"
             "ruby -c Formula/tensor-grep.rb\n"
+            "git checkout -b release/tensor-grep-v1.2.3\n"
+            "git add Formula/tensor-grep.rb\n"
             "brew install oimiragieo/tap/tensor-grep\n"
             "tg --version\n"
             "winget-pkgs/manifests/o/oimiragieo/tensor-grep/1.2.3/oimiragieo.tensor-grep.yaml\n"
             "winget validate --manifest .\\manifests\\o\\oimiragieo\\tensor-grep\\1.2.3\\\n"
+            "git add manifests/o/oimiragieo/tensor-grep/1.2.3\n"
             "winget install oimiragieo.tensor-grep\n"
             "tg --version\n"
         ),
@@ -102,6 +105,11 @@ def test_should_fail_when_summary_missing_required_paths(tmp_path: Path):
     assert any(
         "Bundle summary must include exact winget manifest validation path" in err for err in errors
     )
+    assert any(
+        "Bundle summary must include Homebrew release branch command" in err for err in errors
+    )
+    assert any("Bundle summary must include Homebrew git add command" in err for err in errors)
+    assert any("Bundle summary must include winget git add command" in err for err in errors)
     assert any(
         "Bundle summary must include Homebrew smoke install instruction" in err for err in errors
     )
