@@ -1,4 +1,6 @@
 import importlib.util
+import tarfile
+import zipfile
 from pathlib import Path
 
 
@@ -191,3 +193,45 @@ def test_should_accept_templated_homebrew_urls_for_expected_release_version():
     module._read = fake_read
     errors = module.validate_release_version_parity(expected_version=expected_version)
     assert errors == []
+
+
+def test_should_fail_when_wheel_metadata_version_mismatches_expected(tmp_path):
+    module = _load_module()
+    expected_version = module._version_from_pyproject()
+
+    wheel_path = tmp_path / "tensor_grep-0.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel_path, "w") as zf:
+        zf.writestr(
+            "tensor_grep-0.0.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: tensor-grep\nVersion: 0.0.0\n",
+        )
+
+    errors = module.validate_release_version_parity(
+        expected_version=expected_version,
+        dist_dir=tmp_path,
+        check_package_managers=False,
+    )
+
+    assert any("wheel metadata version 0.0.0 != expected" in err for err in errors)
+
+
+def test_should_fail_when_sdist_metadata_version_mismatches_expected(tmp_path):
+    module = _load_module()
+    expected_version = module._version_from_pyproject()
+
+    sdist_path = tmp_path / "tensor-grep-0.0.0.tar.gz"
+    pkg_info = tmp_path / "PKG-INFO"
+    pkg_info.write_text(
+        "Metadata-Version: 2.1\nName: tensor-grep\nVersion: 0.0.0\n",
+        encoding="utf-8",
+    )
+    with tarfile.open(sdist_path, "w:gz") as tf:
+        tf.add(pkg_info, arcname="tensor-grep-0.0.0/PKG-INFO")
+
+    errors = module.validate_release_version_parity(
+        expected_version=expected_version,
+        dist_dir=tmp_path,
+        check_package_managers=False,
+    )
+
+    assert any("sdist metadata version 0.0.0 != expected" in err for err in errors)

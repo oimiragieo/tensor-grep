@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import tarfile
 import time
 import tomllib
 import urllib.request
+import zipfile
+from email.parser import Parser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +53,50 @@ def _version_from_winget_manifest() -> str:
     if not match:
         raise ValueError("Missing PackageVersion in scripts/oimiragieo.tensor-grep.yaml")
     return match.group(1)
+
+
+def _artifact_versions_from_dist_dir(dist_dir: Path) -> dict[str, str]:
+    versions: dict[str, str] = {}
+    if not dist_dir.exists():
+        raise ValueError(f"dist directory does not exist: {dist_dir}")
+
+    wheel_files = sorted(dist_dir.glob("*.whl"))
+    sdist_files = sorted(dist_dir.glob("*.tar.gz"))
+
+    for wheel_path in wheel_files:
+        with zipfile.ZipFile(wheel_path) as zf:
+            metadata_name = next(
+                (name for name in zf.namelist() if name.endswith(".dist-info/METADATA")),
+                None,
+            )
+            if metadata_name is None:
+                raise ValueError(f"wheel missing dist-info METADATA: {wheel_path.name}")
+            metadata = Parser().parsestr(zf.read(metadata_name).decode("utf-8"))
+            version = metadata.get("Version")
+            if not version:
+                raise ValueError(f"wheel METADATA missing Version field: {wheel_path.name}")
+            versions["wheel"] = str(version)
+            break
+
+    for sdist_path in sdist_files:
+        with tarfile.open(sdist_path, "r:gz") as tf:
+            pkg_info_member = next(
+                (member for member in tf.getmembers() if member.name.endswith("/PKG-INFO")),
+                None,
+            )
+            if pkg_info_member is None:
+                raise ValueError(f"sdist missing PKG-INFO: {sdist_path.name}")
+            pkg_info_file = tf.extractfile(pkg_info_member)
+            if pkg_info_file is None:
+                raise ValueError(f"sdist PKG-INFO unreadable: {sdist_path.name}")
+            metadata = Parser().parsestr(pkg_info_file.read().decode("utf-8"))
+            version = metadata.get("Version")
+            if not version:
+                raise ValueError(f"sdist PKG-INFO missing Version field: {sdist_path.name}")
+            versions["sdist"] = str(version)
+            break
+
+    return versions
 
 
 def _fetch_pypi_latest(package_name: str = "tensor-grep") -> str:
@@ -123,6 +170,7 @@ def validate_release_version_parity(
     pypi_poll_interval_seconds: int = 5,
     npm_wait_seconds: int = 0,
     npm_poll_interval_seconds: int = 5,
+    dist_dir: Path | None = None,
 ) -> list[str]:
     errors: list[str] = []
 
@@ -137,6 +185,12 @@ def validate_release_version_parity(
     for source, actual in versions.items():
         if actual != expected_version:
             errors.append(f"{source} version {actual} != expected {expected_version}")
+
+    if dist_dir is not None:
+        artifact_versions = _artifact_versions_from_dist_dir(dist_dir)
+        for source, actual in artifact_versions.items():
+            if actual != expected_version:
+                errors.append(f"{source} metadata version {actual} != expected {expected_version}")
 
     if expected_tag is not None and expected_tag != f"v{expected_version}":
         errors.append(f"expected tag {expected_tag} != v{expected_version}")
@@ -187,6 +241,11 @@ def main() -> int:
     )
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--expected-tag")
+    parser.add_argument(
+        "--dist-dir",
+        type=Path,
+        help="Optional directory containing built wheel/sdist artifacts to validate",
+    )
     parser.add_argument("--check-pypi", action="store_true")
     parser.add_argument("--check-npm", action="store_true")
     parser.add_argument("--skip-package-managers", action="store_true")
@@ -226,6 +285,7 @@ def main() -> int:
         pypi_poll_interval_seconds=args.pypi_poll_interval_seconds,
         npm_wait_seconds=args.npm_wait_seconds,
         npm_poll_interval_seconds=args.npm_poll_interval_seconds,
+        dist_dir=args.dist_dir,
     )
     if errors:
         for err in errors:
