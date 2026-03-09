@@ -827,17 +827,36 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     if isinstance(validate_tag_parity_job, dict):
         tag_steps = validate_tag_parity_job.get("steps", [])
         tag_run_by_name: dict[str, str] = {}
+        tag_step_names: set[str] = set()
         if isinstance(tag_steps, list):
             for step in tag_steps:
                 if not isinstance(step, dict):
                     continue
                 name = step.get("name")
                 run = step.get("run")
-                if isinstance(name, str) and isinstance(run, str):
-                    tag_run_by_name[name] = run
+                if isinstance(name, str):
+                    tag_step_names.add(name)
+                    if isinstance(run, str):
+                        tag_run_by_name[name] = run
+        for required_step in ("Install uv", "Setup Python"):
+            if required_step not in tag_step_names:
+                errors.append(
+                    "Release workflow validate-tag-version-parity "
+                    f"job must include step `{required_step}`"
+                )
         tag_parity_step = "Validate release tag/version parity across package metadata"
         tag_parity_run = tag_run_by_name.get(tag_parity_step)
-        if tag_parity_run is not None:
+        if tag_parity_run is None:
+            errors.append(
+                "Release workflow validate-tag-version-parity "
+                f"job must include step `{tag_parity_step}`"
+            )
+        else:
+            if "scripts/validate_release_version_parity.py" not in tag_parity_run:
+                errors.append(
+                    "Release workflow validate-tag-version-parity "
+                    f"`{tag_parity_step}` step must invoke `scripts/validate_release_version_parity.py`"
+                )
             for required_flag in ("--expected-version", "--expected-tag"):
                 if required_flag not in tag_parity_run:
                     errors.append(
