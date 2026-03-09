@@ -645,6 +645,30 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 errors.append(
                     "Release workflow build-binaries `Upload Artifact` step must include `path: tg-*`"
                 )
+        build_step_contracts = {
+            "Smoke-test Binary (Windows)": (r".\tg-windows-amd64-${{ matrix.gpu }}.exe --version",),
+            "Smoke-test Binary (Linux)": (
+                "chmod +x tg-linux-amd64-${{ matrix.gpu }}",
+                "./tg-linux-amd64-${{ matrix.gpu }} --version",
+            ),
+            "Smoke-test Binary (macOS)": (
+                "chmod +x tg-macos-amd64-${{ matrix.gpu }}",
+                "./tg-macos-amd64-${{ matrix.gpu }} --version",
+            ),
+        }
+        for step_name, required_tokens in build_step_contracts.items():
+            run_script = build_run_by_name.get(step_name)
+            if run_script is None:
+                errors.append(
+                    f"Release workflow build-binaries job must include step `{step_name}`"
+                )
+                continue
+            for required_token in required_tokens:
+                if required_token not in run_script:
+                    errors.append(
+                        "Release workflow build-binaries "
+                        f"`{step_name}` step must invoke `{required_token}`"
+                    )
 
     parity_needs = _needs("validate-tag-version-parity")
     if "verify-release-assets" not in parity_needs:
