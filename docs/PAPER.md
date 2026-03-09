@@ -70,7 +70,7 @@ To maximize hardware utilization while preserving cross-platform stability, `ten
 ## 3. Evaluation and Benchmarks
 
 ### 3.1 Experimental Setup and Hardware Constraints
-We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **362 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
+We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **363 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
 
 **Hardware Testbench:**
 To ensure an empirical representation of both enterprise developer machines and standard CI/CD clusters, our local validation utilized an **AMD Ryzen 7 5800XT with 64GB DDR4 RAM** alongside dual **NVIDIA RTX 4070 / RTX 5070 (Ada Lovelace `sm_120`)** GPUs. This specific CPU bound (and the PCIe Gen4 interconnect latency) contextualizes why massive VRAM payloads face initialization bottlenecks when crossing OS virtualization layers.
@@ -84,11 +84,11 @@ We re-ran the benchmark suite on 2026-03-09 (local run on current `main`) and ca
 
 Backend-level timings from `run_gpu_benchmarks.py` on this host:
 
-* **AST backend:** `function_definition` query completed in **0.023 seconds** (4 matches).
-* **cyBERT backend:** unavailable in this local pass because no Triton server was running on the benchmark host.
-* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.706 seconds** (2,000 matches).
+* **AST backend:** `function_definition` query completed in **0.018 seconds** (4 matches).
+* **cyBERT backend:** explicitly skipped in this local pass because no Triton server was running on the benchmark host.
+* **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.739 seconds** (2,000 matches).
 
-These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape. They also show an operational benchmark dependency: cyBERT throughput claims are only meaningful when the Triton inference service is actually reachable.
+These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape. They also show an operational benchmark dependency: cyBERT throughput claims are only meaningful when the Triton inference service is actually reachable, and benchmark scripts now record that case as an explicit skip rather than a synthetic failure.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
 The latest full script-driven CLI benchmark (`run_benchmarks.py`) from this local run shows that end-to-end process costs still dominate most regex/text scenarios:

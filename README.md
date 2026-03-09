@@ -24,7 +24,7 @@ Environment notes:
 - End-to-end CLI timings include Python process startup cost.
 - These figures are from a local `uv run python benchmarks/run_benchmarks.py` / `run_ast_benchmarks.py` / `run_gpu_benchmarks.py` execution.
 - `ripgrep` remains faster on most text-search scenarios in this local benchmark setup.
-- The GPU microbenchmark requires benchmark extras plus a reachable Triton endpoint for `cyBERT`; on this host the AST and Torch backend timings completed, while `cyBERT` was unavailable because no Triton server was running.
+- The GPU microbenchmark requires benchmark extras plus a reachable Triton endpoint for `cyBERT`; on this host the AST and Torch backend timings completed, while `cyBERT` was explicitly skipped because no Triton server was running.
 
 ### ripgrep vs tensor-grep (`benchmarks/run_benchmarks.py`)
 
@@ -53,9 +53,9 @@ Environment notes:
 
 | Backend | Workload | Time | Output |
 | --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | 0.023s | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | unavailable on this host | Triton endpoint not running |
-| Torch backend | Exact match on 10,000 log lines | 0.706s | 2,000 matches |
+| AST backend | `function_definition` on test module | 0.018s | 4 matches |
+| cyBERT backend | Semantic classification on 10,000 log lines | skipped on this host | Triton endpoint not running |
+| Torch backend | Exact match on 10,000 log lines | 0.739s | 2,000 matches |
 
 ### Benchmark Governance (Regression Protection)
 
