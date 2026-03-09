@@ -520,6 +520,14 @@ jobs:
         with:
           ref: v${{ needs.release.outputs.release_version }}
 
+      - name: Download all distributions
+        if: needs.release.outputs.release_version != ''
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pypi-*
+          path: dist
+          merge-multiple: true
+
       - name: Confirm publish job result when publishing is required
         if: needs.release.outputs.release_version != ''
         run: |
@@ -543,6 +551,7 @@ jobs:
           python scripts/validate_release_version_parity.py \
             --expected-version "${{ needs.release.outputs.release_version }}" \
             --expected-tag "v${{ needs.release.outputs.release_version }}" \
+            --dist-dir dist \
             --check-pypi \
             --pypi-wait-seconds 180 \
             --pypi-poll-interval-seconds 10

@@ -287,6 +287,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                                 f"`{gate_parity_step}` step must include `{required_flag}`"
                             )
                     for required_flag in (
+                        "--dist-dir",
                         "--check-pypi",
                         "--pypi-wait-seconds",
                         "--pypi-poll-interval-seconds",
@@ -296,6 +297,10 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                                 "CI workflow publish-success-gate "
                                 f"`{gate_parity_step}` step must include `{required_flag}`"
                             )
+                if "Download all distributions" not in gate_step_names:
+                    errors.append(
+                        "CI workflow publish-success-gate job must include step `Download all distributions`"
+                    )
 
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")
