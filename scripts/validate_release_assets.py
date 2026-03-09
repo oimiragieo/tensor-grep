@@ -618,6 +618,36 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     docs_needs = _needs("publish-docs")
     if "validate-tag-version-parity" not in docs_needs:
         errors.append("Release workflow publish-docs must depend on validate-tag-version-parity")
+    publish_docs_job = jobs.get("publish-docs")
+    if isinstance(publish_docs_job, dict):
+        docs_steps = publish_docs_job.get("steps", [])
+        docs_run_by_name: dict[str, str] = {}
+        docs_step_names: set[str] = set()
+        if isinstance(docs_steps, list):
+            for step in docs_steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                run = step.get("run")
+                if isinstance(name, str):
+                    docs_step_names.add(name)
+                    if isinstance(run, str):
+                        docs_run_by_name[name] = run
+        docs_step_contracts = {
+            "Install mkdocs": ("pip install mkdocs-material",),
+            "Deploy Docs": ("mkdocs gh-deploy --force",),
+        }
+        for step_name, required_tokens in docs_step_contracts.items():
+            run_script = docs_run_by_name.get(step_name)
+            if run_script is None:
+                errors.append(f"Release workflow publish-docs job must include step `{step_name}`")
+                continue
+            for required_token in required_tokens:
+                if required_token not in run_script:
+                    errors.append(
+                        "Release workflow publish-docs "
+                        f"`{step_name}` step must invoke `{required_token}`"
+                    )
 
     npm_needs = _needs("publish-npm")
     if "validate-tag-version-parity" not in npm_needs:
