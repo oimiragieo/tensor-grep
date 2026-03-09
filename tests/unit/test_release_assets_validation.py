@@ -1411,3 +1411,54 @@ def test_should_require_release_parity_step_presence_for_publish_npm_and_release
         in err
         for err in errors
     )
+
+
+def test_should_require_validate_pypi_artifacts_job_step_flags():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      validate-pypi-artifacts:
+        steps:
+          - name: Download all distributions
+            uses: actions/download-artifact@v4
+            with:
+              pattern: pypi-*
+              path: dist
+              merge-multiple: true
+          - name: Validate built PyPI artifact set
+            run: |
+              python scripts/validate_pypi_artifacts.py \
+                --dist-dir dist
+          - name: Smoke-test install from built PyPI artifacts
+            run: |
+              python scripts/smoke_test_pypi_artifacts.py \
+                --dist-dir dist
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "validate-pypi-artifacts `Validate built PyPI artifact set` step must include `--version`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-pypi-artifacts `Validate built PyPI artifact set` step must include `--require-platforms`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-pypi-artifacts `Smoke-test install from built PyPI artifacts` step must include `--version`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "validate-pypi-artifacts `Smoke-test install from built PyPI artifacts` step must include `--work-dir`"
+        in err
+        for err in errors
+    )
