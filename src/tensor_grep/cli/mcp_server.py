@@ -183,15 +183,27 @@ def tg_search(
                 by_file[match.file] = []
             by_file[match.file].append(match)
 
-        for filepath, matches in list(by_file.items())[
-            :15
-        ]:  # Limit to first 15 files to prevent context explosion
-            output.append(f"\n{filepath}:")
-            for m in matches[:10]:  # Limit to 10 matches per file
-                output.append(f"  {m.line_number}: {m.text.strip()}")
+        if by_file:
+            for filepath, matches in list(by_file.items())[
+                :15
+            ]:  # Limit to first 15 files to prevent context explosion
+                output.append(f"\n{filepath}:")
+                for m in matches[:10]:  # Limit to 10 matches per file
+                    output.append(f"  {m.line_number}: {m.text.strip()}")
 
-        if len(by_file) > 15:
-            output.append(f"\n... and {len(by_file) - 15} more files.")
+            if len(by_file) > 15:
+                output.append(f"\n... and {len(by_file) - 15} more files.")
+        elif all_results.match_counts_by_file:
+            for filepath, count in list(all_results.match_counts_by_file.items())[:15]:
+                output.append(f"\n{filepath}:")
+                output.append(f"  count={count}")
+            if len(all_results.match_counts_by_file) > 15:
+                output.append(f"\n... and {len(all_results.match_counts_by_file) - 15} more files.")
+        elif all_results.matched_file_paths:
+            for filepath in all_results.matched_file_paths[:15]:
+                output.append(f"\n{filepath}:")
+            if len(all_results.matched_file_paths) > 15:
+                output.append(f"\n... and {len(all_results.matched_file_paths) - 15} more files.")
 
         return "\n".join(output)
 
