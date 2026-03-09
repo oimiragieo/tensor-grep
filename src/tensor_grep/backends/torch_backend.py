@@ -226,12 +226,12 @@ class TorchBackend(ComputeBackend):
         )
 
         pattern_bytes = query.encode("utf-8", errors="replace")
+        routing_chunk_plan_mb: list[tuple[int, int]] = []
+        if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(resolved_device_ids):
+            routing_chunk_plan_mb = list(
+                zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
+            )
         if not pattern_bytes:
-            routing_chunk_plan_mb: list[tuple[int, int]] = []
-            if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(resolved_device_ids):
-                routing_chunk_plan_mb = list(
-                    zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
-                )
             return SearchResult(
                 matches=[],
                 total_files=0,
@@ -299,12 +299,6 @@ class TorchBackend(ComputeBackend):
                     matches.append(MatchLine(line_number=line_number, text=line, file=file_path))
                 if cfg.max_count and len(matches) >= cfg.max_count:
                     break
-
-        routing_chunk_plan_mb: list[tuple[int, int]] = []
-        if normalized_chunk_sizes and len(normalized_chunk_sizes) == len(resolved_device_ids):
-            routing_chunk_plan_mb = list(
-                zip(resolved_device_ids, normalized_chunk_sizes, strict=False)
-            )
 
         return SearchResult(
             matches=matches,
