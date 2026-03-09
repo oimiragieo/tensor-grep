@@ -1,6 +1,141 @@
 # CHANGELOG
 
 
+## v0.31.5 (2026-03-09)
+
+### Bug Fixes
+
+- **ast**: Accept ast-grep wrapper in run command
+  ([`2f93f8d`](https://github.com/oimiragieo/tensor-grep/commit/2f93f8dc811949007ac8dc46e356b50f3ea6d50d))
+
+- **ast**: Honor count-only file contract in workflows
+  ([`391c3e5`](https://github.com/oimiragieo/tensor-grep/commit/391c3e5e1180b066ced48c4349d595fa095e39ce))
+
+- **benchmark**: Skip cybert when triton is unavailable
+  ([`89dcfc8`](https://github.com/oimiragieo/tensor-grep/commit/89dcfc8bf140d5be7eb6d5c5e3691ad30df176d8))
+
+- **cli**: Report matched files for count-only stats
+  ([`bf338fe`](https://github.com/oimiragieo/tensor-grep/commit/bf338fe9a0ed2570ef797d2479f401c2cb50db43))
+
+- **cli**: Surface gpu chunk plans without device ids
+  ([`7cc2aa5`](https://github.com/oimiragieo/tensor-grep/commit/7cc2aa50920cf4796eb92c3979d3f96e73cc3fed))
+
+- **cli**: Track matched files for count-only results
+  ([`3dbd816`](https://github.com/oimiragieo/tensor-grep/commit/3dbd816e31b59ef2186f60c85e2f456b0ce53bc6))
+
+- **cpu**: Report files for count-only python fallback
+  ([`ceae4cb`](https://github.com/oimiragieo/tensor-grep/commit/ceae4cbc4a158ab586219cad9742bb4c238497ee))
+
+- **cudf**: Count matched files correctly
+  ([`f06d768`](https://github.com/oimiragieo/tensor-grep/commit/f06d7687f7e09ea6aa43c4a75111396aef01a281))
+
+- **cudf**: Report single-worker plan accurately
+  ([`eb949df`](https://github.com/oimiragieo/tensor-grep/commit/eb949dfc3e48d48a2fb48b447fc2c93a1876aca6))
+
+- **deps**: Narrow triton nlp extra to http client
+  ([`31b768b`](https://github.com/oimiragieo/tensor-grep/commit/31b768b0506c7677e256347efc4e291c082aa0ac))
+
+- **json**: Expose matched file metadata
+  ([`b7d32a4`](https://github.com/oimiragieo/tensor-grep/commit/b7d32a4fbb891940c1873339c99713bbc302c0e9))
+
+- **json**: Persist aggregated matched file metadata
+  ([`e5ec060`](https://github.com/oimiragieo/tensor-grep/commit/e5ec060a7e16eaf63c71d24ed44121f942b1db57))
+
+- **mcp**: Count matched files for count-only results
+  ([`cfa923d`](https://github.com/oimiragieo/tensor-grep/commit/cfa923d80784c1e26da904466355797f1051c31a))
+
+- **mcp**: Finalize aggregate file metadata
+  ([`d34c49b`](https://github.com/oimiragieo/tensor-grep/commit/d34c49ba7ed0ddb0b1193c282581ec0bee2be2bb))
+
+- **mcp**: Include routing in count responses
+  ([`8f3d6c3`](https://github.com/oimiragieo/tensor-grep/commit/8f3d6c3cb92b35b0b6df9e24285d97958e184e9d))
+
+- **mcp**: Summarize count-only file results
+  ([`7653094`](https://github.com/oimiragieo/tensor-grep/commit/7653094d6bfb17fc54acd83c7accf82404d7fd8e))
+
+- **rg**: Parse count output without json mode
+  ([`638b5d8`](https://github.com/oimiragieo/tensor-grep/commit/638b5d8d0a97253e341084b0e5e736ac4f352dcc))
+
+- **rg**: Preserve matched file paths for count modes
+  ([`9d89389`](https://github.com/oimiragieo/tensor-grep/commit/9d8938997b61a60faa3f198b4200178993f8c417))
+
+- **rg**: Preserve per-file counts for count output
+  ([`a9c827c`](https://github.com/oimiragieo/tensor-grep/commit/a9c827c4f2d075d65d2ad6c93654c01d18d88066))
+
+- **run**: Report actual ast backend mode
+  ([`3765f0c`](https://github.com/oimiragieo/tensor-grep/commit/3765f0c3646807d9ebf06146696d481118cae6e2))
+
+- **scan**: Report actual ast backend mode
+  ([`0a71504`](https://github.com/oimiragieo/tensor-grep/commit/0a715049c140c3379c80490327ecb146f83f4f67))
+
+- **test**: Report actual ast backend mode
+  ([`3c8d7b5`](https://github.com/oimiragieo/tensor-grep/commit/3c8d7b53e293d35bfadeada276d7913936ccd5eb))
+
+- **torch**: Preserve routing metadata on empty pattern
+  ([`12bf1e6`](https://github.com/oimiragieo/tensor-grep/commit/12bf1e672728f771f9025cc4127c9609eb0170bc))
+
+- **torch**: Resolve mypy no-redef in search path
+  ([`91f4293`](https://github.com/oimiragieo/tensor-grep/commit/91f42939d6873cf98fba6ff9df7da39afad60fba))
+
+- **version**: Derive fallback cli version from pyproject
+  ([`2a09a53`](https://github.com/oimiragieo/tensor-grep/commit/2a09a5319376c910e5666570de27c782c1f0167b))
+
+### Documentation
+
+- **benchmark**: Lock local benchmark install contract
+  ([`26f29ab`](https://github.com/oimiragieo/tensor-grep/commit/26f29ab150a79ec68b8ca650852b3a79c790a633))
+
+- **benchmark**: Refresh results for 2026-03-09 run
+  ([`d2e9a97`](https://github.com/oimiragieo/tensor-grep/commit/d2e9a97e5dd28132da036ef642e9c0eb12c932e6))
+
+### Testing
+
+- **bundle**: Require exact validation commands
+  ([`980e127`](https://github.com/oimiragieo/tensor-grep/commit/980e1272e1a76fd3246c54429a4244a4bd63bbdf))
+
+- **bundle**: Require install smoke commands
+  ([`ba6d780`](https://github.com/oimiragieo/tensor-grep/commit/ba6d780f6455536045836e023d4b58624571e7c5))
+
+- **bundle**: Require publish branch and git add commands
+  ([`809ccea`](https://github.com/oimiragieo/tensor-grep/commit/809ccea3fdd420325e3b1c8ee4790af5052cbdae))
+
+- **ci**: Require dist parity check in publish-pypi
+  ([`06af847`](https://github.com/oimiragieo/tensor-grep/commit/06af8470770fa4b3c84c66577032b75337f6e62c))
+
+- **ci**: Require dist parity in publish-success-gate
+  ([`4c34daa`](https://github.com/oimiragieo/tensor-grep/commit/4c34daadf6130ed14bb27025de27355d266aa3fa))
+
+- **ci**: Require validate-pypi-artifacts step flags
+  ([`b5a5731`](https://github.com/oimiragieo/tensor-grep/commit/b5a573106a9c6cfd3d24b0544c8583cb1743c627))
+
+- **docs**: Require exact package-manager validation commands
+  ([`4855a8f`](https://github.com/oimiragieo/tensor-grep/commit/4855a8f77f3f678a20e28b65cf57563914fe7627))
+
+- **gpu**: Lock collapsed cudf plan through pipeline
+  ([`f6a8a6b`](https://github.com/oimiragieo/tensor-grep/commit/f6a8a6b711316202ec2dca31d0b933fe2636f3dd))
+
+- **gpu**: Lock torch regex cpu fallback through pipeline
+  ([`ab06202`](https://github.com/oimiragieo/tensor-grep/commit/ab06202f7a0ac3ec1fab525d269956cb1ad86f86))
+
+- **gpu**: Prefer runtime single-worker metadata in stats
+  ([`0d1aac4`](https://github.com/oimiragieo/tensor-grep/commit/0d1aac492ce1320f17d608cfd9c1326d583e1f68))
+
+- **gpu**: Prefer runtime single-worker metadata in surfaces
+  ([`afb6c80`](https://github.com/oimiragieo/tensor-grep/commit/afb6c802725942081f214df2fbcfc9d9c9800b89))
+
+- **release**: Require binary artifact validation flags
+  ([`2bf3361`](https://github.com/oimiragieo/tensor-grep/commit/2bf33617a4436054fecc605d075c83f6dda5ad70))
+
+- **release**: Require binary smoke artifacts dir flag
+  ([`6c42095`](https://github.com/oimiragieo/tensor-grep/commit/6c42095dde259ce85e1570124df1155425b8f67a))
+
+- **release**: Require binary smoke verify version flag
+  ([`5f71b16`](https://github.com/oimiragieo/tensor-grep/commit/5f71b16128b727a18f14c493e97e42ec4182a786))
+
+- **release**: Validate built artifact metadata parity
+  ([`10d3088`](https://github.com/oimiragieo/tensor-grep/commit/10d30886eb1918b7d2d5cc88094a384f09102359))
+
+
 ## v0.31.4 (2026-03-08)
 
 ### Bug Fixes
