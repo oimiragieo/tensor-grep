@@ -626,6 +626,32 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append(
                 "Release workflow build-binaries `Build Binary` step must invoke `scripts/build_binaries.py`"
             )
+        build_install_contracts = {
+            "Install dependencies (CPU)": (
+                "uv venv",
+                'uv pip install -e ".[dev]"',
+                "uv pip install nuitka",
+            ),
+            "Install dependencies (NVIDIA)": (
+                "uv venv",
+                "uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124",
+                'uv pip install -e ".[gpu-win,nlp,ast,dev]"',
+                "uv pip install nuitka",
+            ),
+        }
+        for step_name, required_tokens in build_install_contracts.items():
+            run_script = build_run_by_name.get(step_name)
+            if run_script is None:
+                errors.append(
+                    f"Release workflow build-binaries job must include step `{step_name}`"
+                )
+                continue
+            for required_token in required_tokens:
+                if required_token not in run_script:
+                    errors.append(
+                        "Release workflow build-binaries "
+                        f"`{step_name}` step must invoke `{required_token}`"
+                    )
 
         upload_step = build_steps_by_name.get("Upload Artifact")
         if upload_step is None:
