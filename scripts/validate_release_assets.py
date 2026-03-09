@@ -624,6 +624,11 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     f"Release workflow create-release job must include step `{required_step}`"
                 )
         create_release_step_contracts = {
+            "Validate release binary artifact matrix and generate checksums": (
+                "scripts/validate_release_binary_artifacts.py",
+                "--artifacts-dir",
+                "--checksums-out",
+            ),
             "Build package-manager publish bundle": (
                 "scripts/prepare_package_manager_release.py",
                 "--output-dir artifacts/package-manager-bundle",
