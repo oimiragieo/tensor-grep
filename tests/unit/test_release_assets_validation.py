@@ -1735,3 +1735,89 @@ def test_should_require_release_publish_npm_prepublish_commands():
         "publish-npm `Publish NPM Package` step must invoke `npm publish --access public`" in err
         for err in errors
     )
+
+
+def test_should_require_release_create_github_release_step_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      validate-package-managers:
+        steps:
+          - name: Validate package-manager publish bundle source state
+            run: uv run python scripts/prepare_package_manager_release.py --check
+          - name: Preflight build package-manager publish bundle artifact
+            run: uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
+          - name: Preflight verify package-manager bundle checksums
+            run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
+          - name: Preflight smoke-test package-manager bundle contracts
+            run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
+      build-binaries:
+        needs: [validate-release-assets, validate-package-managers]
+      create-release:
+        steps:
+          - name: Build package-manager publish bundle
+            run: uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
+          - name: Verify package-manager bundle checksums
+            run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
+          - name: Smoke-test package-manager bundle contracts
+            run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
+          - name: Create GitHub Release
+            uses: softprops/action-gh-release@v1
+            with:
+              files: |
+                artifacts/**/tg-*
+              generate_release_notes: false
+      verify-release-assets:
+        needs: create-release
+      validate-tag-version-parity:
+        needs: verify-release-assets
+      publish-docs:
+        needs: validate-tag-version-parity
+        steps:
+          - name: Install mkdocs
+            run: pip install mkdocs-material
+          - name: Deploy Docs
+            run: mkdocs gh-deploy --force
+      publish-npm:
+        needs: validate-tag-version-parity
+        steps:
+          - name: Verify Version Match
+            run: |
+              TAG_VERSION=${GITHUB_REF#refs/tags/v}
+              NPM_VERSION=$(node -p "require('./npm/package.json').version")
+              if [ "$TAG_VERSION" != "$NPM_VERSION" ]; then
+                exit 1
+              fi
+          - name: Publish NPM Package
+            run: npm publish --access public
+          - name: Verify npm registry parity for release version
+            run: python scripts/validate_release_version_parity.py --expected-version "${GITHUB_REF#refs/tags/v}" --expected-tag "${GITHUB_REF#refs/tags/}" --check-npm --npm-wait-seconds 180 --npm-poll-interval-seconds 10
+      release-success-gate:
+        needs: [validate-tag-version-parity, publish-npm, publish-docs]
+    """
+    errors = module.validate_release_workflow_content(release_workflow=release_workflow)
+    assert any(
+        "create-release `Create GitHub Release` step must use `softprops/action-gh-release@v2`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "create-release `Create GitHub Release` step must include `artifacts/CHECKSUMS.txt`" in err
+        for err in errors
+    )
+    assert any(
+        "create-release `Create GitHub Release` step must include `artifacts/package-manager-bundle/**`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "create-release `Create GitHub Release` step must set `generate_release_notes: true`" in err
+        for err in errors
+    )
