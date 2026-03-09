@@ -54,6 +54,15 @@ class _FakeGpuPipeline(_FakePipeline):
         self.selected_gpu_chunk_plan_mb = [(7, 256), (3, 512)]
 
 
+class _FakeGpuPlanOnlyPipeline(_FakePipeline):
+    def __init__(self, force_cpu=False, config=None):
+        super().__init__(force_cpu=force_cpu, config=config)
+        self.selected_backend_name = "RipgrepBackend"
+        self.selected_backend_reason = "gpu_explicit_ids_no_gpu_backend_fallback"
+        self.selected_gpu_device_ids = []
+        self.selected_gpu_chunk_plan_mb = [(7, 256), (3, 512)]
+
+
 @dataclass
 class _FakeRipgrepBackend:
     called: bool = False
@@ -747,6 +756,64 @@ def test_cli_stats_should_prefer_runtime_backend_metadata_when_backend_falls_bac
     assert result.exit_code == 0
     assert "[stats] backend=CPUBackend reason=torch_regex_cpu_fallback" in result.output
     assert "[stats] gpu_device_ids=" not in result.output
+
+
+def test_cli_debug_should_print_gpu_chunk_plan_when_pipeline_selected_fallback_has_no_device_ids(
+    monkeypatch,
+):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeGpuPlanOnlyPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--debug", "--ltl"])
+
+    assert result.exit_code == 0
+    assert (
+        "[debug] routing.gpu_device_ids=[] routing.gpu_chunk_plan_mb=[(7, 256), (3, 512)]"
+        in result.output
+    )
+
+
+def test_cli_stats_should_print_gpu_chunk_plan_when_pipeline_selected_fallback_has_no_device_ids(
+    monkeypatch,
+):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeGpuPlanOnlyPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--stats"])
+
+    assert result.exit_code == 0
+    assert (
+        "[stats] backend=RipgrepBackend reason=gpu_explicit_ids_no_gpu_backend_fallback"
+        in result.output
+    )
+    assert (
+        "[stats] gpu_device_ids=[] gpu_chunk_plan_mb=[(7, 256), (3, 512)] distributed=True workers=2"
+        in result.output
+    )
 
 
 def test_cli_json_output_should_prefer_runtime_single_worker_gpu_metadata_over_selected_plan(
