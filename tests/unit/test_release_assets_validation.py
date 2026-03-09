@@ -1161,6 +1161,53 @@ def test_should_require_validate_tag_version_parity_step_contracts():
     )
 
 
+def test_should_require_release_binary_smoke_verify_expected_version_flag():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      validate-package-managers:
+        steps:
+          - name: Preflight build package-manager publish bundle artifact
+          - name: Preflight verify package-manager bundle checksums
+          - name: Preflight smoke-test package-manager bundle contracts
+      build-binaries:
+        needs: [validate-release-assets, validate-package-managers]
+      create-release:
+        steps:
+          - name: Build package-manager publish bundle
+            run: uv run python scripts/prepare_package_manager_release.py --output-dir artifacts/package-manager-bundle
+          - name: Verify package-manager bundle checksums
+            run: uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle
+          - name: Smoke-test package-manager bundle contracts
+            run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
+          - name: Smoke-verify Linux release binary version
+            run: uv run python scripts/smoke_verify_release_binary.py --artifacts-dir artifacts
+      verify-release-assets:
+        needs: create-release
+      validate-tag-version-parity:
+        needs: verify-release-assets
+      publish-docs:
+        needs: validate-tag-version-parity
+      publish-npm:
+        needs: validate-tag-version-parity
+      release-success-gate:
+        needs: [validate-tag-version-parity, publish-npm, publish-docs]
+    """
+    errors = module.validate_release_workflow_content(release_workflow=release_workflow)
+    assert any(
+        "create-release `Smoke-verify Linux release binary version` step must pass `--expected-version`"
+        in err
+        for err in errors
+    )
+
+
 def test_should_require_release_parity_steps_to_include_registry_check_flags_and_retries():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
