@@ -55,8 +55,12 @@ def _write_bundle(tmp_path: Path, version: str) -> Path:
         (
             "# Package Manager Publish Bundle v1.2.3\n\n"
             "homebrew-tap/Formula/tensor-grep.rb\n"
+            "brew install oimiragieo/tap/tensor-grep\n"
+            "tg --version\n"
             "winget-pkgs/manifests/o/oimiragieo/tensor-grep/1.2.3/oimiragieo.tensor-grep.yaml\n"
             "winget validate --manifest\n"
+            "winget install oimiragieo.tensor-grep\n"
+            "tg --version\n"
         ),
         encoding="utf-8",
     )
@@ -91,3 +95,12 @@ def test_should_fail_when_summary_missing_required_paths(tmp_path: Path):
         for err in errors
     )
     assert any("Bundle summary must include winget validation instruction" in err for err in errors)
+    assert any(
+        "Bundle summary must include Homebrew smoke install instruction" in err for err in errors
+    )
+    assert any(
+        "Bundle summary must include winget smoke install instruction" in err for err in errors
+    )
+    assert any(
+        "Bundle summary must include tg --version smoke verification" in err for err in errors
+    )

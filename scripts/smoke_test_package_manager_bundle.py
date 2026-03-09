@@ -84,6 +84,12 @@ def smoke_test_package_manager_bundle(*, bundle_dir: Path, expected_version: str
         errors.append("Bundle summary must include winget manifest path for expected version")
     if "winget validate" not in summary_content:
         errors.append("Bundle summary must include winget validation instruction")
+    if "brew install oimiragieo/tap/tensor-grep" not in summary_content:
+        errors.append("Bundle summary must include Homebrew smoke install instruction")
+    if "winget install oimiragieo.tensor-grep" not in summary_content:
+        errors.append("Bundle summary must include winget smoke install instruction")
+    if "tg --version" not in summary_content:
+        errors.append("Bundle summary must include tg --version smoke verification")
 
     return errors
 
