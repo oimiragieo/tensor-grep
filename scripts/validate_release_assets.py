@@ -604,6 +604,47 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         errors.append(
             "Release workflow build-binaries must depend on release/package-manager validators"
         )
+    build_binaries_job = jobs.get("build-binaries")
+    if isinstance(build_binaries_job, dict):
+        build_steps = build_binaries_job.get("steps", [])
+        build_steps_by_name: dict[str, dict[str, object]] = {}
+        build_run_by_name: dict[str, str] = {}
+        if isinstance(build_steps, list):
+            for step in build_steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                if isinstance(name, str):
+                    build_steps_by_name[name] = step
+                    run = step.get("run")
+                    if isinstance(run, str):
+                        build_run_by_name[name] = run
+        build_binary_run = build_run_by_name.get("Build Binary")
+        if build_binary_run is None:
+            errors.append("Release workflow build-binaries job must include step `Build Binary`")
+        elif "scripts/build_binaries.py" not in build_binary_run:
+            errors.append(
+                "Release workflow build-binaries `Build Binary` step must invoke `scripts/build_binaries.py`"
+            )
+
+        upload_step = build_steps_by_name.get("Upload Artifact")
+        if upload_step is None:
+            errors.append("Release workflow build-binaries job must include step `Upload Artifact`")
+        else:
+            uses_value = upload_step.get("uses")
+            if uses_value != "actions/upload-artifact@v4":
+                errors.append(
+                    "Release workflow build-binaries `Upload Artifact` step must use `actions/upload-artifact@v4`"
+                )
+            with_block = upload_step.get("with")
+            if not isinstance(with_block, dict):
+                errors.append(
+                    "Release workflow build-binaries `Upload Artifact` step must define a `with` mapping"
+                )
+            elif str(with_block.get("path")) != "tg-*":
+                errors.append(
+                    "Release workflow build-binaries `Upload Artifact` step must include `path: tg-*`"
+                )
 
     parity_needs = _needs("validate-tag-version-parity")
     if "verify-release-assets" not in parity_needs:
