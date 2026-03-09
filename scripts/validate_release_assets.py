@@ -902,6 +902,37 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 )
 
     publish_npm_runs = _step_runs_by_name("publish-npm")
+    publish_npm_job = jobs.get("publish-npm")
+    if isinstance(publish_npm_job, dict):
+        npm_steps = publish_npm_job.get("steps", [])
+        npm_steps_by_name: dict[str, dict[str, object]] = {}
+        if isinstance(npm_steps, list):
+            for step in npm_steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                if isinstance(name, str):
+                    npm_steps_by_name[name] = step
+        setup_node_step = npm_steps_by_name.get("Setup Node.js")
+        if setup_node_step is None:
+            errors.append("Release workflow publish-npm job must include step `Setup Node.js`")
+        else:
+            uses_value = setup_node_step.get("uses")
+            if uses_value != "actions/setup-node@v4":
+                errors.append(
+                    "Release workflow publish-npm `Setup Node.js` step must use `actions/setup-node@v4`"
+                )
+            with_block = setup_node_step.get("with")
+            if not isinstance(with_block, dict):
+                errors.append(
+                    "Release workflow publish-npm `Setup Node.js` step must define a `with` mapping"
+                )
+            else:
+                if str(with_block.get("registry-url")) != "https://registry.npmjs.org":
+                    errors.append(
+                        "Release workflow publish-npm `Setup Node.js` step must include `registry-url: https://registry.npmjs.org`"
+                    )
+
     npm_version_match_step = "Verify Version Match"
     npm_version_match_run = publish_npm_runs.get(npm_version_match_step)
     if npm_version_match_run is None:
