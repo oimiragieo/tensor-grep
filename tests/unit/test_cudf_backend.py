@@ -236,6 +236,31 @@ class TestCuDFBackend:
         assert result.routing_distributed is True
         assert result.routing_worker_count == 2
 
+    @patch.dict("sys.modules", {"cudf": MagicMock(), "rmm": MagicMock(), "re": MagicMock()})
+    @patch("os.path.getsize", return_value=1024 * 1024 * 2)
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    def test_should_not_claim_distributed_fanout_when_duplicate_device_ids_collapse_to_one_worker(
+        self, mock_pool, mock_getsize
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[1, 1], device_ids=[3, 3])
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+
+        with patch(
+            "tensor_grep.backends.cudf_backend._process_chunk_on_device",
+            return_value=([MagicMock(line_number=1, text="3", file="test.log")], 1),
+        ):
+            result = backend.search("test.log", "ERROR")
+
+        mock_pool.assert_not_called()
+        assert result.routing_reason == "cudf_single_worker_plan"
+        assert result.routing_gpu_device_ids == [3]
+        assert result.routing_gpu_chunk_plan_mb == [(3, 1)]
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
+
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
     def test_should_not_spawn_process_pool_when_multi_gpu_plan_has_single_chunk(
