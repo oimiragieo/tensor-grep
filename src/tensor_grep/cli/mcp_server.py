@@ -87,6 +87,15 @@ def _apply_selected_gpu_defaults(
     )
 
 
+def _finalize_aggregate_result(all_results: SearchResult) -> None:
+    all_results.matched_file_paths = sorted(dict.fromkeys(all_results.matched_file_paths))
+    if not all_results.match_counts_by_file and all_results.matches:
+        for match in all_results.matches:
+            all_results.match_counts_by_file[match.file] = (
+                all_results.match_counts_by_file.get(match.file, 0) + 1
+            )
+
+
 @mcp.tool()  # type: ignore
 def tg_search(
     pattern: str,
@@ -163,6 +172,7 @@ def tg_search(
             ),
             selected_backend_reason=getattr(pipeline, "selected_backend_reason", "unknown"),
         )
+        _finalize_aggregate_result(all_results)
 
         if all_results.is_empty:
             return f"No matches found for '{pattern}' in {path}.\n{_routing_summary(all_results)}"
@@ -262,6 +272,7 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
             ),
             selected_backend_reason=getattr(pipeline, "selected_backend_reason", "unknown"),
         )
+        _finalize_aggregate_result(all_results)
 
         if all_results.is_empty:
             return f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
@@ -278,10 +289,24 @@ def tg_ast_search(pattern: str, lang: str, path: str = ".") -> str:
                 by_file[match.file] = []
             by_file[match.file].append(match)
 
-        for filepath, matches in list(by_file.items())[:15]:
-            output.append(f"\n{filepath}:")
-            for m in matches[:10]:
-                output.append(f"  {m.line_number}: {m.text.strip()}")
+        if by_file:
+            for filepath, matches in list(by_file.items())[:15]:
+                output.append(f"\n{filepath}:")
+                for m in matches[:10]:
+                    output.append(f"  {m.line_number}: {m.text.strip()}")
+            if len(by_file) > 15:
+                output.append(f"\n... and {len(by_file) - 15} more files.")
+        elif all_results.match_counts_by_file:
+            for filepath, count in list(all_results.match_counts_by_file.items())[:15]:
+                output.append(f"\n{filepath}:")
+                output.append(f"  count={count}")
+            if len(all_results.match_counts_by_file) > 15:
+                output.append(f"\n... and {len(all_results.match_counts_by_file) - 15} more files.")
+        elif all_results.matched_file_paths:
+            for filepath in all_results.matched_file_paths[:15]:
+                output.append(f"\n{filepath}:")
+            if len(all_results.matched_file_paths) > 15:
+                output.append(f"\n... and {len(all_results.matched_file_paths) - 15} more files.")
 
         return "\n".join(output)
 

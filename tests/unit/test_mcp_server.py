@@ -152,6 +152,40 @@ def test_tg_search_should_render_count_only_file_summary_without_materialized_ma
     assert "  count=3" in out
 
 
+def test_tg_ast_search_should_render_count_only_file_summary_without_materialized_matches():
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = type("AstGrepWrapperBackend", (), {"search": MagicMock()})()
+    fake_backend.search.side_effect = [
+        SearchResult(
+            matches=[],
+            matched_file_paths=["a.py"],
+            match_counts_by_file={"a.py": 2},
+            total_files=1,
+            total_matches=2,
+        ),
+        SearchResult(matches=[], total_files=0, total_matches=0),
+    ]
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "AstGrepWrapperBackend"
+        pipeline.selected_backend_reason = "ast_grep_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        mock_scanner.return_value.walk.return_value = ["a.py", "b.py"]
+
+        out = mcp_server.tg_ast_search("def $A():", "python", ".")
+
+    assert "Found 2 structural AST matches across 1 files:" in out
+    assert "\na.py:" in out
+    assert "  count=2" in out
+
+
 def test_tg_devices_returns_no_gpu_message_when_empty():
     from tensor_grep.cli import mcp_server
 
