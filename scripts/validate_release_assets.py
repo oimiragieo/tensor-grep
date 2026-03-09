@@ -246,6 +246,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                                 f"`{parity_step}` step must include `{required_flag}`"
                             )
                     for required_flag in (
+                        "--dist-dir",
                         "--check-pypi",
                         "--pypi-wait-seconds",
                         "--pypi-poll-interval-seconds",
