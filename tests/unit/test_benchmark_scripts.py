@@ -71,6 +71,23 @@ def test_run_gpu_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
     assert path == override.resolve()
 
 
+def test_run_gpu_benchmarks_should_skip_cybert_when_triton_is_unreachable():
+    module = _load_script_module("run_gpu_benchmarks_script", "benchmarks/run_gpu_benchmarks.py")
+
+    assert module._is_skippable_cybert_exception(
+        RuntimeError("CyBERT inference failed: [Errno 10061] connection refused")
+    )
+    assert module._is_skippable_cybert_exception(
+        RuntimeError("CyBERT inference failed: connection refused")
+    )
+    assert module._is_skippable_cybert_exception(
+        RuntimeError("CyBERT inference failed: actively refused it")
+    )
+    assert not module._is_skippable_cybert_exception(
+        RuntimeError("CyBERT inference failed: invalid tensor shape")
+    )
+
+
 def test_check_regression_should_refuse_cross_environment_comparison_by_default(
     monkeypatch, tmp_path
 ):

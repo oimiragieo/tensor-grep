@@ -37,6 +37,19 @@ def _record_result(
     })
 
 
+def _is_skippable_cybert_exception(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "connection refused",
+            "actively refused",
+            "failed to establish a new connection",
+            "timed out",
+        )
+    )
+
+
 def main() -> int:
     # Ensure local `src/` imports work when running this script directly.
     root_dir = ROOT_DIR
@@ -156,13 +169,18 @@ class DataManager:
             failures.append(msg)
             print(f"cyBERT quality gate failed: {msg}")
     except Exception as exc:
-        print(f"cyBERT Backend failed: {exc}")
-        import traceback
+        if _is_skippable_cybert_exception(exc):
+            print(f"cyBERT Backend skipped: {exc}")
+            print("-" * 65)
+            _record_result(rows, "cybert_backend", None, str(exc), "SKIP")
+        else:
+            print(f"cyBERT Backend failed: {exc}")
+            import traceback
 
-        traceback.print_exc()
-        print("-" * 65)
-        failures.append(f"cyBERT backend failed: {exc}")
-        _record_result(rows, "cybert_backend", None, str(exc), "FAIL")
+            traceback.print_exc()
+            print("-" * 65)
+            failures.append(f"cyBERT backend failed: {exc}")
+            _record_result(rows, "cybert_backend", None, str(exc), "FAIL")
 
     # --- TorchBackend String Benchmark ---
     try:
