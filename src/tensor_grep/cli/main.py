@@ -768,7 +768,7 @@ def search_command(
         typer.echo(
             f"[debug] routing.backend={selected_backend_name} reason={selected_backend_reason}"
         )
-        if selected_gpu_device_ids:
+        if selected_gpu_device_ids or selected_gpu_chunk_plan_mb:
             typer.echo(
                 f"[debug] routing.gpu_device_ids={selected_gpu_device_ids} "
                 f"routing.gpu_chunk_plan_mb={selected_gpu_chunk_plan_mb}"
@@ -921,7 +921,7 @@ def search_command(
             f"[debug] routing.runtime backend={runtime_backend} reason={runtime_reason}",
             err=True,
         )
-        if runtime_gpu_device_ids:
+        if runtime_gpu_device_ids or runtime_gpu_chunk_plan_mb:
             typer.echo(
                 (
                     f"[debug] routing.runtime.gpu_device_ids={runtime_gpu_device_ids} "
@@ -959,7 +959,7 @@ def search_command(
             stats_gpu_chunk_plan_mb = (
                 all_results.routing_gpu_chunk_plan_mb or selected_gpu_chunk_plan_mb
             )
-        if stats_gpu_device_ids:
+        if stats_gpu_device_ids or stats_gpu_chunk_plan_mb:
             typer.echo(
                 (
                     f"[stats] gpu_device_ids={stats_gpu_device_ids} "
