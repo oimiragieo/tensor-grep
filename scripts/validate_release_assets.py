@@ -395,7 +395,9 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
     for required_cmd in (
         "gh run list --limit 10",
         "uv run python scripts/prepare_package_manager_release.py --check",
+        "ruby -c Formula/tensor-grep.rb",
         "winget validate --manifest",
+        "winget validate --manifest .\\manifests\\o\\oimiragieo\\tensor-grep\\X.Y.Z\\",
         "uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir",
         "uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir",
         "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z",
