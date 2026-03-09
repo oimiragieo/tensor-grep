@@ -638,6 +638,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             ),
             "Smoke-verify Linux release binary version": (
                 "scripts/smoke_verify_release_binary.py",
+                "--artifacts-dir",
                 "--expected-version",
             ),
         }

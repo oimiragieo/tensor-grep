@@ -1188,7 +1188,7 @@ def test_should_require_release_binary_smoke_verify_expected_version_flag():
           - name: Smoke-test package-manager bundle contracts
             run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
           - name: Smoke-verify Linux release binary version
-            run: uv run python scripts/smoke_verify_release_binary.py --artifacts-dir artifacts
+            run: uv run python scripts/smoke_verify_release_binary.py
       verify-release-assets:
         needs: create-release
       validate-tag-version-parity:
@@ -1203,6 +1203,11 @@ def test_should_require_release_binary_smoke_verify_expected_version_flag():
     errors = module.validate_release_workflow_content(release_workflow=release_workflow)
     assert any(
         "create-release `Smoke-verify Linux release binary version` step must pass `--expected-version`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "create-release `Smoke-verify Linux release binary version` step must pass `--artifacts-dir`"
         in err
         for err in errors
     )
