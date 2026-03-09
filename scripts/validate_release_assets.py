@@ -281,6 +281,11 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     )
                 validate_run = validate_run_by_name.get(validate_step)
                 if validate_run is not None:
+                    if "scripts/validate_pypi_artifacts.py" not in validate_run:
+                        errors.append(
+                            "CI workflow validate-pypi-artifacts "
+                            f"`{validate_step}` step must invoke `scripts/validate_pypi_artifacts.py`"
+                        )
                     for required_flag in ("--dist-dir", "--version", "--require-platforms"):
                         if required_flag not in validate_run:
                             errors.append(
@@ -295,6 +300,11 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                     )
                 smoke_run = validate_run_by_name.get(smoke_step)
                 if smoke_run is not None:
+                    if "scripts/smoke_test_pypi_artifacts.py" not in smoke_run:
+                        errors.append(
+                            "CI workflow validate-pypi-artifacts "
+                            f"`{smoke_step}` step must invoke `scripts/smoke_test_pypi_artifacts.py`"
+                        )
                     for required_flag in ("--dist-dir", "--version", "--work-dir"):
                         if required_flag not in smoke_run:
                             errors.append(
