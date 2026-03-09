@@ -646,6 +646,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     "Release workflow build-binaries `Upload Artifact` step must include `path: tg-*`"
                 )
         build_step_contracts = {
+            "Rename Artifact (Windows)": ("mv tg.exe tg-windows-amd64-${{ matrix.gpu }}.exe",),
+            "Rename Artifact (Linux)": ("mv tg tg-linux-amd64-${{ matrix.gpu }}",),
+            "Rename Artifact (macOS)": ("mv tg tg-macos-amd64-${{ matrix.gpu }}",),
             "Smoke-test Binary (Windows)": (r".\tg-windows-amd64-${{ matrix.gpu }}.exe --version",),
             "Smoke-test Binary (Linux)": (
                 "chmod +x tg-linux-amd64-${{ matrix.gpu }}",
