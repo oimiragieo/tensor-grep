@@ -435,6 +435,11 @@ def test_should_require_ci_publish_success_gate_pypi_parity_step_flags():
         in err
         for err in errors
     )
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--dist-dir`"
+        in err
+        for err in errors
+    )
 
 
 def test_should_require_ci_publish_pypi_and_publish_success_gate_parity_step_presence():
