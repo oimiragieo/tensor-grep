@@ -372,3 +372,48 @@ class TestMultiGpuDistributionIntegration:
         assert result.routing_gpu_chunk_plan_mb == [(7, 128), (3, 128)]
         assert result.routing_distributed is True
         assert result.routing_worker_count == 2
+
+    @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
+    @patch("tensor_grep.backends.cudf_backend.CuDFBackend.is_available", return_value=True)
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("os.path.getsize", return_value=2 * 1024 * 1024)
+    def test_should_report_single_worker_cudf_execution_through_pipeline_when_gpu_plan_collapses(
+        self,
+        _mock_getsize,
+        mock_memory,
+        mock_rust,
+        mock_rg,
+        _mock_cudf_available,
+        mock_process_chunk,
+    ):
+        from tensor_grep.core.pipeline import Pipeline
+
+        mock_rg.return_value.is_available.return_value = False
+        mock_rust.return_value.is_available.return_value = False
+        mock_memory.return_value.get_device_chunk_plan_mb.return_value = [(3, 1), (3, 1)]
+        mock_process_chunk.return_value = ([MatchLine(line_number=1, text="3", file="test.log")], 1)
+
+        config = SearchConfig(
+            query_pattern="ERROR",
+            input_total_bytes=8 * 1024 * 1024,
+            gpu_device_ids=[3, 3],
+        )
+        pipeline = Pipeline(force_cpu=False, config=config)
+
+        with patch.dict(
+            "sys.modules",
+            {"cudf": MagicMock(), "rmm": MagicMock(), "tensor_grep.rust_core": None},
+        ):
+            result = pipeline.get_backend().search("test.log", "ERROR")
+
+        assert pipeline.selected_backend_reason == "gpu_explicit_ids_cudf"
+        assert pipeline.selected_gpu_device_ids == [3]
+        assert pipeline.selected_gpu_chunk_plan_mb == [(3, 1)]
+        assert result.routing_backend == "CuDFBackend"
+        assert result.routing_reason == "cudf_chunked_single_worker_plan"
+        assert result.routing_gpu_device_ids == [3]
+        assert result.routing_gpu_chunk_plan_mb == [(3, 1)]
+        assert result.routing_distributed is False
+        assert result.routing_worker_count == 1
