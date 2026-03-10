@@ -1093,13 +1093,19 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     if isinstance(publish_npm_job, dict):
         npm_steps = publish_npm_job.get("steps", [])
         npm_steps_by_name: dict[str, dict[str, object]] = {}
+        npm_uses_values: list[str] = []
         if isinstance(npm_steps, list):
             for step in npm_steps:
                 if not isinstance(step, dict):
                     continue
                 name = step.get("name")
+                uses_value = step.get("uses")
+                if isinstance(uses_value, str):
+                    npm_uses_values.append(uses_value)
                 if isinstance(name, str):
                     npm_steps_by_name[name] = step
+        if "actions/checkout@v4" not in npm_uses_values:
+            errors.append("Release workflow publish-npm job must include `actions/checkout@v4`")
         setup_node_step = npm_steps_by_name.get("Setup Node.js")
         if setup_node_step is None:
             errors.append("Release workflow publish-npm job must include step `Setup Node.js`")
