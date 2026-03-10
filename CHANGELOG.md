@@ -1,6 +1,126 @@
 # CHANGELOG
 
 
+## v0.31.6 (2026-03-10)
+
+### Documentation
+
+- **benchmark**: Refresh latest benchmark and parity contracts
+  ([`d74a94e`](https://github.com/oimiragieo/tensor-grep/commit/d74a94e5436cb793456e215905db6ac8b6a651eb))
+
+### Performance Improvements
+
+- **cli**: Bootstrap rg fast path and fix benchmark gate
+  ([`3aed746`](https://github.com/oimiragieo/tensor-grep/commit/3aed74630c9fd977750865f146f6ea3d30a2e435))
+
+### Testing
+
+- **ci**: Require validate-pypi-artifacts step commands
+  ([`52da731`](https://github.com/oimiragieo/tensor-grep/commit/52da7313b986ffcdf5b7b79ddee54b867315794a))
+
+- **release**: Require build-binaries install commands
+  ([`733ace1`](https://github.com/oimiragieo/tensor-grep/commit/733ace1e843e69d8d3ac7f31ce6d1fca468bdd1a))
+
+- **release**: Require build-binaries rename commands
+  ([`4a51110`](https://github.com/oimiragieo/tensor-grep/commit/4a5111067692e3cf0427ed7b68b9221b993c815c))
+
+- **release**: Require build-binaries setup contract
+  ([`f1e3b17`](https://github.com/oimiragieo/tensor-grep/commit/f1e3b173576b0814c7c56f9f348d191f68ded5c7))
+
+- **release**: Require build-binaries smoke commands
+  ([`73b47b3`](https://github.com/oimiragieo/tensor-grep/commit/73b47b3071205b889f73590668fef914609289af))
+
+- **release**: Require build-binaries step contracts
+  ([`2aea343`](https://github.com/oimiragieo/tensor-grep/commit/2aea343621f31876d030a5336f2cf141e78bcd22))
+
+- **release**: Require create-release artifact steps
+  ([`1828a1a`](https://github.com/oimiragieo/tensor-grep/commit/1828a1a7a39c4272fe4a33a21220ee7dc63bf0f3))
+
+- **release**: Require create-release download contract
+  ([`41137eb`](https://github.com/oimiragieo/tensor-grep/commit/41137ebc637494f098ac4108d266f9c5984692d8))
+
+- **release**: Require create-release setup contract
+  ([`7dff7b3`](https://github.com/oimiragieo/tensor-grep/commit/7dff7b3aab2b260d67c6cb883f605c5b725b9c38))
+
+- **release**: Require github release asset contract
+  ([`058458f`](https://github.com/oimiragieo/tensor-grep/commit/058458f33a9ed77e9dad28609971898f2153a330))
+
+- **release**: Require npm prepublish commands
+  ([`ad547fb`](https://github.com/oimiragieo/tensor-grep/commit/ad547fb4beade692671c5e06a92b7c8e3cb498b4))
+
+- **release**: Require npm setup-node contract
+  ([`aed8ae6`](https://github.com/oimiragieo/tensor-grep/commit/aed8ae6a58dd49701e2348e743fa32191321ca78))
+
+- **release**: Require preflight package-manager step commands
+  ([`c6c17f1`](https://github.com/oimiragieo/tensor-grep/commit/c6c17f181c0a1603481a7c358bb00a2acbe94974))
+
+- **release**: Require publish-docs checkout
+  ([`1cb3342`](https://github.com/oimiragieo/tensor-grep/commit/1cb334203706143f157e25f1674d63551a30242e))
+
+- **release**: Require publish-docs deploy commands
+  ([`8c1375f`](https://github.com/oimiragieo/tensor-grep/commit/8c1375f136da4546a8b3a69a66705bb48d072661))
+
+- **release**: Require publish-docs deploy entrypoint
+  ([`79f0bdd`](https://github.com/oimiragieo/tensor-grep/commit/79f0bdd4082a9272ef4beb3afc41cb2f13c9ce4b))
+
+- **release**: Require publish-docs force deploy
+  ([`f4f1c4e`](https://github.com/oimiragieo/tensor-grep/commit/f4f1c4eafa92f295fa8aae59a3a54d4158c2d9f4))
+
+- **release**: Require publish-docs pip entrypoint
+  ([`3ebc5b1`](https://github.com/oimiragieo/tensor-grep/commit/3ebc5b13ed68d299e8e12aa5ec81768f77f8a9f1))
+
+- **release**: Require publish-docs python setup
+  ([`4531b32`](https://github.com/oimiragieo/tensor-grep/commit/4531b32ea3242961336909c856410b96de0abce0))
+
+- **release**: Require publish-npm auth env
+  ([`be0cc7f`](https://github.com/oimiragieo/tensor-grep/commit/be0cc7f179f1ce4c7eaacde9325c197dc256ed1d))
+
+- **release**: Require publish-npm checkout
+  ([`94c0075`](https://github.com/oimiragieo/tensor-grep/commit/94c0075fe1a19d10ea55fdce0dc7e04149e64fd2))
+
+- **release**: Require publish-npm node version
+  ([`2922540`](https://github.com/oimiragieo/tensor-grep/commit/2922540a6a1912a6d3735c21f62a703835fb64e5))
+
+- **release**: Require publish-npm parity entrypoint
+  ([`df2f33f`](https://github.com/oimiragieo/tensor-grep/commit/df2f33f5f8e2bde8aab79728e66f7d23586be3bc))
+
+- **release**: Require publish-npm uv setup
+  ([`23bd6c4`](https://github.com/oimiragieo/tensor-grep/commit/23bd6c4cd52b46cd1bfc8d860852e38dc127ca62))
+
+- **release**: Require publish-npm version gate
+  ([`1cd74b8`](https://github.com/oimiragieo/tensor-grep/commit/1cd74b8329e59970c9b9eb3b7a2c6e09ffc34653))
+
+- **release**: Require publish-npm working directory
+  ([`52d3060`](https://github.com/oimiragieo/tensor-grep/commit/52d3060d89ce3681b4df8ce8e616008ed9841f1e))
+
+- **release**: Require source-state bundle check command
+  ([`9d103d5`](https://github.com/oimiragieo/tensor-grep/commit/9d103d590c9305ccb7191fdd45a66b9113812869))
+
+- **release**: Require success-gate confirmation
+  ([`440a7a3`](https://github.com/oimiragieo/tensor-grep/commit/440a7a39f97d5c1616c9bf2713e3693d60aef99d))
+
+- **release**: Require success-gate parity script
+  ([`adf940e`](https://github.com/oimiragieo/tensor-grep/commit/adf940eaf6c7f764114eaa3b3e0e0052df118f15))
+
+- **release**: Require success-gate python entrypoint
+  ([`d774eb4`](https://github.com/oimiragieo/tensor-grep/commit/d774eb4f1cbd06141a6ec10131e095bb5227d988))
+
+- **release**: Require success-gate setup
+  ([`af4579e`](https://github.com/oimiragieo/tensor-grep/commit/af4579e474776a100901bf4080a25a3107415c53))
+
+- **release**: Require tag parity setup actions
+  ([`2562577`](https://github.com/oimiragieo/tensor-grep/commit/2562577ca1e867676189bd3f4b651b5723f4f772))
+
+- **release**: Require tag parity setup contract
+  ([`baa044b`](https://github.com/oimiragieo/tensor-grep/commit/baa044be3479578f209ebbafeae270e48ea1030c))
+
+- **release**: Require verify-assets python entrypoint
+  ([`6d07efb`](https://github.com/oimiragieo/tensor-grep/commit/6d07efb4903fbd1299b284f55f5a5d7809c9063d))
+
+- **release**: Require verify-release-assets checkout
+  ([`fd9176d`](https://github.com/oimiragieo/tensor-grep/commit/fd9176df519431beca45c125e0e0a468c6f2291b))
+
+
 ## v0.31.5 (2026-03-09)
 
 ### Bug Fixes
