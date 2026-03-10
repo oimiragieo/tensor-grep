@@ -91,6 +91,36 @@ def test_run_gpu_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
     assert path == override.resolve()
 
 
+def test_run_hot_query_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
+    module = _load_script_module("run_hot_query_benchmarks_script", "benchmarks/run_hot_query_benchmarks.py")
+    monkeypatch.delenv("TENSOR_GREP_HOT_BENCH_DATA_DIR", raising=False)
+
+    path = module.resolve_hot_bench_data_dir()
+
+    assert path.parts[-2:] == ("artifacts", "hot_bench_data")
+
+
+def test_run_hot_query_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path):
+    module = _load_script_module("run_hot_query_benchmarks_script_override", "benchmarks/run_hot_query_benchmarks.py")
+    override = tmp_path / "hot_bench_override"
+    monkeypatch.setenv("TENSOR_GREP_HOT_BENCH_DATA_DIR", str(override))
+
+    path = module.resolve_hot_bench_data_dir()
+
+    assert path == override.resolve()
+
+
+def test_run_hot_query_benchmarks_should_build_cpu_probe_script(tmp_path):
+    module = _load_script_module("run_hot_query_benchmarks_script_probe", "benchmarks/run_hot_query_benchmarks.py")
+    script_path = tmp_path / "cpu_probe.py"
+
+    module.write_cpu_probe_script(script_path)
+
+    text = script_path.read_text(encoding="utf-8")
+    assert "CPUBackend" in text
+    assert "force python fallback" in text
+
+
 def test_run_gpu_benchmarks_should_skip_cybert_when_triton_is_unreachable():
     module = _load_script_module("run_gpu_benchmarks_script", "benchmarks/run_gpu_benchmarks.py")
 
