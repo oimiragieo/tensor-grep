@@ -4,6 +4,7 @@ if TYPE_CHECKING:
     import torch
 
 import logging
+import os
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -21,6 +22,10 @@ class AstBackend(ComputeBackend):
 
     def __init__(self) -> None:
         self._parsers: dict[str, Any] = {}
+        self._queries: dict[tuple[str, str], Any] = {}
+        self._parsed_source_cache: dict[
+            tuple[str, str], tuple[tuple[int, int], bytes, list[str], Any]
+        ] = {}
 
     def is_available(self) -> bool:
         """Check if torch-geometric and tree-sitter are installed."""
@@ -61,6 +66,34 @@ class AstBackend(ComputeBackend):
 
         self._parsers[lang] = parser
         return parser
+
+    def _get_query(self, parser: Any, lang: str, pattern: str) -> Any:
+        cache_key = (lang, pattern)
+        if cache_key in self._queries:
+            return self._queries[cache_key]
+
+        query = parser.language.query(f"({pattern}) @match")
+        self._queries[cache_key] = query
+        return query
+
+    def _get_parsed_source(
+        self, parser: Any, file_path: str, lang: str
+    ) -> tuple[bytes, list[str], Any]:
+        stat_result = os.stat(file_path)
+        cache_key = (file_path, lang)
+        cache_signature = (stat_result.st_mtime_ns, stat_result.st_size)
+        cached = self._parsed_source_cache.get(cache_key)
+        if cached and cached[0] == cache_signature:
+            _, source_bytes, lines, tree = cached
+            return source_bytes, lines, tree
+
+        with open(file_path, "rb") as f:
+            source_bytes = f.read()
+
+        tree = parser.parse(source_bytes)
+        lines = source_bytes.decode("utf-8").split("\n")
+        self._parsed_source_cache[cache_key] = (cache_signature, source_bytes, lines, tree)
+        return source_bytes, lines, tree
 
     def _ast_to_graph(
         self, root_node: Any, source_bytes: bytes
@@ -125,20 +158,14 @@ class AstBackend(ComputeBackend):
             lang = "javascript"
 
         parser = self._get_parser(lang)
-
-        with open(file_path, "rb") as f:
-            source_bytes = f.read()
-
-        tree = parser.parse(source_bytes)
+        _source_bytes, lines, tree = self._get_parsed_source(parser, file_path, lang)
         try:
-            query = parser.language.query(f"({pattern}) @match")
+            query = self._get_query(parser, lang, pattern)
         except Exception as exc:
             raise ValueError(f"Invalid AST query pattern for language '{lang}': {pattern}") from exc
 
         matches = []
         seen_lines = set()
-
-        lines = source_bytes.decode("utf-8").split("\n")
 
         # We perform actual structural matching using tree-sitter queries instead of naive hash
         # to fix the ast matching accuracy issue
