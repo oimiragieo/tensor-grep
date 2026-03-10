@@ -148,6 +148,21 @@ def run_cmd_capture(cmd):
     return time.perf_counter() - start, stdout
 
 
+def build_tg_benchmark_cmd(tg_args: list[str]) -> list[str]:
+    """
+    Benchmark the same bootstrap entrypoint the installed `tg` console script uses.
+    This keeps local/CI measurements aligned with real user-facing startup cost.
+    """
+    return [
+        sys.executable,
+        "-m",
+        "tensor_grep.cli.bootstrap",
+        "search",
+        "--no-ignore",
+        *tg_args,
+    ]
+
+
 def resolve_rg_binary() -> str:
     path = shutil.which("rg")
     if path:
@@ -232,18 +247,7 @@ def main():
 
         rg_cmd = [rg_bin, "--no-ignore", *rg_args]
 
-        # When running inside `uv run python run_benchmarks.py`, invoking `python` via subprocess
-        # escapes the uv environment. We MUST use sys.executable to stay inside the PyTorch env.
-        import sys
-
-        actual_tg_cmd = [
-            sys.executable,
-            "-m",
-            "tensor_grep.cli.main",
-            "search",
-            "--no-ignore",
-            *tg_args,
-        ]
+        actual_tg_cmd = build_tg_benchmark_cmd(tg_args)
 
         # Warmup to reduce first-run jitter (regex compilation/import effects).
         run_cmd_capture(rg_cmd)

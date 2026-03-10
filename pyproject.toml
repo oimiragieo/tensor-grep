@@ -51,7 +51,7 @@ bench = [
 ]
 
 [project.scripts]
-tg = "tensor_grep.cli.main:main_entry"
+tg = "tensor_grep.cli.bootstrap:main_entry"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

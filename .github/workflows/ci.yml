@@ -521,7 +521,7 @@ jobs:
           ref: v${{ needs.release.outputs.release_version }}
 
       - name: Download all distributions
-        if: needs.release.outputs.release_version != ''
+        if: needs.release.outputs.release_version != '' && needs.release.outputs.publish_pypi == 'true'
         uses: actions/download-artifact@v4
         with:
           pattern: pypi-*
@@ -548,10 +548,14 @@ jobs:
       - name: Verify PyPI parity for semantic-release version (always)
         if: needs.release.outputs.release_version != ''
         run: |
-          python scripts/validate_release_version_parity.py \
-            --expected-version "${{ needs.release.outputs.release_version }}" \
-            --expected-tag "v${{ needs.release.outputs.release_version }}" \
-            --dist-dir dist \
-            --check-pypi \
-            --pypi-wait-seconds 180 \
+          PARITY_ARGS=(
+            --expected-version "${{ needs.release.outputs.release_version }}"
+            --expected-tag "v${{ needs.release.outputs.release_version }}"
+            --check-pypi
+            --pypi-wait-seconds 180
             --pypi-poll-interval-seconds 10
+          )
+          if [ "${{ needs.release.outputs.publish_pypi }}" = "true" ]; then
+            PARITY_ARGS+=(--dist-dir dist)
+          fi
+          python scripts/validate_release_version_parity.py "${PARITY_ARGS[@]}"

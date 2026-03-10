@@ -437,7 +437,12 @@ def test_should_require_ci_publish_success_gate_pypi_parity_step_flags():
         for err in errors
     )
     assert any(
-        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--dist-dir`"
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--dist-dir` in its publish_pypi conditional branch"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must conditionally gate `--dist-dir` on `publish_pypi`"
         in err
         for err in errors
     )
@@ -479,6 +484,62 @@ def test_should_require_ci_publish_pypi_and_publish_success_gate_parity_step_pre
     )
     assert any(
         "publish-success-gate job must include step `Verify PyPI parity for semantic-release version (always)`"
+        in err
+        for err in errors
+    )
+
+
+def test_should_require_publish_success_gate_dist_branch_and_download_guard():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        outputs:
+          release_version: 0.31.5
+          publish_pypi: 'false'
+      publish-success-gate:
+        if: always()
+        needs: [release, publish-pypi]
+        steps:
+          - uses: actions/checkout@v4
+            if: needs.release.outputs.release_version != ''
+          - name: Download all distributions
+            if: needs.release.outputs.release_version != ''
+            uses: actions/download-artifact@v4
+            with:
+              pattern: pypi-*
+              path: dist
+              merge-multiple: true
+          - name: Verify PyPI parity for semantic-release version (always)
+            if: needs.release.outputs.release_version != ''
+            run: |
+              python scripts/validate_release_version_parity.py \
+                --expected-version "${{ needs.release.outputs.release_version }}" \
+                --expected-tag "v${{ needs.release.outputs.release_version }}" \
+                --check-pypi \
+                --pypi-wait-seconds 180 \
+                --pypi-poll-interval-seconds 10
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must include `--dist-dir` in its publish_pypi conditional branch"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-success-gate `Verify PyPI parity for semantic-release version (always)` step must conditionally gate `--dist-dir` on `publish_pypi`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "publish-success-gate `Download all distributions` step must run only when `publish_pypi == 'true'`"
         in err
         for err in errors
     )
