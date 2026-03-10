@@ -1072,6 +1072,14 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 f"job must include step `{tag_parity_step}`"
             )
         else:
+            if not tag_parity_run.lstrip().startswith(
+                "python scripts/validate_release_version_parity.py"
+            ):
+                errors.append(
+                    "Release workflow validate-tag-version-parity "
+                    f"`{tag_parity_step}` step must invoke "
+                    "`python scripts/validate_release_version_parity.py`"
+                )
             if "scripts/validate_release_version_parity.py" not in tag_parity_run:
                 errors.append(
                     "Release workflow validate-tag-version-parity "
