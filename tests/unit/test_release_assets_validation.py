@@ -2281,6 +2281,40 @@ def test_should_require_verify_release_assets_checkout_contract():
     assert "verify-release-assets job must include `actions/checkout@v4`" in joined_errors
 
 
+def test_should_require_verify_release_assets_python_entrypoint_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    verify_prefix, verify_rest = release_workflow.split("  verify-release-assets:", 1)
+    verify_section, remainder = verify_rest.split("  validate-tag-version-parity:", 1)
+    verify_section = verify_section.replace(
+        "python scripts/verify_github_release_assets.py",
+        "uv run python scripts/verify_github_release_assets.py",
+        1,
+    )
+    release_workflow = (
+        verify_prefix
+        + "  verify-release-assets:"
+        + verify_section
+        + "  validate-tag-version-parity:"
+        + remainder
+    )
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert (
+        "verify-release-assets `Verify uploaded release assets and checksum coverage` step must invoke "
+        "`python scripts/verify_github_release_assets.py`" in joined_errors
+    )
+
+
 def test_should_require_validate_tag_version_parity_setup_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
