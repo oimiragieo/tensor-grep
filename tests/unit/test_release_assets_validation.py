@@ -2118,3 +2118,32 @@ def test_should_require_release_build_binaries_step_contracts():
         "build-binaries `Smoke-test Binary (macOS)` step must invoke "
         "`./tg-macos-amd64-${{ matrix.gpu }} --version`" in joined_errors
     )
+
+
+def test_should_require_create_release_download_artifacts_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    release_workflow = release_workflow.replace(
+        "actions/download-artifact@v4",
+        "actions/download-artifact@v3",
+        1,
+    )
+    release_workflow = release_workflow.replace("path: artifacts", "path: dist", 1)
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert (
+        "create-release `Download Artifacts` step must use `actions/download-artifact@v4`"
+        in joined_errors
+    )
+    assert (
+        "create-release `Download Artifacts` step must include `path: artifacts`" in joined_errors
+    )

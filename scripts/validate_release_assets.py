@@ -834,6 +834,26 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     run = step.get("run")
                     if isinstance(run, str):
                         create_release_run_by_name[name] = run
+        download_artifacts_step = create_release_steps_by_name.get("Download Artifacts")
+        if download_artifacts_step is None:
+            errors.append(
+                "Release workflow create-release job must include step `Download Artifacts`"
+            )
+        else:
+            uses_value = download_artifacts_step.get("uses")
+            if uses_value != "actions/download-artifact@v4":
+                errors.append(
+                    "Release workflow create-release `Download Artifacts` step must use `actions/download-artifact@v4`"
+                )
+            with_block = download_artifacts_step.get("with")
+            if not isinstance(with_block, dict):
+                errors.append(
+                    "Release workflow create-release `Download Artifacts` step must define a `with` mapping"
+                )
+            elif str(with_block.get("path")) != "artifacts":
+                errors.append(
+                    "Release workflow create-release `Download Artifacts` step must include `path: artifacts`"
+                )
         for required_step in (
             "Build package-manager publish bundle",
             "Verify package-manager bundle checksums",
