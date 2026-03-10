@@ -2312,3 +2312,24 @@ def test_should_require_validate_tag_version_parity_setup_contract():
         "validate-tag-version-parity `Setup Python` step must invoke `uv python install 3.12`"
         in joined_errors
     )
+
+
+def test_should_require_publish_npm_checkout_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
+    npm_section, remainder = npm_rest.split("  publish-docs:", 1)
+    npm_section = npm_section.replace("actions/checkout@v4", "actions/checkout@v3", 1)
+    release_workflow = npm_prefix + "  publish-npm:" + npm_section + "  publish-docs:" + remainder
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "publish-npm job must include `actions/checkout@v4`" in joined_errors
