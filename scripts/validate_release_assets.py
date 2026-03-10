@@ -834,6 +834,22 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     run = step.get("run")
                     if isinstance(run, str):
                         create_release_run_by_name[name] = run
+        install_uv_step = create_release_steps_by_name.get("Install uv")
+        if install_uv_step is None:
+            errors.append("Release workflow create-release job must include step `Install uv`")
+        else:
+            uses_value = install_uv_step.get("uses")
+            if uses_value != "astral-sh/setup-uv@v5":
+                errors.append(
+                    "Release workflow create-release `Install uv` step must use `astral-sh/setup-uv@v5`"
+                )
+        setup_python_run = create_release_run_by_name.get("Setup Python")
+        if setup_python_run is None:
+            errors.append("Release workflow create-release job must include step `Setup Python`")
+        elif "uv python install 3.12" not in setup_python_run:
+            errors.append(
+                "Release workflow create-release `Setup Python` step must invoke `uv python install 3.12`"
+            )
         download_artifacts_step = create_release_steps_by_name.get("Download Artifacts")
         if download_artifacts_step is None:
             errors.append(
