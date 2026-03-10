@@ -1155,6 +1155,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     "Release workflow publish-npm `Setup Node.js` step must define a `with` mapping"
                 )
             else:
+                if str(with_block.get("node-version")) != "20":
+                    errors.append(
+                        "Release workflow publish-npm `Setup Node.js` step must include `node-version: 20`"
+                    )
                 if str(with_block.get("registry-url")) != "https://registry.npmjs.org":
                     errors.append(
                         "Release workflow publish-npm `Setup Node.js` step must include `registry-url: https://registry.npmjs.org`"
