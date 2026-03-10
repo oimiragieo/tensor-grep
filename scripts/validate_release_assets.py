@@ -976,22 +976,46 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         tag_steps = validate_tag_parity_job.get("steps", [])
         tag_run_by_name: dict[str, str] = {}
         tag_step_names: set[str] = set()
+        tag_steps_by_name: dict[str, dict[str, object]] = {}
+        tag_uses_values: list[str] = []
         if isinstance(tag_steps, list):
             for step in tag_steps:
                 if not isinstance(step, dict):
                     continue
                 name = step.get("name")
                 run = step.get("run")
+                uses_value = step.get("uses")
+                if isinstance(uses_value, str):
+                    tag_uses_values.append(uses_value)
                 if isinstance(name, str):
                     tag_step_names.add(name)
+                    tag_steps_by_name[name] = step
                     if isinstance(run, str):
                         tag_run_by_name[name] = run
+        if "actions/checkout@v4" not in tag_uses_values:
+            errors.append(
+                "Release workflow validate-tag-version-parity job must include `actions/checkout@v4`"
+            )
         for required_step in ("Install uv", "Setup Python"):
             if required_step not in tag_step_names:
                 errors.append(
                     "Release workflow validate-tag-version-parity "
                     f"job must include step `{required_step}`"
                 )
+        install_uv_step = tag_steps_by_name.get("Install uv")
+        if install_uv_step is not None:
+            uses_value = install_uv_step.get("uses")
+            if uses_value != "astral-sh/setup-uv@v5":
+                errors.append(
+                    "Release workflow validate-tag-version-parity "
+                    "`Install uv` step must use `astral-sh/setup-uv@v5`"
+                )
+        setup_python_run = tag_run_by_name.get("Setup Python")
+        if setup_python_run is not None and "uv python install 3.12" not in setup_python_run:
+            errors.append(
+                "Release workflow validate-tag-version-parity "
+                "`Setup Python` step must invoke `uv python install 3.12`"
+            )
         tag_parity_step = "Validate release tag/version parity across package metadata"
         tag_parity_run = tag_run_by_name.get(tag_parity_step)
         if tag_parity_run is None:

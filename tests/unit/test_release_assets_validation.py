@@ -2279,3 +2279,36 @@ def test_should_require_verify_release_assets_checkout_contract():
     )
     joined_errors = "\n".join(errors)
     assert "verify-release-assets job must include `actions/checkout@v4`" in joined_errors
+
+
+def test_should_require_validate_tag_version_parity_setup_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    tag_prefix, tag_rest = release_workflow.split("  validate-tag-version-parity:", 1)
+    tag_section, remainder = tag_rest.split("  publish-npm:", 1)
+    tag_section = tag_section.replace("actions/checkout@v4", "actions/checkout@v3", 1)
+    tag_section = tag_section.replace("astral-sh/setup-uv@v5", "astral-sh/setup-uv@v4", 1)
+    tag_section = tag_section.replace("uv python install 3.12", "python -V", 1)
+    release_workflow = (
+        tag_prefix + "  validate-tag-version-parity:" + tag_section + "  publish-npm:" + remainder
+    )
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "validate-tag-version-parity job must include `actions/checkout@v4`" in joined_errors
+    assert (
+        "validate-tag-version-parity `Install uv` step must use `astral-sh/setup-uv@v5`"
+        in joined_errors
+    )
+    assert (
+        "validate-tag-version-parity `Setup Python` step must invoke `uv python install 3.12`"
+        in joined_errors
+    )
