@@ -1011,9 +1011,11 @@ class _FakeCountOnlyAstPipeline:
 class _CapturingAstPipeline:
     last_config = None
     seen_configs: ClassVar[list[object]] = []
+    init_count: ClassVar[int] = 0
 
     def __init__(self, force_cpu=False, config=None):
         _ = force_cpu
+        _CapturingAstPipeline.init_count += 1
         _CapturingAstPipeline.last_config = config
         _CapturingAstPipeline.seen_configs.append(config)
         self._backend = _FakeAstBackend()
@@ -1214,6 +1216,7 @@ def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     _CapturingAstPipeline.seen_configs = []
+    _CapturingAstPipeline.init_count = 0
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1241,6 +1244,7 @@ def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
 def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     _CapturingAstPipeline.seen_configs = []
+    _CapturingAstPipeline.init_count = 0
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1267,6 +1271,77 @@ def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch):
     assert _CapturingAstPipeline.last_config is not None
     assert _CapturingAstPipeline.last_config.ast_prefer_native is True
     assert any(cfg and cfg.query_pattern == "ERROR" for cfg in _CapturingAstPipeline.seen_configs)
+
+
+def test_scan_should_reuse_native_ast_backend_selection_for_multiple_native_patterns(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    _CapturingAstPipeline.seen_configs = []
+    _CapturingAstPipeline.init_count = 0
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+        )
+        Path("rules").mkdir()
+        Path("rules/rule_a.yml").write_text(
+            "id: rule-a\nlanguage: python\nrule:\n  pattern: function_definition\n",
+            encoding="utf-8",
+        )
+        Path("rules/rule_b.yml").write_text(
+            "id: rule-b\nlanguage: python\nrule:\n  pattern: class_definition\n",
+            encoding="utf-8",
+        )
+        Path("a.py").write_text("function_definition\nclass_definition\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert _CapturingAstPipeline.init_count == 1
+
+
+def test_test_command_should_reuse_wrapper_backend_selection_for_multiple_ast_grep_patterns(
+    monkeypatch,
+):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
+    _CapturingAstPipeline.seen_configs = []
+    _CapturingAstPipeline.init_count = 0
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+            encoding="utf-8",
+        )
+        Path("rules").mkdir()
+        Path("tests").mkdir()
+        Path("rules/a.yml").write_text(
+            "id: rule-a\nlanguage: python\nrule:\n  pattern: 'def $FUNC():'\n",
+            encoding="utf-8",
+        )
+        Path("rules/b.yml").write_text(
+            "id: rule-b\nlanguage: python\nrule:\n  pattern: 'class $NAME:'\n",
+            encoding="utf-8",
+        )
+        Path("tests/a.yml").write_text(
+            "id: test-a\nruleId: rule-a\nvalid:\n  - ok\ninvalid:\n  - 'def $FUNC():'\n",
+            encoding="utf-8",
+        )
+        Path("tests/b.yml").write_text(
+            "id: test-b\nruleId: rule-b\nvalid:\n  - ok\ninvalid:\n  - 'class $NAME:'\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert _CapturingAstPipeline.init_count == 1
 
 
 def test_test_command_should_use_total_file_contract_for_match_detection(monkeypatch):
