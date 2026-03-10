@@ -345,3 +345,80 @@ class TestCPUBackend:
 
         assert result.total_matches == 2
         assert result.routing_reason == "cpu_python_regex"
+
+    def test_should_reuse_persistent_literal_prefilter_cache_across_instances(
+        self, tmp_path, monkeypatch
+    ):
+        cache_dir = tmp_path / "cpu-prefilter-cache"
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX_DIR", str(cache_dir))
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "1")
+        CPUBackend._clear_shared_caches()
+
+        log = tmp_path / "persistent_prefilter.log"
+        log.write_text("INFO ok\nERROR x timeout\nWARN no\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            first = CPUBackend().search(str(log), r"ERROR.*timeout", config=SearchConfig())
+            assert first.total_matches == 1
+            assert first.routing_reason == "cpu_python_regex_prefilter"
+
+            CPUBackend._clear_shared_caches()
+            backend_two = CPUBackend()
+
+            def fail_build(*_args, **_kwargs):
+                raise AssertionError("should not rebuild literal prefilter index from disk cache")
+
+            backend_two._build_line_trigram_index = fail_build  # type: ignore[method-assign]
+            second = backend_two.search(str(log), r"ERROR.*timeout", config=SearchConfig())
+
+        assert second.total_matches == 1
+        assert second.routing_reason == "cpu_python_regex_prefilter_cache"
+
+    def test_should_invalidate_persistent_literal_prefilter_cache_when_file_changes(
+        self, tmp_path, monkeypatch
+    ):
+        cache_dir = tmp_path / "cpu-prefilter-cache"
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX_DIR", str(cache_dir))
+        monkeypatch.setenv("TENSOR_GREP_CPU_REGEX_INDEX", "1")
+        CPUBackend._clear_shared_caches()
+
+        log = tmp_path / "persistent_prefilter_invalidation.log"
+        log.write_text("INFO ok\nERROR x timeout\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            first = CPUBackend().search(str(log), r"ERROR.*timeout", config=SearchConfig())
+            assert first.total_matches == 1
+
+            log.write_text("INFO ok\nWARN timeout\n", encoding="utf-8")
+            CPUBackend._clear_shared_caches()
+
+            backend_two = CPUBackend()
+            build_calls = {"count": 0}
+            original_build = backend_two._build_line_trigram_index
+
+            def wrapped_build(lines):
+                build_calls["count"] += 1
+                return original_build(lines)
+
+            backend_two._build_line_trigram_index = wrapped_build  # type: ignore[method-assign]
+            second = backend_two.search(str(log), r"WARN.*timeout", config=SearchConfig())
+
+        assert second.total_matches == 1
+        assert second.routing_reason == "cpu_python_regex_prefilter"
+        assert build_calls["count"] == 1
