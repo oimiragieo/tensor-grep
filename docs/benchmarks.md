@@ -80,3 +80,14 @@ Measured on the local development host with a synthetic single-file corpus:
 - second cached literal query on the same file: **0.0025s**
 
 That speedup is exactly the kind of workload-specific win the REI paper suggests: pay a small indexing cost once, then reuse it across repeated searches.
+
+### Repeated Regex Prefilter Microbenchmark
+
+The current line also adds a safe literal-core prefilter to `CPUBackend` for repeated regex workloads that fall back to Python `re`. This does not try to solve general regex indexing. It only activates when a conservative parser can prove the regex contains a required literal fragment and when context/invert semantics are not in play.
+
+Measured on the local development host with a synthetic single-file corpus and forced Python fallback:
+
+- first indexed regex query: **0.243s**
+- second cached regex query on the same file: **0.014s**
+
+This is a narrower win than direct `rg` passthrough, but it matters in the exact cases where `tg` cannot stay on the native `rg`/Rust path and would otherwise rescan every line with Python `re`.
