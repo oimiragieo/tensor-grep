@@ -887,9 +887,11 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     "Release workflow create-release `Download Artifacts` step must include `path: artifacts`"
                 )
         for required_step in (
+            "Validate release binary artifact matrix and generate checksums",
             "Build package-manager publish bundle",
             "Verify package-manager bundle checksums",
             "Smoke-test package-manager bundle contracts",
+            "Smoke-verify Linux release binary version",
         ):
             if required_step not in create_release_step_names:
                 errors.append(

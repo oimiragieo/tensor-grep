@@ -2209,3 +2209,46 @@ def test_should_require_create_release_setup_contract():
     assert (
         "create-release `Setup Python` step must invoke `uv python install 3.12`" in joined_errors
     )
+
+
+def test_should_require_create_release_artifact_validation_steps():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    create_release_prefix, create_release_rest = release_workflow.split("  create-release:", 1)
+    create_release_section, remainder = create_release_rest.split("  verify-release-assets:", 1)
+    create_release_section = create_release_section.replace(
+        "Validate release binary artifact matrix and generate checksums",
+        "Validate release binaries",
+        1,
+    )
+    create_release_section = create_release_section.replace(
+        "Smoke-verify Linux release binary version",
+        "Smoke-verify release binary",
+        1,
+    )
+    release_workflow = (
+        create_release_prefix
+        + "  create-release:"
+        + create_release_section
+        + "  verify-release-assets:"
+        + remainder
+    )
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert (
+        "create-release job must include step `Validate release binary artifact matrix and generate checksums`"
+        in joined_errors
+    )
+    assert (
+        "create-release job must include step `Smoke-verify Linux release binary version`"
+        in joined_errors
+    )
