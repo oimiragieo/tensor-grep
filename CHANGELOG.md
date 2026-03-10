@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.9 (2026-03-10)
+
+### Performance Improvements
+
+- **ast**: Prefer native backend for repeated workflows
+  ([`1226560`](https://github.com/oimiragieo/tensor-grep/commit/122656063c3333e9fa2a67c4d99cfc028f7daa3a))
+
+
 ## v0.31.8 (2026-03-10)
 
 ### Performance Improvements
