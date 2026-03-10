@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.8 (2026-03-10)
+
+### Performance Improvements
+
+- **ast**: Persist cached results across runs
+  ([`3731823`](https://github.com/oimiragieo/tensor-grep/commit/37318235756164445b55595fdaa397ba2b9ae16a))
+
+
 ## v0.31.7 (2026-03-10)
 
 ### Performance Improvements
