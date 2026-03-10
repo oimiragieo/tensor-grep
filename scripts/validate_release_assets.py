@@ -784,6 +784,14 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                         "Release workflow publish-docs "
                         f"`{step_name}` step must invoke `{required_token}`"
                     )
+        install_mkdocs_run = docs_run_by_name.get("Install mkdocs")
+        if install_mkdocs_run is not None and not install_mkdocs_run.lstrip().startswith(
+            "pip install mkdocs-material"
+        ):
+            errors.append(
+                "Release workflow publish-docs "
+                "`Install mkdocs` step must invoke `pip install mkdocs-material`"
+            )
         deploy_docs_run = docs_run_by_name.get("Deploy Docs")
         if deploy_docs_run is not None and "mkdocs gh-deploy --force" in deploy_docs_run:
             for required_token in ("mkdocs", "gh-deploy", "--force"):
