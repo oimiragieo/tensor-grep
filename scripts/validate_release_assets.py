@@ -1336,6 +1336,11 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 f"Release workflow release-success-gate job must include step `{step_name}`"
             )
             continue
+        if not step_run.lstrip().startswith("python scripts/validate_release_version_parity.py"):
+            errors.append(
+                "Release workflow release-success-gate "
+                f"`{step_name}` step must invoke `python scripts/validate_release_version_parity.py`"
+            )
         if "scripts/validate_release_version_parity.py" not in step_run:
             errors.append(
                 "Release workflow release-success-gate "

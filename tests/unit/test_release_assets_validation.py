@@ -2671,3 +2671,30 @@ def test_should_require_release_success_gate_parity_script_contract():
         "release-success-gate `Verify final npm parity before release success gate` step must invoke "
         "`scripts/validate_release_version_parity.py`" in joined_errors
     )
+
+
+def test_should_require_release_success_gate_parity_entrypoint_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    gate_prefix, gate_rest = release_workflow.split("  release-success-gate:", 1)
+    gate_section = gate_rest.replace(
+        "python scripts/validate_release_version_parity.py",
+        "uv run python scripts/validate_release_version_parity.py",
+        1,
+    )
+    release_workflow = gate_prefix + "  release-success-gate:" + gate_section
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert (
+        "release-success-gate `Verify final npm parity before release success gate` step must invoke "
+        "`python scripts/validate_release_version_parity.py`" in joined_errors
+    )
