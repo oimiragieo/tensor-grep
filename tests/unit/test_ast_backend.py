@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from tensor_grep.core.config import SearchConfig
@@ -522,3 +524,81 @@ class TestAstBackend:
         assert second.total_matches == 1
         assert parser_two.parse_calls == 0
         assert parser_two.language.query_calls == 0
+
+    def test_should_reuse_shared_in_memory_node_index_without_disk_reload(
+        self, tmp_path, mocker, monkeypatch
+    ):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        cache_dir = tmp_path / "ast-cache"
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE_DIR", str(cache_dir))
+        AstBackend._clear_shared_caches()
+
+        class FakeNode:
+            def __init__(self, node_type, line_number, children=()):
+                self.type = node_type
+                self.start_point = (line_number, 0)
+                self.children = children
+
+        class FakeQuery:
+            def captures(self, _root):
+                return []
+
+        class FakeLanguage:
+            def __init__(self):
+                self.query_calls = 0
+
+            def query(self, _pattern):
+                self.query_calls += 1
+                return FakeQuery()
+
+        class FakeTree:
+            def __init__(self):
+                self.root_node = FakeNode(
+                    "module",
+                    0,
+                    children=(
+                        FakeNode("function_definition", 0),
+                        FakeNode("class_definition", 2),
+                    ),
+                )
+
+        class FakeParser:
+            def __init__(self):
+                self.language = FakeLanguage()
+                self.parse_calls = 0
+
+            def parse(self, _source):
+                self.parse_calls += 1
+                return FakeTree()
+
+        file_path = tmp_path / "test.py"
+        file_path.write_text("def hello():\n    pass\nclass World:\n    pass\n", encoding="utf-8")
+
+        backend_one = AstBackend()
+        mocker.patch.object(backend_one, "is_available", return_value=True)
+        parser_one = FakeParser()
+        mocker.patch.object(backend_one, "_get_parser", return_value=parser_one)
+
+        first = backend_one.search(
+            str(file_path), "function_definition", SearchConfig(ast=True, lang="python")
+        )
+
+        assert first.total_matches == 1
+        assert parser_one.parse_calls == 1
+
+        backend_two = AstBackend()
+        mocker.patch.object(backend_two, "is_available", return_value=True)
+        parser_two = FakeParser()
+        mocker.patch.object(backend_two, "_get_parser", return_value=parser_two)
+        read_text_spy = mocker.spy(Path, "read_text")
+
+        second = backend_two.search(
+            str(file_path), "class_definition", SearchConfig(ast=True, lang="python")
+        )
+
+        assert second.total_matches == 1
+        assert second.matches[0].line_number == 3
+        assert parser_two.parse_calls == 0
+        assert parser_two.language.query_calls == 0
+        assert read_text_spy.call_count == 0
