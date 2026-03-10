@@ -1208,6 +1208,11 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             f"Release workflow publish-npm job must include step `{npm_version_match_step}`"
         )
     else:
+        if not npm_version_match_run.lstrip().startswith("TAG_VERSION=${GITHUB_REF#refs/tags/v}"):
+            errors.append(
+                "Release workflow publish-npm "
+                f"`{npm_version_match_step}` step must begin with `TAG_VERSION=${{GITHUB_REF#refs/tags/v}}`"
+            )
         required_tokens = (
             "node -p \"require('./npm/package.json').version\"",
             'if [ "$TAG_VERSION" != "$NPM_VERSION" ]',
