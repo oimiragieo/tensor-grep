@@ -1188,13 +1188,26 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
 
     npm_publish_step = "Publish NPM Package"
     npm_publish_run = publish_npm_runs.get(npm_publish_step)
+    npm_publish_step_config = None
+    if isinstance(publish_npm_job, dict):
+        npm_publish_step_config = npm_steps_by_name.get(npm_publish_step)
     if npm_publish_run is None:
         errors.append(f"Release workflow publish-npm job must include step `{npm_publish_step}`")
-    elif "npm publish --access public" not in npm_publish_run:
-        errors.append(
-            "Release workflow publish-npm "
-            f"`{npm_publish_step}` step must invoke `npm publish --access public`"
-        )
+    else:
+        if "npm publish --access public" not in npm_publish_run:
+            errors.append(
+                "Release workflow publish-npm "
+                f"`{npm_publish_step}` step must invoke `npm publish --access public`"
+            )
+        if not isinstance(npm_publish_step_config, dict):
+            errors.append(
+                f"Release workflow publish-npm job must include step `{npm_publish_step}`"
+            )
+        elif str(npm_publish_step_config.get("working-directory")) != "npm":
+            errors.append(
+                "Release workflow publish-npm "
+                f"`{npm_publish_step}` step must include `working-directory: npm`"
+            )
 
     npm_verify_step = "Verify npm registry parity for release version"
     npm_verify_run = publish_npm_runs.get(npm_verify_step)
