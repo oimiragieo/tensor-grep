@@ -1184,6 +1184,45 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 )
 
     release_gate_runs = _step_runs_by_name("release-success-gate")
+    release_gate_job = jobs.get("release-success-gate")
+    if isinstance(release_gate_job, dict):
+        release_gate_steps = release_gate_job.get("steps", [])
+        release_gate_uses_values: list[str] = []
+        release_gate_steps_by_name: dict[str, dict[str, object]] = {}
+        if isinstance(release_gate_steps, list):
+            for step in release_gate_steps:
+                if not isinstance(step, dict):
+                    continue
+                uses_value = step.get("uses")
+                if isinstance(uses_value, str):
+                    release_gate_uses_values.append(uses_value)
+                name = step.get("name")
+                if isinstance(name, str):
+                    release_gate_steps_by_name[name] = step
+        if "actions/checkout@v4" not in release_gate_uses_values:
+            errors.append(
+                "Release workflow release-success-gate job must include `actions/checkout@v4`"
+            )
+        install_uv_step = release_gate_steps_by_name.get("Install uv")
+        if install_uv_step is None:
+            errors.append(
+                "Release workflow release-success-gate job must include step `Install uv`"
+            )
+        else:
+            uses_value = install_uv_step.get("uses")
+            if uses_value != "astral-sh/setup-uv@v5":
+                errors.append(
+                    "Release workflow release-success-gate `Install uv` step must use `astral-sh/setup-uv@v5`"
+                )
+        setup_python_run = release_gate_runs.get("Setup Python")
+        if setup_python_run is None:
+            errors.append(
+                "Release workflow release-success-gate job must include step `Setup Python`"
+            )
+        elif "uv python install 3.12" not in setup_python_run:
+            errors.append(
+                "Release workflow release-success-gate `Setup Python` step must invoke `uv python install 3.12`"
+            )
     release_gate_step_contracts = {
         "Verify final npm parity before release success gate": (
             "--check-npm",
