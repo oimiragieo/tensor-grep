@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
@@ -54,6 +55,13 @@ class AstBackend(ComputeBackend):
     def _build_file_signature(self, file_path: str) -> tuple[int, int]:
         stat_result = os.stat(file_path)
         return stat_result.st_mtime_ns, stat_result.st_size
+
+    def _is_simple_node_type_pattern(self, pattern: str) -> bool:
+        return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", pattern.strip()))
+
+    def _get_node_index_cache_path(self, file_path: str, lang: str) -> Path:
+        digest = hashlib.sha256(f"{Path(file_path).resolve()}::{lang}".encode()).hexdigest()
+        return self._get_persistent_cache_dir() / lang / "node-index" / f"{digest}.json"
 
     def _get_result_cache_path(self, file_path: str, lang: str, pattern: str) -> Path:
         digest = hashlib.sha256(
@@ -128,6 +136,83 @@ class AstBackend(ComputeBackend):
             cache_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         except OSError:
             logger.debug("Failed to write AST persistent cache for %s", file_path, exc_info=True)
+
+    def _build_node_type_index(self, root_node: Any) -> dict[str, list[int]]:
+        node_type_index: dict[str, set[int]] = {}
+
+        def traverse(node: Any) -> None:
+            node_type_index.setdefault(node.type, set()).add(node.start_point[0] + 1)
+            for child in node.children:
+                traverse(child)
+
+        traverse(root_node)
+        return {
+            node_type: sorted(line_numbers) for node_type, line_numbers in node_type_index.items()
+        }
+
+    def _load_persistent_node_type_index(
+        self, file_path: str, lang: str
+    ) -> dict[str, list[int]] | None:
+        if not self._is_persistent_cache_enabled():
+            return None
+
+        cache_path = self._get_node_index_cache_path(file_path, lang)
+        if not cache_path.exists():
+            return None
+
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        if payload.get("file_signature") != list(self._build_file_signature(file_path)):
+            return None
+
+        node_index = payload.get("node_type_index")
+        if not isinstance(node_index, dict):
+            return None
+
+        normalized: dict[str, list[int]] = {}
+        for node_type, line_numbers in node_index.items():
+            if not isinstance(node_type, str) or not isinstance(line_numbers, list):
+                return None
+            normalized[node_type] = [int(line_number) for line_number in line_numbers]
+        return normalized
+
+    def _persist_node_type_index(
+        self, file_path: str, lang: str, node_type_index: dict[str, list[int]]
+    ) -> None:
+        if not self._is_persistent_cache_enabled():
+            return
+
+        cache_path = self._get_node_index_cache_path(file_path, lang)
+        payload = {
+            "file_signature": list(self._build_file_signature(file_path)),
+            "node_type_index": node_type_index,
+        }
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError:
+            logger.debug("Failed to write AST node index cache for %s", file_path, exc_info=True)
+
+    def _build_matches_from_line_numbers(
+        self, file_path: str, lines: list[str], line_numbers: list[int], routing_reason: str
+    ) -> SearchResult:
+        matches = [
+            MatchLine(line_number=line_num, text=lines[line_num - 1], file=file_path)
+            for line_num in line_numbers
+            if 0 < line_num <= len(lines)
+        ]
+        return SearchResult(
+            matches=matches,
+            total_files=1 if matches else 0,
+            total_matches=len(matches),
+            routing_backend="AstBackend",
+            routing_reason=routing_reason,
+            routing_distributed=False,
+            routing_worker_count=1,
+        )
 
     def is_available(self) -> bool:
         """Check if torch-geometric and tree-sitter are installed."""
@@ -262,8 +347,35 @@ class AstBackend(ComputeBackend):
         if persistent_cached_result is not None:
             return persistent_cached_result
 
+        if self._is_simple_node_type_pattern(pattern):
+            node_type_index = self._load_persistent_node_type_index(file_path, lang)
+            if node_type_index is not None and pattern in node_type_index:
+                lines = Path(file_path).read_text(encoding="utf-8").split("\n")
+                result = self._build_matches_from_line_numbers(
+                    file_path,
+                    lines,
+                    node_type_index.get(pattern, []),
+                    "ast_structural_index_cache",
+                )
+                if result.total_matches > 0:
+                    self._persist_result_cache(file_path, lang, pattern, result)
+                    return result
+
         parser = self._get_parser(lang)
         _source_bytes, lines, tree = self._get_parsed_source(parser, file_path, lang)
+        if self._is_simple_node_type_pattern(pattern):
+            node_type_index = self._build_node_type_index(tree.root_node)
+            self._persist_node_type_index(file_path, lang, node_type_index)
+            result = self._build_matches_from_line_numbers(
+                file_path,
+                lines,
+                node_type_index.get(pattern, []),
+                "ast_structural_index",
+            )
+            if result.total_matches > 0:
+                self._persist_result_cache(file_path, lang, pattern, result)
+                return result
+
         try:
             query = self._get_query(parser, lang, pattern)
         except Exception as exc:
