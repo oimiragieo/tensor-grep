@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.7 (2026-03-10)
+
+### Performance Improvements
+
+- **ast**: Cache tree-sitter queries and parsed source
+  ([`640491c`](https://github.com/oimiragieo/tensor-grep/commit/640491c6484e2ebbe6fcf4a5ed3e1605e8670fdf))
+
+
 ## v0.31.6 (2026-03-10)
 
 ### Documentation
