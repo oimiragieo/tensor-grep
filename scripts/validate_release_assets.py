@@ -1265,6 +1265,13 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     if npm_verify_run is None:
         errors.append(f"Release workflow publish-npm job must include step `{npm_verify_step}`")
     else:
+        if not npm_verify_run.lstrip().startswith(
+            "python scripts/validate_release_version_parity.py"
+        ):
+            errors.append(
+                "Release workflow publish-npm "
+                f"`{npm_verify_step}` step must invoke `python scripts/validate_release_version_parity.py`"
+            )
         for required_flag in release_identity_flags:
             if required_flag not in npm_verify_run:
                 errors.append(
