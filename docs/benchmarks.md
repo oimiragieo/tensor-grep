@@ -69,3 +69,14 @@ That optimization primarily benefits `tg run --ast`, `tg scan`, and `tg test` wo
 The current line also adds a persistent AST result cache for unchanged files across CLI invocations. That cache is correctness-keyed by `(file path, lang, pattern, mtime_ns, size)`, but on this host the latest one-shot benchmark still shows startup/routing overhead dominating wall time. In other words: the cache is a real building block, but it is not yet the feature that makes `tg` faster than `ast-grep` on cold one-shot structural searches.
 
 The latest AST backend line also persists a node-type index for simple native queries (for example `function_definition`). That index is keyed by file identity and lets future native node-type lookups skip both query compilation and tree parsing on unchanged files. It is a real structure-aware cache, not just exact prior-result replay, but it still does not remove the cold CLI startup cost that dominates one-shot `tg run --ast`.
+
+### Repeated Fixed-String Microbenchmark
+
+The current line also adds a REI-style trigram line index to `StringZillaBackend` for repeated fixed-string workloads. This is not intended to beat `rg` on cold one-shot scans; it is aimed at hot corpora where the same file is searched repeatedly with different literals.
+
+Measured on the local development host with a synthetic single-file corpus:
+
+- first indexed literal query build: **1.05s**
+- second cached literal query on the same file: **0.0025s**
+
+That speedup is exactly the kind of workload-specific win the REI paper suggests: pay a small indexing cost once, then reuse it across repeated searches.
