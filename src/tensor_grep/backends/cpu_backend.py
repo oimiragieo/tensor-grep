@@ -1,4 +1,7 @@
+import hashlib
+import json
 import logging
+import os
 import re
 import warnings
 from pathlib import Path
@@ -24,6 +27,35 @@ class CPUBackend(ComputeBackend):
     def _build_file_signature(file_path: str) -> tuple[int, int]:
         stat_result = Path(file_path).stat()
         return stat_result.st_mtime_ns, stat_result.st_size
+
+    @staticmethod
+    def _is_persistent_prefilter_enabled() -> bool:
+        return os.environ.get("TENSOR_GREP_CPU_REGEX_INDEX", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+
+    @staticmethod
+    def _get_prefilter_cache_dir() -> Path:
+        override = os.environ.get("TENSOR_GREP_CPU_REGEX_INDEX_DIR")
+        if override:
+            return Path(override).expanduser().resolve()
+        if os.name == "nt":
+            local_appdata = os.environ.get("LOCALAPPDATA")
+            if local_appdata:
+                return Path(local_appdata) / "tensor-grep" / "cpu-regex-index"
+        xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+        if xdg_cache_home:
+            return Path(xdg_cache_home) / "tensor-grep" / "cpu-regex-index"
+        return Path.home() / ".cache" / "tensor-grep" / "cpu-regex-index"
+
+    @classmethod
+    def _get_prefilter_cache_path(cls, file_path: str, ignore_case: bool) -> Path:
+        key = f"{Path(file_path).resolve()}::{int(ignore_case)}"
+        digest = hashlib.sha256(key.encode()).hexdigest()
+        return cls._get_prefilter_cache_dir() / f"{digest}.json"
 
     @staticmethod
     def _build_line_trigram_index(lines: list[str]) -> dict[str, list[int]]:
@@ -65,6 +97,29 @@ class CPUBackend(ComputeBackend):
         cached = self._shared_literal_index_cache.get(cache_key)
         if cached and cached[0] == cache_signature:
             return cached[1], cached[2]
+        if not self._is_persistent_prefilter_enabled():
+            return None
+        cache_path = self._get_prefilter_cache_path(file_path, ignore_case)
+        if not cache_path.exists():
+            return None
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if payload.get("file_signature") != list(cache_signature):
+            return None
+        raw_lines = payload.get("lines")
+        raw_index = payload.get("trigram_index")
+        if not isinstance(raw_lines, list) or not isinstance(raw_index, dict):
+            return None
+        lines = [str(line) for line in raw_lines]
+        trigram_index: dict[str, list[int]] = {}
+        for trigram, values in raw_index.items():
+            if not isinstance(trigram, str) or not isinstance(values, list):
+                return None
+            trigram_index[trigram] = [int(v) for v in values]
+        self._shared_literal_index_cache[cache_key] = (cache_signature, lines, trigram_index)
+        return lines, trigram_index
         return None
 
     def _store_literal_index(
@@ -74,11 +129,25 @@ class CPUBackend(ComputeBackend):
         lines: list[str],
         trigram_index: dict[str, list[int]],
     ) -> None:
+        cache_signature = self._build_file_signature(file_path)
         self._shared_literal_index_cache[(file_path, ignore_case)] = (
-            self._build_file_signature(file_path),
+            cache_signature,
             lines,
             trigram_index,
         )
+        if not self._is_persistent_prefilter_enabled():
+            return
+        cache_path = self._get_prefilter_cache_path(file_path, ignore_case)
+        payload = {
+            "file_signature": list(cache_signature),
+            "lines": lines,
+            "trigram_index": trigram_index,
+        }
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError:
+            return
 
     @classmethod
     def _candidate_line_indexes(

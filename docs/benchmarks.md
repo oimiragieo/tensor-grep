@@ -83,7 +83,7 @@ That speedup is exactly the kind of workload-specific win the REI paper suggests
 
 ### Repeated Regex Prefilter Microbenchmark
 
-The current line also adds a safe literal-core prefilter to `CPUBackend` for repeated regex workloads that fall back to Python `re`. This does not try to solve general regex indexing. It only activates when a conservative parser can prove the regex contains a required literal fragment and when context/invert semantics are not in play.
+The current line also adds a safe literal-core prefilter to `CPUBackend` for repeated regex workloads that fall back to Python `re`. This does not try to solve general regex indexing. It only activates when a conservative parser can prove the regex contains a required literal fragment and when context/invert semantics are not in play. The prefilter cache now persists across backend instances and fresh CLI invocations.
 
 Measured on the local development host with a synthetic single-file corpus and forced Python fallback:
 
