@@ -1116,7 +1116,7 @@ def run(
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
-    cfg = SearchConfig(ast=True, lang=lang)
+    cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang)
     pipeline = Pipeline(config=cfg)
     backend = pipeline.get_backend()
     backend_name = type(backend).__name__
@@ -1165,7 +1165,11 @@ def scan(
         typer.echo("Error: No valid rules found in configured rule directories.", err=True)
         sys.exit(1)
 
-    cfg = SearchConfig(ast=True, lang=cast(str, project_cfg["language"]))
+    cfg = SearchConfig(
+        ast=True,
+        ast_prefer_native=True,
+        lang=cast(str, project_cfg["language"]),
+    )
     pipeline = Pipeline(config=cfg)
     backend = pipeline.get_backend()
     scanner = DirectoryScanner(cfg)
@@ -1229,7 +1233,11 @@ def test(
         typer.echo("Error: No test files found in configured test directories.", err=True)
         sys.exit(1)
 
-    cfg = SearchConfig(ast=True, lang=cast(str, project_cfg["language"]))
+    cfg = SearchConfig(
+        ast=True,
+        ast_prefer_native=True,
+        lang=cast(str, project_cfg["language"]),
+    )
     pipeline = Pipeline(config=cfg)
     backend = pipeline.get_backend()
 

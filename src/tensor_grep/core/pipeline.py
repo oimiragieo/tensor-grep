@@ -139,24 +139,23 @@ class Pipeline:
                     selected_backend_reason = "force_cpu_python_cpu"
             elif config and config.ast:
                 try:
+                    from tensor_grep.backends.ast_backend import AstBackend
                     from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
 
+                    ast_backend = AstBackend()
                     ast_wrapper = AstGrepWrapperBackend()
-
-                    # Check for one-off CLI queries, prefer native ast-grep if installed for instant resolution
-                    if ast_wrapper.is_available():
+                    if config.ast_prefer_native and ast_backend.is_available():
+                        self.backend = ast_backend
+                        selected_backend_reason = "ast_backend_available"
+                    elif ast_wrapper.is_available():
                         self.backend = ast_wrapper
                         selected_backend_reason = "ast_wrapper_available"
+                    elif ast_backend.is_available():
+                        self.backend = ast_backend
+                        selected_backend_reason = "ast_backend_available_fallback"
                     else:
-                        from tensor_grep.backends.ast_backend import AstBackend
-
-                        ast_backend = AstBackend()
-                        if ast_backend.is_available():
-                            self.backend = ast_backend
-                            selected_backend_reason = "ast_backend_available"
-                        else:
-                            self.backend = fallback_backend
-                            selected_backend_reason = "ast_backends_unavailable_fallback"
+                        self.backend = fallback_backend
+                        selected_backend_reason = "ast_backends_unavailable_fallback"
                 except ImportError:
                     self.backend = fallback_backend
                     selected_backend_reason = "ast_import_error_fallback"

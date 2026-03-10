@@ -6,6 +6,43 @@ from tensor_grep.core.pipeline import Pipeline
 
 class TestPipeline:
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
+    @patch("tensor_grep.backends.ast_backend.AstBackend")
+    def test_should_prefer_ast_backend_over_wrapper_when_both_are_available(
+        self, mock_ast_backend, mock_ast_wrapper, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_ast_backend.return_value.is_available.return_value = True
+        mock_ast_wrapper.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(ast=True, ast_prefer_native=True, lang="python"),
+        )
+
+        assert pipeline.backend == mock_ast_backend.return_value
+        assert pipeline.selected_backend_reason == "ast_backend_available"
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
+    @patch("tensor_grep.backends.ast_backend.AstBackend")
+    def test_should_prefer_ast_wrapper_by_default_when_both_ast_backends_are_available(
+        self, mock_ast_backend, mock_ast_wrapper, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_ast_backend.return_value.is_available.return_value = True
+        mock_ast_wrapper.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(force_cpu=False, config=SearchConfig(ast=True, lang="python"))
+
+        assert pipeline.backend == mock_ast_wrapper.return_value
+        assert pipeline.selected_backend_reason == "ast_wrapper_available"
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.MemoryManager")
     @patch("tensor_grep.core.pipeline.CuDFBackend")
     def test_should_prefer_ripgrep_for_default_text_search(self, mock_cudf, mock_mem, mock_rg):
