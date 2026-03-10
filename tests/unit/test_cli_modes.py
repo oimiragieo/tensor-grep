@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from typing import ClassVar
 
 import pytest
 from typer.testing import CliRunner
@@ -1009,10 +1010,12 @@ class _FakeCountOnlyAstPipeline:
 
 class _CapturingAstPipeline:
     last_config = None
+    seen_configs: ClassVar[list[object]] = []
 
     def __init__(self, force_cpu=False, config=None):
         _ = force_cpu
         _CapturingAstPipeline.last_config = config
+        _CapturingAstPipeline.seen_configs.append(config)
         self._backend = _FakeAstBackend()
 
     def get_backend(self):
@@ -1162,6 +1165,7 @@ def test_run_should_report_ast_wrapper_backend_mode(monkeypatch):
 def test_run_should_keep_wrapper_first_ast_policy(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    _CapturingAstPipeline.seen_configs = []
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1175,6 +1179,7 @@ def test_run_should_keep_wrapper_first_ast_policy(monkeypatch):
     assert result.exit_code == 0
     assert _CapturingAstPipeline.last_config is not None
     assert _CapturingAstPipeline.last_config.ast_prefer_native is False
+    assert _CapturingAstPipeline.last_config.query_pattern == "ERROR"
 
 
 def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
@@ -1208,6 +1213,7 @@ def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
 def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    _CapturingAstPipeline.seen_configs = []
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1229,10 +1235,12 @@ def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
     assert result.exit_code == 0
     assert _CapturingAstPipeline.last_config is not None
     assert _CapturingAstPipeline.last_config.ast_prefer_native is True
+    assert any(cfg and cfg.query_pattern == "ERROR" for cfg in _CapturingAstPipeline.seen_configs)
 
 
 def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
+    _CapturingAstPipeline.seen_configs = []
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1258,6 +1266,7 @@ def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch):
     assert result.exit_code == 0
     assert _CapturingAstPipeline.last_config is not None
     assert _CapturingAstPipeline.last_config.ast_prefer_native is True
+    assert any(cfg and cfg.query_pattern == "ERROR" for cfg in _CapturingAstPipeline.seen_configs)
 
 
 def test_test_command_should_use_total_file_contract_for_match_detection(monkeypatch):

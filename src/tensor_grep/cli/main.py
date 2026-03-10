@@ -283,6 +283,31 @@ def _describe_ast_backend_mode(backend_name: str) -> str:
     return backend_name
 
 
+def _describe_ast_backend_modes(backend_names: set[str]) -> str:
+    if not backend_names:
+        return "adaptive AST routing"
+    if len(backend_names) == 1:
+        return _describe_ast_backend_mode(next(iter(backend_names)))
+    return "adaptive AST routing"
+
+
+def _select_ast_backend_for_pattern(
+    base_config: "SearchConfig",
+    pattern: str,
+    backend_cache: dict[tuple[str | None, str, bool], object] | None = None,
+):
+    from tensor_grep.core.pipeline import Pipeline
+
+    cache_key = (base_config.lang, pattern, base_config.ast_prefer_native)
+    if backend_cache is not None and cache_key in backend_cache:
+        return backend_cache[cache_key]
+
+    backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+    if backend_cache is not None:
+        backend_cache[cache_key] = backend
+    return backend
+
+
 @app.command(
     name="search",
     help="""Search files for a regex pattern, with GPU acceleration when applicable.
@@ -1112,13 +1137,11 @@ def run(
         path = "."
 
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.pipeline import Pipeline
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
-    cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang)
-    pipeline = Pipeline(config=cfg)
-    backend = pipeline.get_backend()
+    cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang, query_pattern=pattern)
+    backend = _select_ast_backend_for_pattern(cfg, pattern)
     backend_name = type(backend).__name__
     typer.echo(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
 
@@ -1151,7 +1174,6 @@ def scan(
 ) -> None:
     """Scan and rewrite code by configuration (ast-grep parity)"""
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.pipeline import Pipeline
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     try:
@@ -1170,20 +1192,21 @@ def scan(
         ast_prefer_native=True,
         lang=cast(str, project_cfg["language"]),
     )
-    pipeline = Pipeline(config=cfg)
-    backend = pipeline.get_backend()
     scanner = DirectoryScanner(cfg)
     root_dir = cast(Path, project_cfg["root_dir"])
     candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+    backend_cache: dict[tuple[str | None, str, bool], object] = {}
+    backend_names_used: set[str] = set()
 
-    backend_name = type(backend).__name__
-    scan_banner = f"Scanning project using {_describe_ast_backend_mode(backend_name)}"
+    scan_banner = "Scanning project using adaptive AST routing"
     typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
 
     total_matches = 0
     matched_rules = 0
     for rule in rules:
         rule_cfg = replace(cfg, lang=rule["language"])
+        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        backend_names_used.add(type(backend).__name__)
         rule_matches = 0
         matched_files: set[str] = set()
         for current_file in candidate_files:
@@ -1200,7 +1223,9 @@ def scan(
         )
 
     typer.echo(
-        f"Scan completed. rules={len(rules)} matched_rules={matched_rules} total_matches={total_matches}"
+        "Scan completed. "
+        f"rules={len(rules)} matched_rules={matched_rules} total_matches={total_matches} "
+        f"backends={','.join(sorted(backend_names_used)) or 'none'}"
     )
 
 
@@ -1212,7 +1237,6 @@ def test(
 ) -> None:
     """Test ast-grep rules (ast-grep parity)"""
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.pipeline import Pipeline
 
     try:
         project_cfg = _load_sg_project_config(config)
@@ -1238,8 +1262,8 @@ def test(
         ast_prefer_native=True,
         lang=cast(str, project_cfg["language"]),
     )
-    pipeline = Pipeline(config=cfg)
-    backend = pipeline.get_backend()
+    backend_cache: dict[tuple[str | None, str, bool], object] = {}
+    backend_names_used: set[str] = set()
 
     total_cases = 0
     failures: list[str] = []
@@ -1272,14 +1296,15 @@ def test(
             for expected_match, snippets in ((False, valid_snippets), (True, invalid_snippets)):
                 for snippet in snippets:
                     total_cases += 1
+                    case_cfg = replace(cfg, lang=language)
+                    backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
+                    backend_names_used.add(type(backend).__name__)
                     temp_name = (
                         root_dir / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
                     )
                     temp_name.write_text(snippet, encoding="utf-8")
                     try:
-                        result = backend.search(
-                            str(temp_name), pattern, config=replace(cfg, lang=language)
-                        )
+                        result = backend.search(str(temp_name), pattern, config=case_cfg)
                         has_match = bool(
                             result.total_files > 0
                             or result.total_matches > 0
@@ -1298,9 +1323,8 @@ def test(
                             f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
                         )
 
-    backend_name = type(backend).__name__
     typer.echo(
-        f"Testing AST rules using {_describe_ast_backend_mode(backend_name)} "
+        f"Testing AST rules using {_describe_ast_backend_modes(backend_names_used)} "
         f"from {project_cfg['config_path']}..."
     )
     if failures:

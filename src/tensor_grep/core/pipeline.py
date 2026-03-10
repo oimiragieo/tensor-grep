@@ -1,3 +1,4 @@
+import re
 from contextlib import nullcontext
 from typing import Any
 
@@ -12,6 +13,17 @@ from tensor_grep.core.hardware.memory_manager import MemoryManager
 
 
 class Pipeline:
+    @staticmethod
+    def _supports_native_ast_pattern(config: SearchConfig | None) -> bool:
+        if config is None:
+            return False
+        pattern = (config.query_pattern or "").strip()
+        if not pattern:
+            return False
+        if pattern.startswith("("):
+            return True
+        return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", pattern))
+
     @staticmethod
     def _normalize_device_chunk_plan(
         device_chunk_plan: list[tuple[int, int]],
@@ -144,7 +156,11 @@ class Pipeline:
 
                     ast_backend = AstBackend()
                     ast_wrapper = AstGrepWrapperBackend()
-                    if config.ast_prefer_native and ast_backend.is_available():
+                    if (
+                        config.ast_prefer_native
+                        and self._supports_native_ast_pattern(config)
+                        and ast_backend.is_available()
+                    ):
                         self.backend = ast_backend
                         selected_backend_reason = "ast_backend_available"
                     elif ast_wrapper.is_available():
