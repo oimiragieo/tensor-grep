@@ -733,6 +733,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         docs_steps = publish_docs_job.get("steps", [])
         docs_run_by_name: dict[str, str] = {}
         docs_step_names: set[str] = set()
+        docs_steps_by_name: dict[str, dict[str, object]] = {}
         docs_uses_values: list[str] = []
         if isinstance(docs_steps, list):
             for step in docs_steps:
@@ -745,10 +746,29 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     docs_uses_values.append(uses_value)
                 if isinstance(name, str):
                     docs_step_names.add(name)
+                    docs_steps_by_name[name] = step
                     if isinstance(run, str):
                         docs_run_by_name[name] = run
         if "actions/checkout@v4" not in docs_uses_values:
             errors.append("Release workflow publish-docs job must include `actions/checkout@v4`")
+        setup_python_step = docs_steps_by_name.get("Set up Python")
+        if setup_python_step is None:
+            errors.append("Release workflow publish-docs job must include step `Set up Python`")
+        else:
+            uses_value = setup_python_step.get("uses")
+            if uses_value != "actions/setup-python@v5":
+                errors.append(
+                    "Release workflow publish-docs `Set up Python` step must use `actions/setup-python@v5`"
+                )
+            with_block = setup_python_step.get("with")
+            if not isinstance(with_block, dict):
+                errors.append(
+                    "Release workflow publish-docs `Set up Python` step must define a `with` mapping"
+                )
+            elif str(with_block.get("python-version")) != "3.11":
+                errors.append(
+                    "Release workflow publish-docs `Set up Python` step must include `python-version: 3.11`"
+                )
         docs_step_contracts = {
             "Install mkdocs": ("pip install mkdocs-material",),
             "Deploy Docs": ("mkdocs gh-deploy --force",),
