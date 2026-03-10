@@ -85,6 +85,7 @@ Environment notes:
 - **In-Place File Mutations (NEW):** Unlike ripgrep, `tensor-grep` natively supports memory-mapped find-and-replace mutability via `--replace`. Apply `sed`-like capture groups (e.g. `$1`) at millions of lines per second without ever leaving the Rust terminal backend.
 - **AST-Grep Parity (NEW):** Structural code searching via PyTorch Geometric Graph Neural Networks (GNNs). Run `tg run`, `tg scan`, `tg lsp` to match structural code patterns (e.g. `if ($A) { return $B; }`) rather than dumb text strings.
 - **Repeated AST searches are materially faster now.** `AstBackend` caches compiled tree-sitter queries plus parsed file state (`mtime_ns`/size keyed) so `tg scan` / `tg test` / repeated in-process AST workloads stop recompiling and reparsing unchanged modules on every pass.
+- **Persistent AST result cache.** Repeated structural queries across unchanged files can now reuse on-disk AST result entries across CLI invocations. Cache location can be overridden with `TENSOR_GREP_AST_CACHE_DIR`, or disabled with `TENSOR_GREP_AST_CACHE=0`.
 - **Semantic Understanding:** The `tg classify` command utilizes a specialized `cyBERT` HuggingFace transformer to identify malicious log patterns, detect hidden base64 payloads, and assign severity (WARN/ERROR/INFO) based on *context* rather than strict regex matches.
 - **Resilient Fallback:** If you don't have a GPU, `tensor-grep` instantly transparently falls back to an embedded PyO3/Rust backend using `memmap2`, matching the baseline performance of standard CPU ripgrep.
 

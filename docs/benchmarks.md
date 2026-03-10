@@ -64,3 +64,5 @@ The current AST numbers improved after adding two in-process hot-path caches to 
 - parsed source/tree/decoded-line cache keyed by `(file_path, lang, mtime_ns, size)`
 
 That optimization primarily benefits `tg run --ast`, `tg scan`, and `tg test` workloads that reuse queries or revisit unchanged files within the same process. It does not eliminate the remaining one-shot process-start gap against native `ast-grep`, which is still the next structural performance target.
+
+The current line also adds a persistent AST result cache for unchanged files across CLI invocations. That cache is correctness-keyed by `(file path, lang, pattern, mtime_ns, size)`, but on this host the latest one-shot benchmark still shows startup/routing overhead dominating wall time. In other words: the cache is a real building block, but it is not yet the feature that makes `tg` faster than `ast-grep` on cold one-shot structural searches.

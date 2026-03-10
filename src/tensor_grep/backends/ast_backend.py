@@ -3,8 +3,11 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import torch
 
+import hashlib
+import json
 import logging
 import os
+from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -26,6 +29,105 @@ class AstBackend(ComputeBackend):
         self._parsed_source_cache: dict[
             tuple[str, str], tuple[tuple[int, int], bytes, list[str], Any]
         ] = {}
+
+    def _is_persistent_cache_enabled(self) -> bool:
+        return os.environ.get("TENSOR_GREP_AST_CACHE", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+
+    def _get_persistent_cache_dir(self) -> Path:
+        override = os.environ.get("TENSOR_GREP_AST_CACHE_DIR")
+        if override:
+            return Path(override).expanduser().resolve()
+        if os.name == "nt":
+            local_appdata = os.environ.get("LOCALAPPDATA")
+            if local_appdata:
+                return Path(local_appdata) / "tensor-grep" / "ast-cache"
+        xdg_cache_home = os.environ.get("XDG_CACHE_HOME")
+        if xdg_cache_home:
+            return Path(xdg_cache_home) / "tensor-grep" / "ast-cache"
+        return Path.home() / ".cache" / "tensor-grep" / "ast-cache"
+
+    def _build_file_signature(self, file_path: str) -> tuple[int, int]:
+        stat_result = os.stat(file_path)
+        return stat_result.st_mtime_ns, stat_result.st_size
+
+    def _get_result_cache_path(self, file_path: str, lang: str, pattern: str) -> Path:
+        digest = hashlib.sha256(
+            f"{Path(file_path).resolve()}::{lang}::{pattern}".encode()
+        ).hexdigest()
+        return self._get_persistent_cache_dir() / lang / f"{digest}.json"
+
+    def _load_persistent_cached_result(
+        self, file_path: str, lang: str, pattern: str
+    ) -> SearchResult | None:
+        if not self._is_persistent_cache_enabled():
+            return None
+
+        cache_path = self._get_result_cache_path(file_path, lang, pattern)
+        if not cache_path.exists():
+            return None
+
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+        signature = payload.get("file_signature")
+        if signature != list(self._build_file_signature(file_path)):
+            return None
+
+        matches_payload = payload.get("matches", [])
+        if not isinstance(matches_payload, list):
+            return None
+
+        matches = [
+            MatchLine(
+                line_number=int(match["line_number"]),
+                text=str(match["text"]),
+                file=str(match["file"]),
+            )
+            for match in matches_payload
+        ]
+
+        return SearchResult(
+            matches=matches,
+            total_files=int(payload.get("total_files", 0)),
+            total_matches=int(payload.get("total_matches", len(matches))),
+            routing_backend="AstBackend",
+            routing_reason="ast_structural_match_cached",
+            routing_distributed=False,
+            routing_worker_count=1,
+        )
+
+    def _persist_result_cache(
+        self, file_path: str, lang: str, pattern: str, result: SearchResult
+    ) -> None:
+        if not self._is_persistent_cache_enabled():
+            return
+
+        cache_path = self._get_result_cache_path(file_path, lang, pattern)
+        payload = {
+            "file_signature": list(self._build_file_signature(file_path)),
+            "total_files": result.total_files,
+            "total_matches": result.total_matches,
+            "matches": [
+                {
+                    "line_number": match.line_number,
+                    "text": match.text,
+                    "file": match.file,
+                }
+                for match in result.matches
+            ],
+        }
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError:
+            logger.debug("Failed to write AST persistent cache for %s", file_path, exc_info=True)
 
     def is_available(self) -> bool:
         """Check if torch-geometric and tree-sitter are installed."""
@@ -79,9 +181,8 @@ class AstBackend(ComputeBackend):
     def _get_parsed_source(
         self, parser: Any, file_path: str, lang: str
     ) -> tuple[bytes, list[str], Any]:
-        stat_result = os.stat(file_path)
         cache_key = (file_path, lang)
-        cache_signature = (stat_result.st_mtime_ns, stat_result.st_size)
+        cache_signature = self._build_file_signature(file_path)
         cached = self._parsed_source_cache.get(cache_key)
         if cached and cached[0] == cache_signature:
             _, source_bytes, lines, tree = cached
@@ -157,6 +258,10 @@ class AstBackend(ComputeBackend):
         elif file_path.endswith(".js") or file_path.endswith(".ts"):
             lang = "javascript"
 
+        persistent_cached_result = self._load_persistent_cached_result(file_path, lang, pattern)
+        if persistent_cached_result is not None:
+            return persistent_cached_result
+
         parser = self._get_parser(lang)
         _source_bytes, lines, tree = self._get_parsed_source(parser, file_path, lang)
         try:
@@ -197,7 +302,7 @@ class AstBackend(ComputeBackend):
 
         matches.sort(key=lambda m: m.line_number)
 
-        return SearchResult(
+        result = SearchResult(
             matches=matches,
             total_files=1 if matches else 0,
             total_matches=len(matches),
@@ -206,3 +311,5 @@ class AstBackend(ComputeBackend):
             routing_distributed=False,
             routing_worker_count=1,
         )
+        self._persist_result_cache(file_path, lang, pattern, result)
+        return result
