@@ -784,6 +784,14 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                         "Release workflow publish-docs "
                         f"`{step_name}` step must invoke `{required_token}`"
                     )
+        deploy_docs_run = docs_run_by_name.get("Deploy Docs")
+        if deploy_docs_run is not None and "mkdocs gh-deploy --force" in deploy_docs_run:
+            for required_token in ("mkdocs", "gh-deploy", "--force"):
+                if required_token not in deploy_docs_run:
+                    errors.append(
+                        "Release workflow publish-docs "
+                        f"`Deploy Docs` step must invoke `{required_token}`"
+                    )
 
     npm_needs = _needs("publish-npm")
     if "validate-tag-version-parity" not in npm_needs:
