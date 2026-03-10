@@ -1110,6 +1110,13 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             f"Release workflow verify-release-assets job must include step `{verify_assets_step}`"
         )
     else:
+        if not verify_assets_run.lstrip().startswith(
+            "python scripts/verify_github_release_assets.py"
+        ):
+            errors.append(
+                "Release workflow verify-release-assets "
+                f"`{verify_assets_step}` step must invoke `python scripts/verify_github_release_assets.py`"
+            )
         if "scripts/verify_github_release_assets.py" not in verify_assets_run:
             errors.append(
                 "Release workflow verify-release-assets "
