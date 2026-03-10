@@ -733,16 +733,22 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         docs_steps = publish_docs_job.get("steps", [])
         docs_run_by_name: dict[str, str] = {}
         docs_step_names: set[str] = set()
+        docs_uses_values: list[str] = []
         if isinstance(docs_steps, list):
             for step in docs_steps:
                 if not isinstance(step, dict):
                     continue
                 name = step.get("name")
                 run = step.get("run")
+                uses_value = step.get("uses")
+                if isinstance(uses_value, str):
+                    docs_uses_values.append(uses_value)
                 if isinstance(name, str):
                     docs_step_names.add(name)
                     if isinstance(run, str):
                         docs_run_by_name[name] = run
+        if "actions/checkout@v4" not in docs_uses_values:
+            errors.append("Release workflow publish-docs job must include `actions/checkout@v4`")
         docs_step_contracts = {
             "Install mkdocs": ("pip install mkdocs-material",),
             "Deploy Docs": ("mkdocs gh-deploy --force",),
