@@ -68,7 +68,11 @@ class CPUBackend(ComputeBackend):
         return None
 
     def _store_literal_index(
-        self, file_path: str, ignore_case: bool, lines: list[str], trigram_index: dict[str, list[int]]
+        self,
+        file_path: str,
+        ignore_case: bool,
+        lines: list[str],
+        trigram_index: dict[str, list[int]],
     ) -> None:
         self._shared_literal_index_cache[(file_path, ignore_case)] = (
             self._build_file_signature(file_path),
@@ -233,7 +237,9 @@ class CPUBackend(ComputeBackend):
                 cached_index = self._load_literal_index(file_path, ignore_case)
                 if cached_index is None:
                     source_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-                    normalized_lines = [line.lower() for line in source_lines] if ignore_case else source_lines
+                    normalized_lines = (
+                        [line.lower() for line in source_lines] if ignore_case else source_lines
+                    )
                     trigram_index = self._build_line_trigram_index(normalized_lines)
                     self._store_literal_index(file_path, ignore_case, source_lines, trigram_index)
                     routing_reason = "cpu_python_regex_prefilter"
@@ -256,9 +262,14 @@ class CPUBackend(ComputeBackend):
             before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
             context_after_remaining = 0
             if source_lines is not None:
-                line_iter = ((idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines))
+                line_iter = (
+                    (idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines)
+                )
                 for line_idx, line_bytes in line_iter:
-                    if candidate_line_indexes is not None and (line_idx - 1) not in candidate_line_indexes:
+                    if (
+                        candidate_line_indexes is not None
+                        and (line_idx - 1) not in candidate_line_indexes
+                    ):
                         continue
                     # Try using python regex to decode byte string, else try the decoded string
                     matched = False
@@ -324,7 +335,10 @@ class CPUBackend(ComputeBackend):
             else:
                 with open(path, "rb") as f:
                     for line_idx, line_bytes in enumerate(f, 1):
-                        if candidate_line_indexes is not None and (line_idx - 1) not in candidate_line_indexes:
+                        if (
+                            candidate_line_indexes is not None
+                            and (line_idx - 1) not in candidate_line_indexes
+                        ):
                             continue
                         # Try using python regex to decode byte string, else try the decoded string
                         matched = False
