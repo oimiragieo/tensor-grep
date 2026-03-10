@@ -22,22 +22,23 @@ uv run python benchmarks/run_gpu_benchmarks.py
 Notes:
 - `bench` extras are required for the AST/Torch backend microbench path.
 - `cyBERT` benchmarking also requires a reachable Triton inference endpoint; when Triton is unavailable, the script now records `cybert_backend` as `SKIP` instead of failing the whole benchmark run.
-- On this host, the current Windows local CLI run regressed versus `benchmarks/baselines/run_benchmarks.windows.json` in most end-to-end text-search scenarios. The exact regression report is emitted to `artifacts/benchmark_summary.local.md`.
+- `run_benchmarks.py` now measures the bootstrap entrypoint used by the installed `tg` console script, so the numbers reflect the real fast path instead of the older `tensor_grep.cli.main` module path.
+- On this host, the current Windows local CLI run passed `benchmarks/check_regression.py --baseline auto` against `benchmarks/baselines/run_benchmarks.windows.json`.
 
 ### ripgrep vs tensor-grep (`run_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.522s | 0.989s | Parity PASS |
-| Case-Insensitive Match | 0.488s | 0.899s | Parity PASS |
-| Regex Match | 0.541s | 0.948s | Parity PASS |
-| Invert Match | 1.244s | 1.662s | Parity PASS |
-| Count Matches | 0.180s | 0.087s | Parity PASS |
-| Context Lines (`-C2`) | 2.024s | 2.317s | Parity PASS |
-| Max Count (`-m 5`) | 0.117s | 0.533s | Parity PASS |
-| File Glob Filtering | 0.569s | 0.914s | Parity PASS |
-| Word Boundary | 0.640s | 0.946s | Parity PASS |
-| Fixed Strings (`-F`) | 0.520s | 0.900s | Parity PASS |
+| Simple String Match | 0.451s | 0.609s | Parity PASS |
+| Case-Insensitive Match | 0.501s | 0.671s | Parity PASS |
+| Regex Match | 0.506s | 0.682s | Parity PASS |
+| Invert Match | 1.309s | 1.477s | Parity PASS |
+| Count Matches | 0.146s | 0.093s | Parity PASS |
+| Context Lines (`-C2`) | 1.757s | 1.956s | Parity PASS |
+| Max Count (`-m 5`) | 0.116s | 0.280s | Parity PASS |
+| File Glob Filtering | 0.511s | 0.611s | Parity PASS |
+| Word Boundary | 0.495s | 0.696s | Parity PASS |
+| Fixed Strings (`-F`) | 0.476s | 0.594s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`run_ast_benchmarks.py`)
 

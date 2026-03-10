@@ -33,6 +33,15 @@ def test_run_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path):
     assert path == override.resolve()
 
 
+def test_run_benchmarks_should_target_bootstrap_entrypoint():
+    module = _load_script_module("run_benchmarks_script_cmd", "benchmarks/run_benchmarks.py")
+
+    cmd = module.build_tg_benchmark_cmd(["ERROR", "bench_data"])
+
+    assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
+    assert cmd[3:] == ["search", "--no-ignore", "ERROR", "bench_data"]
+
+
 def test_run_ast_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module("run_ast_benchmarks_script", "benchmarks/run_ast_benchmarks.py")
     monkeypatch.delenv("TENSOR_GREP_AST_BENCH_DATA_DIR", raising=False)

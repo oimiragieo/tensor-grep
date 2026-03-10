@@ -23,24 +23,25 @@ Fresh benchmark pass results (2026-03-10, local run on current `main`) from this
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
 - These figures are from a local `uv run python benchmarks/run_benchmarks.py` / `run_ast_benchmarks.py` / `run_gpu_benchmarks.py` execution.
+- `run_benchmarks.py` now measures the bootstrap entrypoint used by the installed `tg` console script, rather than the older `tensor_grep.cli.main` module path.
 - `ripgrep` remains faster on most text-search scenarios in this local benchmark setup.
-- The current Windows local run regressed versus the stored Windows baseline in most end-to-end CLI search scenarios; only the Rust count path improved. See `artifacts/benchmark_summary.local.md` for the exact deltas from `benchmarks/baselines/run_benchmarks.windows.json`.
+- The current Windows local run no longer trips the stored regression guard in `benchmarks/baselines/run_benchmarks.windows.json`.
 - The GPU microbenchmark requires benchmark extras plus a reachable Triton endpoint for `cyBERT`; on this host the AST and Torch backend timings completed, while `cyBERT` was explicitly skipped because no Triton server was running.
 
 ### ripgrep vs tensor-grep (`benchmarks/run_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.522s | 0.989s | Parity PASS |
-| Case-Insensitive Match | 0.488s | 0.899s | Parity PASS |
-| Regex Match | 0.541s | 0.948s | Parity PASS |
-| Invert Match | 1.244s | 1.662s | Parity PASS |
-| Count Matches | 0.180s | 0.087s | Parity PASS |
-| Context Lines (`-C2`) | 2.024s | 2.317s | Parity PASS |
-| Max Count (`-m 5`) | 0.117s | 0.533s | Parity PASS |
-| File Glob Filtering | 0.569s | 0.914s | Parity PASS |
-| Word Boundary | 0.640s | 0.946s | Parity PASS |
-| Fixed Strings (`-F`) | 0.520s | 0.900s | Parity PASS |
+| Simple String Match | 0.451s | 0.609s | Parity PASS |
+| Case-Insensitive Match | 0.501s | 0.671s | Parity PASS |
+| Regex Match | 0.506s | 0.682s | Parity PASS |
+| Invert Match | 1.309s | 1.477s | Parity PASS |
+| Count Matches | 0.146s | 0.093s | Parity PASS |
+| Context Lines (`-C2`) | 1.757s | 1.956s | Parity PASS |
+| Max Count (`-m 5`) | 0.116s | 0.280s | Parity PASS |
+| File Glob Filtering | 0.511s | 0.611s | Parity PASS |
+| Word Boundary | 0.495s | 0.696s | Parity PASS |
+| Fixed Strings (`-F`) | 0.476s | 0.594s | Parity PASS |
 
 ### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
 
@@ -65,6 +66,7 @@ Environment notes:
 - Regression checks are now environment-aware (platform/machine metadata); cross-OS comparisons are rejected by default unless explicitly overridden.
 - Main CI (`.github/workflows/ci.yml`) now includes a required `benchmark-regression` job on Ubuntu that runs `benchmarks/run_benchmarks.py`, enforces baseline regression thresholds, and publishes a markdown summary + JSON/text artifacts.
 - Standalone benchmark workflow (`.github/workflows/benchmark.yml`) remains available for manual and scheduled deep benchmark passes.
+- Current local status on 2026-03-10: `benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json` passed.
 - Release workflow now validates the full GitHub binary artifact filename matrix and publishes `CHECKSUMS.txt` (SHA256) alongside release binaries for reproducible integrity checks.
 - Release asset verification enforces that each managed binary's `CHECKSUMS.txt` digest matches GitHub release `asset.digest` metadata, closing post-upload integrity gaps.
 

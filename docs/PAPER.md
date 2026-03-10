@@ -70,7 +70,7 @@ To maximize hardware utilization while preserving cross-platform stability, `ten
 ## 3. Evaluation and Benchmarks
 
 ### 3.1 Experimental Setup and Hardware Constraints
-We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **408 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
+We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **414 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
 
 **Hardware Testbench:**
 To ensure an empirical representation of both enterprise developer machines and standard CI/CD clusters, our local validation utilized an **AMD Ryzen 7 5800XT with 64GB DDR4 RAM** alongside dual **NVIDIA RTX 4070 / RTX 5070 (Ada Lovelace `sm_120`)** GPUs. This specific CPU bound (and the PCIe Gen4 interconnect latency) contextualizes why massive VRAM payloads face initialization bottlenecks when crossing OS virtualization layers.
@@ -78,9 +78,9 @@ To ensure an empirical representation of both enterprise developer machines and 
 ### 3.2 Main Results: Bare-Metal GPU Execution on RTX 5070
 We re-ran the benchmark suite on 2026-03-10 (local run on current `main`) and captured the output artifacts directly:
 
-* `artifacts/bench_run_benchmarks.txt`
-* `artifacts/bench_run_ast_benchmarks.txt`
-* `artifacts/bench_run_gpu_benchmarks.txt`
+* `artifacts/bench_run_benchmarks.json`
+* `artifacts/bench_run_ast_benchmarks.json`
+* `artifacts/bench_run_gpu_benchmarks.json`
 
 Backend-level timings from `run_gpu_benchmarks.py` on this host:
 
@@ -91,13 +91,13 @@ Backend-level timings from `run_gpu_benchmarks.py` on this host:
 These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape. They also show an operational benchmark dependency: cyBERT throughput claims are only meaningful when the Triton inference service is actually reachable, and benchmark scripts now record that case as an explicit skip rather than a synthetic failure.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
-The latest full script-driven CLI benchmark (`run_benchmarks.py`) from this local run shows that end-to-end process costs still dominate most regex/text scenarios. It also regressed versus the stored Windows baseline in most end-to-end CLI scenarios, while the Rust count path improved:
+The latest full script-driven CLI benchmark (`run_benchmarks.py`) from this local run shows that end-to-end process costs still dominate most regex/text scenarios, but the new bootstrap entrypoint materially reduced command startup overhead. Once the benchmark harness was switched to measure the installed `tg` fast path instead of `tensor_grep.cli.main`, the stored Windows regression guard passed again:
 
-* **Regex Match:** ripgrep **0.541s** vs tensor-grep **0.948s**
-* **Invert Match:** ripgrep **1.244s** vs tensor-grep **1.662s**
-* **Context (`-C2`):** ripgrep **2.024s** vs tensor-grep **2.317s**
+* **Regex Match:** ripgrep **0.506s** vs tensor-grep **0.682s**
+* **Invert Match:** ripgrep **1.309s** vs tensor-grep **1.477s**
+* **Context (`-C2`):** ripgrep **1.757s** vs tensor-grep **1.956s**
 
-All scenarios passed parity checks. However, the current local Windows run exceeded the stored regression threshold on multiple CLI scenarios (`Simple String`, `Regex`, `Invert`, `Context`, `Max Count`, `Glob`, `Word Boundary`, `Fixed Strings`), so routing correctness landed cleanly but the CLI perf regression remains an open investigation item on this host.
+All scenarios passed parity checks, and the current local Windows run no longer exceeds the stored regression threshold in `benchmarks/baselines/run_benchmarks.windows.json`.
 
 ```mermaid
 gantt
@@ -106,21 +106,21 @@ gantt
     axisFormat %S
     
     section CPU (ripgrep)
-    Native C DFA Evaluation :a1, 0, 0.541s
+    Native C DFA Evaluation :a1, 0, 0.506s
     
     section tensor-grep CLI (this run)
-    tensor-grep Regex Match :a2, 0, 0.948s
+    tensor-grep Regex Match :a2, 0, 0.682s
 ```
 
 ### 3.4 Exact String Matching (The CPU/Rust Advantage)
 In the fresh benchmark pass, the strongest `tensor-grep` result is the count path:
 
-* **Count Matches:** ripgrep **0.180s** vs tensor-grep **0.087s**
+* **Count Matches:** ripgrep **0.146s** vs tensor-grep **0.093s**
 
 For other exact/fixed-string modes in this run:
 
-* **Fixed Strings (`-F`):** ripgrep **0.520s** vs tensor-grep **0.900s**
-* **Simple String Match:** ripgrep **0.522s** vs tensor-grep **0.989s**
+* **Fixed Strings (`-F`):** ripgrep **0.476s** vs tensor-grep **0.594s**
+* **Simple String Match:** ripgrep **0.451s** vs tensor-grep **0.609s**
 
 This suggests the current architecture is highly competitive when it routes to the native Rust counting backend, while general CLI text search paths still carry substantial startup/orchestration overhead.
 
@@ -131,13 +131,13 @@ gantt
     axisFormat %S
     
     section Native CPU / CLI
-    ripgrep Count              :a1, 0, 0.180s
-    tensor-grep Count          :a2, 0, 0.087s
+    ripgrep Count              :a1, 0, 0.146s
+    tensor-grep Count          :a2, 0, 0.093s
     
     section Other exact/fixed paths
-    ripgrep Fixed Strings      :a3, 0, 0.520s
-    tensor-grep Fixed Strings  :a4, 0, 0.900s
-    tensor-grep Simple String  :a5, 0, 0.989s
+    ripgrep Fixed Strings      :a3, 0, 0.476s
+    tensor-grep Fixed Strings  :a4, 0, 0.594s
+    tensor-grep Simple String  :a5, 0, 0.609s
 ```
 
 ### 3.5 OS Architectural Limitations: Windows `spawn()` vs. WSL `fork()`
@@ -205,19 +205,25 @@ While the current tripartite routing structure defines a new paradigm for regex 
 2. **Replacing ProcessPoolExecutor with Distributed Contexts (Ray/Dask-cuDF):**
    Relying on standard Python multiprocessing to handle GPU sharding and VRAM budgeting across massive enterprise hardware (e.g., dual RTX 4070/5070 matrices) remains notoriously brittle, primarily manifesting in `cudaErrorInitializationError` crashes when child processes fork the main CUDA context. Integrating a distributed framework like Ray or Dask-cuDF will manage distributed worker context, GPU memory pinning, and network fault tolerance organically.
 
-3. **Pre-Compiled AST Tensors for Native CI/CD LSP Integration:**
+3. **Derivative-Based Regex Planning for Complex CPU Queries:**
+   Recent work such as RE# shows that symbolic-derivative execution can outperform mainstream Rust regex engines on complex pattern classes while retaining input-linear behavior. The concrete implication for `tensor-grep` is not "replace ripgrep everywhere," but rather add a planner tier for the subset of patterns where the current `rg`/Rust routing boundary still pays avoidable startup or engine-construction costs.
+
+4. **Pre-Compiled AST Tensors for Native CI/CD LSP Integration:**
    Our empirical measurements show that once an AST is mapped to PyTorch Geometric tensors, subgraph invariant matching operates at asymptotically O(1) latency. For real-world workflows, a background daemon should be implemented to watch the filesystem, incrementally update the tree-sitter AST on file save, and keep the GNN graph perpetually warm in VRAM, enabling instantaneous Language Server Protocol (LSP) semantic resolution.
 
-4. **Automated Cybersecurity Telemetry De-Obfuscation:**
+5. **AST-Structured Code Chunk Indexing:**
+   Recent code-retrieval work such as cAST indicates that AST-shaped chunking beats naive line chunking when structural locality matters. For `tensor-grep`, the practical next step is a deterministic on-disk AST shard/index cache that can accelerate `tg run` / `tg scan` / `tg test` without reparsing unchanged modules every invocation.
+
+6. **Automated Cybersecurity Telemetry De-Obfuscation:**
    Because `tensor-grep` leverages `cyBERT` for semantic network log classification, standard regex engines fail to analyze deeply encoded threat payloads. Future updates will embed an automatic de-obfuscation pre-processor (decoding Base64, Hex, and URL encodings on the fly) immediately before the sequence is vectorized for VRAM injection. This guarantees resilient threat hunting without degrading to sequential CPU decoding boundaries.
 
-5. **StringZilla SIMD Fallback Paths:**
+7. **StringZilla SIMD Fallback Paths:**
    Recent literature demonstrates that raw string matching utilizing advanced SIMD CPU instructions (and CUDA bound iterations) via libraries like *StringZilla* can achieve up to 500+ GigaCUPS of edit-distance calculations, performing 109x faster than standard CPU libraries on H100 arrays. Integrating StringZilla as a native exact-match `-F` fallback will establish an intermediate performance tier that further buries C-level binaries.
 
-6. **Just-In-Time (JIT) cuDF Regex Kernels:**
+8. **Just-In-Time (JIT) cuDF Regex Kernels:**
    While the current `CuDFBackend` relies on pre-compiled regex DFA matrices, recent optimizations from NVIDIA (2025/2026) illustrate that utilizing NVRTC (NVIDIA Runtime Compilation) to JIT-compile custom string transformation kernels can yield an additional 1x-4x speedup over standard `cudf.Series.str.contains`. We plan to inject a JIT-compiler into the query analysis phase for massively complex user patterns.
 
-7. **Linear Temporal Logic (LTL) Log Synthesis:**
+9. **Linear Temporal Logic (LTL) Log Synthesis:**
    Building upon structural AST tracing, `tensor-grep` will support LTL assertions (e.g., *Query: Did connection timeout ALWAYS follow event authentication failure?*). By mapping sequential log arrays into characteristic bitvector matrices, the GPU can evaluate sequence compliance 2000x faster than existing CPU trace learners [Valizadeh et al., 2024].
 
 ## 6. Conclusion
@@ -228,6 +234,8 @@ While the current tripartite routing structure defines a new paradigm for regex 
 1. Zhong, J., Chen, S., & Yu, C. (2024). *XAV: A High-Performance Regular Expression Matching Engine for Packet Processing*. arXiv:2403.16533.
 2. Ye, Y., Pang, P., Zhang, T., & Huang, H. (2025). *GNN-Coder: Boosting Semantic Code Retrieval with Combined GNNs and Transformer*. arXiv:2502.15202.
 3. Zhang, L., Deep, S., Patel, J. M., & Sankaralingam, K. (2025). *Regular Expression Indexing for Log Analysis. Extended Version*. arXiv:2510.10348.
+4. Varatalu, I. E., Veanes, M., & Ernits, J.-P. (2024). *RE#: High Performance Derivative-Based Regex Matching with Intersection, Complement and Lookarounds*. arXiv:2407.20479.
+5. Zhang, Y., Zhao, X., Wang, Z. Z., Yang, C., Wei, J., & Wu, T. (2025). *cAST: Enhancing Code Retrieval-Augmented Generation with Structural Chunking via Abstract Syntax Tree*. arXiv:2506.15655.
 4. Sun, Y., Kumar, S., Gilray, T., & Micinski, K. (2025). *Column-Oriented Datalog on the GPU*. arXiv:2501.13051.
 5. Wang, X., et al. (2025). *GRACE: Graph-Guided Repository-Aware Code Completion through Hierarchical Code Fusion*. arXiv:2509.05980.
 6. Wang, Y., et al. (2024). *STATIC: Fast and Constrained Decoding for LLM-based Generative Retrieval*. arXiv:2403.19317.

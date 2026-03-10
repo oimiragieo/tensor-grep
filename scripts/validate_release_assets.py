@@ -316,6 +316,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             if isinstance(publish_success_gate_job, dict):
                 gate_steps = publish_success_gate_job.get("steps", [])
                 gate_run_by_name: dict[str, str] = {}
+                gate_if_by_name: dict[str, str] = {}
                 gate_step_names: set[str] = set()
                 if isinstance(gate_steps, list):
                     for step in gate_steps:
@@ -324,6 +325,9 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         name = step.get("name")
                         if isinstance(name, str):
                             gate_step_names.add(name)
+                        step_if = step.get("if")
+                        if isinstance(name, str) and isinstance(step_if, str):
+                            gate_if_by_name[name] = step_if
                         run = step.get("run")
                         if isinstance(name, str) and isinstance(run, str):
                             gate_run_by_name[name] = run
@@ -342,7 +346,6 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                                 f"`{gate_parity_step}` step must include `{required_flag}`"
                             )
                     for required_flag in (
-                        "--dist-dir",
                         "--check-pypi",
                         "--pypi-wait-seconds",
                         "--pypi-poll-interval-seconds",
@@ -352,10 +355,26 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                                 "CI workflow publish-success-gate "
                                 f"`{gate_parity_step}` step must include `{required_flag}`"
                             )
+                    if "--dist-dir" not in gate_parity_run:
+                        errors.append(
+                            "CI workflow publish-success-gate "
+                            f"`{gate_parity_step}` step must include `--dist-dir` in its publish_pypi conditional branch"
+                        )
+                    if "publish_pypi" not in gate_parity_run:
+                        errors.append(
+                            "CI workflow publish-success-gate "
+                            f"`{gate_parity_step}` step must conditionally gate `--dist-dir` on `publish_pypi`"
+                        )
                 if "Download all distributions" not in gate_step_names:
                     errors.append(
                         "CI workflow publish-success-gate job must include step `Download all distributions`"
                     )
+                else:
+                    download_if = gate_if_by_name.get("Download all distributions", "")
+                    if "publish_pypi == 'true'" not in download_if:
+                        errors.append(
+                            "CI workflow publish-success-gate `Download all distributions` step must run only when `publish_pypi == 'true'`"
+                        )
 
     if "--skip-package-managers" in ci_workflow:
         errors.append("CI workflow parity validation must not skip package-manager version checks")
