@@ -107,6 +107,10 @@ def resolve_ast_grep_binary() -> str | None:
     return None
 
 
+def build_tg_ast_benchmark_cmd(args: list[str]) -> list[str]:
+    return [sys.executable, "-m", "tensor_grep.cli.bootstrap", *args]
+
+
 def compare_results(ast_out, tg_out, scenario_name):
     # Both ast-grep and tg will print matches, but formatting differs heavily (ast-grep has color highlighting by default, tg outputs rg style)
     # Just checking if both found matches
@@ -156,7 +160,7 @@ def main():
         )
         return 0
 
-    tg_cmd = [sys.executable, "-m", "tensor_grep.cli.main", "run"]
+    tg_cmd = build_tg_ast_benchmark_cmd(["run"])
 
     for scenario in SCENARIOS:
         ast_cmd = [

@@ -61,6 +61,17 @@ def test_run_ast_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
     assert path == override.resolve()
 
 
+def test_run_ast_benchmarks_should_target_bootstrap_entrypoint():
+    module = _load_script_module(
+        "run_ast_benchmarks_script_cmd", "benchmarks/run_ast_benchmarks.py"
+    )
+
+    cmd = module.build_tg_ast_benchmark_cmd(["run", "--ast", "pattern", "bench_ast_data"])
+
+    assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
+    assert cmd[3:] == ["run", "--ast", "pattern", "bench_ast_data"]
+
+
 def test_run_gpu_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module("run_gpu_benchmarks_script", "benchmarks/run_gpu_benchmarks.py")
     monkeypatch.delenv("TENSOR_GREP_GPU_BENCH_DATA_DIR", raising=False)

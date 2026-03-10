@@ -22,7 +22,7 @@ uv run python benchmarks/run_gpu_benchmarks.py
 Notes:
 - `bench` extras are required for the AST/Torch backend microbench path.
 - `cyBERT` benchmarking also requires a reachable Triton inference endpoint; when Triton is unavailable, the script now records `cybert_backend` as `SKIP` instead of failing the whole benchmark run.
-- `run_benchmarks.py` now measures the bootstrap entrypoint used by the installed `tg` console script, so the numbers reflect the real fast path instead of the older `tensor_grep.cli.main` module path.
+- `run_benchmarks.py` and `run_ast_benchmarks.py` now measure the bootstrap entrypoint used by the installed `tg` console script, so the numbers reflect the real fast path instead of the older `tensor_grep.cli.main` module path.
 - On this host, the current Windows local CLI run passed `benchmarks/check_regression.py --baseline auto` against `benchmarks/baselines/run_benchmarks.windows.json`.
 
 ### ripgrep vs tensor-grep (`run_benchmarks.py`)
@@ -44,9 +44,9 @@ Notes:
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.184s | 0.644s | Parity PASS |
-| Try/Except Block | 0.155s | 0.561s | Parity PASS |
-| Class Declaration | 0.156s | 0.523s | Parity PASS |
+| Simple Function Def | 0.139s | 0.437s | Parity PASS |
+| Try/Except Block | 0.143s | 0.485s | Parity PASS |
+| Class Declaration | 0.140s | 0.465s | Parity PASS |
 
 ### GPU/NLP Microbenchmark (`run_gpu_benchmarks.py`)
 
@@ -55,3 +55,12 @@ Notes:
 | AST backend | 0.062s | 4 matches |
 | cyBERT backend | SKIP | Triton endpoint not running on this host |
 | Torch backend | 0.630s | 2,000 matches |
+
+## 2026-03-10 AST optimization note
+
+The current AST numbers improved after adding two in-process hot-path caches to `AstBackend`:
+
+- compiled tree-sitter query cache keyed by `(lang, pattern)`
+- parsed source/tree/decoded-line cache keyed by `(file_path, lang, mtime_ns, size)`
+
+That optimization primarily benefits `tg run --ast`, `tg scan`, and `tg test` workloads that reuse queries or revisit unchanged files within the same process. It does not eliminate the remaining one-shot process-start gap against native `ast-grep`, which is still the next structural performance target.

@@ -70,7 +70,7 @@ To maximize hardware utilization while preserving cross-platform stability, `ten
 ## 3. Evaluation and Benchmarks
 
 ### 3.1 Experimental Setup and Hardware Constraints
-We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **414 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
+We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **418 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
 
 **Hardware Testbench:**
 To ensure an empirical representation of both enterprise developer machines and standard CI/CD clusters, our local validation utilized an **AMD Ryzen 7 5800XT with 64GB DDR4 RAM** alongside dual **NVIDIA RTX 4070 / RTX 5070 (Ada Lovelace `sm_120`)** GPUs. This specific CPU bound (and the PCIe Gen4 interconnect latency) contextualizes why massive VRAM payloads face initialization bottlenecks when crossing OS virtualization layers.
@@ -112,7 +112,19 @@ gantt
     tensor-grep Regex Match :a2, 0, 0.682s
 ```
 
-### 3.4 Exact String Matching (The CPU/Rust Advantage)
+### 3.4 AST Structural Search (The Query-Cache Gain)
+
+The latest AST benchmark pass (`run_ast_benchmarks.py`) improved materially after adding two in-process caches to `AstBackend`: a compiled tree-sitter query cache keyed by `(lang, pattern)` and a parsed-source cache keyed by `(file_path, lang, mtime_ns, size)`. This reduces repeated query compilation and reparsing overhead for `tg run --ast`, `tg scan`, and `tg test` when the same process revisits unchanged modules.
+
+Current local results:
+
+* **Simple Function Def:** ast-grep **0.139s** vs tensor-grep **0.437s**
+* **Try/Except Block:** ast-grep **0.143s** vs tensor-grep **0.485s**
+* **Class Declaration:** ast-grep **0.140s** vs tensor-grep **0.465s**
+
+This is a real improvement over the prior local AST line, but it does not close the remaining one-shot process-start gap against native `ast-grep`. The practical conclusion is that AST backend caching helps repeated in-process workloads immediately, while persistent on-disk AST shard/index caching remains the next major speed lever.
+
+### 3.5 Exact String Matching (The CPU/Rust Advantage)
 In the fresh benchmark pass, the strongest `tensor-grep` result is the count path:
 
 * **Count Matches:** ripgrep **0.146s** vs tensor-grep **0.093s**
@@ -140,7 +152,7 @@ gantt
     tensor-grep Simple String  :a5, 0, 0.609s
 ```
 
-### 3.5 OS Architectural Limitations: Windows `spawn()` vs. WSL `fork()`
+### 3.6 OS Architectural Limitations: Windows `spawn()` vs. WSL `fork()`
 During our cross-platform validation, we encountered fundamental OS limitations that define why our tripartite routing architecture is mandatory:
 
 1. **Windows Subprocessing Overhead:** Windows Python `multiprocessing` relies on the `spawn()` method, requiring every worker to re-initialize the heavy PyTorch CUDA 12.4 context. This introduces a devastating **~11-second overhead**, making GPU offloading strictly non-viable for files under 200MB.
@@ -150,7 +162,7 @@ To mitigate the ~5.17s penalty of falling back to pure Python when GPUs were una
 
 When the Rust orchestrator detects a complex log or AST query that necessitates GPU capabilities, it dynamically spawns the Python runtime in-memory, loads `cuDF`, and evaluates the massive tensors. Our empirical tests against the C:\dev enterprise directory baseline (encompassing 40+ Gigabytes of raw code data) yielded a search completion time of **6.78 seconds** using `tensor-grep-rs`, compared to native `ripgrep` returning OS errors and taking **19.81 seconds** on identical hardware paths.
 
-### 3.6 The PyO3 Boundary: Why Pure Python Traversals Sometimes Win
+### 3.7 The PyO3 Boundary: Why Pure Python Traversals Sometimes Win
 During our optimizations, we attempted to map the `DirectoryScanner` natively to Rust via Andrew Gallant's highly optimized `ignore` crate wrapped in a PyO3 class. We expected an astronomical speedup compared to Python's native `os.walk`.
 
 Our empirical benchmarks across massive directories (such as an entire `C:\dev` enterprise monorepo) presented a deeply counter-intuitive discovery:
@@ -161,12 +173,12 @@ While Rust natively traverses files blazing fast, the **bottleneck is the PyO3 F
 
 Consequently, `tensor-grep` retains pure Python standard library capabilities for massive directory traversal (unless natively routed via the static Rust embedded execution `tg.exe` which avoids the GIL altogether), firmly demonstrating that high-performance hybrid architectures must be critically mindful of serialization boundaries.
 
-### 3.7 Highly-Scalable Find and Replace Mutations
+### 3.8 Highly-Scalable Find and Replace Mutations
 One of the longest-standing limitations of `ripgrep` is its strict adherence to pure search capabilities; it lacks native in-place log mutation or capture-group code refactoring natively. Developers typically pipeline `rg` outputs into `sed -i` or `awk`, crippling performance via IPC context switching overhead. 
 
 To resolve this, we embedded a native `--replace` pipeline directly into the Rust memory-mapped engine. Because the entire log sequence is evaluated as a contiguous string slice natively inside the regex solver, we can seamlessly apply parameterized capture group mutations (e.g. `$1`, `${num}`) at speeds matching VSCode's native C++ text buffers but entirely via the CLI. Benchmarking the replacement of 100,000 function argument parameters across a synthetic python file, `tensor-grep-rs` safely applied complex parameterized Regex template replacements across all lines, and wrote the new file to disk in exactly **0.497 seconds**. This achieves what was previously an impossibility for pure `ripgrep` constraints while completely maintaining strict code formatting preservation.
 
-### 3.8 Benchmark Regression Governance
+### 3.9 Benchmark Regression Governance
 To enforce sustainable performance gains, we introduced a benchmark-governance layer:
 
 1. Benchmark suites emit machine-readable JSON artifacts (`artifacts/bench_*.json`).
