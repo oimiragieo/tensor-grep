@@ -2413,6 +2413,34 @@ def test_should_require_publish_npm_node_version_contract():
     assert "publish-npm `Setup Node.js` step must include `node-version: 20`" in joined_errors
 
 
+def test_should_require_publish_npm_version_check_entrypoint_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
+    npm_section, remainder = npm_rest.split("  publish-docs:", 1)
+    npm_section = npm_section.replace(
+        "TAG_VERSION=${GITHUB_REF#refs/tags/v}",
+        "VERSION=${GITHUB_REF#refs/tags/v}",
+        1,
+    )
+    release_workflow = npm_prefix + "  publish-npm:" + npm_section + "  publish-docs:" + remainder
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert (
+        "publish-npm `Verify Version Match` step must begin with `TAG_VERSION=${GITHUB_REF#refs/tags/v}`"
+        in joined_errors
+    )
+
+
 def test_should_require_publish_npm_working_directory_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
