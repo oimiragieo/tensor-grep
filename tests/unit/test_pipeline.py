@@ -19,7 +19,12 @@ class TestPipeline:
 
         pipeline = Pipeline(
             force_cpu=False,
-            config=SearchConfig(ast=True, ast_prefer_native=True, lang="python"),
+            config=SearchConfig(
+                ast=True,
+                ast_prefer_native=True,
+                lang="python",
+                query_pattern="function_definition",
+            ),
         )
 
         assert pipeline.backend == mock_ast_backend.return_value
@@ -38,6 +43,31 @@ class TestPipeline:
         mock_ast_wrapper.return_value.is_available.return_value = True
 
         pipeline = Pipeline(force_cpu=False, config=SearchConfig(ast=True, lang="python"))
+
+        assert pipeline.backend == mock_ast_wrapper.return_value
+        assert pipeline.selected_backend_reason == "ast_wrapper_available"
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
+    @patch("tensor_grep.backends.ast_backend.AstBackend")
+    def test_should_prefer_ast_wrapper_for_ast_grep_style_patterns_even_when_native_is_requested(
+        self, mock_ast_backend, mock_ast_wrapper, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_ast_backend.return_value.is_available.return_value = True
+        mock_ast_wrapper.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(
+                ast=True,
+                ast_prefer_native=True,
+                lang="python",
+                query_pattern="def $FUNC():",
+            ),
+        )
 
         assert pipeline.backend == mock_ast_wrapper.return_value
         assert pipeline.selected_backend_reason == "ast_wrapper_available"
