@@ -619,6 +619,22 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     run = step.get("run")
                     if isinstance(run, str):
                         build_run_by_name[name] = run
+        build_install_uv_step = build_steps_by_name.get("Install uv")
+        if build_install_uv_step is None:
+            errors.append("Release workflow build-binaries job must include step `Install uv`")
+        else:
+            uses_value = build_install_uv_step.get("uses")
+            if uses_value != "astral-sh/setup-uv@v5":
+                errors.append(
+                    "Release workflow build-binaries `Install uv` step must use `astral-sh/setup-uv@v5`"
+                )
+        build_setup_python_run = build_run_by_name.get("Set up Python")
+        if build_setup_python_run is None:
+            errors.append("Release workflow build-binaries job must include step `Set up Python`")
+        elif "uv python install 3.12" not in build_setup_python_run:
+            errors.append(
+                "Release workflow build-binaries `Set up Python` step must invoke `uv python install 3.12`"
+            )
         build_binary_run = build_run_by_name.get("Build Binary")
         if build_binary_run is None:
             errors.append("Release workflow build-binaries job must include step `Build Binary`")

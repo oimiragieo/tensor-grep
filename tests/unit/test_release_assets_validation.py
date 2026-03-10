@@ -2016,6 +2016,25 @@ def test_should_require_release_build_binaries_step_contracts():
     spec.loader.exec_module(module)
 
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    build_binaries_prefix, build_binaries_rest = release_workflow.split("  build-binaries:", 1)
+    build_binaries_section, remainder = build_binaries_rest.split("  create-release:", 1)
+    build_binaries_section = build_binaries_section.replace(
+        "astral-sh/setup-uv@v5",
+        "astral-sh/setup-uv@v4",
+        1,
+    )
+    build_binaries_section = build_binaries_section.replace(
+        "uv python install 3.12",
+        "python -V",
+        1,
+    )
+    release_workflow = (
+        build_binaries_prefix
+        + "  build-binaries:"
+        + build_binaries_section
+        + "  create-release:"
+        + remainder
+    )
     release_workflow = release_workflow.replace(
         'uv pip install -e ".[dev]"',
         'uv pip install -e "."',
@@ -2074,6 +2093,10 @@ def test_should_require_release_build_binaries_step_contracts():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
+    assert "build-binaries `Install uv` step must use `astral-sh/setup-uv@v5`" in joined_errors
+    assert (
+        "build-binaries `Set up Python` step must invoke `uv python install 3.12`" in joined_errors
+    )
     assert (
         "build-binaries `Build Binary` step must invoke `scripts/build_binaries.py`"
         in joined_errors
