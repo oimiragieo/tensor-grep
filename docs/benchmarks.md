@@ -44,9 +44,9 @@ Notes:
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.139s | 0.437s | Parity PASS |
-| Try/Except Block | 0.143s | 0.485s | Parity PASS |
-| Class Declaration | 0.140s | 0.465s | Parity PASS |
+| Simple Function Def | 0.126s | 0.428s | Parity PASS |
+| Try/Except Block | 0.113s | 0.404s | Parity PASS |
+| Class Declaration | 0.118s | 0.401s | Parity PASS |
 
 ### GPU/NLP Microbenchmark (`run_gpu_benchmarks.py`)
 
@@ -62,6 +62,7 @@ The current AST numbers improved after adding two in-process hot-path caches to 
 
 - compiled tree-sitter query cache keyed by `(lang, pattern)`
 - parsed source/tree/decoded-line cache keyed by `(file_path, lang, mtime_ns, size)`
+- shared in-memory reuse across separate `AstBackend` instances in the same process
 
 That optimization primarily benefits `tg run --ast`, `tg scan`, and `tg test` workloads that reuse queries or revisit unchanged files within the same process. It does not eliminate the remaining one-shot process-start gap against native `ast-grep`, which is still the next structural performance target.
 

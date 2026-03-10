@@ -114,13 +114,13 @@ gantt
 
 ### 3.4 AST Structural Search (The Query-Cache Gain)
 
-The latest AST benchmark pass (`run_ast_benchmarks.py`) improved materially after adding two in-process caches to `AstBackend`: a compiled tree-sitter query cache keyed by `(lang, pattern)` and a parsed-source cache keyed by `(file_path, lang, mtime_ns, size)`. This reduces repeated query compilation and reparsing overhead for `tg run --ast`, `tg scan`, and `tg test` when the same process revisits unchanged modules.
+The latest AST benchmark pass (`run_ast_benchmarks.py`) improved materially after adding two in-process caches to `AstBackend`: a compiled tree-sitter query cache keyed by `(lang, pattern)` and a parsed-source cache keyed by `(file_path, lang, mtime_ns, size)`. The current line also shares those caches across separate `AstBackend` instances in the same process, which matters for `tg scan` and `tg test` because different rules may still route through separate backend objects. This reduces repeated query compilation and reparsing overhead for `tg run --ast`, `tg scan`, and `tg test` when the same process revisits unchanged modules.
 
 Current local results:
 
-* **Simple Function Def:** ast-grep **0.139s** vs tensor-grep **0.437s**
-* **Try/Except Block:** ast-grep **0.143s** vs tensor-grep **0.485s**
-* **Class Declaration:** ast-grep **0.140s** vs tensor-grep **0.465s**
+* **Simple Function Def:** ast-grep **0.126s** vs tensor-grep **0.428s**
+* **Try/Except Block:** ast-grep **0.113s** vs tensor-grep **0.404s**
+* **Class Declaration:** ast-grep **0.118s** vs tensor-grep **0.401s**
 
 This is a real improvement over the prior local AST line, but it does not close the remaining one-shot process-start gap against native `ast-grep`. The practical conclusion is that AST backend caching helps repeated in-process workloads immediately.
 
