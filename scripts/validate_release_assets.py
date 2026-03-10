@@ -1151,6 +1151,22 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     errors.append(
                         "Release workflow publish-npm `Setup Node.js` step must include `registry-url: https://registry.npmjs.org`"
                     )
+        install_uv_step = npm_steps_by_name.get("Install uv")
+        if install_uv_step is None:
+            errors.append("Release workflow publish-npm job must include step `Install uv`")
+        else:
+            uses_value = install_uv_step.get("uses")
+            if uses_value != "astral-sh/setup-uv@v5":
+                errors.append(
+                    "Release workflow publish-npm `Install uv` step must use `astral-sh/setup-uv@v5`"
+                )
+        setup_python_run = publish_npm_runs.get("Setup Python")
+        if setup_python_run is None:
+            errors.append("Release workflow publish-npm job must include step `Setup Python`")
+        elif "uv python install 3.12" not in setup_python_run:
+            errors.append(
+                "Release workflow publish-npm `Setup Python` step must invoke `uv python install 3.12`"
+            )
 
     npm_version_match_step = "Verify Version Match"
     npm_version_match_run = publish_npm_runs.get(npm_version_match_step)
