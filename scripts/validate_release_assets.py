@@ -1323,6 +1323,22 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     "Release workflow release-success-gate "
                     f"`{step_name}` step must include `{required_flag}`"
                 )
+    release_gate_confirm_step = "Confirm release publication gates"
+    release_gate_confirm_run = release_gate_runs.get(release_gate_confirm_step)
+    if release_gate_confirm_run is None:
+        errors.append(
+            "Release workflow release-success-gate "
+            f"job must include step `{release_gate_confirm_step}`"
+        )
+    elif (
+        'echo "Release publication gates passed: parity, npm, docs."'
+        not in release_gate_confirm_run
+    ):
+        errors.append(
+            "Release workflow release-success-gate "
+            f"`{release_gate_confirm_step}` step must invoke "
+            '`echo "Release publication gates passed: parity, npm, docs."`'
+        )
 
     if "uses: astral-sh/setup-uv@v5" not in release_workflow:
         errors.append(
