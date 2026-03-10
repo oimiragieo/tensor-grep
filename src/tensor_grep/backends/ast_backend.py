@@ -29,17 +29,20 @@ class AstBackend(ComputeBackend):
     _shared_parsed_source_cache: ClassVar[
         dict[tuple[str, str], tuple[tuple[int, int], bytes, list[str], Any]]
     ] = {}
+    _shared_node_type_index_cache: ClassVar[dict[tuple[str, str], tuple[tuple[int, int], dict[str, list[int]]]]] = {}
 
     def __init__(self) -> None:
         self._parsers = self._shared_parsers
         self._queries = self._shared_queries
         self._parsed_source_cache = self._shared_parsed_source_cache
+        self._node_type_index_cache = self._shared_node_type_index_cache
 
     @classmethod
     def _clear_shared_caches(cls) -> None:
         cls._shared_parsers.clear()
         cls._shared_queries.clear()
         cls._shared_parsed_source_cache.clear()
+        cls._shared_node_type_index_cache.clear()
 
     def _is_persistent_cache_enabled(self) -> bool:
         return os.environ.get("TENSOR_GREP_AST_CACHE", "1").strip().lower() not in {
@@ -163,6 +166,12 @@ class AstBackend(ComputeBackend):
     def _load_persistent_node_type_index(
         self, file_path: str, lang: str
     ) -> dict[str, list[int]] | None:
+        cache_key = (file_path, lang)
+        cache_signature = self._build_file_signature(file_path)
+        cached = self._node_type_index_cache.get(cache_key)
+        if cached and cached[0] == cache_signature:
+            return cached[1]
+
         if not self._is_persistent_cache_enabled():
             return None
 
@@ -187,11 +196,16 @@ class AstBackend(ComputeBackend):
             if not isinstance(node_type, str) or not isinstance(line_numbers, list):
                 return None
             normalized[node_type] = [int(line_number) for line_number in line_numbers]
+        self._node_type_index_cache[cache_key] = (cache_signature, normalized)
         return normalized
 
     def _persist_node_type_index(
         self, file_path: str, lang: str, node_type_index: dict[str, list[int]]
     ) -> None:
+        self._node_type_index_cache[(file_path, lang)] = (
+            self._build_file_signature(file_path),
+            node_type_index,
+        )
         if not self._is_persistent_cache_enabled():
             return
 
@@ -291,6 +305,14 @@ class AstBackend(ComputeBackend):
         self._parsed_source_cache[cache_key] = (cache_signature, source_bytes, lines, tree)
         return source_bytes, lines, tree
 
+    def _get_cached_lines(self, file_path: str, lang: str) -> list[str] | None:
+        cache_key = (file_path, lang)
+        cache_signature = self._build_file_signature(file_path)
+        cached = self._parsed_source_cache.get(cache_key)
+        if cached and cached[0] == cache_signature:
+            return cached[2]
+        return None
+
     def _ast_to_graph(
         self, root_node: Any, source_bytes: bytes
     ) -> tuple["torch.Tensor", "torch.Tensor", list[int]]:
@@ -360,7 +382,9 @@ class AstBackend(ComputeBackend):
         if self._is_simple_node_type_pattern(pattern):
             node_type_index = self._load_persistent_node_type_index(file_path, lang)
             if node_type_index is not None and pattern in node_type_index:
-                lines = Path(file_path).read_text(encoding="utf-8").split("\n")
+                lines = self._get_cached_lines(file_path, lang)
+                if lines is None:
+                    lines = Path(file_path).read_text(encoding="utf-8").split("\n")
                 result = self._build_matches_from_line_numbers(
                     file_path,
                     lines,
