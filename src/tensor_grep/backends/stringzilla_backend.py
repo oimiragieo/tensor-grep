@@ -150,7 +150,9 @@ class StringZillaBackend(ComputeBackend):
         if cached is None:
             with open(file_path, encoding="utf-8") as f_obj:
                 source_lines = f_obj.read().splitlines()
-            normalized_lines = [line.lower() for line in source_lines] if ignore_case else source_lines
+            normalized_lines = (
+                [line.lower() for line in source_lines] if ignore_case else source_lines
+            )
             trigram_index = self._build_line_trigram_index(normalized_lines)
             self._persist_index(file_path, ignore_case, source_lines, trigram_index)
             routing_reason = "stringzilla_fixed_strings_index"

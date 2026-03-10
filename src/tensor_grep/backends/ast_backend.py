@@ -29,7 +29,9 @@ class AstBackend(ComputeBackend):
     _shared_parsed_source_cache: ClassVar[
         dict[tuple[str, str], tuple[tuple[int, int], bytes, list[str], Any]]
     ] = {}
-    _shared_node_type_index_cache: ClassVar[dict[tuple[str, str], tuple[tuple[int, int], dict[str, list[int]]]]] = {}
+    _shared_node_type_index_cache: ClassVar[
+        dict[tuple[str, str], tuple[tuple[int, int], dict[str, list[int]]]]
+    ] = {}
 
     def __init__(self) -> None:
         self._parsers = self._shared_parsers
