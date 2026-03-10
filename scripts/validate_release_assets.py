@@ -1030,6 +1030,21 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         return runs
 
     verify_release_assets_runs = _step_runs_by_name("verify-release-assets")
+    verify_release_assets_job = jobs.get("verify-release-assets")
+    if isinstance(verify_release_assets_job, dict):
+        verify_release_assets_steps = verify_release_assets_job.get("steps", [])
+        checkout_uses_values = []
+        if isinstance(verify_release_assets_steps, list):
+            for step in verify_release_assets_steps:
+                if not isinstance(step, dict):
+                    continue
+                uses_value = step.get("uses")
+                if isinstance(uses_value, str):
+                    checkout_uses_values.append(uses_value)
+        if "actions/checkout@v4" not in checkout_uses_values:
+            errors.append(
+                "Release workflow verify-release-assets job must include `actions/checkout@v4`"
+            )
     verify_assets_step = "Verify uploaded release assets and checksum coverage"
     verify_assets_run = verify_release_assets_runs.get(verify_assets_step)
     if verify_assets_run is None:
