@@ -1196,7 +1196,7 @@ def scan(
     scanner = DirectoryScanner(cfg)
     root_dir = cast(Path, project_cfg["root_dir"])
     candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
-    backend_cache: dict[tuple[str | None, str, bool], "ComputeBackend"] = {}
+    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
 
     scan_banner = "Scanning project using adaptive AST routing"
@@ -1263,7 +1263,7 @@ def test(
         ast_prefer_native=True,
         lang=cast(str, project_cfg["language"]),
     )
-    backend_cache: dict[tuple[str | None, str, bool], "ComputeBackend"] = {}
+    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
 
     total_cases = 0
