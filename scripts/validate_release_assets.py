@@ -1203,11 +1203,23 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append(
                 f"Release workflow publish-npm job must include step `{npm_publish_step}`"
             )
-        elif str(npm_publish_step_config.get("working-directory")) != "npm":
-            errors.append(
-                "Release workflow publish-npm "
-                f"`{npm_publish_step}` step must include `working-directory: npm`"
-            )
+        else:
+            if str(npm_publish_step_config.get("working-directory")) != "npm":
+                errors.append(
+                    "Release workflow publish-npm "
+                    f"`{npm_publish_step}` step must include `working-directory: npm`"
+                )
+            env_block = npm_publish_step_config.get("env")
+            if not isinstance(env_block, dict):
+                errors.append(
+                    "Release workflow publish-npm "
+                    f"`{npm_publish_step}` step must define an `env` mapping"
+                )
+            elif str(env_block.get("NODE_AUTH_TOKEN")) != "${{ secrets.NPM_TOKEN }}":
+                errors.append(
+                    "Release workflow publish-npm "
+                    f"`{npm_publish_step}` step must include `NODE_AUTH_TOKEN: ${{{{ secrets.NPM_TOKEN }}}}`"
+                )
 
     npm_verify_step = "Verify npm registry parity for release version"
     npm_verify_run = publish_npm_runs.get(npm_verify_step)
