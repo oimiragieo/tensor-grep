@@ -15,6 +15,7 @@ from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
 if TYPE_CHECKING:
+    from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -294,8 +295,8 @@ def _describe_ast_backend_modes(backend_names: set[str]) -> str:
 def _select_ast_backend_for_pattern(
     base_config: "SearchConfig",
     pattern: str,
-    backend_cache: dict[tuple[str | None, str, bool], object] | None = None,
-):
+    backend_cache: dict[tuple[str | None, str, bool], "ComputeBackend"] | None = None,
+) -> "ComputeBackend":
     from tensor_grep.core.pipeline import Pipeline
 
     cache_key = (base_config.lang, pattern, base_config.ast_prefer_native)
@@ -1195,7 +1196,7 @@ def scan(
     scanner = DirectoryScanner(cfg)
     root_dir = cast(Path, project_cfg["root_dir"])
     candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
-    backend_cache: dict[tuple[str | None, str, bool], object] = {}
+    backend_cache: dict[tuple[str | None, str, bool], "ComputeBackend"] = {}
     backend_names_used: set[str] = set()
 
     scan_banner = "Scanning project using adaptive AST routing"
@@ -1262,7 +1263,7 @@ def test(
         ast_prefer_native=True,
         lang=cast(str, project_cfg["language"]),
     )
-    backend_cache: dict[tuple[str | None, str, bool], object] = {}
+    backend_cache: dict[tuple[str | None, str, bool], "ComputeBackend"] = {}
     backend_names_used: set[str] = set()
 
     total_cases = 0
