@@ -299,7 +299,13 @@ def _select_ast_backend_for_pattern(
 ) -> "ComputeBackend":
     from tensor_grep.core.pipeline import Pipeline
 
-    cache_key = (base_config.lang, pattern, base_config.ast_prefer_native)
+    stripped_pattern = pattern.strip()
+    supports_native_pattern = bool(
+        stripped_pattern
+        and (stripped_pattern.startswith("(") or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", stripped_pattern))
+    )
+    pattern_kind = "native" if base_config.ast_prefer_native and supports_native_pattern else "wrapper"
+    cache_key = (base_config.lang, pattern_kind, base_config.ast_prefer_native)
     if backend_cache is not None and cache_key in backend_cache:
         return backend_cache[cache_key]
 
