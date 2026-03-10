@@ -2,6 +2,7 @@ import logging
 import re
 import warnings
 from pathlib import Path
+from typing import ClassVar
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -11,6 +12,83 @@ logger = logging.getLogger(__name__)
 
 
 class CPUBackend(ComputeBackend):
+    _shared_literal_index_cache: ClassVar[
+        dict[tuple[str, bool], tuple[tuple[int, int], list[str], dict[str, list[int]]]]
+    ] = {}
+
+    @classmethod
+    def _clear_shared_caches(cls) -> None:
+        cls._shared_literal_index_cache.clear()
+
+    @staticmethod
+    def _build_file_signature(file_path: str) -> tuple[int, int]:
+        stat_result = Path(file_path).stat()
+        return stat_result.st_mtime_ns, stat_result.st_size
+
+    @staticmethod
+    def _build_line_trigram_index(lines: list[str]) -> dict[str, list[int]]:
+        index: dict[str, set[int]] = {}
+        for line_idx, line in enumerate(lines):
+            if len(line) < 3:
+                continue
+            for start in range(len(line) - 2):
+                trigram = line[start : start + 3]
+                index.setdefault(trigram, set()).add(line_idx)
+        return {trigram: sorted(line_numbers) for trigram, line_numbers in index.items()}
+
+    @staticmethod
+    def _extract_required_literal(pattern: str) -> str | None:
+        if any(token in pattern for token in ("|", "(", ")", "[", "]", "{", "}", "?", "+", "\\")):
+            return None
+
+        literals: list[str] = []
+        current: list[str] = []
+        for ch in pattern:
+            if ch in {".", "*", "^", "$"}:
+                if current:
+                    literals.append("".join(current))
+                    current = []
+                continue
+            current.append(ch)
+
+        if current:
+            literals.append("".join(current))
+
+        literal = max(literals, key=len, default="")
+        return literal if len(literal) >= 3 else None
+
+    def _load_literal_index(
+        self, file_path: str, ignore_case: bool
+    ) -> tuple[list[str], dict[str, list[int]]] | None:
+        cache_key = (file_path, ignore_case)
+        cache_signature = self._build_file_signature(file_path)
+        cached = self._shared_literal_index_cache.get(cache_key)
+        if cached and cached[0] == cache_signature:
+            return cached[1], cached[2]
+        return None
+
+    def _store_literal_index(
+        self, file_path: str, ignore_case: bool, lines: list[str], trigram_index: dict[str, list[int]]
+    ) -> None:
+        self._shared_literal_index_cache[(file_path, ignore_case)] = (
+            self._build_file_signature(file_path),
+            lines,
+            trigram_index,
+        )
+
+    @classmethod
+    def _candidate_line_indexes(
+        cls, trigram_index: dict[str, list[int]], literal: str
+    ) -> list[int]:
+        trigrams = [literal[i : i + 3] for i in range(len(literal) - 2)]
+        candidate_sets = []
+        for trigram in trigrams:
+            line_numbers = trigram_index.get(trigram)
+            if not line_numbers:
+                return []
+            candidate_sets.append(set(line_numbers))
+        return sorted(set.intersection(*candidate_sets)) if candidate_sets else []
+
     @staticmethod
     def _compile_regexes(
         pattern: str, flags: int, config: SearchConfig
@@ -135,6 +213,35 @@ class CPUBackend(ComputeBackend):
             flags |= re.IGNORECASE
 
         regex_str, regex = self._compile_regexes(pattern=pattern, flags=flags, config=config)
+        prefilter_literal = None
+        routing_reason = "cpu_python_regex"
+        ignore_case = bool(config.ignore_case or (config.smart_case and pattern.islower()))
+        source_lines: list[str] | None = None
+        candidate_line_indexes: set[int] | None = None
+        if not (
+            config.fixed_strings
+            or config.invert_match
+            or config.context
+            or config.before_context
+            or config.after_context
+            or config.line_regexp
+            or config.word_regexp
+            or config.ltl
+        ):
+            prefilter_literal = self._extract_required_literal(pattern)
+            if prefilter_literal:
+                cached_index = self._load_literal_index(file_path, ignore_case)
+                if cached_index is None:
+                    source_lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    normalized_lines = [line.lower() for line in source_lines] if ignore_case else source_lines
+                    trigram_index = self._build_line_trigram_index(normalized_lines)
+                    self._store_literal_index(file_path, ignore_case, source_lines, trigram_index)
+                    routing_reason = "cpu_python_regex_prefilter"
+                else:
+                    source_lines, trigram_index = cached_index
+                    routing_reason = "cpu_python_regex_prefilter_cache"
+                literal = prefilter_literal.lower() if ignore_case else prefilter_literal
+                candidate_line_indexes = set(self._candidate_line_indexes(trigram_index, literal))
 
         total_matches_count = 0
         before_lines = getattr(config, "before_context", 0) or 0
@@ -148,9 +255,11 @@ class CPUBackend(ComputeBackend):
 
             before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
             context_after_remaining = 0
-
-            with open(path, "rb") as f:
-                for line_idx, line_bytes in enumerate(f, 1):
+            if source_lines is not None:
+                line_iter = ((idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines))
+                for line_idx, line_bytes in line_iter:
+                    if candidate_line_indexes is not None and (line_idx - 1) not in candidate_line_indexes:
+                        continue
                     # Try using python regex to decode byte string, else try the decoded string
                     matched = False
                     try:
@@ -190,7 +299,6 @@ class CPUBackend(ComputeBackend):
                             matched = not matched
 
                     if matched:
-                        # Flush before context
                         while before_queue:
                             b_idx, b_text = before_queue.popleft()
                             matches.append(
@@ -213,6 +321,72 @@ class CPUBackend(ComputeBackend):
                     else:
                         if before_lines > 0:
                             before_queue.append((line_idx, line_text))
+            else:
+                with open(path, "rb") as f:
+                    for line_idx, line_bytes in enumerate(f, 1):
+                        if candidate_line_indexes is not None and (line_idx - 1) not in candidate_line_indexes:
+                            continue
+                        # Try using python regex to decode byte string, else try the decoded string
+                        matched = False
+                        try:
+                            matched = bool(regex.search(line_bytes))
+                        except Exception:
+                            pass
+
+                        if not matched:
+                            try:
+                                line_text = line_bytes.decode("utf-8").rstrip("\n\r")
+                                matched = bool(regex_str.search(line_text))
+                            except Exception:
+                                try:
+                                    line_text = line_bytes.decode("latin-1").rstrip("\n\r")
+                                    matched = bool(regex_str.search(line_text))
+                                except Exception:
+                                    pass
+
+                        if config.invert_match:
+                            matched = not matched
+
+                        if matched or before_lines > 0 or context_after_remaining > 0:
+                            # Decode lazily only what we need to return
+                            try:
+                                line = line_bytes.decode("utf-8")
+                            except UnicodeDecodeError:
+                                try:
+                                    line = line_bytes.decode("latin-1")
+                                except Exception:
+                                    line = line_bytes.decode("utf-8", errors="replace")
+                            line_text = line.rstrip("\n\r")
+
+                            # Apply python regex search for decoded text to be safe
+                            matched = bool(regex_str.search(line_text))
+
+                            if config.invert_match:
+                                matched = not matched
+
+                        if matched:
+                            while before_queue:
+                                b_idx, b_text = before_queue.popleft()
+                                matches.append(
+                                    MatchLine(line_number=b_idx, text=b_text, file=file_path)
+                                )
+
+                            matches.append(
+                                MatchLine(line_number=line_idx, text=line_text, file=file_path)
+                            )
+                            total_matches_count += 1
+                            context_after_remaining = after_lines
+
+                            if config.max_count and total_matches_count >= config.max_count:
+                                break
+                        elif context_after_remaining > 0:
+                            matches.append(
+                                MatchLine(line_number=line_idx, text=line_text, file=file_path)
+                            )
+                            context_after_remaining -= 1
+                        else:
+                            if before_lines > 0:
+                                before_queue.append((line_idx, line_text))
         except Exception as exc:
             raise RuntimeError(f"CPU backend search failed for {file_path}: {exc}") from exc
 

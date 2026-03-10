@@ -7,6 +7,9 @@ from tensor_grep.core.config import SearchConfig
 
 
 class TestCPUBackend:
+    def teardown_method(self):
+        CPUBackend._clear_shared_caches()
+
     def test_should_find_simple_pattern(self, sample_log_file):
         backend = CPUBackend()
         result = backend.search(str(sample_log_file), "ERROR")
@@ -190,7 +193,11 @@ class TestCPUBackend:
 
         assert result.total_matches == 1
         assert result.routing_backend == "CPUBackend"
-        assert result.routing_reason == "cpu_python_regex"
+        assert result.routing_reason in {
+            "cpu_python_regex",
+            "cpu_python_regex_prefilter",
+            "cpu_python_regex_prefilter_cache",
+        }
 
     def test_should_report_total_files_for_count_mode_without_materialized_matches(self, tmp_path):
         log = tmp_path / "count_mode.log"
@@ -211,7 +218,11 @@ class TestCPUBackend:
         assert result.total_matches == 2
         assert result.total_files == 1
         assert result.routing_backend == "CPUBackend"
-        assert result.routing_reason == "cpu_python_regex"
+        assert result.routing_reason in {
+            "cpu_python_regex",
+            "cpu_python_regex_prefilter",
+            "cpu_python_regex_prefilter_cache",
+        }
 
     def test_should_not_match_ltl_when_order_is_wrong(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
@@ -267,3 +278,70 @@ class TestCPUBackend:
 
         assert result.total_matches == 1
         assert not any(isinstance(warning.message, FutureWarning) for warning in captured)
+
+    def test_should_use_literal_prefilter_for_safe_python_regex_fallback(self, tmp_path):
+        log = tmp_path / "prefilter.log"
+        log.write_text("INFO ok\nERROR x timeout\nWARN no\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), r"ERROR.*timeout", config=SearchConfig())
+
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 2
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_python_regex_prefilter"
+
+    def test_should_reuse_literal_prefilter_index_across_backend_instances(self, tmp_path):
+        log = tmp_path / "prefilter_cache.log"
+        log.write_text("INFO ok\nERROR x timeout\nWARN no\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            first = CPUBackend().search(str(log), r"ERROR.*timeout", config=SearchConfig())
+            assert first.total_matches == 1
+
+            backend_two = CPUBackend()
+
+            def fail_build(*_args, **_kwargs):
+                raise AssertionError("should not rebuild literal prefilter index on cache hit")
+
+            backend_two._build_line_trigram_index = fail_build  # type: ignore[method-assign]
+            second = backend_two.search(str(log), r"ERROR.*timeout", config=SearchConfig())
+
+        assert second.total_matches == 1
+        assert second.routing_reason == "cpu_python_regex_prefilter_cache"
+
+    def test_should_not_use_literal_prefilter_for_unsafe_regex_constructs(self, tmp_path):
+        log = tmp_path / "unsafe_prefilter.log"
+        log.write_text("foo\nbar\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), r"foo|bar", config=SearchConfig())
+
+        assert result.total_matches == 2
+        assert result.routing_reason == "cpu_python_regex"
