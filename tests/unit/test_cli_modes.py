@@ -1007,6 +1007,18 @@ class _FakeCountOnlyAstPipeline:
         return self._backend
 
 
+class _CapturingAstPipeline:
+    last_config = None
+
+    def __init__(self, force_cpu=False, config=None):
+        _ = force_cpu
+        _CapturingAstPipeline.last_config = config
+        self._backend = _FakeAstBackend()
+
+    def get_backend(self):
+        return self._backend
+
+
 class _FakeAstScanner:
     def __init__(self, config=None):
         pass
@@ -1147,6 +1159,24 @@ def test_run_should_report_ast_wrapper_backend_mode(monkeypatch):
     assert "GPU-Accelerated AST-Grep Run" not in result.output
 
 
+def test_run_should_keep_wrapper_first_ast_policy(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["run", "ERROR", "."])
+
+    assert result.exit_code == 0
+    assert _CapturingAstPipeline.last_config is not None
+    assert _CapturingAstPipeline.last_config.ast_prefer_native is False
+
+
 def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
 
@@ -1173,6 +1203,61 @@ def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
 
     assert result.exit_code == 0
     assert "Testing AST rules using ast-grep structural matching" in result.output
+
+
+def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+        )
+        Path("rules").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert _CapturingAstPipeline.last_config is not None
+    assert _CapturingAstPipeline.last_config.ast_prefer_native is True
+
+
+def test_test_command_should_prefer_native_ast_backend_policy(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+            encoding="utf-8",
+        )
+        Path("rules").mkdir()
+        Path("tests").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("tests/error.yml").write_text(
+            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert _CapturingAstPipeline.last_config is not None
+    assert _CapturingAstPipeline.last_config.ast_prefer_native is True
 
 
 def test_test_command_should_use_total_file_contract_for_match_detection(monkeypatch):

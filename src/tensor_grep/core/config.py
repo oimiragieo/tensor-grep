@@ -120,6 +120,7 @@ class SearchConfig:
     format_type: str = "rg"
     nlp_threshold: float = 0.0
     ast: bool = False
+    ast_prefer_native: bool = False
     lang: str | None = None
     use_jit: bool = False
     ltl: bool = False
