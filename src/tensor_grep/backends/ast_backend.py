@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     import torch
@@ -24,12 +24,22 @@ class AstBackend(ComputeBackend):
     subgraph isomorphism matching directly in GPU VRAM using PyTorch Geometric.
     """
 
+    _shared_parsers: ClassVar[dict[str, Any]] = {}
+    _shared_queries: ClassVar[dict[tuple[str, str], Any]] = {}
+    _shared_parsed_source_cache: ClassVar[
+        dict[tuple[str, str], tuple[tuple[int, int], bytes, list[str], Any]]
+    ] = {}
+
     def __init__(self) -> None:
-        self._parsers: dict[str, Any] = {}
-        self._queries: dict[tuple[str, str], Any] = {}
-        self._parsed_source_cache: dict[
-            tuple[str, str], tuple[tuple[int, int], bytes, list[str], Any]
-        ] = {}
+        self._parsers = self._shared_parsers
+        self._queries = self._shared_queries
+        self._parsed_source_cache = self._shared_parsed_source_cache
+
+    @classmethod
+    def _clear_shared_caches(cls) -> None:
+        cls._shared_parsers.clear()
+        cls._shared_queries.clear()
+        cls._shared_parsed_source_cache.clear()
 
     def _is_persistent_cache_enabled(self) -> bool:
         return os.environ.get("TENSOR_GREP_AST_CACHE", "1").strip().lower() not in {

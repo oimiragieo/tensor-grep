@@ -47,9 +47,9 @@ Environment notes:
 
 | Scenario | ast-grep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple Function Def | 0.139s | 0.437s | Parity PASS |
-| Try/Except Block | 0.143s | 0.485s | Parity PASS |
-| Class Declaration | 0.140s | 0.465s | Parity PASS |
+| Simple Function Def | 0.126s | 0.428s | Parity PASS |
+| Try/Except Block | 0.113s | 0.404s | Parity PASS |
+| Class Declaration | 0.118s | 0.401s | Parity PASS |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
@@ -85,6 +85,7 @@ Environment notes:
 - **In-Place File Mutations (NEW):** Unlike ripgrep, `tensor-grep` natively supports memory-mapped find-and-replace mutability via `--replace`. Apply `sed`-like capture groups (e.g. `$1`) at millions of lines per second without ever leaving the Rust terminal backend.
 - **AST-Grep Parity (NEW):** Structural code searching via PyTorch Geometric Graph Neural Networks (GNNs). Run `tg run`, `tg scan`, `tg lsp` to match structural code patterns (e.g. `if ($A) { return $B; }`) rather than dumb text strings.
 - **Repeated AST searches are materially faster now.** `AstBackend` caches compiled tree-sitter queries plus parsed file state (`mtime_ns`/size keyed) so `tg scan` / `tg test` / repeated in-process AST workloads stop recompiling and reparsing unchanged modules on every pass.
+- **AST caches are now shared across backend instances in the same process.** `scan` / `test` no longer pay separate parser/query/source cache misses just because different rules selected separate `AstBackend` objects.
 - **Persistent AST result cache.** Repeated structural queries across unchanged files can now reuse on-disk AST result entries across CLI invocations. Cache location can be overridden with `TENSOR_GREP_AST_CACHE_DIR`, or disabled with `TENSOR_GREP_AST_CACHE=0`.
 - **Persistent AST node-type index.** Simple native AST queries such as `function_definition` can now reuse an on-disk node-type line index across runs, which lets later native queries over unchanged files skip reparsing entirely.
 - **Semantic Understanding:** The `tg classify` command utilizes a specialized `cyBERT` HuggingFace transformer to identify malicious log patterns, detect hidden base64 payloads, and assign severity (WARN/ERROR/INFO) based on *context* rather than strict regex matches.
