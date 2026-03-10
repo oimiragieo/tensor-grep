@@ -2458,6 +2458,29 @@ def test_should_require_publish_docs_python_setup_contract():
     assert "publish-docs `Set up Python` step must include `python-version: 3.11`" in joined_errors
 
 
+def test_should_require_publish_docs_force_flag():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
+    docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
+    docs_section = docs_section.replace("mkdocs gh-deploy --force", "mkdocs gh-deploy", 1)
+    release_workflow = (
+        docs_prefix + "  publish-docs:" + docs_section + "  release-success-gate:" + remainder
+    )
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "publish-docs `Deploy Docs` step must invoke `mkdocs gh-deploy --force`" in joined_errors
+
+
 def test_should_require_release_success_gate_setup_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
