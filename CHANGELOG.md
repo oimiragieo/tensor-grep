@@ -1,6 +1,58 @@
 # CHANGELOG
 
 
+## v0.31.10 (2026-03-11)
+
+### Bug Fixes
+
+- **ast**: Route native backend only for native patterns
+  ([`47d8b59`](https://github.com/oimiragieo/tensor-grep/commit/47d8b59d3f3bc0d43267abd3b7e644a9e7245c00))
+
+- **ci**: Annotate ast backend selection helper
+  ([`c6fd803`](https://github.com/oimiragieo/tensor-grep/commit/c6fd8031a42625ae601d262a1e2e5feb8e1d4507))
+
+- **ci**: Apply ruff formatting to backend caches
+  ([`9f0ee25`](https://github.com/oimiragieo/tensor-grep/commit/9f0ee253ed13f58006b0589689fe5c8a1068b000))
+
+- **ci**: Apply ruff formatting to cpu prefilter
+  ([`65c0a94`](https://github.com/oimiragieo/tensor-grep/commit/65c0a9498ee22de32ed53a83386e3765dc3a46c4))
+
+- **ci**: Format ast workflow cache helper
+  ([`eb7b635`](https://github.com/oimiragieo/tensor-grep/commit/eb7b6356fc2bf5748d3a7c02a2e5615fe2808612))
+
+- **ci**: Satisfy ruff type annotation style
+  ([`cbbc44b`](https://github.com/oimiragieo/tensor-grep/commit/cbbc44b30a505c64d97fc9d1613efee19c5daf40))
+
+### Performance Improvements
+
+- **ast**: Add workflow benchmark and fix wrapper path
+  ([`3976826`](https://github.com/oimiragieo/tensor-grep/commit/39768263708380b262e720e2d7e21837d15a7b43))
+
+- **ast**: Bypass pipeline for workflow backend selection
+  ([`1a2f04b`](https://github.com/oimiragieo/tensor-grep/commit/1a2f04b3f9403b1ff2cf2991a28457239df027f9))
+
+- **ast**: Keep node indexes hot in memory
+  ([`8b8e1ee`](https://github.com/oimiragieo/tensor-grep/commit/8b8e1ee66e12babcd1567487a099d7f82413261d))
+
+- **ast**: Persist node type index for native queries
+  ([`6d749a7`](https://github.com/oimiragieo/tensor-grep/commit/6d749a7406901a285ce995c407015f899812b306))
+
+- **ast**: Reuse workflow backend selection cache
+  ([`9c2d873`](https://github.com/oimiragieo/tensor-grep/commit/9c2d873efc0d7365a7d7f8fc4744170957f7a5e9))
+
+- **ast**: Share in-memory caches across instances
+  ([`69fba09`](https://github.com/oimiragieo/tensor-grep/commit/69fba0973edd52032b52426e5b10aa5a65378f7b))
+
+- **cpu**: Persist regex prefilter cache
+  ([`1177fad`](https://github.com/oimiragieo/tensor-grep/commit/1177fad2d13e1336525c360ae5b99a7a3517236b))
+
+- **cpu**: Prefilter repeated regex fallback
+  ([`c042acd`](https://github.com/oimiragieo/tensor-grep/commit/c042acd3ade68952a937471e20b88c0437f350d1))
+
+- **string**: Add repeated-query trigram index
+  ([`53c88fa`](https://github.com/oimiragieo/tensor-grep/commit/53c88fa9af459f979daf73caa5cce944a01ddbbc))
+
+
 ## v0.31.9 (2026-03-10)
 
 ### Performance Improvements
