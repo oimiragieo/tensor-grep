@@ -51,16 +51,14 @@ class AstGrepWrapperBackend(ComputeBackend):
         rule_file = temp_dir / "inline_rule.yml"
         lang_value = lang or "python"
         rule_file.write_text(
-            "\n".join(
-                [
-                    "id: inline-rule",
-                    f"language: {lang_value}",
-                    "rule:",
-                    "  pattern: |",
-                    *[f"    {line}" for line in pattern.splitlines()],
-                    "",
-                ]
-            ),
+            "\n".join([
+                "id: inline-rule",
+                f"language: {lang_value}",
+                "rule:",
+                "  pattern: |",
+                *[f"    {line}" for line in pattern.splitlines()],
+                "",
+            ]),
             encoding="utf-8",
         )
         cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), *paths]

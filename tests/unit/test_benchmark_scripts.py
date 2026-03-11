@@ -244,23 +244,19 @@ def test_check_regression_should_refuse_cross_environment_comparison_by_default(
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "linux", "machine": "x86_64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "linux", "machine": "x86_64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.2}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.2}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -286,23 +282,19 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "linux", "machine": "x86_64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "linux", "machine": "x86_64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -343,13 +335,11 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
 
@@ -381,13 +371,11 @@ def test_check_regression_should_fail_when_auto_baseline_platform_is_unavailable
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "darwin", "machine": "arm64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
 
@@ -429,13 +417,11 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -470,13 +456,11 @@ def test_summarize_benchmarks_should_fail_when_auto_baseline_platform_is_unavail
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "darwin", "machine": "arm64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"

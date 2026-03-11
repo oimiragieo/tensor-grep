@@ -96,27 +96,23 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+        })
 
     return specs
 
@@ -428,18 +424,16 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                         temp_name.write_text(snippet, encoding="utf-8")
                         try:
                             result = backend.search(str(temp_name), pattern, config=case_cfg)
-                            evaluated_snippets.append(
-                                (
-                                    f"{test_file}:{case_id}",
-                                    snippet,
-                                    expected_match,
-                                    bool(
-                                        result.total_files > 0
-                                        or result.total_matches > 0
-                                        or result.matched_file_paths
-                                    ),
-                                )
-                            )
+                            evaluated_snippets.append((
+                                f"{test_file}:{case_id}",
+                                snippet,
+                                expected_match,
+                                bool(
+                                    result.total_files > 0
+                                    or result.total_matches > 0
+                                    or result.matched_file_paths
+                                ),
+                            ))
                         finally:
                             temp_name.unlink(missing_ok=True)
             except Exception as exc:
