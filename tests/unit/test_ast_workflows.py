@@ -164,7 +164,9 @@ def test_search_ast_test_snippets_with_wrapper_should_match_by_temp_file_name(tm
     class _Backend:
         def search_many(self, paths, pattern, config=None):
             return SearchResult(
-                matches=[MatchLine(file=str(Path(paths[0]) / "case_1.py"), line_number=1, text="x")],
+                matches=[
+                    MatchLine(file=str(Path(paths[0]) / "case_1.py"), line_number=1, text="x")
+                ],
                 total_matches=1,
                 total_files=1,
                 matched_file_paths=["nested\\case_0.py"],

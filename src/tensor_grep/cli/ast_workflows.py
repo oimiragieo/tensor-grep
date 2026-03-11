@@ -163,6 +163,7 @@ def _search_ast_test_snippets_with_wrapper(
             snippet_names.append(snippet_name)
 
         result = cast(Any, backend).search_many([str(temp_root)], pattern, config=case_cfg)
+
         def _match_name(raw_path: str) -> str:
             return raw_path.replace("\\", "/").rsplit("/", 1)[-1]
 
