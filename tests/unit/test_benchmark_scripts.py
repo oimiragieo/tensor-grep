@@ -72,6 +72,42 @@ def test_run_ast_benchmarks_should_target_bootstrap_entrypoint():
     assert cmd[3:] == ["run", "--ast", "pattern", "bench_ast_data"]
 
 
+def test_run_ast_workflow_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
+    module = _load_script_module(
+        "run_ast_workflow_benchmarks_script", "benchmarks/run_ast_workflow_benchmarks.py"
+    )
+    monkeypatch.delenv("TENSOR_GREP_AST_WORKFLOW_BENCH_DIR", raising=False)
+
+    path = module.resolve_ast_workflow_bench_dir()
+
+    assert path.parts[-2:] == ("artifacts", "bench_ast_workflow")
+
+
+def test_run_ast_workflow_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_ast_workflow_benchmarks_script_override",
+        "benchmarks/run_ast_workflow_benchmarks.py",
+    )
+    override = tmp_path / "bench_ast_workflow_override"
+    monkeypatch.setenv("TENSOR_GREP_AST_WORKFLOW_BENCH_DIR", str(override))
+
+    path = module.resolve_ast_workflow_bench_dir()
+
+    assert path == override.resolve()
+
+
+def test_run_ast_workflow_benchmarks_should_target_bootstrap_entrypoint():
+    module = _load_script_module(
+        "run_ast_workflow_benchmarks_script_cmd",
+        "benchmarks/run_ast_workflow_benchmarks.py",
+    )
+
+    cmd = module.build_tg_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
+
+    assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
+    assert cmd[3:] == ["scan", "--config", "sgconfig.yml"]
+
+
 def test_run_gpu_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module("run_gpu_benchmarks_script", "benchmarks/run_gpu_benchmarks.py")
     monkeypatch.delenv("TENSOR_GREP_GPU_BENCH_DATA_DIR", raising=False)
@@ -92,7 +128,9 @@ def test_run_gpu_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
 
 
 def test_run_hot_query_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
-    module = _load_script_module("run_hot_query_benchmarks_script", "benchmarks/run_hot_query_benchmarks.py")
+    module = _load_script_module(
+        "run_hot_query_benchmarks_script", "benchmarks/run_hot_query_benchmarks.py"
+    )
     monkeypatch.delenv("TENSOR_GREP_HOT_BENCH_DATA_DIR", raising=False)
 
     path = module.resolve_hot_bench_data_dir()
@@ -101,7 +139,9 @@ def test_run_hot_query_benchmarks_should_default_data_dir_to_artifacts(monkeypat
 
 
 def test_run_hot_query_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path):
-    module = _load_script_module("run_hot_query_benchmarks_script_override", "benchmarks/run_hot_query_benchmarks.py")
+    module = _load_script_module(
+        "run_hot_query_benchmarks_script_override", "benchmarks/run_hot_query_benchmarks.py"
+    )
     override = tmp_path / "hot_bench_override"
     monkeypatch.setenv("TENSOR_GREP_HOT_BENCH_DATA_DIR", str(override))
 
@@ -111,7 +151,9 @@ def test_run_hot_query_benchmarks_should_honor_data_dir_override(monkeypatch, tm
 
 
 def test_run_hot_query_benchmarks_should_build_cpu_probe_script(tmp_path):
-    module = _load_script_module("run_hot_query_benchmarks_script_probe", "benchmarks/run_hot_query_benchmarks.py")
+    module = _load_script_module(
+        "run_hot_query_benchmarks_script_probe", "benchmarks/run_hot_query_benchmarks.py"
+    )
     script_path = tmp_path / "cpu_probe.py"
 
     module.write_cpu_probe_script(script_path)

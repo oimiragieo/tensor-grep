@@ -70,7 +70,7 @@ To maximize hardware utilization while preserving cross-platform stability, `ten
 ## 3. Evaluation and Benchmarks
 
 ### 3.1 Experimental Setup and Hardware Constraints
-We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **418 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
+We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **448 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
 
 **Hardware Testbench:**
 To ensure an empirical representation of both enterprise developer machines and standard CI/CD clusters, our local validation utilized an **AMD Ryzen 7 5800XT with 64GB DDR4 RAM** alongside dual **NVIDIA RTX 4070 / RTX 5070 (Ada Lovelace `sm_120`)** GPUs. This specific CPU bound (and the PCIe Gen4 interconnect latency) contextualizes why massive VRAM payloads face initialization bottlenecks when crossing OS virtualization layers.
@@ -80,6 +80,7 @@ We re-ran the benchmark suite on 2026-03-10 (local run on current `main`) and ca
 
 * `artifacts/bench_run_benchmarks.json`
 * `artifacts/bench_run_ast_benchmarks.json`
+* `artifacts/bench_run_ast_workflow_benchmarks.json`
 * `artifacts/bench_run_gpu_benchmarks.json`
 
 Backend-level timings from `run_gpu_benchmarks.py` on this host:
@@ -89,6 +90,8 @@ Backend-level timings from `run_gpu_benchmarks.py` on this host:
 * **Torch backend:** exact-string query (`Database connection timeout`) completed in **0.630 seconds** (2,000 matches).
 
 These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape. They also show an operational benchmark dependency: cyBERT throughput claims are only meaningful when the Triton inference service is actually reachable, and benchmark scripts now record that case as an explicit skip rather than a synthetic failure.
+
+We also added a workflow-focused AST startup harness (`run_ast_workflow_benchmarks.py`) to measure command-level orchestration instead of only single-pattern search latency. On the current local Windows host, the synthetic `tg scan --config sgconfig.yml` workflow completed in **4.275 seconds**. This benchmark is intentionally small and deterministic so it can track AST workflow startup regressions without being dominated by huge wrapper-rule corpora.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
 The latest full script-driven CLI benchmark (`run_benchmarks.py`) from this local run shows that end-to-end process costs still dominate most regex/text scenarios, but the new bootstrap entrypoint materially reduced command startup overhead. Once the benchmark harness was switched to measure the installed `tg` fast path instead of `tensor_grep.cli.main`, the stored Windows regression guard passed again:

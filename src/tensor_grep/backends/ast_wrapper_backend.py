@@ -24,12 +24,12 @@ class AstGrepWrapperBackend(ComputeBackend):
     def _get_binary_name(self) -> str:
         import shutil
 
-        if shutil.which("ast-grep"):
-            return "ast-grep"
-        if shutil.which("ast-grep.exe"):
-            return "ast-grep.exe"
-        if shutil.which("sg"):
-            return "sg"
+        if ast_grep_path := shutil.which("ast-grep"):
+            return ast_grep_path
+        if ast_grep_exe_path := shutil.which("ast-grep.exe"):
+            return ast_grep_exe_path
+        if sg_path := shutil.which("sg"):
+            return sg_path
         return "ast-grep"
 
     def search(

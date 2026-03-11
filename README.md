@@ -22,7 +22,7 @@ Fresh benchmark pass results (2026-03-10, local run on current `main`) from this
 
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
-- These figures are from a local `uv run python benchmarks/run_benchmarks.py` / `run_ast_benchmarks.py` / `run_gpu_benchmarks.py` execution.
+- These figures are from a local `uv run python benchmarks/run_benchmarks.py` / `run_ast_benchmarks.py` / `run_ast_workflow_benchmarks.py` / `run_gpu_benchmarks.py` execution.
 - `run_benchmarks.py` and `run_ast_benchmarks.py` now measure the bootstrap entrypoint used by the installed `tg` console script, rather than the older `tensor_grep.cli.main` module path.
 - `ripgrep` remains faster on most text-search scenarios in this local benchmark setup.
 - The current Windows local run no longer trips the stored regression guard in `benchmarks/baselines/run_benchmarks.windows.json`.
@@ -50,6 +50,12 @@ Environment notes:
 | Simple Function Def | 0.126s | 0.428s | Parity PASS |
 | Try/Except Block | 0.113s | 0.404s | Parity PASS |
 | Class Declaration | 0.118s | 0.401s | Parity PASS |
+
+### tensor-grep AST workflow startup (`benchmarks/run_ast_workflow_benchmarks.py`)
+
+| Scenario | tensor-grep |
+| --- | --- |
+| `tg scan --config sgconfig.yml` synthetic AST workflow | 4.275s |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
