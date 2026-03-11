@@ -42,3 +42,35 @@ def test_ast_wrapper_backend_should_emit_runtime_routing_metadata():
     assert result.routing_reason == "ast_grep_json"
     assert result.routing_distributed is False
     assert result.routing_worker_count == 1
+
+
+def test_ast_wrapper_backend_should_batch_many_files():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.stdout = (
+        '[{"text":"def hello():","file":"a.py","range":{"start":{"line":0}}},'
+        '{"text":"class World:","file":"b.py","range":{"start":{"line":4}}}]'
+    )
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(
+            backend,
+            "_get_binary_name",
+            return_value=r"C:\\Users\\oimir\\AppData\\Roaming\\npm\\ast-grep.CMD",
+        ),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search_many(
+            ["a.py", "b.py"],
+            "function_definition",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    assert run.call_args.args[0][-2:] == ["a.py", "b.py"]
+    assert result.total_matches == 2
+    assert result.total_files == 2
+    assert result.matched_file_paths == ["a.py", "b.py"]

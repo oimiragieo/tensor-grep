@@ -967,7 +967,27 @@ class _FakeAstBackend:
 
 
 class AstGrepWrapperBackend(_FakeAstBackend):
-    pass
+    search_many_calls: ClassVar[int] = 0
+
+    def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
+        AstGrepWrapperBackend.search_many_calls += 1
+        total_matches = 0
+        matched_file_paths: list[str] = []
+        for file_path in file_paths:
+            result = self.search(file_path, pattern, config=config)
+            total_matches += result.total_matches
+            if result.total_matches > 0:
+                matched_file_paths.append(file_path)
+        return SearchResult(
+            matches=[],
+            matched_file_paths=matched_file_paths,
+            total_files=len(matched_file_paths),
+            total_matches=total_matches,
+            routing_backend="AstGrepWrapperBackend",
+            routing_reason="ast_grep_json",
+            routing_distributed=False,
+            routing_worker_count=1,
+        )
 
 
 class _FakeCountOnlyAstBackend:
@@ -1093,6 +1113,7 @@ def test_scan_executes_rules_from_sgconfig(monkeypatch):
 def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1113,6 +1134,7 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
 
     assert result.exit_code == 0
     assert "GPU-Accelerated GNNs" not in result.output
+    assert AstGrepWrapperBackend.search_many_calls == 1
 
 
 def test_scan_should_count_files_from_count_only_ast_results(monkeypatch):
