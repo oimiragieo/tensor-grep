@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.12 (2026-03-11)
+
+### Performance Improvements
+
+- **ast**: Bypass scanner for wrapper roots
+  ([`c6949ae`](https://github.com/oimiragieo/tensor-grep/commit/c6949aef9ee61a5f92f20df74a9aa1b06cbd369a))
+
+
 ## v0.31.11 (2026-03-11)
 
 ### Performance Improvements
