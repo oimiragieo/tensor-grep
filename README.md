@@ -55,15 +55,9 @@ Environment notes:
 
 | Scenario | tensor-grep |
 | --- | --- |
-<<<<<<< HEAD
-| `tg run` synthetic AST workflow | 0.295s |
-| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.613s |
-| `tg test --config sgconfig.yml` synthetic AST workflow | 0.444s |
-=======
-| `tg run "def $FUNC():\n    $$$BODY" .` synthetic AST workflow | 0.331s |
-| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.328s |
-| `tg test --config sgconfig.yml` synthetic AST workflow | 0.503s |
->>>>>>> 740dc83 (perf(ast): add direct workflow and project scan fast paths)
+| `tg run "def $FUNC():\n    $$$BODY" .` synthetic AST workflow | 0.297s |
+| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.315s |
+| `tg test --config sgconfig.yml` synthetic AST workflow | 0.421s |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 

@@ -401,7 +401,6 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
     if not rules:
         print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
         return 1
-    rules_by_id = {rule["id"]: rule for rule in rules}
 
     root_dir = cast(Path, project_cfg["root_dir"])
     test_dirs = cast(list[str], project_cfg["test_dirs"])
@@ -412,8 +411,20 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
 
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
+    resolved_case_cache: dict[tuple[str, str], tuple[SearchConfig, ComputeBackend]] = {}
     backend_names_used: set[str] = set()
     wrapper_case_groups: dict[tuple[int, str, str], dict[str, object]] = {}
+    resolved_rules_by_id: dict[str, tuple[str, str, SearchConfig, ComputeBackend]] = {}
+
+    for rule in rules:
+        rule_cfg = replace(cfg, lang=rule["language"])
+        rule_backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        resolved_rules_by_id[rule["id"]] = (
+            rule["pattern"],
+            rule["language"],
+            rule_cfg,
+            rule_backend,
+        )
 
     total_cases = 0
     failures: list[str] = []
@@ -431,12 +442,41 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
             linked_rule = case.get("ruleId")
             pattern = _extract_rule_pattern(case)
             language = str(case.get("language") or cfg.lang or "python")
-            if not pattern and isinstance(linked_rule, str) and linked_rule in rules_by_id:
-                pattern = rules_by_id[linked_rule]["pattern"]
-                language = str(case.get("language") or rules_by_id[linked_rule]["language"])
+            case_cfg: SearchConfig
+            backend: ComputeBackend
+            if not pattern and isinstance(linked_rule, str) and linked_rule in resolved_rules_by_id:
+                rule_pattern, rule_language, rule_cfg, rule_backend = resolved_rules_by_id[
+                    linked_rule
+                ]
+                pattern = rule_pattern
+                language = str(case.get("language") or rule_language)
+                if language == rule_language:
+                    case_cfg = rule_cfg
+                    backend = rule_backend
+                else:
+                    cache_key = (pattern, language)
+                    cached = resolved_case_cache.get(cache_key)
+                    if cached is None:
+                        case_cfg = replace(cfg, lang=language)
+                        backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
+                        resolved_case_cache[cache_key] = (case_cfg, backend)
+                    else:
+                        case_cfg, backend = cached
             if not pattern:
                 failures.append(f"{test_file}:{case_id}: missing pattern or ruleId")
                 continue
+
+            if pattern and not (
+                isinstance(linked_rule, str) and linked_rule in resolved_rules_by_id
+            ):
+                cache_key = (pattern, language)
+                cached = resolved_case_cache.get(cache_key)
+                if cached is None:
+                    case_cfg = replace(cfg, lang=language)
+                    backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
+                    resolved_case_cache[cache_key] = (case_cfg, backend)
+                else:
+                    case_cfg, backend = cached
 
             valid_snippets = _normalize_string_list(case.get("valid"), [])
             invalid_snippets = _normalize_string_list(case.get("invalid"), [])
@@ -445,8 +485,6 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                 continue
 
             total_cases += len(valid_snippets) + len(invalid_snippets)
-            case_cfg = replace(cfg, lang=language)
-            backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
             backend_names_used.add(type(backend).__name__)
 
             if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(

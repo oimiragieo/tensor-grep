@@ -43,6 +43,22 @@ class _CountingWrapperBackend(_FakeWrapperBackend):
         type(self).init_count += 1
 
 
+class _CountingAstBackend:
+    init_count = 0
+
+    def __init__(self):
+        type(self).init_count += 1
+
+    def is_available(self):
+        return True
+
+    def search(self, file_path, pattern, config=None) -> SearchResult:
+        _ = file_path
+        _ = pattern
+        _ = config
+        return SearchResult(matches=[], total_files=0, total_matches=0)
+
+
 def test_scan_command_should_reuse_backend_selection_per_rule(monkeypatch, tmp_path, capsys):
     from tensor_grep.cli.ast_workflows import scan_command
 
@@ -112,3 +128,48 @@ def test_scan_command_should_use_wrapper_project_fast_path(monkeypatch, tmp_path
     assert "[scan] rule=error-rule lang=python matches=1 files=1" in captured.out
     assert _FakeWrapperBackend.search_project_calls == 1
     assert _FakeWrapperBackend.search_many_calls == 0
+
+
+def test_test_command_should_reuse_backend_selection_for_rule_linked_cases(
+    monkeypatch, tmp_path, capsys
+):
+    from tensor_grep.cli.ast_workflows import test_command
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _CountingAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _FakeUnavailableAstBackend,
+    )
+    _CountingAstBackend.init_count = 0
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "rules" / "native.yml").write_text(
+        "id: native-rule\nlanguage: python\nrule:\n  pattern: identifier\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "cases.yml").write_text(
+        "tests:\n"
+        "  - id: case-a\n"
+        "    ruleId: native-rule\n"
+        "    valid:\n"
+        "      - 'pass'\n"
+        "  - id: case-b\n"
+        "    ruleId: native-rule\n"
+        "    valid:\n"
+        "      - 'pass'\n",
+        encoding="utf-8",
+    )
+
+    exit_code = test_command(str(tmp_path / "sgconfig.yml"))
+
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    assert _CountingAstBackend.init_count == 1
