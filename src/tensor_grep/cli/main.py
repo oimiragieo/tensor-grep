@@ -1249,13 +1249,20 @@ def scan(
         rule_cfg = replace(cfg, lang=rule["language"])
         backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
         backend_names_used.add(type(backend).__name__)
-        rule_matches = 0
         matched_files: set[str] = set()
-        for current_file in candidate_files:
-            result = backend.search(current_file, rule["pattern"], config=rule_cfg)
-            rule_matches += result.total_matches
-            if result.total_files > 0 or result.total_matches > 0:
-                matched_files.add(current_file)
+        if hasattr(backend, "search_many"):
+            result = backend.search_many(candidate_files, rule["pattern"], config=rule_cfg)
+            rule_matches = result.total_matches
+            matched_files.update(result.matched_file_paths)
+            if not matched_files and result.total_files > 0:
+                matched_files.update(match.file for match in result.matches if match.file)
+        else:
+            rule_matches = 0
+            for current_file in candidate_files:
+                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                rule_matches += result.total_matches
+                if result.total_files > 0 or result.total_matches > 0:
+                    matched_files.add(current_file)
         total_matches += rule_matches
         if rule_matches > 0:
             matched_rules += 1

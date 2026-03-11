@@ -32,6 +32,71 @@ class AstGrepWrapperBackend(ComputeBackend):
             return sg_path
         return "ast-grep"
 
+    def _build_command(
+        self, pattern: str, paths: list[str], config: SearchConfig | None = None
+    ) -> list[str]:
+        cmd = [self._get_binary_name(), "run", "--json", "-p", pattern]
+
+        if config and config.lang:
+            cmd.extend(["--lang", config.lang])
+
+        cmd.extend(paths)
+        return cmd
+
+    def _parse_result(self, stdout: str, fallback_file: str | None = None) -> SearchResult:
+        import json
+
+        matches: list[MatchLine] = []
+        matched_files: list[str] = []
+        seen_files: set[str] = set()
+
+        try:
+            data_list = json.loads(stdout)
+            for item in data_list:
+                file_path = str(item.get("file") or fallback_file or "")
+                text = item.get("text", "")
+                line_num = (
+                    item.get("range", {}).get("start", {}).get("line", 0) + 1
+                )  # 0-indexed to 1-indexed
+
+                matches.append(MatchLine(line_number=line_num, text=text, file=file_path))
+                if file_path and file_path not in seen_files:
+                    seen_files.add(file_path)
+                    matched_files.append(file_path)
+        except json.JSONDecodeError:
+            pass
+
+        return SearchResult(
+            matches=matches,
+            matched_file_paths=matched_files,
+            total_files=len(matched_files),
+            total_matches=len(matches),
+            routing_backend="AstGrepWrapperBackend",
+            routing_reason="ast_grep_json",
+            routing_distributed=False,
+            routing_worker_count=1,
+        )
+
+    def search_many(
+        self, file_paths: list[str], pattern: str, config: SearchConfig | None = None
+    ) -> SearchResult:
+        if not self.is_available():
+            raise RuntimeError(
+                "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
+            )
+
+        try:
+            result = subprocess.run(
+                self._build_command(pattern, file_paths, config=config),
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+            )
+            return self._parse_result(result.stdout)
+        except Exception as e:
+            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
+
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
@@ -40,48 +105,15 @@ class AstGrepWrapperBackend(ComputeBackend):
                 "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
             )
 
-        binary = self._get_binary_name()
-
-        # ast-grep --json output
-        cmd = [binary, "run", "--json", "-p", pattern]
-
-        if config and config.lang:
-            cmd.extend(["--lang", config.lang])
-
-        cmd.append(file_path)
-
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, encoding="utf-8"
+                self._build_command(pattern, [file_path], config=config),
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
             )
-
-            import json
-
-            matches = []
-
-            # ast-grep json mode outputs an array of objects
-            try:
-                data_list = json.loads(result.stdout)
-                for item in data_list:
-                    # Item contains 'text', 'file', 'range'
-                    text = item.get("text", "")
-                    line_num = (
-                        item.get("range", {}).get("start", {}).get("line", 0) + 1
-                    )  # 0-indexed to 1-indexed
-
-                    matches.append(MatchLine(line_number=line_num, text=text, file=file_path))
-            except json.JSONDecodeError:
-                pass
-
-            return SearchResult(
-                matches=matches,
-                total_files=1 if matches else 0,
-                total_matches=len(matches),
-                routing_backend="AstGrepWrapperBackend",
-                routing_reason="ast_grep_json",
-                routing_distributed=False,
-                routing_worker_count=1,
-            )
+            return self._parse_result(result.stdout, fallback_file=file_path)
 
         except Exception as e:
             raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
