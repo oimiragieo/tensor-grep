@@ -108,6 +108,59 @@ def test_run_ast_workflow_benchmarks_should_target_bootstrap_entrypoint():
     assert cmd[3:] == ["scan", "--config", "sgconfig.yml"]
 
 
+def test_run_ast_workflow_benchmarks_should_generate_rule_tests(tmp_path):
+    module = _load_script_module(
+        "run_ast_workflow_benchmarks_script_project",
+        "benchmarks/run_ast_workflow_benchmarks.py",
+    )
+
+    module.generate_ast_workflow_project(tmp_path, rule_count=2, file_count=1)
+
+    config_text = (tmp_path / "scan_project" / "sgconfig.yml").read_text(encoding="utf-8")
+    assert "testDirs:" in config_text
+    test_text = (tmp_path / "scan_project" / "tests" / "test_000.yml").read_text(encoding="utf-8")
+    assert (tmp_path / "scan_project" / "tests" / "test_000.yml").exists()
+    assert "invalid:\n  - |\n" in test_text
+
+
+def test_run_ast_workflow_benchmarks_should_emit_scan_and_test_rows(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_ast_workflow_benchmarks_script_rows",
+        "benchmarks/run_ast_workflow_benchmarks.py",
+    )
+    monkeypatch.setattr(module, "resolve_ast_workflow_bench_dir", lambda: tmp_path / "bench")
+
+    def _fake_run_cmd_capture(cmd, cwd):
+        if cmd[3] == "scan":
+            return 0.25, 0
+        if cmd[3] == "test":
+            return 0.40, 0
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(module, "run_cmd_capture", _fake_run_cmd_capture)
+
+    captured: dict[str, object] = {}
+
+    def _fake_write_json(path, payload):
+        captured["path"] = path
+        captured["payload"] = payload
+
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr("tensor_grep.perf_guard.write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["suite"] == "run_ast_workflow_benchmarks"
+    rows = payload["rows"]
+    assert rows == [
+        {"name": "ast_scan_workflow", "tg_time_s": 0.25, "exit_code": 0},
+        {"name": "ast_test_workflow", "tg_time_s": 0.4, "exit_code": 0},
+    ]
+
+
 def test_run_gpu_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module("run_gpu_benchmarks_script", "benchmarks/run_gpu_benchmarks.py")
     monkeypatch.delenv("TENSOR_GREP_GPU_BENCH_DATA_DIR", raising=False)

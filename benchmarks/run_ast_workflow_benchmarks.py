@@ -23,7 +23,10 @@ def build_tg_ast_workflow_cmd(args: list[str]) -> list[str]:
 def _write_rules(rules_dir: Path, rule_count: int) -> None:
     rules_dir.mkdir(parents=True, exist_ok=True)
     for idx in range(rule_count):
-        pattern = "function_definition" if idx % 2 == 0 else "class_definition"
+        if idx % 2 == 0:
+            pattern = "\"def $FUNC():\\n    $$$BODY\""
+        else:
+            pattern = "\"class $NAME:\\n    $$$BODY\""
         (rules_dir / f"rule_{idx:03d}.yml").write_text(
             f"id: rule-{idx}\nlanguage: python\nrule:\n  pattern: {pattern}\n",
             encoding="utf-8",
@@ -34,11 +37,16 @@ def _write_tests(tests_dir: Path, rule_count: int) -> None:
     tests_dir.mkdir(parents=True, exist_ok=True)
     for idx in range(rule_count):
         if idx % 2 == 0:
-            invalid_case = "'def sample_function():\n    return 1\n'"
+            invalid_case = "  - |\n      def sample_function():\n          return 1\n"
         else:
-            invalid_case = "'class SampleClass:\n    def __init__(self):\n        pass\n'"
+            invalid_case = (
+                "  - |\n"
+                "      class SampleClass:\n"
+                "          def __init__(self):\n"
+                "              pass\n"
+            )
         (tests_dir / f"test_{idx:03d}.yml").write_text(
-            f"id: test-{idx}\nruleId: rule-{idx}\nvalid:\n  - ok\ninvalid:\n  - {invalid_case}\n",
+            f"id: test-{idx}\nruleId: rule-{idx}\nvalid:\n  - ok\ninvalid:\n{invalid_case}",
             encoding="utf-8",
         )
 
@@ -65,11 +73,12 @@ def generate_ast_workflow_project(root: Path, *, rule_count: int = 4, file_count
     scan_project = root / "scan_project"
     scan_project.mkdir(exist_ok=True)
     (scan_project / "sgconfig.yml").write_text(
-        "ruleDirs:\n  - rules\nlanguage: python\n",
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
         encoding="utf-8",
     )
     _write_source_files(scan_project, file_count)
     _write_rules(scan_project / "rules", rule_count)
+    _write_tests(scan_project / "tests", rule_count)
 
 
 def run_cmd_capture(cmd: list[str], cwd: Path) -> tuple[float, int]:
@@ -100,18 +109,26 @@ def main() -> int:
     generate_ast_workflow_project(bench_dir)
 
     scan_cmd = build_tg_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
+    test_cmd = build_tg_ast_workflow_cmd(["test", "--config", "sgconfig.yml"])
 
     scan_project = bench_dir / "scan_project"
 
     run_cmd_capture(scan_cmd, scan_project)
+    run_cmd_capture(test_cmd, scan_project)
 
     scan_time_s, scan_exit = run_cmd_capture(scan_cmd, scan_project)
+    test_time_s, test_exit = run_cmd_capture(test_cmd, scan_project)
 
     rows = [
         {
             "name": "ast_scan_workflow",
             "tg_time_s": round(scan_time_s, 6),
             "exit_code": scan_exit,
+        },
+        {
+            "name": "ast_test_workflow",
+            "tg_time_s": round(test_time_s, 6),
+            "exit_code": test_exit,
         },
     ]
 
@@ -130,7 +147,7 @@ def main() -> int:
         },
     )
 
-    return 0 if scan_exit == 0 else 1
+    return 0 if scan_exit == 0 and test_exit == 0 else 1
 
 
 if __name__ == "__main__":

@@ -74,3 +74,27 @@ def test_ast_wrapper_backend_should_batch_many_files():
     assert result.total_matches == 2
     assert result.total_files == 2
     assert result.matched_file_paths == ["a.py", "b.py"]
+
+
+def test_ast_wrapper_backend_should_use_rule_file_for_multiline_patterns():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.stdout = "[]"
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        backend.search(
+            "example.py",
+            "def $FUNC():\n    $$$BODY",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    cmd = run.call_args.args[0]
+    assert cmd[:4] == ["sg", "scan", "--json", "--rule"]
+    assert cmd[-1] == "example.py"

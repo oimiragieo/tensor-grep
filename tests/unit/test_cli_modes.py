@@ -2,6 +2,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -973,7 +974,14 @@ class AstGrepWrapperBackend(_FakeAstBackend):
         AstGrepWrapperBackend.search_many_calls += 1
         total_matches = 0
         matched_file_paths: list[str] = []
+        expanded_paths: list[str] = []
         for file_path in file_paths:
+            candidate = Path(file_path)
+            if candidate.is_dir():
+                expanded_paths.extend(str(path) for path in sorted(candidate.rglob("*")) if path.is_file())
+            else:
+                expanded_paths.append(file_path)
+        for file_path in expanded_paths:
             result = self.search(file_path, pattern, config=config)
             total_matches += result.total_matches
             if result.total_matches > 0:
