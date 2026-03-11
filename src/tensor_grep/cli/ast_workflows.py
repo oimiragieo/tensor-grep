@@ -163,8 +163,11 @@ def _search_ast_test_snippets_with_wrapper(
             snippet_names.append(snippet_name)
 
         result = cast(Any, backend).search_many([str(temp_root)], pattern, config=case_cfg)
-        matched_names = {Path(path).name for path in result.matched_file_paths if path}
-        matched_names.update(Path(match.file).name for match in result.matches if match.file)
+        def _match_name(raw_path: str) -> str:
+            return raw_path.replace("\\", "/").rsplit("/", 1)[-1]
+
+        matched_names = {_match_name(path) for path in result.matched_file_paths if path}
+        matched_names.update(_match_name(match.file) for match in result.matches if match.file)
         return [snippet_name in matched_names for snippet_name in snippet_names]
 
 
