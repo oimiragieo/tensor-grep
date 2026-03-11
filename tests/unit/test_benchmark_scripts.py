@@ -324,13 +324,11 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
@@ -406,13 +404,11 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
