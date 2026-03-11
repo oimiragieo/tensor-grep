@@ -1195,14 +1195,22 @@ def run(
 
     scanner = DirectoryScanner(cfg)
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    candidate_files, _ = _collect_candidate_files(scanner, [path])
 
-    for current_file in scanner.walk(path):
-        result = backend.search(current_file, pattern, config=cfg)
+    if hasattr(backend, "search_many"):
+        result = backend.search_many(candidate_files, pattern, config=cfg)
         all_results.matches.extend(result.matches)
         all_results.matched_file_paths.extend(result.matched_file_paths)
         all_results.total_matches += result.total_matches
-        if result.total_files > 0 or result.total_matches > 0:
-            all_results.total_files += 1
+        all_results.total_files = max(all_results.total_files, result.total_files)
+    else:
+        for current_file in candidate_files:
+            result = backend.search(current_file, pattern, config=cfg)
+            all_results.matches.extend(result.matches)
+            all_results.matched_file_paths.extend(result.matched_file_paths)
+            all_results.total_matches += result.total_matches
+            if result.total_files > 0 or result.total_matches > 0:
+                all_results.total_files += 1
 
     formatter = RipgrepFormatter()
     print(formatter.format(all_results))
