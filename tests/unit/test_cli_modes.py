@@ -1263,10 +1263,10 @@ def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
 
     assert result.exit_code == 0
     assert "Testing AST rules using ast-grep structural matching" in result.output
-    assert AstGrepWrapperBackend.search_many_calls == 2
+    assert AstGrepWrapperBackend.search_many_calls == 1
 
 
-def test_test_command_should_batch_wrapper_backend_by_expectation_group(monkeypatch):
+def test_test_command_should_batch_wrapper_backend_once_per_case(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
     AstGrepWrapperBackend.search_many_calls = 0
 
@@ -1293,7 +1293,7 @@ def test_test_command_should_batch_wrapper_backend_by_expectation_group(monkeypa
 
     assert result.exit_code == 0
     assert "All tests passed. cases=4" in result.output
-    assert AstGrepWrapperBackend.search_many_calls == 2
+    assert AstGrepWrapperBackend.search_many_calls == 1
 
 
 def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):
