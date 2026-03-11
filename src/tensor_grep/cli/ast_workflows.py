@@ -245,6 +245,31 @@ def _select_ast_backend_for_pattern(
     return backend
 
 
+def run_command(pattern: str, path: str | None = None, lang: str | None = None) -> int:
+    from tensor_grep.core.config import SearchConfig
+
+    target_path = path or "."
+    cfg = SearchConfig(ast=True, lang=lang or "python")
+    backend = _select_ast_backend_for_pattern(cfg, pattern, backend_cache={})
+    backend_name = type(backend).__name__
+
+    print(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
+    if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+        result = cast(Any, backend).search_many([target_path], pattern, config=cfg)
+    else:
+        result = backend.search(target_path, pattern, config=cfg)
+
+    for match in result.matches:
+        line = match.line_content.rstrip("\n")
+        print(f"{match.file}:{match.line_number}:{line}")
+
+    print(
+        f"Run completed. matches={result.total_matches} files={result.total_files} "
+        f"backend={backend_name}"
+    )
+    return 0
+
+
 def scan_command(config: str | None = "sgconfig.yml") -> int:
     from tensor_grep.core.config import SearchConfig
 
@@ -472,6 +497,11 @@ def main_entry(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(add_help=True, prog="tg")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    run_parser = subparsers.add_parser("run")
+    run_parser.add_argument("pattern")
+    run_parser.add_argument("path", nargs="?", default=".")
+    run_parser.add_argument("--lang", "-l", default=None)
+
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("--config", "-c", default="sgconfig.yml")
 
@@ -479,6 +509,8 @@ def main_entry(argv: list[str] | None = None) -> None:
     test_parser.add_argument("--config", "-c", default="sgconfig.yml")
 
     args = parser.parse_args(argv)
+    if args.command == "run":
+        raise SystemExit(run_command(args.pattern, args.path, args.lang))
     if args.command == "scan":
         raise SystemExit(scan_command(args.config))
     if args.command == "test":

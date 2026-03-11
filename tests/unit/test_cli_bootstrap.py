@@ -126,6 +126,20 @@ def test_main_entry_should_route_test_to_ast_workflow_cli(monkeypatch):
     assert seen == {"argv": ["test", "--config", "sgconfig.yml"]}
 
 
+def test_main_entry_should_route_run_to_ast_workflow_cli(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "run", "def $FUNC():\n    $$$BODY", "."])
+    monkeypatch.setattr(
+        bootstrap, "_run_ast_workflow_cli", lambda argv: seen.update({"argv": list(argv)})
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    bootstrap.main_entry()
+
+    assert seen == {"argv": ["run", "def $FUNC():\n    $$$BODY", "."]}
+
+
 def test_main_entry_should_print_version_without_loading_full_cli(monkeypatch, capsys):
     def _raise_version(_dist_name: str) -> str:
         raise RuntimeError("metadata unavailable")

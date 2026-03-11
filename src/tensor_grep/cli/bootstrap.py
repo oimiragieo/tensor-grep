@@ -134,7 +134,7 @@ def main_entry() -> None:
         _print_version()
         raise SystemExit(0)
 
-    if argv and argv[0] in {"scan", "test"}:
+    if argv and argv[0] in {"run", "scan", "test"}:
         _run_ast_workflow_cli(argv)
         return
 
