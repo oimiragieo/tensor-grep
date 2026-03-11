@@ -969,6 +969,10 @@ class _FakeAstBackend:
 
 class AstGrepWrapperBackend(_FakeAstBackend):
     search_many_calls: ClassVar[int] = 0
+    search_project_calls: ClassVar[int] = 0
+
+    def is_available(self):
+        return True
 
     def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
         AstGrepWrapperBackend.search_many_calls += 1
@@ -998,6 +1002,23 @@ class AstGrepWrapperBackend(_FakeAstBackend):
             routing_distributed=False,
             routing_worker_count=1,
         )
+
+    def search_project(self, root_path: str, config_path: str) -> dict[str, SearchResult]:
+        _ = root_path
+        _ = config_path
+        AstGrepWrapperBackend.search_project_calls += 1
+        return {
+            "error-rule": SearchResult(
+                matches=[],
+                matched_file_paths=["a.py"],
+                total_files=1,
+                total_matches=1,
+                routing_backend="AstGrepWrapperBackend",
+                routing_reason="ast_grep_project_scan_json",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+        }
 
 
 class _FakeCountOnlyAstBackend:
@@ -1060,9 +1081,25 @@ class _FakeDirectNativeAstBackend:
         return True
 
 
+class _FakeUnavailableAstBackend:
+    def is_available(self):
+        return False
+
+
 class _FakeDirectWrapperAstBackend:
     def is_available(self):
         return True
+
+
+def _patch_direct_wrapper_selection(monkeypatch):
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _FakeUnavailableAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        AstGrepWrapperBackend,
+    )
 
 
 class _FakeAstScanner:
@@ -1124,9 +1161,10 @@ def test_scan_executes_rules_from_sgconfig(monkeypatch):
 
 
 def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):
-    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     AstGrepWrapperBackend.search_many_calls = 0
+    AstGrepWrapperBackend.search_project_calls = 0
     _FakeAstScanner.walk_calls = 0
 
     runner = CliRunner()
@@ -1148,6 +1186,7 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
 
     assert result.exit_code == 0
     assert "GPU-Accelerated GNNs" not in result.output
+    assert AstGrepWrapperBackend.search_project_calls == 0
     assert AstGrepWrapperBackend.search_many_calls == 1
     assert _FakeAstScanner.walk_calls == 0
 
@@ -1178,7 +1217,7 @@ def test_scan_should_count_files_from_count_only_ast_results(monkeypatch):
 
 
 def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
-    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     AstGrepWrapperBackend.search_many_calls = 0
     _FakeAstScanner.walk_calls = 0
@@ -1199,7 +1238,7 @@ def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
 
 
 def test_run_should_report_ast_wrapper_backend_mode(monkeypatch):
-    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
 
     runner = CliRunner()
@@ -1237,7 +1276,7 @@ def test_run_should_keep_wrapper_first_ast_policy(monkeypatch):
 
 
 def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
-    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    _patch_direct_wrapper_selection(monkeypatch)
     AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()
@@ -1267,7 +1306,7 @@ def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
 
 
 def test_test_command_should_batch_wrapper_backend_once_per_case(monkeypatch):
-    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    _patch_direct_wrapper_selection(monkeypatch)
     AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()
@@ -1297,7 +1336,7 @@ def test_test_command_should_batch_wrapper_backend_once_per_case(monkeypatch):
 
 
 def test_test_command_should_batch_wrapper_backend_across_cases_for_same_rule(monkeypatch):
-    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    _patch_direct_wrapper_selection(monkeypatch)
     AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()

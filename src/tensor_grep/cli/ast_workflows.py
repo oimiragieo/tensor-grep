@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
+from tensor_grep.core.result import SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
 
 if TYPE_CHECKING:
@@ -191,6 +192,57 @@ def _describe_ast_backend_modes(backend_names: set[str]) -> str:
     return "adaptive AST routing"
 
 
+def run_command(
+    pattern: str,
+    path: str | None = None,
+    *,
+    rewrite: str | None = None,
+    lang: str | None = None,
+    config: str | None = "sgconfig.yml",
+) -> int:
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.core.result import SearchResult
+
+    del rewrite, config  # reserved for parity; rewrite stays unimplemented in fast path
+
+    search_path = path or "."
+    cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang, query_pattern=pattern)
+    backend = _select_ast_backend_for_pattern(cfg, pattern)
+    backend_name = type(backend).__name__
+    print(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
+
+    if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
+        print(
+            "Warning: AstBackend not available (requires torch_geometric/tree_sitter). "
+            "Falling back to CPU regex.",
+            file=sys.stderr,
+        )
+
+    all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+
+    if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+        result = cast(Any, backend).search_many([search_path], pattern, config=cfg)
+        all_results.matches.extend(result.matches)
+        all_results.matched_file_paths.extend(result.matched_file_paths)
+        all_results.total_matches += result.total_matches
+        all_results.total_files = max(all_results.total_files, result.total_files)
+    else:
+        scanner = DirectoryScanner(cfg)
+        candidate_files, _ = _collect_candidate_files(scanner, [search_path])
+        for current_file in candidate_files:
+            result = backend.search(current_file, pattern, config=cfg)
+            all_results.matches.extend(result.matches)
+            all_results.matched_file_paths.extend(result.matched_file_paths)
+            all_results.total_matches += result.total_matches
+            if result.total_files > 0 or result.total_matches > 0:
+                all_results.total_files += 1
+
+    from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+
+    print(RipgrepFormatter().format(all_results))
+    return 0
+
+
 def _select_ast_backend_for_pattern(
     base_config: SearchConfig,
     pattern: str,
@@ -289,6 +341,29 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
 
     print(f"Scanning project using adaptive AST routing based on {project_cfg['config_path']}...")
 
+    wrapper_project_backend: Any | None = None
+    wrapper_project_results: dict[str, SearchResult] | None = None
+    if rules:
+        selected_backends = [
+            _select_ast_backend_for_pattern(
+                replace(cfg, lang=rule["language"]), rule["pattern"], backend_cache
+            )
+            for rule in rules
+        ]
+        if (
+            selected_backends
+            and all(hasattr(backend, "search_project") for backend in selected_backends)
+            and hasattr(selected_backends[0], "search_project")
+        ):
+            wrapper_project_backend = selected_backends[0]
+            backend_names_used.add(type(wrapper_project_backend).__name__)
+            try:
+                wrapper_project_results = cast(Any, wrapper_project_backend).search_project(
+                    str(root_dir), str(project_cfg["config_path"])
+                )
+            except Exception:
+                wrapper_project_results = None
+
     total_matches = 0
     matched_rules = 0
     for rule in rules:
@@ -296,7 +371,15 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
         backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
-        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+        if wrapper_project_results is not None and wrapper_project_backend is backend:
+            result = wrapper_project_results.get(
+                rule["id"], SearchResult(matches=[], total_files=0, total_matches=0)
+            )
+            rule_matches = result.total_matches
+            matched_files.update(result.matched_file_paths)
+            if not matched_files and result.total_files > 0:
+                matched_files.update(match.file for match in result.matches if match.file)
+        elif type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             result = cast(Any, backend).search_many(
                 [str(root_dir)], rule["pattern"], config=rule_cfg
             )
@@ -493,8 +576,15 @@ def main_entry(argv: list[str] | None = None) -> None:
 
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("pattern")
+<<<<<<< HEAD
     run_parser.add_argument("path", nargs="?", default=".")
     run_parser.add_argument("--lang", "-l", default=None)
+=======
+    run_parser.add_argument("path", nargs="?")
+    run_parser.add_argument("--rewrite", "-r", default=None)
+    run_parser.add_argument("--lang", "-l", default=None)
+    run_parser.add_argument("--config", "-c", default="sgconfig.yml")
+>>>>>>> 740dc83 (perf(ast): add direct workflow and project scan fast paths)
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("--config", "-c", default="sgconfig.yml")
@@ -504,7 +594,19 @@ def main_entry(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     if args.command == "run":
+<<<<<<< HEAD
         raise SystemExit(run_command(args.pattern, args.path, args.lang))
+=======
+        raise SystemExit(
+            run_command(
+                args.pattern,
+                args.path,
+                rewrite=args.rewrite,
+                lang=args.lang,
+                config=args.config,
+            )
+        )
+>>>>>>> 740dc83 (perf(ast): add direct workflow and project scan fast paths)
     if args.command == "scan":
         raise SystemExit(scan_command(args.config))
     if args.command == "test":

@@ -112,6 +112,20 @@ def test_main_entry_should_route_scan_to_ast_workflow_cli(monkeypatch):
     assert seen == {"argv": ["scan", "--config", "sgconfig.yml"]}
 
 
+def test_main_entry_should_route_run_to_ast_workflow_cli(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "run", "ERROR", ".", "--lang", "python"])
+    monkeypatch.setattr(
+        bootstrap, "_run_ast_workflow_cli", lambda argv: seen.update({"argv": list(argv)})
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    bootstrap.main_entry()
+
+    assert seen == {"argv": ["run", "ERROR", ".", "--lang", "python"]}
+
+
 def test_main_entry_should_route_test_to_ast_workflow_cli(monkeypatch):
     seen: dict[str, object] = {}
 
