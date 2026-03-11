@@ -1228,6 +1228,7 @@ def test_run_should_keep_wrapper_first_ast_policy(monkeypatch):
 
 def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    AstGrepWrapperBackend.search_many_calls = 0
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1252,6 +1253,37 @@ def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
 
     assert result.exit_code == 0
     assert "Testing AST rules using ast-grep structural matching" in result.output
+    assert AstGrepWrapperBackend.search_many_calls == 2
+
+
+def test_test_command_should_batch_wrapper_backend_by_expectation_group(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
+    AstGrepWrapperBackend.search_many_calls = 0
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+            encoding="utf-8",
+        )
+        Path("rules").mkdir()
+        Path("tests").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("tests/error.yml").write_text(
+            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\n  - all good\ninvalid:\n  - ERROR in file\n  - another ERROR\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "All tests passed. cases=4" in result.output
+    assert AstGrepWrapperBackend.search_many_calls == 2
 
 
 def test_scan_should_prefer_native_ast_backend_policy(monkeypatch):

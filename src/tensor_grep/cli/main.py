@@ -4,7 +4,8 @@ import time
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import typer
@@ -274,6 +275,37 @@ def _suffix_for_language(language: str) -> str:
     if normalized in {"ts", "typescript"}:
         return ".ts"
     return ".py"
+
+
+def _search_ast_test_snippets_with_wrapper(
+    backend: object,
+    *,
+    root_dir: Path,
+    case_cfg: "SearchConfig",
+    pattern: str,
+    language: str,
+    snippets: list[str],
+) -> list[bool]:
+    if not snippets:
+        return []
+
+    suffix = _suffix_for_language(language)
+    with TemporaryDirectory(prefix=".tg_rule_test_batch_", dir=root_dir) as temp_dir:
+        temp_root = Path(temp_dir)
+        snippet_paths: list[Path] = []
+        for index, snippet in enumerate(snippets):
+            snippet_path = temp_root / f"case_{index}{suffix}"
+            snippet_path.write_text(snippet, encoding="utf-8")
+            snippet_paths.append(snippet_path)
+
+        result = cast(Any, backend).search_many(
+            [str(snippet_path) for snippet_path in snippet_paths],
+            pattern,
+            config=case_cfg,
+        )
+        matched_paths = {Path(path).resolve() for path in result.matched_file_paths}
+        matched_paths.update(Path(match.file).resolve() for match in result.matches if match.file)
+        return [snippet_path.resolve() in matched_paths for snippet_path in snippet_paths]
 
 
 def _describe_ast_backend_mode(backend_name: str) -> str:
@@ -1355,28 +1387,46 @@ def test(
                 continue
 
             for expected_match, snippets in ((False, valid_snippets), (True, invalid_snippets)):
-                for snippet in snippets:
-                    total_cases += 1
-                    case_cfg = replace(cfg, lang=language)
-                    backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
-                    backend_names_used.add(type(backend).__name__)
-                    temp_name = (
-                        root_dir / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
-                    )
-                    temp_name.write_text(snippet, encoding="utf-8")
-                    try:
-                        result = backend.search(str(temp_name), pattern, config=case_cfg)
-                        has_match = bool(
-                            result.total_files > 0
-                            or result.total_matches > 0
-                            or result.matched_file_paths
-                        )
-                    except Exception as exc:
-                        failures.append(f"{test_file}:{case_id}: backend error: {exc}")
-                        has_match = expected_match
-                    finally:
-                        temp_name.unlink(missing_ok=True)
+                total_cases += len(snippets)
+                case_cfg = replace(cfg, lang=language)
+                backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
+                backend_names_used.add(type(backend).__name__)
 
+                try:
+                    if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
+                        backend, "search_many"
+                    ):
+                        match_results = _search_ast_test_snippets_with_wrapper(
+                            backend,
+                            root_dir=root_dir,
+                            case_cfg=case_cfg,
+                            pattern=pattern,
+                            language=language,
+                            snippets=snippets,
+                        )
+                    else:
+                        match_results = []
+                        for snippet in snippets:
+                            temp_name = (
+                                root_dir / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
+                            )
+                            temp_name.write_text(snippet, encoding="utf-8")
+                            try:
+                                result = backend.search(str(temp_name), pattern, config=case_cfg)
+                                match_results.append(
+                                    bool(
+                                        result.total_files > 0
+                                        or result.total_matches > 0
+                                        or result.matched_file_paths
+                                    )
+                                )
+                            finally:
+                                temp_name.unlink(missing_ok=True)
+                except Exception as exc:
+                    failures.append(f"{test_file}:{case_id}: backend error: {exc}")
+                    continue
+
+                for snippet, has_match in zip(snippets, match_results, strict=True):
                     if has_match != expected_match:
                         expectation = "match" if expected_match else "no match"
                         failures.append(
