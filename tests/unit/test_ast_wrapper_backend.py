@@ -4,6 +4,19 @@ from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
 from tensor_grep.core.config import SearchConfig
 
 
+def test_ast_wrapper_backend_should_use_resolved_binary_path():
+    backend = AstGrepWrapperBackend()
+
+    with patch("shutil.which") as which:
+        which.side_effect = lambda name: {
+            "ast-grep": r"C:\Users\oimir\AppData\Roaming\npm\ast-grep.CMD",
+            "ast-grep.exe": None,
+            "sg": None,
+        }.get(name)
+
+        assert backend._get_binary_name() == r"C:\Users\oimir\AppData\Roaming\npm\ast-grep.CMD"
+
+
 def test_ast_wrapper_backend_should_emit_runtime_routing_metadata():
     backend = AstGrepWrapperBackend()
 
