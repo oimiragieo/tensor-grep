@@ -299,12 +299,19 @@ def _search_ast_test_snippets_with_wrapper(
             snippet_paths.append(snippet_path)
 
         result = cast(Any, backend).search_many(
-            [str(snippet_path) for snippet_path in snippet_paths],
+            [str(temp_root)],
             pattern,
             config=case_cfg,
         )
-        matched_paths = {Path(path).resolve() for path in result.matched_file_paths}
-        matched_paths.update(Path(match.file).resolve() for match in result.matches if match.file)
+
+        def _resolve_match_path(raw_path: str) -> Path:
+            candidate = Path(raw_path)
+            if candidate.is_absolute():
+                return candidate.resolve()
+            return (temp_root / candidate).resolve()
+
+        matched_paths = {_resolve_match_path(path) for path in result.matched_file_paths}
+        matched_paths.update(_resolve_match_path(match.file) for match in result.matches if match.file)
         return [snippet_path.resolve() in matched_paths for snippet_path in snippet_paths]
 
 

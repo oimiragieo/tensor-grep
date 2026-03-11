@@ -1,4 +1,7 @@
 import subprocess
+from contextlib import AbstractContextManager, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -34,14 +37,32 @@ class AstGrepWrapperBackend(ComputeBackend):
 
     def _build_command(
         self, pattern: str, paths: list[str], config: SearchConfig | None = None
-    ) -> list[str]:
-        cmd = [self._get_binary_name(), "run", "--json", "-p", pattern]
+    ) -> tuple[list[str], AbstractContextManager[object]]:
+        lang = config.lang if config and config.lang else None
+        if "\n" not in pattern and "\r" not in pattern:
+            cmd = [self._get_binary_name(), "run", "--json", "-p", pattern]
+            if lang:
+                cmd.extend(["--lang", lang])
+            cmd.extend(paths)
+            return cmd, nullcontext()
 
-        if config and config.lang:
-            cmd.extend(["--lang", config.lang])
-
-        cmd.extend(paths)
-        return cmd
+        context = TemporaryDirectory(prefix="tg_ast_wrapper_rule_")
+        temp_dir = Path(context.name)
+        rule_file = temp_dir / "inline_rule.yml"
+        lang_value = lang or "python"
+        rule_file.write_text(
+            "\n".join([
+                "id: inline-rule",
+                f"language: {lang_value}",
+                "rule:",
+                "  pattern: |",
+                *[f"    {line}" for line in pattern.splitlines()],
+                "",
+            ]),
+            encoding="utf-8",
+        )
+        cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), *paths]
+        return cmd, context
 
     def _parse_result(self, stdout: str, fallback_file: str | None = None) -> SearchResult:
         import json
@@ -86,14 +107,16 @@ class AstGrepWrapperBackend(ComputeBackend):
             )
 
         try:
-            result = subprocess.run(
-                self._build_command(pattern, file_paths, config=config),
-                capture_output=True,
-                text=True,
-                check=False,
-                encoding="utf-8",
-            )
-            return self._parse_result(result.stdout)
+            cmd, context = self._build_command(pattern, file_paths, config=config)
+            with context:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    encoding="utf-8",
+                )
+                return self._parse_result(result.stdout)
         except Exception as e:
             raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
 
@@ -106,14 +129,16 @@ class AstGrepWrapperBackend(ComputeBackend):
             )
 
         try:
-            result = subprocess.run(
-                self._build_command(pattern, [file_path], config=config),
-                capture_output=True,
-                text=True,
-                check=False,
-                encoding="utf-8",
-            )
-            return self._parse_result(result.stdout, fallback_file=file_path)
+            cmd, context = self._build_command(pattern, [file_path], config=config)
+            with context:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    encoding="utf-8",
+                )
+                return self._parse_result(result.stdout, fallback_file=file_path)
 
         except Exception as e:
             raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
