@@ -227,3 +227,79 @@ def test_test_command_should_reuse_backend_selection_for_rule_linked_cases(
     _ = capsys.readouterr()
     assert exit_code == 0
     assert _CountingAstBackend.init_count == 1
+
+
+def test_test_command_should_use_one_wrapper_project_scan(monkeypatch, tmp_path, capsys):
+    from tensor_grep.cli import ast_workflows
+    from tensor_grep.core.result import SearchResult
+
+    class AstGrepWrapperBackend:
+        search_project_calls = 0
+        search_many_calls = 0
+
+        def is_available(self):
+            return True
+
+        def search_many(self, *args, **kwargs):
+            type(self).search_many_calls += 1
+            raise AssertionError("search_many should not be used")
+
+        def search_project(self, root_path: str, config_path: str):
+            type(self).search_project_calls += 1
+            return {
+                "batch-0": SearchResult(
+                    matches=[],
+                    matched_file_paths=[str(Path(root_path) / "cases_0" / "case_0.py")],
+                    total_files=1,
+                    total_matches=1,
+                ),
+                "batch-1": SearchResult(
+                    matches=[],
+                    matched_file_paths=[str(Path(root_path) / "cases_1" / "case_0.py")],
+                    total_files=1,
+                    total_matches=1,
+                ),
+            }
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _FakeUnavailableAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        AstGrepWrapperBackend,
+    )
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "rules" / "rule_a.yml").write_text(
+        "id: wrapper-a\nlanguage: python\nrule:\n  pattern: 'def $F():'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules" / "rule_b.yml").write_text(
+        "id: wrapper-b\nlanguage: python\nrule:\n  pattern: 'class $C:'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests" / "cases.yml").write_text(
+        "tests:\n"
+        "  - id: case-a\n"
+        "    ruleId: wrapper-a\n"
+        "    invalid:\n"
+        "      - 'pass'\n"
+        "  - id: case-b\n"
+        "    ruleId: wrapper-b\n"
+        "    invalid:\n"
+        "      - 'pass'\n",
+        encoding="utf-8",
+    )
+
+    exit_code = ast_workflows.test_command(str(tmp_path / "sgconfig.yml"))
+
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    assert AstGrepWrapperBackend.search_project_calls == 1
+    assert AstGrepWrapperBackend.search_many_calls == 0

@@ -148,13 +148,26 @@ def _search_ast_test_snippets_with_wrapper(
     pattern: str,
     language: str,
     snippets: list[str],
+    temp_root: Path | None = None,
 ) -> list[bool]:
     if not snippets:
         return []
 
     suffix = _suffix_for_language(language)
-    with TemporaryDirectory(prefix=".tg_rule_test_batch_") as temp_dir:
-        temp_root = Path(temp_dir)
+    if temp_root is None:
+        with TemporaryDirectory(prefix=".tg_rule_test_batch_") as temp_dir:
+            return _search_ast_test_snippets_with_wrapper(
+                backend,
+                root_dir=root_dir,
+                case_cfg=case_cfg,
+                pattern=pattern,
+                language=language,
+                snippets=snippets,
+                temp_root=Path(temp_dir),
+            )
+
+    temp_root.mkdir(parents=True, exist_ok=True)
+    try:
         snippet_names: list[str] = []
         for index, snippet in enumerate(snippets):
             snippet_name = f"case_{index}{suffix}"
@@ -170,6 +183,77 @@ def _search_ast_test_snippets_with_wrapper(
         matched_names = {_match_name(path) for path in result.matched_file_paths if path}
         matched_names.update(_match_name(match.file) for match in result.matches if match.file)
         return [snippet_name in matched_names for snippet_name in snippet_names]
+    finally:
+        for snippet_file in temp_root.iterdir():
+            snippet_file.unlink(missing_ok=True)
+        temp_root.rmdir()
+
+
+def _search_ast_test_batches_with_wrapper_project(
+    batches: list[dict[str, object]],
+) -> list[list[bool]]:
+    from tempfile import TemporaryDirectory
+
+    if not batches:
+        return []
+
+    with TemporaryDirectory(prefix=".tg_rule_test_project_") as temp_dir:
+        temp_root = Path(temp_dir)
+        rules_dir = temp_root / "rules"
+        rules_dir.mkdir(parents=True, exist_ok=True)
+        config_path = temp_root / "sgconfig.yml"
+        config_path.write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
+
+        snippet_names_by_rule: list[list[str]] = []
+        rule_ids: list[str] = []
+
+        for batch_index, batch in enumerate(batches):
+            rule_id = f"batch-{batch_index}"
+            rule_ids.append(rule_id)
+            language = cast(str, batch["language"])
+            pattern = cast(str, batch["pattern"])
+            snippets = cast(list[str], batch["snippets"])
+
+            rule_file = rules_dir / f"{rule_id}.yml"
+            rule_file.write_text(
+                "\n".join([
+                    f"id: {rule_id}",
+                    f"language: {language}",
+                    "rule:",
+                    "  pattern: |",
+                    *[f"    {line}" for line in pattern.splitlines()],
+                    "",
+                ]),
+                encoding="utf-8",
+            )
+
+            suffix = _suffix_for_language(language)
+            snippet_dir = temp_root / f"cases_{batch_index}"
+            snippet_dir.mkdir(parents=True, exist_ok=True)
+            snippet_names: list[str] = []
+            for snippet_index, snippet in enumerate(snippets):
+                snippet_name = f"case_{snippet_index}{suffix}"
+                (snippet_dir / snippet_name).write_text(snippet, encoding="utf-8")
+                snippet_names.append(snippet_name)
+            snippet_names_by_rule.append(snippet_names)
+
+        backend = cast(Any, batches[0]["backend"])
+        grouped_results = backend.search_project(str(temp_root), str(config_path))
+
+        output: list[list[bool]] = []
+        for rule_id, snippet_names in zip(rule_ids, snippet_names_by_rule, strict=True):
+            result = grouped_results.get(rule_id)
+            if result is None:
+                output.append([False for _ in snippet_names])
+                continue
+
+            def _match_name(raw_path: str) -> str:
+                return raw_path.replace("\\", "/").rsplit("/", 1)[-1]
+
+            matched_names = {_match_name(path) for path in result.matched_file_paths if path}
+            matched_names.update(_match_name(match.file) for match in result.matches if match.file)
+            output.append([snippet_name in matched_names for snippet_name in snippet_names])
+        return output
 
 
 def _describe_ast_backend_mode(backend_name: str) -> str:
@@ -543,30 +627,34 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                         f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
                     )
 
-    for batch in wrapper_case_groups.values():
-        items = cast(list[tuple[str, str, bool]], batch["items"])
+    wrapper_batches = list(wrapper_case_groups.values())
+    if wrapper_batches:
         try:
-            match_results = _search_ast_test_snippets_with_wrapper(
-                batch["backend"],
-                root_dir=cast(Path, batch["root_dir"]),
-                case_cfg=cast("SearchConfig", batch["case_cfg"]),
-                pattern=cast(str, batch["pattern"]),
-                language=cast(str, batch["language"]),
-                snippets=[snippet for _, snippet, _ in items],
-            )
+            grouped_match_results = _search_ast_test_batches_with_wrapper_project([
+                {
+                    "backend": batch["backend"],
+                    "pattern": batch["pattern"],
+                    "language": batch["language"],
+                    "snippets": [snippet for _, snippet, _ in cast(list[tuple[str, str, bool]], batch["items"])],
+                }
+                for batch in wrapper_batches
+            ])
         except Exception as exc:
-            for case_key, _, _ in items:
-                failures.append(f"{case_key}: backend error: {exc}")
-            continue
-        for (case_key, snippet, expected_match), has_match in zip(
-            items, match_results, strict=True
-        ):
-            if has_match != expected_match:
-                expectation = "match" if expected_match else "no match"
-                failures.append(
-                    f"{case_key}: expected {expectation}, got "
-                    f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
-                )
+            for batch in wrapper_batches:
+                for case_key, _, _ in cast(list[tuple[str, str, bool]], batch["items"]):
+                    failures.append(f"{case_key}: backend error: {exc}")
+        else:
+            for batch, match_results in zip(wrapper_batches, grouped_match_results, strict=True):
+                items = cast(list[tuple[str, str, bool]], batch["items"])
+                for (case_key, snippet, expected_match), has_match in zip(
+                    items, match_results, strict=True
+                ):
+                    if has_match != expected_match:
+                        expectation = "match" if expected_match else "no match"
+                        failures.append(
+                            f"{case_key}: expected {expectation}, got "
+                            f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
+                        )
 
     print(
         f"Testing AST rules using {_describe_ast_backend_modes(backend_names_used)} "

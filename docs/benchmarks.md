@@ -54,9 +54,9 @@ Notes:
 
 | Scenario | tensor-grep | Result |
 | --- | --- | --- |
-| `tg run "def $FUNC():\n    $$$BODY" .` synthetic AST workflow | 0.274s | PASS |
-| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.292s | PASS |
-| `tg test --config sgconfig.yml` synthetic AST workflow | 0.354s | PASS |
+| `tg run "def $FUNC():\n    $$$BODY" .` synthetic AST workflow | 0.279s | PASS |
+| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.304s | PASS |
+| `tg test --config sgconfig.yml` synthetic AST workflow | 0.306s | PASS |
 
 ### GPU/NLP Microbenchmark (`run_gpu_benchmarks.py`)
 
