@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.31.16 (2026-03-11)
+
+### Bug Fixes
+
+- **ast**: Normalize wrapper temp match paths
+  ([`3428b96`](https://github.com/oimiragieo/tensor-grep/commit/3428b96ccf763c0c0ead53b5742d1096ce1e8c57))
+
+- **ci**: Format ast workflow matcher
+  ([`b3f272a`](https://github.com/oimiragieo/tensor-grep/commit/b3f272a5b421eac88ac18ff4527609efc3cb2365))
+
+### Performance Improvements
+
+- **ast**: Move wrapper test batches to system temp
+  ([`4643e8f`](https://github.com/oimiragieo/tensor-grep/commit/4643e8f0d248bef3df15c6bde64c50ae980f1f99))
+
+
 ## v0.31.15 (2026-03-11)
 
 ### Performance Improvements
