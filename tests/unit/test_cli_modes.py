@@ -978,7 +978,9 @@ class AstGrepWrapperBackend(_FakeAstBackend):
         for file_path in file_paths:
             candidate = Path(file_path)
             if candidate.is_dir():
-                expanded_paths.extend(str(path) for path in sorted(candidate.rglob("*")) if path.is_file())
+                expanded_paths.extend(
+                    str(path) for path in sorted(candidate.rglob("*")) if path.is_file()
+                )
             else:
                 expanded_paths.append(file_path)
         for file_path in expanded_paths:

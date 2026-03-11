@@ -24,9 +24,9 @@ def _write_rules(rules_dir: Path, rule_count: int) -> None:
     rules_dir.mkdir(parents=True, exist_ok=True)
     for idx in range(rule_count):
         if idx % 2 == 0:
-            pattern = "\"def $FUNC():\\n    $$$BODY\""
+            pattern = '"def $FUNC():\\n    $$$BODY"'
         else:
-            pattern = "\"class $NAME:\\n    $$$BODY\""
+            pattern = '"class $NAME:\\n    $$$BODY"'
         (rules_dir / f"rule_{idx:03d}.yml").write_text(
             f"id: rule-{idx}\nlanguage: python\nrule:\n  pattern: {pattern}\n",
             encoding="utf-8",
@@ -54,14 +54,16 @@ def _write_tests(tests_dir: Path, rule_count: int) -> None:
 def _write_source_files(root: Path, file_count: int) -> None:
     for idx in range(file_count):
         (root / f"module_{idx:03d}.py").write_text(
-            "\n".join([
-                "class SampleClass:",
-                "    def __init__(self):",
-                "        pass",
-                "",
-                "def sample_function():",
-                "    return 1",
-            ])
+            "\n".join(
+                [
+                    "class SampleClass:",
+                    "    def __init__(self):",
+                    "        pass",
+                    "",
+                    "def sample_function():",
+                    "    return 1",
+                ]
+            )
             + "\n",
             encoding="utf-8",
         )
