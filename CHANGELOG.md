@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.15 (2026-03-11)
+
+### Performance Improvements
+
+- **ast**: Cache wrapper binary resolution
+  ([`ddf568a`](https://github.com/oimiragieo/tensor-grep/commit/ddf568ac51c78751fbd6596237d5aa50b747d902))
+
+
 ## v0.31.14 (2026-03-11)
 
 ### Bug Fixes
