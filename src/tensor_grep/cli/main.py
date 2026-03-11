@@ -1193,17 +1193,17 @@ def run(
             err=True,
         )
 
-    scanner = DirectoryScanner(cfg)
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
-    candidate_files, _ = _collect_candidate_files(scanner, [path])
 
-    if hasattr(backend, "search_many"):
-        result = backend.search_many(candidate_files, pattern, config=cfg)
+    if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+        result = backend.search_many([path], pattern, config=cfg)
         all_results.matches.extend(result.matches)
         all_results.matched_file_paths.extend(result.matched_file_paths)
         all_results.total_matches += result.total_matches
         all_results.total_files = max(all_results.total_files, result.total_files)
     else:
+        scanner = DirectoryScanner(cfg)
+        candidate_files, _ = _collect_candidate_files(scanner, [path])
         for current_file in candidate_files:
             result = backend.search(current_file, pattern, config=cfg)
             all_results.matches.extend(result.matches)
@@ -1242,9 +1242,9 @@ def scan(
         ast_prefer_native=True,
         lang=cast(str, project_cfg["language"]),
     )
-    scanner = DirectoryScanner(cfg)
     root_dir = cast(Path, project_cfg["root_dir"])
-    candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+    scanner: DirectoryScanner | None = None
+    candidate_files: list[str] | None = None
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
 
@@ -1258,13 +1258,17 @@ def scan(
         backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
-        if hasattr(backend, "search_many"):
-            result = backend.search_many(candidate_files, rule["pattern"], config=rule_cfg)
+        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
             rule_matches = result.total_matches
             matched_files.update(result.matched_file_paths)
             if not matched_files and result.total_files > 0:
                 matched_files.update(match.file for match in result.matches if match.file)
         else:
+            if scanner is None:
+                scanner = DirectoryScanner(cfg)
+            if candidate_files is None:
+                candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
             rule_matches = 0
             for current_file in candidate_files:
                 result = backend.search(current_file, rule["pattern"], config=rule_cfg)
