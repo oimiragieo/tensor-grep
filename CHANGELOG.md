@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.31.11 (2026-03-11)
+
+### Performance Improvements
+
+- **ast**: Batch wrapper run across files
+  ([`2392205`](https://github.com/oimiragieo/tensor-grep/commit/2392205bbf50e99b22d071e829660b8c5eaf668f))
+
+- **ast**: Batch wrapper scan per rule
+  ([`848af3b`](https://github.com/oimiragieo/tensor-grep/commit/848af3bf17f426ed88830155775c183d189c0911))
+
+
 ## v0.31.10 (2026-03-11)
 
 ### Bug Fixes
