@@ -1,8 +1,9 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
-from tensor_grep.core.result import SearchResult
+from tensor_grep.core.result import MatchLine, SearchResult
 
 
 class _FakeUnavailableAstBackend:
@@ -154,6 +155,31 @@ def test_ast_workflows_import_should_not_eagerly_load_directory_scanner():
         env=env,
     )
     assert completed.stdout.strip() == "False"
+
+
+def test_search_ast_test_snippets_with_wrapper_should_match_by_temp_file_name(tmp_path):
+    from tensor_grep.cli.ast_workflows import _search_ast_test_snippets_with_wrapper
+    from tensor_grep.core.config import SearchConfig
+
+    class _Backend:
+        def search_many(self, paths, pattern, config=None):
+            return SearchResult(
+                matches=[MatchLine(file=str(Path(paths[0]) / "case_1.py"), line_number=1, text="x")],
+                total_matches=1,
+                total_files=1,
+                matched_file_paths=["nested\\case_0.py"],
+            )
+
+    results = _search_ast_test_snippets_with_wrapper(
+        _Backend(),
+        root_dir=tmp_path,
+        case_cfg=SearchConfig(ast=True, lang="python"),
+        pattern="pattern",
+        language="python",
+        snippets=["a = 1", "b = 2"],
+    )
+
+    assert results == [True, True]
 
 
 def test_test_command_should_reuse_backend_selection_for_rule_linked_cases(

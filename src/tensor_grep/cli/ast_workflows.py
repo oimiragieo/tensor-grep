@@ -153,27 +153,19 @@ def _search_ast_test_snippets_with_wrapper(
         return []
 
     suffix = _suffix_for_language(language)
-    with TemporaryDirectory(prefix=".tg_rule_test_batch_", dir=root_dir) as temp_dir:
+    with TemporaryDirectory(prefix=".tg_rule_test_batch_") as temp_dir:
         temp_root = Path(temp_dir)
-        snippet_paths: list[Path] = []
+        snippet_names: list[str] = []
         for index, snippet in enumerate(snippets):
-            snippet_path = temp_root / f"case_{index}{suffix}"
+            snippet_name = f"case_{index}{suffix}"
+            snippet_path = temp_root / snippet_name
             snippet_path.write_text(snippet, encoding="utf-8")
-            snippet_paths.append(snippet_path)
+            snippet_names.append(snippet_name)
 
         result = cast(Any, backend).search_many([str(temp_root)], pattern, config=case_cfg)
-
-        def _resolve_match_path(raw_path: str) -> Path:
-            candidate = Path(raw_path)
-            if candidate.is_absolute():
-                return candidate.resolve()
-            return (temp_root / candidate).resolve()
-
-        matched_paths = {_resolve_match_path(path) for path in result.matched_file_paths}
-        matched_paths.update(
-            _resolve_match_path(match.file) for match in result.matches if match.file
-        )
-        return [snippet_path.resolve() in matched_paths for snippet_path in snippet_paths]
+        matched_names = {Path(path).name for path in result.matched_file_paths if path}
+        matched_names.update(Path(match.file).name for match in result.matches if match.file)
+        return [snippet_name in matched_names for snippet_name in snippet_names]
 
 
 def _describe_ast_backend_mode(backend_name: str) -> str:
