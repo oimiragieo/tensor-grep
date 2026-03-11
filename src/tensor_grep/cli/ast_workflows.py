@@ -118,6 +118,23 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
     return specs
 
 
+def _load_test_case_payloads(project_cfg: dict[str, object]) -> list[tuple[Path, list[dict[str, object]]]]:
+    root_dir = cast(Path, project_cfg["root_dir"])
+    test_dirs = cast(list[str], project_cfg["test_dirs"])
+
+    payloads: list[tuple[Path, list[dict[str, object]]]] = []
+    for test_file in _iter_yaml_files(root_dir, test_dirs):
+        payload = _load_yaml_dict(test_file)
+        raw_cases = payload.get("tests")
+        cases = (
+            [case for case in raw_cases if isinstance(case, dict)]
+            if isinstance(raw_cases, list)
+            else [payload]
+        )
+        payloads.append((test_file, cases))
+    return payloads
+
+
 def _suffix_for_language(language: str) -> str:
     normalized = language.lower()
     if normalized in {"js", "javascript"}:
@@ -487,9 +504,8 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
         return 1
 
     root_dir = cast(Path, project_cfg["root_dir"])
-    test_dirs = cast(list[str], project_cfg["test_dirs"])
-    test_files = _iter_yaml_files(root_dir, test_dirs)
-    if not test_files:
+    test_payloads = _load_test_case_payloads(project_cfg)
+    if not test_payloads:
         print("Error: No test files found in configured test directories.", file=sys.stderr)
         return 1
 
@@ -512,15 +528,7 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
 
     total_cases = 0
     failures: list[str] = []
-    for test_file in test_files:
-        payload = _load_yaml_dict(test_file)
-        raw_cases = payload.get("tests")
-        cases = (
-            [case for case in raw_cases if isinstance(case, dict)]
-            if isinstance(raw_cases, list)
-            else [payload]
-        )
-
+    for test_file, cases in test_payloads:
         for case in cases:
             case_id = str(case.get("id") or test_file.stem)
             linked_rule = case.get("ruleId")
