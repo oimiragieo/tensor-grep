@@ -122,11 +122,21 @@ def _run_full_cli() -> None:
     full_main_entry()
 
 
+def _run_ast_workflow_cli(argv: list[str]) -> None:
+    from tensor_grep.cli.ast_workflows import main_entry as ast_main_entry
+
+    ast_main_entry(argv)
+
+
 def main_entry() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] in {"--version", "-V"}:
         _print_version()
         raise SystemExit(0)
+
+    if argv and argv[0] in {"scan", "test"}:
+        _run_ast_workflow_cli(argv)
+        return
 
     search_args = _normalize_search_invocation(argv)
     if search_args is not None and not _requires_full_cli(search_args):
