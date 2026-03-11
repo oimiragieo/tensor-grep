@@ -363,8 +363,6 @@ def _evaluate_grouped_ast_test_cases_with_wrapper(
         language = cast(str, batch["language"])
         items = cast(list[tuple[str, str, bool]], batch["items"])
         snippets = [snippet for _, snippet, _ in items]
-        expected_matches = [expected for _, _, expected in items]
-
         try:
             match_results = _search_ast_test_snippets_with_wrapper(
                 backend,
