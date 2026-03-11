@@ -320,15 +320,16 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
 
     print(f"Scanning project using adaptive AST routing based on {project_cfg['config_path']}...")
 
+    resolved_rules: list[tuple[dict[str, str], SearchConfig, ComputeBackend]] = []
+    for rule in rules:
+        rule_cfg = replace(cfg, lang=rule["language"])
+        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        resolved_rules.append((rule, rule_cfg, backend))
+
     wrapper_project_backend: Any | None = None
     wrapper_project_results: dict[str, SearchResult] | None = None
-    if rules:
-        selected_backends = [
-            _select_ast_backend_for_pattern(
-                replace(cfg, lang=rule["language"]), rule["pattern"], backend_cache
-            )
-            for rule in rules
-        ]
+    if resolved_rules:
+        selected_backends = [backend for _, _, backend in resolved_rules]
         if (
             selected_backends
             and all(hasattr(backend, "search_project") for backend in selected_backends)
@@ -345,9 +346,7 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
 
     total_matches = 0
     matched_rules = 0
-    for rule in rules:
-        rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+    for rule, rule_cfg, backend in resolved_rules:
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
         if wrapper_project_results is not None and wrapper_project_backend is backend:

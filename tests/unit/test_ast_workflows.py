@@ -36,6 +36,50 @@ class _FakeWrapperBackend:
         }
 
 
+class _CountingWrapperBackend(_FakeWrapperBackend):
+    init_count = 0
+
+    def __init__(self):
+        type(self).init_count += 1
+
+
+def test_scan_command_should_reuse_backend_selection_per_rule(monkeypatch, tmp_path, capsys):
+    from tensor_grep.cli.ast_workflows import scan_command
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _FakeUnavailableAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _CountingWrapperBackend,
+    )
+    _CountingWrapperBackend.init_count = 0
+    _CountingWrapperBackend.search_project_calls = 0
+    _CountingWrapperBackend.search_many_calls = 0
+
+    (tmp_path / "sgconfig.yml").write_text(
+        "ruleDirs:\n  - rules\nlanguage: python\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules").mkdir()
+    (tmp_path / "rules" / "rule_a.yml").write_text(
+        "id: rule-a\nlanguage: python\nrule:\n  pattern: ERROR_A\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "rules" / "rule_b.yml").write_text(
+        "id: rule-b\nlanguage: python\nrule:\n  pattern: ERROR_B\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "a.py").write_text("ERROR_A\nERROR_B\n", encoding="utf-8")
+
+    exit_code = scan_command(str(tmp_path / "sgconfig.yml"))
+
+    _ = capsys.readouterr()
+    assert exit_code == 0
+    assert _CountingWrapperBackend.init_count == 1
+
+
 def test_scan_command_should_use_wrapper_project_fast_path(monkeypatch, tmp_path, capsys):
     from tensor_grep.cli.ast_workflows import scan_command
 
