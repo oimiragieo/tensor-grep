@@ -44,14 +44,14 @@ def test_ci_workflow_should_keep_dependency_install_retry_guards() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "Install Dependencies (Unix with retry)" in workflow
     assert "Install Dependencies (Windows with retry)" in workflow
-    assert "Dependency install failed after 3 attempts." in workflow
+    assert "Dependency install failed after 5 attempts." in workflow
 
 
 def test_ci_gpu_workflow_should_keep_dependency_retry_guards() -> None:
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "Verify cuDF / RAPIDS Configuration (with retry)" in workflow
-    assert "GPU dependency install failed (attempt ${attempt}/3)" in workflow
-    assert "GPU dependency install failed after 3 attempts." in workflow
+    assert "GPU dependency install failed (attempt ${attempt}/5)" in workflow
+    assert "GPU dependency install failed after 5 attempts." in workflow
 
 
 def test_ci_benchmark_regression_jobs_should_use_auto_baseline_resolution() -> None:

@@ -247,23 +247,27 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append({
-                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
-                    "language": str(
-                        item.get("language") or payload.get("language") or default_language
-                    ),
-                })
+                specs.append(
+                    {
+                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                        "pattern": pattern,
+                        "language": str(
+                            item.get("language") or payload.get("language") or default_language
+                        ),
+                    }
+                )
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append({
-            "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
-            "language": str(payload.get("language") or default_language),
-        })
+        specs.append(
+            {
+                "id": str(payload.get("id") or rule_file.stem),
+                "pattern": pattern,
+                "language": str(payload.get("language") or default_language),
+            }
+        )
 
     return specs
 
@@ -311,7 +315,9 @@ def _search_ast_test_snippets_with_wrapper(
             return (temp_root / candidate).resolve()
 
         matched_paths = {_resolve_match_path(path) for path in result.matched_file_paths}
-        matched_paths.update(_resolve_match_path(match.file) for match in result.matches if match.file)
+        matched_paths.update(
+            _resolve_match_path(match.file) for match in result.matches if match.file
+        )
         return [snippet_path.resolve() in matched_paths for snippet_path in snippet_paths]
 
 
@@ -1415,7 +1421,8 @@ def test(
                         match_results = []
                         for snippet in snippets:
                             temp_name = (
-                                root_dir / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
+                                root_dir
+                                / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
                             )
                             temp_name.write_text(snippet, encoding="utf-8")
                             try:
