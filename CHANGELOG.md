@@ -1,6 +1,49 @@
 # CHANGELOG
 
 
+## v0.31.13 (2026-03-11)
+
+### Bug Fixes
+
+- **ast**: Support multiline wrapper patterns
+  ([`bb684bf`](https://github.com/oimiragieo/tensor-grep/commit/bb684bfee50b1dbad14da8a3fe6293493066cc81))
+
+- **ci**: Format cli main for ruff
+  ([`8e44473`](https://github.com/oimiragieo/tensor-grep/commit/8e444730b00f7548b7236c85c2c004a2d5822c2a))
+
+- **ci**: Format direct ast workflow bootstrap path
+  ([`0209cc3`](https://github.com/oimiragieo/tensor-grep/commit/0209cc3b0a23f92f971e013d03a18928f42f615c))
+
+- **ci**: Harden install retries and format ast workflow files
+  ([`105ffc8`](https://github.com/oimiragieo/tensor-grep/commit/105ffc89b8dbabd8bcd02a4bae752bb59482055a))
+
+- **ci**: Match ruff formatter output
+  ([`8ce4f8a`](https://github.com/oimiragieo/tensor-grep/commit/8ce4f8a0a2074f243fc747b6c948bc519f46f824))
+
+- **ci**: Normalize linux formatter shapes
+  ([`21c57e9`](https://github.com/oimiragieo/tensor-grep/commit/21c57e9c52cbd082b249ddc8064960a3c3dbec3f))
+
+### Performance Improvements
+
+- **ast**: Add direct bootstrap path for workflow commands
+  ([`e7d2b24`](https://github.com/oimiragieo/tensor-grep/commit/e7d2b24b9c2fb2596ce2fd3bde27f257b73810f9))
+
+- **ast**: Batch wrapper rule tests
+  ([`2e08e23`](https://github.com/oimiragieo/tensor-grep/commit/2e08e23444129a5c4772a3d454bca4ffe855c85d))
+
+- **ast**: Batch wrapper test cases once per rule
+  ([`227b679`](https://github.com/oimiragieo/tensor-grep/commit/227b679ae194168cbb22113d7b4f9f6443d4dcd3))
+
+- **ast**: Group wrapper rule tests by pattern
+  ([`2c1fe42`](https://github.com/oimiragieo/tensor-grep/commit/2c1fe42736ce84b52fb2ea4c3fa51bc0ad40fda8))
+
+- **ast**: Group wrapper test batches by pattern
+  ([`b37d857`](https://github.com/oimiragieo/tensor-grep/commit/b37d8576d1dc29576a0cee44791ae2cb4dbdfbc5))
+
+- **ast**: Route run through direct workflow path
+  ([`5b57673`](https://github.com/oimiragieo/tensor-grep/commit/5b57673291ed9a8ca4d581dd79f386bcdb163036))
+
+
 ## v0.31.12 (2026-03-11)
 
 ### Performance Improvements
