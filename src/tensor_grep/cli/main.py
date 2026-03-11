@@ -314,7 +314,37 @@ def _select_ast_backend_for_pattern(
     if backend_cache is not None and cache_key in backend_cache:
         return backend_cache[cache_key]
 
-    backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+    backend: ComputeBackend
+    if Pipeline.__module__ == "tensor_grep.core.pipeline":
+        try:
+            from tensor_grep.backends.ast_backend import AstBackend
+            from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+
+            ast_backend = AstBackend()
+            ast_wrapper = AstGrepWrapperBackend()
+            if pattern_kind == "native":
+                if ast_backend.is_available():
+                    backend = ast_backend
+                elif ast_wrapper.is_available():
+                    backend = ast_wrapper
+                else:
+                    backend = Pipeline(
+                        config=replace(base_config, query_pattern=pattern)
+                    ).get_backend()
+            else:
+                if ast_wrapper.is_available():
+                    backend = ast_wrapper
+                elif ast_backend.is_available():
+                    backend = ast_backend
+                else:
+                    backend = Pipeline(
+                        config=replace(base_config, query_pattern=pattern)
+                    ).get_backend()
+        except ImportError:
+            backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+    else:
+        backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+
     if backend_cache is not None:
         backend_cache[cache_key] = backend
     return backend

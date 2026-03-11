@@ -7,7 +7,8 @@ from typing import ClassVar
 import pytest
 from typer.testing import CliRunner
 
-from tensor_grep.cli.main import app
+from tensor_grep.cli.main import _select_ast_backend_for_pattern, app
+from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -1024,6 +1025,16 @@ class _CapturingAstPipeline:
         return self._backend
 
 
+class _FakeDirectNativeAstBackend:
+    def is_available(self):
+        return True
+
+
+class _FakeDirectWrapperAstBackend:
+    def is_available(self):
+        return True
+
+
 class _FakeAstScanner:
     def __init__(self, config=None):
         pass
@@ -1342,6 +1353,56 @@ def test_test_command_should_reuse_wrapper_backend_selection_for_multiple_ast_gr
 
     assert result.exit_code == 0
     assert _CapturingAstPipeline.init_count == 1
+
+
+def test_ast_selection_should_skip_pipeline_for_native_backend(monkeypatch):
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _FakeDirectNativeAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _FakeDirectWrapperAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.core.pipeline.Pipeline.__init__",
+        lambda self, force_cpu=False, config=None: (_ for _ in ()).throw(
+            AssertionError("Pipeline construction should be skipped for direct AST selection")
+        ),
+    )
+
+    backend = _select_ast_backend_for_pattern(
+        SearchConfig(query_pattern="function_definition", ast=True, ast_prefer_native=True),
+        "function_definition",
+        {},
+    )
+
+    assert isinstance(backend, _FakeDirectNativeAstBackend)
+
+
+def test_ast_selection_should_skip_pipeline_for_wrapper_backend(monkeypatch):
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _FakeDirectNativeAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _FakeDirectWrapperAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.core.pipeline.Pipeline.__init__",
+        lambda self, force_cpu=False, config=None: (_ for _ in ()).throw(
+            AssertionError("Pipeline construction should be skipped for direct AST selection")
+        ),
+    )
+
+    backend = _select_ast_backend_for_pattern(
+        SearchConfig(query_pattern="def $FUNC():", ast=True, ast_prefer_native=True),
+        "def $FUNC():",
+        {},
+    )
+
+    assert isinstance(backend, _FakeDirectWrapperAstBackend)
 
 
 def test_test_command_should_use_total_file_contract_for_match_detection(monkeypatch):
