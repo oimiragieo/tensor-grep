@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+
 from tensor_grep.core.result import SearchResult
 
 
@@ -128,6 +132,28 @@ def test_scan_command_should_use_wrapper_project_fast_path(monkeypatch, tmp_path
     assert "[scan] rule=error-rule lang=python matches=1 files=1" in captured.out
     assert _FakeWrapperBackend.search_project_calls == 1
     assert _FakeWrapperBackend.search_many_calls == 0
+
+
+def test_ast_workflows_import_should_not_eagerly_load_directory_scanner():
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = f"src{os.pathsep}{existing}" if existing else "src"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "import tensor_grep.cli.ast_workflows; "
+                "print('tensor_grep.io.directory_scanner' in sys.modules)"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert completed.stdout.strip() == "False"
 
 
 def test_test_command_should_reuse_backend_selection_for_rule_linked_cases(

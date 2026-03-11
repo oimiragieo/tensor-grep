@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tensor_grep.core.result import SearchResult
-from tensor_grep.io.directory_scanner import DirectoryScanner
 
 if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import DirectoryScanner
 
 
 def _load_yaml_dict(path: Path) -> dict[str, object]:
@@ -227,6 +227,8 @@ def run_command(
         all_results.total_matches += result.total_matches
         all_results.total_files = max(all_results.total_files, result.total_files)
     else:
+        from tensor_grep.io.directory_scanner import DirectoryScanner
+
         scanner = DirectoryScanner(cfg)
         candidate_files, _ = _collect_candidate_files(scanner, [search_path])
         for current_file in candidate_files:
@@ -362,6 +364,8 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
             if not matched_files and result.total_files > 0:
                 matched_files.update(match.file for match in result.matches if match.file)
         else:
+            from tensor_grep.io.directory_scanner import DirectoryScanner
+
             if scanner is None:
                 scanner = DirectoryScanner(cfg)
             if candidate_files is None:

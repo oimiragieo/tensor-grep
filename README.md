@@ -55,9 +55,9 @@ Environment notes:
 
 | Scenario | tensor-grep |
 | --- | --- |
-| `tg run "def $FUNC():\n    $$$BODY" .` synthetic AST workflow | 0.297s |
-| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.315s |
-| `tg test --config sgconfig.yml` synthetic AST workflow | 0.421s |
+| `tg run "def $FUNC():\n    $$$BODY" .` synthetic AST workflow | 0.299s |
+| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.324s |
+| `tg test --config sgconfig.yml` synthetic AST workflow | 0.412s |
 
 ### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
 
