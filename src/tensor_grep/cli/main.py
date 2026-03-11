@@ -321,6 +321,32 @@ def _search_ast_test_snippets_with_wrapper(
         return [snippet_path.resolve() in matched_paths for snippet_path in snippet_paths]
 
 
+def _evaluate_ast_test_case_with_wrapper(
+    backend: object,
+    *,
+    root_dir: Path,
+    case_cfg: "SearchConfig",
+    pattern: str,
+    language: str,
+    valid_snippets: list[str],
+    invalid_snippets: list[str],
+) -> list[tuple[str, bool, bool]]:
+    snippets = [*valid_snippets, *invalid_snippets]
+    if not snippets:
+        return []
+
+    match_results = _search_ast_test_snippets_with_wrapper(
+        backend,
+        root_dir=root_dir,
+        case_cfg=case_cfg,
+        pattern=pattern,
+        language=language,
+        snippets=snippets,
+    )
+    expected_matches = [False] * len(valid_snippets) + [True] * len(invalid_snippets)
+    return list(zip(snippets, expected_matches, match_results, strict=True))
+
+
 def _describe_ast_backend_mode(backend_name: str) -> str:
     if backend_name == "AstBackend":
         return "GPU-Accelerated GNNs"
@@ -1399,26 +1425,30 @@ def test(
                 failures.append(f"{test_file}:{case_id}: empty valid/invalid test lists")
                 continue
 
-            for expected_match, snippets in ((False, valid_snippets), (True, invalid_snippets)):
-                total_cases += len(snippets)
-                case_cfg = replace(cfg, lang=language)
-                backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
-                backend_names_used.add(type(backend).__name__)
+            total_cases += len(valid_snippets) + len(invalid_snippets)
+            case_cfg = replace(cfg, lang=language)
+            backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
+            backend_names_used.add(type(backend).__name__)
 
-                try:
-                    if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
-                        backend, "search_many"
+            try:
+                if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
+                    backend, "search_many"
+                ):
+                    evaluated_snippets = _evaluate_ast_test_case_with_wrapper(
+                        backend,
+                        root_dir=root_dir,
+                        case_cfg=case_cfg,
+                        pattern=pattern,
+                        language=language,
+                        valid_snippets=valid_snippets,
+                        invalid_snippets=invalid_snippets,
+                    )
+                else:
+                    evaluated_snippets = []
+                    for expected_match, snippets in (
+                        (False, valid_snippets),
+                        (True, invalid_snippets),
                     ):
-                        match_results = _search_ast_test_snippets_with_wrapper(
-                            backend,
-                            root_dir=root_dir,
-                            case_cfg=case_cfg,
-                            pattern=pattern,
-                            language=language,
-                            snippets=snippets,
-                        )
-                    else:
-                        match_results = []
                         for snippet in snippets:
                             temp_name = (
                                 root_dir
@@ -1427,26 +1457,30 @@ def test(
                             temp_name.write_text(snippet, encoding="utf-8")
                             try:
                                 result = backend.search(str(temp_name), pattern, config=case_cfg)
-                                match_results.append(
-                                    bool(
-                                        result.total_files > 0
-                                        or result.total_matches > 0
-                                        or result.matched_file_paths
+                                evaluated_snippets.append(
+                                    (
+                                        snippet,
+                                        expected_match,
+                                        bool(
+                                            result.total_files > 0
+                                            or result.total_matches > 0
+                                            or result.matched_file_paths
+                                        ),
                                     )
                                 )
                             finally:
                                 temp_name.unlink(missing_ok=True)
-                except Exception as exc:
-                    failures.append(f"{test_file}:{case_id}: backend error: {exc}")
-                    continue
+            except Exception as exc:
+                failures.append(f"{test_file}:{case_id}: backend error: {exc}")
+                continue
 
-                for snippet, has_match in zip(snippets, match_results, strict=True):
-                    if has_match != expected_match:
-                        expectation = "match" if expected_match else "no match"
-                        failures.append(
-                            f"{test_file}:{case_id}: expected {expectation}, got "
-                            f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
-                        )
+            for snippet, expected_match, has_match in evaluated_snippets:
+                if has_match != expected_match:
+                    expectation = "match" if expected_match else "no match"
+                    failures.append(
+                        f"{test_file}:{case_id}: expected {expectation}, got "
+                        f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
+                    )
 
     typer.echo(
         f"Testing AST rules using {_describe_ast_backend_modes(backend_names_used)} "
