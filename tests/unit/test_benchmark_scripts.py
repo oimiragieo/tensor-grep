@@ -123,7 +123,7 @@ def test_run_ast_workflow_benchmarks_should_generate_rule_tests(tmp_path):
     assert "invalid:\n  - |\n" in test_text
 
 
-def test_run_ast_workflow_benchmarks_should_emit_scan_and_test_rows(monkeypatch, tmp_path):
+def test_run_ast_workflow_benchmarks_should_emit_run_scan_and_test_rows(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_ast_workflow_benchmarks_script_rows",
         "benchmarks/run_ast_workflow_benchmarks.py",
@@ -131,6 +131,8 @@ def test_run_ast_workflow_benchmarks_should_emit_scan_and_test_rows(monkeypatch,
     monkeypatch.setattr(module, "resolve_ast_workflow_bench_dir", lambda: tmp_path / "bench")
 
     def _fake_run_cmd_capture(cmd, cwd):
+        if cmd[3] == "run":
+            return 0.15, 0
         if cmd[3] == "scan":
             return 0.25, 0
         if cmd[3] == "test":
@@ -156,6 +158,7 @@ def test_run_ast_workflow_benchmarks_should_emit_scan_and_test_rows(monkeypatch,
     assert payload["suite"] == "run_ast_workflow_benchmarks"
     rows = payload["rows"]
     assert rows == [
+        {"name": "ast_run_workflow", "tg_time_s": 0.15, "exit_code": 0},
         {"name": "ast_scan_workflow", "tg_time_s": 0.25, "exit_code": 0},
         {"name": "ast_test_workflow", "tg_time_s": 0.4, "exit_code": 0},
     ]

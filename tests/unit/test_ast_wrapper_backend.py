@@ -98,3 +98,29 @@ def test_ast_wrapper_backend_should_use_rule_file_for_multiline_patterns():
     cmd = run.call_args.args[0]
     assert cmd[:4] == ["sg", "scan", "--json", "--rule"]
     assert cmd[-1] == "example.py"
+
+
+def test_ast_wrapper_backend_should_group_project_scan_results_by_rule_id():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.stdout = (
+        '[{"text":"def hello():","file":"a.py","ruleId":"rule-a","range":{"start":{"line":0}}},'
+        '{"text":"def world():","file":"b.py","ruleId":"rule-b","range":{"start":{"line":4}}},'
+        '{"text":"def again():","file":"a.py","ruleId":"rule-a","range":{"start":{"line":8}}}]'
+    )
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch(
+            "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        results = backend.search_project("project", "sgconfig.yml")
+
+    assert run.call_args.args[0] == ["sg", "scan", "--json", "--config", "sgconfig.yml", "project"]
+    assert results["rule-a"].total_matches == 2
+    assert results["rule-a"].matched_file_paths == ["a.py"]
+    assert results["rule-b"].total_matches == 1
+    assert results["rule-b"].matched_file_paths == ["b.py"]

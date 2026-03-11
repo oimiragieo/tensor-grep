@@ -1,7 +1,9 @@
+import json
 import subprocess
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Any
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -67,8 +69,6 @@ class AstGrepWrapperBackend(ComputeBackend):
         return cmd, context
 
     def _parse_result(self, stdout: str, fallback_file: str | None = None) -> SearchResult:
-        import json
-
         matches: list[MatchLine] = []
         matched_files: list[str] = []
         seen_files: set[str] = set()
@@ -99,6 +99,51 @@ class AstGrepWrapperBackend(ComputeBackend):
             routing_distributed=False,
             routing_worker_count=1,
         )
+
+    def _parse_json_items(self, stdout: str) -> list[dict[str, Any]]:
+        try:
+            loaded = json.loads(stdout)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(loaded, list):
+            return []
+        return [item for item in loaded if isinstance(item, dict)]
+
+    def search_project(self, root_path: str, config_path: str) -> dict[str, SearchResult]:
+        if not self.is_available():
+            raise RuntimeError(
+                "AstGrepWrapperBackend requires the 'ast-grep' binary to be installed."
+            )
+
+        try:
+            result = subprocess.run(
+                [
+                    self._get_binary_name(),
+                    "scan",
+                    "--json",
+                    "--config",
+                    config_path,
+                    root_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                encoding="utf-8",
+            )
+        except Exception as e:
+            raise RuntimeError(f"AstGrepWrapperBackend failed: {e}") from e
+
+        grouped_matches: dict[str, list[dict[str, Any]]] = {}
+        for item in self._parse_json_items(result.stdout):
+            rule_id = item.get("ruleId") or item.get("rule_id")
+            if not isinstance(rule_id, str) or not rule_id.strip():
+                continue
+            grouped_matches.setdefault(rule_id, []).append(item)
+
+        grouped_results: dict[str, SearchResult] = {}
+        for rule_id, items in grouped_matches.items():
+            grouped_results[rule_id] = self._parse_result(json.dumps(items))
+        return grouped_results
 
     def search_many(
         self, file_paths: list[str], pattern: str, config: SearchConfig | None = None
