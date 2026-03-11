@@ -110,18 +110,26 @@ def main() -> int:
     bench_dir = bench_root / f"run_{int(time.time() * 1000)}"
     generate_ast_workflow_project(bench_dir)
 
+    run_cmd = build_tg_ast_workflow_cmd(["run", "def $FUNC():\n    $$$BODY", "."])
     scan_cmd = build_tg_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
     test_cmd = build_tg_ast_workflow_cmd(["test", "--config", "sgconfig.yml"])
 
     scan_project = bench_dir / "scan_project"
 
+    run_cmd_capture(run_cmd, scan_project)
     run_cmd_capture(scan_cmd, scan_project)
     run_cmd_capture(test_cmd, scan_project)
 
+    run_time_s, run_exit = run_cmd_capture(run_cmd, scan_project)
     scan_time_s, scan_exit = run_cmd_capture(scan_cmd, scan_project)
     test_time_s, test_exit = run_cmd_capture(test_cmd, scan_project)
 
     rows = [
+        {
+            "name": "ast_run_workflow",
+            "tg_time_s": round(run_time_s, 6),
+            "exit_code": run_exit,
+        },
         {
             "name": "ast_scan_workflow",
             "tg_time_s": round(scan_time_s, 6),
@@ -149,7 +157,7 @@ def main() -> int:
         },
     )
 
-    return 0 if scan_exit == 0 and test_exit == 0 else 1
+    return 0 if run_exit == 0 and scan_exit == 0 and test_exit == 0 else 1
 
 
 if __name__ == "__main__":
