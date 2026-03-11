@@ -1056,10 +1056,13 @@ class _FakeDirectWrapperAstBackend:
 
 
 class _FakeAstScanner:
+    walk_calls: ClassVar[int] = 0
+
     def __init__(self, config=None):
         pass
 
     def walk(self, path):
+        _FakeAstScanner.walk_calls += 1
         yield "a.py"
         yield "b.py"
 
@@ -1114,6 +1117,7 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     AstGrepWrapperBackend.search_many_calls = 0
+    _FakeAstScanner.walk_calls = 0
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1135,6 +1139,7 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
     assert result.exit_code == 0
     assert "GPU-Accelerated GNNs" not in result.output
     assert AstGrepWrapperBackend.search_many_calls == 1
+    assert _FakeAstScanner.walk_calls == 0
 
 
 def test_scan_should_count_files_from_count_only_ast_results(monkeypatch):
@@ -1166,6 +1171,7 @@ def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstWrapperPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     AstGrepWrapperBackend.search_many_calls = 0
+    _FakeAstScanner.walk_calls = 0
 
     runner = CliRunner()
     with runner.isolated_filesystem():
@@ -1179,6 +1185,7 @@ def test_run_should_not_warn_when_ast_wrapper_backend_selected(monkeypatch):
     assert result.exit_code == 0
     assert "Warning:" not in result.output
     assert AstGrepWrapperBackend.search_many_calls == 1
+    assert _FakeAstScanner.walk_calls == 0
 
 
 def test_run_should_report_ast_wrapper_backend_mode(monkeypatch):
