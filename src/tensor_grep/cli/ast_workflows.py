@@ -130,7 +130,9 @@ def _suffix_for_language(language: str) -> str:
     return ".py"
 
 
-def _collect_candidate_files(scanner: DirectoryScanner, paths: list[str]) -> tuple[list[str], set[str]]:
+def _collect_candidate_files(
+    scanner: DirectoryScanner, paths: list[str]
+) -> tuple[list[str], set[str]]:
     ordered = []
     seen = set()
     for p in paths:
@@ -274,7 +276,9 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            result = cast(Any, backend).search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
+            result = cast(Any, backend).search_many(
+                [str(root_dir)], rule["pattern"], config=rule_cfg
+            )
             rule_matches = result.total_matches
             matched_files.update(result.matched_file_paths)
             if not matched_files and result.total_files > 0:
@@ -338,7 +342,11 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
     for test_file in test_files:
         payload = _load_yaml_dict(test_file)
         raw_cases = payload.get("tests")
-        cases = [case for case in raw_cases if isinstance(case, dict)] if isinstance(raw_cases, list) else [payload]
+        cases = (
+            [case for case in raw_cases if isinstance(case, dict)]
+            if isinstance(raw_cases, list)
+            else [payload]
+        )
 
         for case in cases:
             case_id = str(case.get("id") or test_file.stem)
@@ -363,7 +371,9 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
             backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
             backend_names_used.add(type(backend).__name__)
 
-            if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+            if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
+                backend, "search_many"
+            ):
                 batch_key = (id(backend), pattern, language)
                 batch = wrapper_case_groups.setdefault(
                     batch_key,
@@ -386,7 +396,10 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                 evaluated_snippets = []
                 for expected_match, snippets in ((False, valid_snippets), (True, invalid_snippets)):
                     for snippet in snippets:
-                        temp_name = root_dir / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
+                        temp_name = (
+                            root_dir
+                            / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
+                        )
                         temp_name.write_text(snippet, encoding="utf-8")
                         try:
                             result = backend.search(str(temp_name), pattern, config=case_cfg)
@@ -431,7 +444,9 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
             for case_key, _, _ in items:
                 failures.append(f"{case_key}: backend error: {exc}")
             continue
-        for (case_key, snippet, expected_match), has_match in zip(items, match_results, strict=True):
+        for (case_key, snippet, expected_match), has_match in zip(
+            items, match_results, strict=True
+        ):
             if has_match != expected_match:
                 expectation = "match" if expected_match else "no match"
                 failures.append(
