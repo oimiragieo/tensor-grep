@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v0.31.14 (2026-03-11)
+
+### Bug Fixes
+
+- **ci**: Apply ruff format to ast workflows
+  ([`a0976c9`](https://github.com/oimiragieo/tensor-grep/commit/a0976c93b75f033d32df13e2ad76545f0a469999))
+
+- **ci**: Format ast workflows file
+  ([`49d6fd2`](https://github.com/oimiragieo/tensor-grep/commit/49d6fd22f9760d12a989433c506a843ab0200618))
+
+- **ci**: Format ast workflows for ruff
+  ([`37c4548`](https://github.com/oimiragieo/tensor-grep/commit/37c4548369408ab5d9bf291883b4ad77949f9b7e))
+
+- **ci**: Remove ast workflow conflict markers
+  ([`57c421b`](https://github.com/oimiragieo/tensor-grep/commit/57c421b17eca92ae1ad5d76eb91c722f7122311c))
+
+### Performance Improvements
+
+- **ast**: Add direct workflow and project scan fast paths
+  ([`fb5151d`](https://github.com/oimiragieo/tensor-grep/commit/fb5151d60173cc7d71fe1e80b0e697b3dafb0a7d))
+
+- **ast**: Defer scanner import in workflow path
+  ([`756c660`](https://github.com/oimiragieo/tensor-grep/commit/756c660fee74937945a042ee58aa98f1b9db451f))
+
+- **ast**: Reuse rule-linked test resolution
+  ([`54f7ac0`](https://github.com/oimiragieo/tensor-grep/commit/54f7ac00774614d324fbfd41b38cc6290d8c5cfc))
+
+- **ast**: Reuse scan backend selection
+  ([`c032cd4`](https://github.com/oimiragieo/tensor-grep/commit/c032cd4522b12b1e478d800163c58905dc48e69f))
+
+
 ## v0.31.13 (2026-03-11)
 
 ### Bug Fixes
