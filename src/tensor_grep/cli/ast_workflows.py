@@ -361,8 +361,6 @@ def _select_ast_backend_for_pattern(
     pattern: str,
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] | None = None,
 ) -> ComputeBackend:
-    from tensor_grep.core.pipeline import Pipeline
-
     stripped_pattern = pattern.strip()
     supports_native_pattern = bool(
         stripped_pattern
@@ -379,28 +377,29 @@ def _select_ast_backend_for_pattern(
         return backend_cache[cache_key]
 
     backend: ComputeBackend
-    if Pipeline.__module__ == "tensor_grep.core.pipeline":
-        if pattern_kind == "native":
+    if pattern_kind == "native":
+        ast_backend = _make_ast_backend()
+        ast_wrapper = _make_ast_wrapper_backend()
+        if ast_backend.is_available():
+            backend = ast_backend
+        elif ast_wrapper.is_available():
+            backend = ast_wrapper
+        else:
+            from tensor_grep.core.pipeline import Pipeline
+
+            backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+    else:
+        ast_wrapper = _make_ast_wrapper_backend()
+        if ast_wrapper.is_available():
+            backend = ast_wrapper
+        else:
             ast_backend = _make_ast_backend()
-            ast_wrapper = _make_ast_wrapper_backend()
             if ast_backend.is_available():
                 backend = ast_backend
-            elif ast_wrapper.is_available():
-                backend = ast_wrapper
             else:
+                from tensor_grep.core.pipeline import Pipeline
+
                 backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
-        else:
-            ast_wrapper = _make_ast_wrapper_backend()
-            if ast_wrapper.is_available():
-                backend = ast_wrapper
-            else:
-                ast_backend = _make_ast_backend()
-                if ast_backend.is_available():
-                    backend = ast_backend
-                else:
-                    backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
-    else:
-        backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
 
     if backend_cache is not None:
         backend_cache[cache_key] = backend
