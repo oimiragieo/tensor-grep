@@ -15,6 +15,10 @@ class TestCPUBackend:
         assert encoded == [[1, 3], [7, 7], [9, 10]]
         assert CPUBackend._decompress_line_indexes(encoded) == [1, 2, 3, 7, 9, 10]
 
+    def test_should_intersect_sorted_line_indexes(self):
+        postings = [[1, 2, 4, 7], [2, 4, 7, 9], [0, 2, 7, 10]]
+        assert CPUBackend._intersect_sorted_line_indexes(postings) == [2, 7]
+
     def test_should_find_simple_pattern(self, sample_log_file):
         backend = CPUBackend()
         result = backend.search(str(sample_log_file), "ERROR")

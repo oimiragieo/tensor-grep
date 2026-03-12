@@ -101,6 +101,30 @@ class CPUBackend(ComputeBackend):
         return line_indexes
 
     @staticmethod
+    def _intersect_sorted_line_indexes(postings: list[list[int]]) -> list[int]:
+        if not postings:
+            return []
+        result = postings[0]
+        for current in postings[1:]:
+            merged: list[int] = []
+            left_idx = right_idx = 0
+            while left_idx < len(result) and right_idx < len(current):
+                left = result[left_idx]
+                right = current[right_idx]
+                if left == right:
+                    merged.append(left)
+                    left_idx += 1
+                    right_idx += 1
+                elif left < right:
+                    left_idx += 1
+                else:
+                    right_idx += 1
+            if not merged:
+                return []
+            result = merged
+        return result
+
+    @staticmethod
     def _extract_required_literal(pattern: str) -> str | None:
         if any(token in pattern for token in ("|", "(", ")", "[", "]", "{", "}", "?", "+", "\\")):
             return None
@@ -196,13 +220,13 @@ class CPUBackend(ComputeBackend):
         cls, trigram_index: dict[str, list[int]], literal: str
     ) -> list[int]:
         trigrams = [literal[i : i + 3] for i in range(len(literal) - 2)]
-        candidate_sets = []
+        postings: list[list[int]] = []
         for trigram in trigrams:
             line_numbers = trigram_index.get(trigram)
             if not line_numbers:
                 return []
-            candidate_sets.append(set(line_numbers))
-        return sorted(set.intersection(*candidate_sets)) if candidate_sets else []
+            postings.append(line_numbers)
+        return cls._intersect_sorted_line_indexes(sorted(postings, key=len))
 
     @staticmethod
     def _compile_regexes(
