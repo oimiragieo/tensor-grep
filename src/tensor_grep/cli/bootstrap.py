@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -101,6 +99,8 @@ def _requires_full_cli(search_args: list[str]) -> bool:
 
 
 def _resolve_rg_binary() -> str | None:
+    import shutil
+
     if shutil.which("rg"):
         return "rg"
     if shutil.which("rg.exe"):
@@ -113,6 +113,8 @@ def _resolve_rg_binary() -> str | None:
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
+    import subprocess
+
     result = subprocess.run([binary_name, *search_args], check=False)
     return int(result.returncode)
 
