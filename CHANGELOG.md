@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.31.17 (2026-03-12)
+
+### Bug Fixes
+
+- **ci**: Format ast workflow payload cache
+  ([`4a60bbc`](https://github.com/oimiragieo/tensor-grep/commit/4a60bbcd1bfb6884053b4fd818ff5172de1fa88b))
+
+### Performance Improvements
+
+- **ast**: Batch wrapper rule tests through project scan
+  ([`e1f0074`](https://github.com/oimiragieo/tensor-grep/commit/e1f00747dd053a27bd9dffc90d02de136a03edb1))
+
+- **ast**: Preload test payloads per workflow run
+  ([`656db72`](https://github.com/oimiragieo/tensor-grep/commit/656db727dffcf66139cec5a32e3aaefdbe845e21))
+
+
 ## v0.31.16 (2026-03-11)
 
 ### Bug Fixes
