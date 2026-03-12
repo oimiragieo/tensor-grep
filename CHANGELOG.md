@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v0.31.19 (2026-03-12)
+
+### Bug Fixes
+
+- **ci**: Bootstrap uv via pip in ci jobs
+  ([`1800aa7`](https://github.com/oimiragieo/tensor-grep/commit/1800aa798b7692ac30be589d6c2c8c63d0501845))
+
+### Performance Improvements
+
+- **cpu**: Compact persistent regex index
+  ([`b359aa6`](https://github.com/oimiragieo/tensor-grep/commit/b359aa6f29bdde432a5647cecdac9e5ec1d4d83e))
+
+- **string**: Speed indexed trigram intersections
+  ([`56ab7e4`](https://github.com/oimiragieo/tensor-grep/commit/56ab7e49b4dc3bcfa952d640c91d2e11196fb933))
+
+
 ## v0.31.18 (2026-03-12)
 
 ### Performance Improvements
