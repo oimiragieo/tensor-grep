@@ -118,7 +118,9 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
     return specs
 
 
-def _load_test_case_payloads(project_cfg: dict[str, object]) -> list[tuple[Path, list[dict[str, object]]]]:
+def _load_test_case_payloads(
+    project_cfg: dict[str, object],
+) -> list[tuple[Path, list[dict[str, object]]]]:
     root_dir = cast(Path, project_cfg["root_dir"])
     test_dirs = cast(list[str], project_cfg["test_dirs"])
 
@@ -643,7 +645,10 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                     "backend": batch["backend"],
                     "pattern": batch["pattern"],
                     "language": batch["language"],
-                    "snippets": [snippet for _, snippet, _ in cast(list[tuple[str, str, bool]], batch["items"])],
+                    "snippets": [
+                        snippet
+                        for _, snippet, _ in cast(list[tuple[str, str, bool]], batch["items"])
+                    ],
                 }
                 for batch in wrapper_batches
             ])
