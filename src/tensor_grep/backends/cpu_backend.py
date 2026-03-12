@@ -356,7 +356,7 @@ class CPUBackend(ComputeBackend):
         routing_reason = "cpu_python_regex"
         ignore_case = bool(config.ignore_case or (config.smart_case and pattern.islower()))
         source_lines: list[str] | None = None
-        candidate_line_indexes: set[int] | None = None
+        candidate_line_indexes: list[int] | None = None
         if not (
             config.fixed_strings
             or config.invert_match
@@ -382,7 +382,7 @@ class CPUBackend(ComputeBackend):
                     source_lines, trigram_index = cached_index
                     routing_reason = "cpu_python_regex_prefilter_cache"
                 literal = prefilter_literal.lower() if ignore_case else prefilter_literal
-                candidate_line_indexes = set(self._candidate_line_indexes(trigram_index, literal))
+                candidate_line_indexes = self._candidate_line_indexes(trigram_index, literal)
 
         total_matches_count = 0
         before_lines = getattr(config, "before_context", 0) or 0
@@ -397,15 +397,16 @@ class CPUBackend(ComputeBackend):
             before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
             context_after_remaining = 0
             if source_lines is not None:
-                line_iter = (
-                    (idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines)
-                )
+                if candidate_line_indexes is not None:
+                    line_iter = (
+                        (line_idx + 1, f"{source_lines[line_idx]}\n".encode())
+                        for line_idx in candidate_line_indexes
+                    )
+                else:
+                    line_iter = (
+                        (idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines)
+                    )
                 for line_idx, line_bytes in line_iter:
-                    if (
-                        candidate_line_indexes is not None
-                        and (line_idx - 1) not in candidate_line_indexes
-                    ):
-                        continue
                     # Try using python regex to decode byte string, else try the decoded string
                     matched = False
                     try:
