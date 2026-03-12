@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.22 (2026-03-12)
+
+### Performance Improvements
+
+- **cli**: Remove argparse from text fast path
+  ([`da2acf0`](https://github.com/oimiragieo/tensor-grep/commit/da2acf0dc785c7ff028645f1ce612ce37c7a5a07))
+
+
 ## v0.31.21 (2026-03-12)
 
 ### Bug Fixes
