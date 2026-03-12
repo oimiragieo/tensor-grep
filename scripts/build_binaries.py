@@ -21,7 +21,7 @@ def build_binary():
         "--include-package=rich",
         "--include-package=typer",
         "--plugin-enable=pylint-warnings",
-        "src/tensor_grep/cli/main.py",
+        "src/tensor_grep/cli/bootstrap.py",
     ]
 
     # Run Nuitka
