@@ -108,5 +108,5 @@ The scripted hot-query benchmark includes fresh-process overhead and writes a JS
 
 | Scenario | First | Second | Result |
 | --- | --- | --- | --- |
-| repeated_fixed_string | 0.2904s | 0.0060s | cache win |
-| repeated_regex_prefilter | 0.2442s | 0.0545s | cache win |
+| repeated_fixed_string | 0.2368s | 0.0048s | cache win |
+| repeated_regex_prefilter | 0.2580s | 0.0379s | cache win |

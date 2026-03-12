@@ -9,6 +9,17 @@ def backend():
     return StringZillaBackend()
 
 
+def test_stringzilla_should_round_trip_compact_line_indexes():
+    encoded = StringZillaBackend._compress_line_indexes([1, 2, 3, 7, 9, 10])
+    assert encoded == [[1, 3], [7, 7], [9, 10]]
+    assert StringZillaBackend._decompress_line_indexes(encoded) == [1, 2, 3, 7, 9, 10]
+
+
+def test_stringzilla_should_intersect_sorted_line_indexes():
+    postings = [[1, 2, 4, 7], [2, 4, 7, 9], [0, 2, 7, 10]]
+    assert StringZillaBackend._intersect_sorted_line_indexes(postings) == [2, 7]
+
+
 def test_stringzilla_availability(backend):
     # Ensure it's installed via pip
     assert backend.is_available() is True

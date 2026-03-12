@@ -73,8 +73,64 @@ class StringZillaBackend(ComputeBackend):
                 index.setdefault(trigram, set()).add(line_idx)
         return {trigram: sorted(line_numbers) for trigram, line_numbers in index.items()}
 
+    @staticmethod
+    def _compress_line_indexes(line_indexes: list[int]) -> list[list[int]]:
+        if not line_indexes:
+            return []
+        ranges: list[list[int]] = []
+        start = prev = line_indexes[0]
+        for line_idx in line_indexes[1:]:
+            if line_idx == prev + 1:
+                prev = line_idx
+                continue
+            ranges.append([start, prev])
+            start = prev = line_idx
+        ranges.append([start, prev])
+        return ranges
+
+    @staticmethod
+    def _decompress_line_indexes(encoded_ranges: list[list[int]]) -> list[int] | None:
+        line_indexes: list[int] = []
+        for item in encoded_ranges:
+            if (
+                not isinstance(item, list)
+                or len(item) != 2
+                or not isinstance(item[0], int)
+                or not isinstance(item[1], int)
+            ):
+                return None
+            start, end = item
+            if end < start:
+                return None
+            line_indexes.extend(range(start, end + 1))
+        return line_indexes
+
     def _extract_trigrams(self, pattern: str) -> list[str]:
         return [pattern[i : i + 3] for i in range(len(pattern) - 2)]
+
+    @staticmethod
+    def _intersect_sorted_line_indexes(postings: list[list[int]]) -> list[int]:
+        if not postings:
+            return []
+        result = postings[0]
+        for current in postings[1:]:
+            merged: list[int] = []
+            left_idx = right_idx = 0
+            while left_idx < len(result) and right_idx < len(current):
+                left = result[left_idx]
+                right = current[right_idx]
+                if left == right:
+                    merged.append(left)
+                    left_idx += 1
+                    right_idx += 1
+                elif left < right:
+                    left_idx += 1
+                else:
+                    right_idx += 1
+            if not merged:
+                return []
+            result = merged
+        return result
 
     def _load_cached_index(
         self, file_path: str, ignore_case: bool
@@ -100,17 +156,25 @@ class StringZillaBackend(ComputeBackend):
         if payload.get("file_signature") != list(cache_signature):
             return None
 
-        raw_lines = payload.get("lines")
         raw_index = payload.get("trigram_index")
-        if not isinstance(raw_lines, list) or not isinstance(raw_index, dict):
-            return None
+        raw_compact_index = payload.get("trigram_index_ranges")
+        if not isinstance(raw_index, dict):
+            if not isinstance(raw_compact_index, dict):
+                return None
+            raw_index = raw_compact_index
 
-        lines = [str(line) for line in raw_lines]
+        lines = Path(file_path).read_text(encoding="utf-8").splitlines()
         trigram_index: dict[str, list[int]] = {}
         for trigram, values in raw_index.items():
             if not isinstance(trigram, str) or not isinstance(values, list):
                 return None
-            trigram_index[trigram] = [int(v) for v in values]
+            decoded = self._decompress_line_indexes(values)
+            if decoded is None:
+                try:
+                    decoded = [int(v) for v in values]
+                except (TypeError, ValueError):
+                    return None
+            trigram_index[trigram] = decoded
 
         self._shared_index_cache[cache_key] = (cache_signature, lines, trigram_index)
         return lines, trigram_index
@@ -130,8 +194,10 @@ class StringZillaBackend(ComputeBackend):
         cache_path = self._get_index_cache_path(file_path, ignore_case)
         payload = {
             "file_signature": list(cache_signature),
-            "lines": lines,
-            "trigram_index": trigram_index,
+            "trigram_index_ranges": {
+                trigram: self._compress_line_indexes(line_indexes)
+                for trigram, line_indexes in trigram_index.items()
+            },
         }
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -159,7 +225,7 @@ class StringZillaBackend(ComputeBackend):
         else:
             source_lines, trigram_index = cached
 
-        candidate_sets = []
+        postings: list[list[int]] = []
         normalized_pattern = pattern.lower() if ignore_case else pattern
         for trigram in self._extract_trigrams(normalized_pattern):
             line_numbers = trigram_index.get(trigram)
@@ -173,9 +239,11 @@ class StringZillaBackend(ComputeBackend):
                     routing_distributed=False,
                     routing_worker_count=1,
                 )
-            candidate_sets.append(set(line_numbers))
+            postings.append(line_numbers)
 
-        candidate_line_indexes = sorted(set.intersection(*candidate_sets)) if candidate_sets else []
+        candidate_line_indexes = self._intersect_sorted_line_indexes(
+            sorted(postings, key=len)
+        )
         matches = []
         for line_idx in candidate_line_indexes:
             line = source_lines[line_idx]
