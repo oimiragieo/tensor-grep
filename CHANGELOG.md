@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v0.31.21 (2026-03-12)
+
+### Bug Fixes
+
+- **ci**: Stop depending on rust-toolchain action
+  ([`17b31b9`](https://github.com/oimiragieo/tensor-grep/commit/17b31b994bafbf488a6e74c3aa7a8f69926f8e21))
+
+### Performance Improvements
+
+- **cli**: Add no-rg search fast path
+  ([`f686d13`](https://github.com/oimiragieo/tensor-grep/commit/f686d136c4024e9aba88806faadeee7930fe9217))
+
+- **cli**: Lazy import rg passthrough helpers
+  ([`0066cc0`](https://github.com/oimiragieo/tensor-grep/commit/0066cc0f0bd83eb1b3777d16e1af2f856a81713f))
+
+- **cli**: Lazy import text backends in fast path
+  ([`bdc977f`](https://github.com/oimiragieo/tensor-grep/commit/bdc977fd848dc882ae30be4f825e215b34bbed24))
+
+- **cli**: Skip rg probe when path is empty
+  ([`305ae35`](https://github.com/oimiragieo/tensor-grep/commit/305ae357e7a8f75e7976c84b9cabb2d8fc03a4da))
+
+- **string**: Preallocate compact index decode
+  ([`bdd58a9`](https://github.com/oimiragieo/tensor-grep/commit/bdd58a92f9997f1cdacabb9aab2a532d41918861))
+
+
 ## v0.31.20 (2026-03-12)
 
 ### Performance Improvements
