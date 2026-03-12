@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import os
 import sys
 from pathlib import Path
@@ -37,12 +36,7 @@ _TG_ONLY_SEARCH_FLAGS = {
     "-r",
 }
 
-_TG_ONLY_SEARCH_FLAG_PREFIXES = (
-    "--format=",
-    "--gpu-device-ids=",
-    "--lang=",
-    "--replace=",
-)
+_TG_ONLY_SEARCH_FLAG_PREFIXES = ("--format=", "--gpu-device-ids=", "--lang=", "--replace=")
 
 
 def _read_project_version_fallback() -> str:
@@ -166,36 +160,49 @@ def _print_fast_search_result(
 
 
 def _run_text_search_fast_cli(search_args: list[str]) -> int:
-    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-    parser.add_argument("-F", "--fixed-strings", action="store_true")
-    parser.add_argument("-i", "--ignore-case", action="store_true")
-    parser.add_argument("-v", "--invert-match", action="store_true")
-    parser.add_argument("-c", "--count", action="store_true")
-    parser.add_argument("pattern")
-    parser.add_argument("paths", nargs="+")
+    fixed_strings = False
+    ignore_case = False
+    invert_match = False
+    count = False
+    position = 0
 
-    try:
-        parsed, unknown = parser.parse_known_args(search_args)
-    except SystemExit as exc:
-        raise ValueError("unsupported fast-path search invocation") from exc
+    while position < len(search_args):
+        arg = search_args[position]
+        if arg == "--":
+            position += 1
+            break
+        if arg == "-F" or arg == "--fixed-strings":
+            fixed_strings = True
+        elif arg == "-i" or arg == "--ignore-case":
+            ignore_case = True
+        elif arg == "-v" or arg == "--invert-match":
+            invert_match = True
+        elif arg == "-c" or arg == "--count":
+            count = True
+        elif arg.startswith("-"):
+            raise ValueError("unsupported fast-path search options")
+        else:
+            break
+        position += 1
 
-    if unknown:
-        raise ValueError("unsupported fast-path search options")
+    remaining = search_args[position:]
+    if len(remaining) < 2:
+        raise ValueError("unsupported fast-path search invocation")
 
     from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
 
-    file_paths = _iter_search_files(parsed.paths)
+    pattern = remaining[0]
+    file_paths = _iter_search_files(remaining[1:])
     if not file_paths:
         return 1
 
-    pattern = parsed.pattern
-    use_stringzilla = parsed.fixed_strings or _looks_like_literal_pattern(pattern)
+    use_stringzilla = fixed_strings or _looks_like_literal_pattern(pattern)
     config = SearchConfig(
         fixed_strings=use_stringzilla,
-        ignore_case=parsed.ignore_case,
-        invert_match=parsed.invert_match,
-        count=parsed.count,
+        ignore_case=ignore_case,
+        invert_match=invert_match,
+        count=count,
         line_number=True,
     )
     backend: ComputeBackend
@@ -219,7 +226,7 @@ def _run_text_search_fast_cli(search_args: list[str]) -> int:
     for file_path in file_paths:
         result = backend.search(file_path, pattern, config)
         total_matches += result.total_matches
-        if parsed.count:
+        if count:
             if include_filename:
                 print(f"{file_path}:{result.total_matches}")
             else:
