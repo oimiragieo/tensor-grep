@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.24 (2026-03-12)
+
+### Performance Improvements
+
+- **release**: Build binaries from bootstrap entrypoint
+  ([`c274bee`](https://github.com/oimiragieo/tensor-grep/commit/c274bee1d92c1cd74fe10f5e6a08896cf7cca7d8))
+
+
 ## v0.31.23 (2026-03-12)
 
 ### Performance Improvements
