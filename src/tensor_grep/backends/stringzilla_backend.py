@@ -90,7 +90,8 @@ class StringZillaBackend(ComputeBackend):
 
     @staticmethod
     def _decompress_line_indexes(encoded_ranges: list[list[int]]) -> list[int] | None:
-        line_indexes: list[int] = []
+        decoded_ranges: list[tuple[int, int]] = []
+        total_size = 0
         for item in encoded_ranges:
             if (
                 not isinstance(item, list)
@@ -102,7 +103,14 @@ class StringZillaBackend(ComputeBackend):
             start, end = item
             if end < start:
                 return None
-            line_indexes.extend(range(start, end + 1))
+            decoded_ranges.append((start, end))
+            total_size += end - start + 1
+        line_indexes = [0] * total_size
+        output_idx = 0
+        for start, end in decoded_ranges:
+            for value in range(start, end + 1):
+                line_indexes[output_idx] = value
+                output_idx += 1
         return line_indexes
 
     def _extract_trigrams(self, pattern: str) -> list[str]:
