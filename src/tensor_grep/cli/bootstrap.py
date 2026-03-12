@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -99,14 +100,19 @@ def _requires_full_cli(search_args: list[str]) -> bool:
 
 
 def _resolve_rg_binary() -> str | None:
+    path_env = os.environ.get("PATH", "")
+    dev_path = Path.cwd() / "benchmarks" / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
+    if not path_env:
+        if dev_path.exists():
+            return str(dev_path)
+        return None
+
     import shutil
 
     if shutil.which("rg"):
         return "rg"
     if shutil.which("rg.exe"):
         return "rg.exe"
-
-    dev_path = Path.cwd() / "benchmarks" / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
     if dev_path.exists():
         return str(dev_path)
     return None
