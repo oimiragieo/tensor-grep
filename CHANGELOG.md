@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.23 (2026-03-12)
+
+### Performance Improvements
+
+- **cpu**: Iterate regex prefilter candidates directly
+  ([`8492dd2`](https://github.com/oimiragieo/tensor-grep/commit/8492dd2b127f9eafe28394d90bbbc272cc7e92e8))
+
+
 ## v0.31.22 (2026-03-12)
 
 ### Performance Improvements
