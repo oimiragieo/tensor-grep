@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v0.31.18 (2026-03-12)
+
+### Performance Improvements
+
+- **ast**: Lazy import pipeline fallback
+  ([`1f1ee56`](https://github.com/oimiragieo/tensor-grep/commit/1f1ee5696c7139f9494207587e395df2a50ade2c))
+
+- **ast**: Skip native backend construction for wrapper rules
+  ([`7d69006`](https://github.com/oimiragieo/tensor-grep/commit/7d69006fbcd4b6e2131d5c7e91e6c6a6a4ba8150))
+
+
 ## v0.31.17 (2026-03-12)
 
 ### Bug Fixes
