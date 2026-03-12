@@ -291,6 +291,18 @@ def _describe_ast_backend_modes(backend_names: set[str]) -> str:
     return "adaptive AST routing"
 
 
+def _make_ast_backend() -> ComputeBackend:
+    from tensor_grep.backends.ast_backend import AstBackend
+
+    return AstBackend()
+
+
+def _make_ast_wrapper_backend() -> ComputeBackend:
+    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+
+    return AstGrepWrapperBackend()
+
+
 def run_command(
     pattern: str,
     path: str | None = None,
@@ -349,8 +361,6 @@ def _select_ast_backend_for_pattern(
     pattern: str,
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] | None = None,
 ) -> ComputeBackend:
-    from tensor_grep.backends.ast_backend import AstBackend
-    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
     from tensor_grep.core.pipeline import Pipeline
 
     stripped_pattern = pattern.strip()
@@ -370,9 +380,9 @@ def _select_ast_backend_for_pattern(
 
     backend: ComputeBackend
     if Pipeline.__module__ == "tensor_grep.core.pipeline":
-        ast_backend = AstBackend()
-        ast_wrapper = AstGrepWrapperBackend()
         if pattern_kind == "native":
+            ast_backend = _make_ast_backend()
+            ast_wrapper = _make_ast_wrapper_backend()
             if ast_backend.is_available():
                 backend = ast_backend
             elif ast_wrapper.is_available():
@@ -380,12 +390,15 @@ def _select_ast_backend_for_pattern(
             else:
                 backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
         else:
+            ast_wrapper = _make_ast_wrapper_backend()
             if ast_wrapper.is_available():
                 backend = ast_wrapper
-            elif ast_backend.is_available():
-                backend = ast_backend
             else:
-                backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+                ast_backend = _make_ast_backend()
+                if ast_backend.is_available():
+                    backend = ast_backend
+                else:
+                    backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
     else:
         backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
 

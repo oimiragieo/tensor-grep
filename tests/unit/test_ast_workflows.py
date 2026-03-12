@@ -101,6 +101,32 @@ def test_scan_command_should_reuse_backend_selection_per_rule(monkeypatch, tmp_p
     assert _CountingWrapperBackend.init_count == 1
 
 
+def test_select_ast_backend_for_wrapper_pattern_should_not_build_native_backend(monkeypatch):
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_for_pattern
+    from tensor_grep.core.config import SearchConfig
+
+    class _WrapperBackend:
+        def is_available(self):
+            return True
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._make_ast_wrapper_backend",
+        lambda: _WrapperBackend(),
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._make_ast_backend",
+        lambda: (_ for _ in ()).throw(AssertionError("native backend should not be built")),
+    )
+
+    backend = _select_ast_backend_for_pattern(
+        SearchConfig(ast=True, ast_prefer_native=True, lang="python"),
+        "def $FUNC():\n    $$$BODY",
+        {},
+    )
+
+    assert type(backend).__name__ == "_WrapperBackend"
+
+
 def test_scan_command_should_use_wrapper_project_fast_path(monkeypatch, tmp_path, capsys):
     from tensor_grep.cli.ast_workflows import scan_command
 
