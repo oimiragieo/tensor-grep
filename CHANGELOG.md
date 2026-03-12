@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.31.20 (2026-03-12)
+
+### Performance Improvements
+
+- **cpu**: Speed regex prefilter intersections
+  ([`3087914`](https://github.com/oimiragieo/tensor-grep/commit/3087914c714df53b303cb28f8ebe5676a6b1f43a))
+
+
 ## v0.31.19 (2026-03-12)
 
 ### Bug Fixes
