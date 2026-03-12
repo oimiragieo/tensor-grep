@@ -174,8 +174,7 @@ def _run_text_search_fast_cli(search_args: list[str]) -> int:
     if unknown:
         raise ValueError("unsupported fast-path search options")
 
-    from tensor_grep.backends.cpu_backend import CPUBackend
-    from tensor_grep.backends.stringzilla_backend import StringZillaBackend
+    from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
 
     file_paths = _iter_search_files(parsed.paths)
@@ -191,10 +190,20 @@ def _run_text_search_fast_cli(search_args: list[str]) -> int:
         count=parsed.count,
         line_number=True,
     )
+    backend: ComputeBackend
     if use_stringzilla:
+        from tensor_grep.backends.stringzilla_backend import StringZillaBackend
+
         stringzilla_backend = StringZillaBackend()
-        backend = stringzilla_backend if stringzilla_backend.is_available() else CPUBackend()
+        if stringzilla_backend.is_available():
+            backend = stringzilla_backend
+        else:
+            from tensor_grep.backends.cpu_backend import CPUBackend
+
+            backend = CPUBackend()
     else:
+        from tensor_grep.backends.cpu_backend import CPUBackend
+
         backend = CPUBackend()
 
     total_matches = 0
