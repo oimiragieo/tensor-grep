@@ -241,9 +241,7 @@ class StringZillaBackend(ComputeBackend):
                 )
             postings.append(line_numbers)
 
-        candidate_line_indexes = self._intersect_sorted_line_indexes(
-            sorted(postings, key=len)
-        )
+        candidate_line_indexes = self._intersect_sorted_line_indexes(sorted(postings, key=len))
         matches = []
         for line_idx in candidate_line_indexes:
             line = source_lines[line_idx]

@@ -119,8 +119,11 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
         )
 
-    if ci_workflow.count("uses: astral-sh/setup-uv@v5") < 2:
-        errors.append("CI workflow should install uv in package-manager/release validation paths")
+    uv_bootstrap_count = ci_workflow.count("uses: astral-sh/setup-uv@v5") + ci_workflow.count(
+        "python -m pip install uv"
+    )
+    if uv_bootstrap_count < 2:
+        errors.append("CI workflow should bootstrap uv in package-manager/release validation paths")
 
     if "--pypi-wait-seconds" not in ci_workflow:
         errors.append("CI workflow must pass --pypi-wait-seconds to release parity validation")
