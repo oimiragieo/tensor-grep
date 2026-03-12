@@ -69,6 +69,38 @@ class CPUBackend(ComputeBackend):
         return {trigram: sorted(line_numbers) for trigram, line_numbers in index.items()}
 
     @staticmethod
+    def _compress_line_indexes(line_indexes: list[int]) -> list[list[int]]:
+        if not line_indexes:
+            return []
+        ranges: list[list[int]] = []
+        start = prev = line_indexes[0]
+        for line_idx in line_indexes[1:]:
+            if line_idx == prev + 1:
+                prev = line_idx
+                continue
+            ranges.append([start, prev])
+            start = prev = line_idx
+        ranges.append([start, prev])
+        return ranges
+
+    @staticmethod
+    def _decompress_line_indexes(encoded_ranges: list[list[int]]) -> list[int] | None:
+        line_indexes: list[int] = []
+        for item in encoded_ranges:
+            if (
+                not isinstance(item, list)
+                or len(item) != 2
+                or not isinstance(item[0], int)
+                or not isinstance(item[1], int)
+            ):
+                return None
+            start, end = item
+            if end < start:
+                return None
+            line_indexes.extend(range(start, end + 1))
+        return line_indexes
+
+    @staticmethod
     def _extract_required_literal(pattern: str) -> str | None:
         if any(token in pattern for token in ("|", "(", ")", "[", "]", "{", "}", "?", "+", "\\")):
             return None
@@ -108,16 +140,24 @@ class CPUBackend(ComputeBackend):
             return None
         if payload.get("file_signature") != list(cache_signature):
             return None
-        raw_lines = payload.get("lines")
         raw_index = payload.get("trigram_index")
-        if not isinstance(raw_lines, list) or not isinstance(raw_index, dict):
-            return None
-        lines = [str(line) for line in raw_lines]
+        raw_compact_index = payload.get("trigram_index_ranges")
+        if not isinstance(raw_index, dict):
+            if not isinstance(raw_compact_index, dict):
+                return None
+            raw_index = raw_compact_index
+        lines = Path(file_path).read_text(encoding="utf-8", errors="replace").splitlines()
         trigram_index: dict[str, list[int]] = {}
         for trigram, values in raw_index.items():
             if not isinstance(trigram, str) or not isinstance(values, list):
                 return None
-            trigram_index[trigram] = [int(v) for v in values]
+            decoded = self._decompress_line_indexes(values)
+            if decoded is None:
+                try:
+                    decoded = [int(v) for v in values]
+                except (TypeError, ValueError):
+                    return None
+            trigram_index[trigram] = decoded
         self._shared_literal_index_cache[cache_key] = (cache_signature, lines, trigram_index)
         return lines, trigram_index
         return None
@@ -140,8 +180,10 @@ class CPUBackend(ComputeBackend):
         cache_path = self._get_prefilter_cache_path(file_path, ignore_case)
         payload = {
             "file_signature": list(cache_signature),
-            "lines": lines,
-            "trigram_index": trigram_index,
+            "trigram_index_ranges": {
+                trigram: self._compress_line_indexes(line_indexes)
+                for trigram, line_indexes in trigram_index.items()
+            },
         }
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
