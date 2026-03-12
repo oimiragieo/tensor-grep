@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
@@ -128,6 +129,95 @@ def _run_ast_workflow_cli(argv: list[str]) -> None:
     ast_main_entry(argv)
 
 
+def _looks_like_literal_pattern(pattern: str) -> bool:
+    regex_tokens = {".", "*", "+", "?", "[", "]", "(", ")", "{", "}", "|", "^", "$", "\\"}
+    return not any(token in pattern for token in regex_tokens)
+
+
+def _iter_search_files(paths: list[str]) -> list[str]:
+    resolved_files: list[str] = []
+    for raw_path in paths:
+        path = Path(raw_path)
+        if path.is_file():
+            resolved_files.append(str(path))
+            continue
+        if path.is_dir():
+            for child in sorted(path.rglob("*")):
+                if child.is_file():
+                    resolved_files.append(str(child))
+    return resolved_files
+
+
+def _print_fast_search_result(
+    *, file_path: str, line_number: int, text: str, include_filename: bool
+) -> None:
+    if include_filename:
+        print(f"{file_path}:{line_number}:{text}")
+    else:
+        print(f"{line_number}:{text}")
+
+
+def _run_text_search_fast_cli(search_args: list[str]) -> int:
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("-F", "--fixed-strings", action="store_true")
+    parser.add_argument("-i", "--ignore-case", action="store_true")
+    parser.add_argument("-v", "--invert-match", action="store_true")
+    parser.add_argument("-c", "--count", action="store_true")
+    parser.add_argument("pattern")
+    parser.add_argument("paths", nargs="+")
+
+    try:
+        parsed, unknown = parser.parse_known_args(search_args)
+    except SystemExit as exc:
+        raise ValueError("unsupported fast-path search invocation") from exc
+
+    if unknown:
+        raise ValueError("unsupported fast-path search options")
+
+    from tensor_grep.backends.cpu_backend import CPUBackend
+    from tensor_grep.backends.stringzilla_backend import StringZillaBackend
+    from tensor_grep.core.config import SearchConfig
+
+    file_paths = _iter_search_files(parsed.paths)
+    if not file_paths:
+        return 1
+
+    pattern = parsed.pattern
+    use_stringzilla = parsed.fixed_strings or _looks_like_literal_pattern(pattern)
+    config = SearchConfig(
+        fixed_strings=use_stringzilla,
+        ignore_case=parsed.ignore_case,
+        invert_match=parsed.invert_match,
+        count=parsed.count,
+        line_number=True,
+    )
+    if use_stringzilla:
+        stringzilla_backend = StringZillaBackend()
+        backend = stringzilla_backend if stringzilla_backend.is_available() else CPUBackend()
+    else:
+        backend = CPUBackend()
+
+    total_matches = 0
+    include_filename = len(file_paths) > 1
+    for file_path in file_paths:
+        result = backend.search(file_path, pattern, config)
+        total_matches += result.total_matches
+        if parsed.count:
+            if include_filename:
+                print(f"{file_path}:{result.total_matches}")
+            else:
+                print(f"{result.total_matches}")
+            continue
+        for match in result.matches:
+            _print_fast_search_result(
+                file_path=match.file,
+                line_number=match.line_number,
+                text=match.text,
+                include_filename=include_filename,
+            )
+    return 0 if total_matches > 0 else 1
+
+
 def main_entry() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] in {"--version", "-V"}:
@@ -143,6 +233,10 @@ def main_entry() -> None:
         binary_name = _resolve_rg_binary()
         if binary_name is not None:
             raise SystemExit(_run_rg_passthrough(binary_name, search_args))
+        try:
+            raise SystemExit(_run_text_search_fast_cli(search_args))
+        except ValueError:
+            pass
 
     _run_full_cli()
 

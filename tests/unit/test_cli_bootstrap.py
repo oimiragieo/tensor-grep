@@ -82,6 +82,44 @@ def test_main_entry_should_fallback_to_full_cli_when_rg_is_unavailable(monkeypat
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_route_simple_search_to_text_fast_path_when_rg_is_unavailable(
+    monkeypatch,
+):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", "."])
+    monkeypatch.setattr(bootstrap, "_resolve_rg_binary", lambda: None)
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_text_search_fast_cli",
+        lambda search_args: seen.update({"search_args": list(search_args)}) or 0,
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"search_args": ["ERROR", "."]}
+
+
+def test_main_entry_should_fallback_to_full_cli_when_text_fast_path_rejects_invocation(monkeypatch):
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", "."])
+    monkeypatch.setattr(bootstrap, "_resolve_rg_binary", lambda: None)
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_text_search_fast_cli",
+        lambda search_args: (_ for _ in ()).throw(ValueError("unsupported")),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_fallback_to_full_cli_for_help(monkeypatch):
     called = {"full_cli": False}
 
