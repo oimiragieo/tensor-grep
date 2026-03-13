@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _configure_cuda_worker_environment(device_id: int) -> int:
+    """
+    Windows spawn() workers must pin CUDA visibility before importing cudf/rmm.
+    After pinning a single physical device via CUDA_VISIBLE_DEVICES, CUDA exposes it
+    to the worker as logical device 0.
+    """
+    if os.name != "nt":
+        return device_id
+
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    return 0
+
+
+def _create_process_pool(max_workers: int) -> ProcessPoolExecutor:
+    if os.name == "nt":
+        # Fresh child processes avoid reusing an already-imported CUDA context for a
+        # different physical GPU when Windows spawn() fans out multi-device work.
+        return ProcessPoolExecutor(max_workers=max_workers, max_tasks_per_child=1)
+    return ProcessPoolExecutor(max_workers=max_workers)
+
+
 def _process_chunk_on_device(
     device_id: int,
     file_path: str,
@@ -24,11 +47,13 @@ def _process_chunk_on_device(
 ) -> tuple[list[MatchLine], int]:
     import re
 
+    local_device_id = _configure_cuda_worker_environment(device_id)
+
     import cudf
     import rmm
 
     try:
-        rmm.reinitialize(devices=[device_id])
+        rmm.reinitialize(devices=[local_device_id])
     except Exception:
         # Fallback to default RMM initialization if specific device mapping fails (common in WSL multiprocess)
         try:
@@ -196,7 +221,7 @@ class CuDFBackend(ComputeBackend):
             matches.sort(key=lambda m: m.line_number)
             return matches, 1
 
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with _create_process_pool(max_workers) as executor:
             futures = []
             for task_index, (device_id, chunk_offset, chunk_size) in enumerate(execution_plan):
                 future = executor.submit(
