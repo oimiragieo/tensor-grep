@@ -2,27 +2,30 @@ import base64
 import importlib.util
 import logging
 import re
+import sys
 import urllib.parse
 from dataclasses import replace
 from typing import Any
 
+from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 from tensor_grep.io.reader_fallback import FallbackReader
 
 logger = logging.getLogger(__name__)
 
-HAS_CYBERT_DEPS = False
-try:
-    if importlib.util.find_spec("numpy") is not None:
-        try:
-            if importlib.util.find_spec("transformers") is not None:
-                HAS_CYBERT_DEPS = True
-        except ValueError:
-            # Handle ValueError: transformers.__spec__ is not set
-            pass
-except Exception:
-    pass
+def _module_is_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError, AttributeError):
+        return module_name in sys.modules
+
+
+def _has_cybert_runtime_dependencies() -> bool:
+    return all(
+        _module_is_available(module_name)
+        for module_name in ("numpy", "transformers", "tritonclient.http")
+    )
 
 
 def deobfuscate_payload(line: str) -> str:
@@ -101,13 +104,32 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
     return dict(tokenizer(cleaned_lines, padding=True, truncation=True, return_tensors="np"))
 
 
-class CybertBackend:
+class CybertBackend(ComputeBackend):
+    model_name = "cybert"
+
     def __init__(self, url: str = "localhost:8000"):
         self.url = url
         self.labels = ["info", "warn", "error"]
 
     def is_available(self) -> bool:
-        return True
+        if not _has_cybert_runtime_dependencies():
+            return False
+
+        try:
+            import tritonclient.http as httpclient
+
+            client = httpclient.InferenceServerClient(url=self.url)
+        except Exception:
+            return False
+
+        try:
+            if not client.is_server_live():
+                return False
+            if not client.is_server_ready():
+                return False
+            return bool(client.is_model_ready(self.model_name))
+        except Exception:
+            return False
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
@@ -194,11 +216,11 @@ class CybertBackend:
 
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span("cybert_classification_inference"):
-                result = client.infer(model_name="cybert", inputs=inputs)
+                result = client.infer(model_name=self.model_name, inputs=inputs)
                 probs = result.as_numpy("logits")
         except Exception:
             try:
-                result = client.infer(model_name="cybert", inputs=inputs)
+                result = client.infer(model_name=self.model_name, inputs=inputs)
                 probs = result.as_numpy("logits")
             except Exception as exc:
                 raise RuntimeError(f"CyBERT inference failed: {exc}") from exc

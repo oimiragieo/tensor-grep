@@ -5,6 +5,56 @@ import pytest
 
 
 class TestCybertBackend:
+    @patch.dict(
+        "sys.modules",
+        {
+            "numpy": MagicMock(),
+            "transformers": MagicMock(),
+            "tritonclient": MagicMock(),
+            "tritonclient.http": MagicMock(),
+        },
+    )
+    def test_should_report_unavailable_when_triton_model_is_not_ready(self):
+        import tritonclient.http as httpclient
+
+        mock_client = MagicMock()
+        mock_client.is_server_live.return_value = True
+        mock_client.is_server_ready.return_value = True
+        mock_client.is_model_ready.return_value = False
+        httpclient.InferenceServerClient.return_value = mock_client
+
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        assert CybertBackend().is_available() is False
+
+    @patch.dict(
+        "sys.modules",
+        {
+            "numpy": MagicMock(),
+            "transformers": MagicMock(),
+            "tritonclient": MagicMock(),
+            "tritonclient.http": MagicMock(),
+        },
+    )
+    def test_should_report_available_when_triton_model_is_ready(self):
+        import tritonclient.http as httpclient
+
+        mock_client = MagicMock()
+        mock_client.is_server_live.return_value = True
+        mock_client.is_server_ready.return_value = True
+        mock_client.is_model_ready.return_value = True
+        httpclient.InferenceServerClient.return_value = mock_client
+
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        assert CybertBackend().is_available() is True
+
+    def test_should_inherit_compute_backend_protocol(self):
+        from tensor_grep.backends.base import ComputeBackend
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        assert ComputeBackend in CybertBackend.__mro__
+
     @patch.dict("sys.modules", {"transformers": MagicMock()})
     def test_should_tokenize_log_lines(self):
         import transformers
