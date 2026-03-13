@@ -51,10 +51,32 @@ class TestCybertBackend:
 
         client_kwargs = httpclient.InferenceServerClient.call_args.kwargs
         assert client_kwargs["url"] == "localhost:8000"
-        assert (
-            client_kwargs.get("network_timeout") is not None
-            or client_kwargs.get("connection_timeout") is not None
-        )
+        assert client_kwargs.get("network_timeout") == 5.0
+        assert client_kwargs.get("connection_timeout") == 5.0
+
+    @patch.dict(
+        "sys.modules",
+        {
+            "numpy": MagicMock(),
+            "transformers": MagicMock(),
+            "tritonclient": MagicMock(),
+            "tritonclient.http": MagicMock(),
+        },
+    )
+    def test_should_use_configured_triton_timeout_when_env_var_set(self, monkeypatch):
+        monkeypatch.setenv("TENSOR_GREP_TRITON_TIMEOUT_SECONDS", "12.5")
+
+        import tritonclient.http as httpclient
+
+        from tensor_grep.backends.cybert_backend import _create_triton_http_client
+
+        httpclient.InferenceServerClient.return_value = MagicMock()
+        _create_triton_http_client("localhost:8000")
+
+        client_kwargs = httpclient.InferenceServerClient.call_args.kwargs
+        assert client_kwargs["url"] == "localhost:8000"
+        assert client_kwargs.get("network_timeout") == 12.5
+        assert client_kwargs.get("connection_timeout") == 12.5
 
     @patch("tensor_grep.backends.cybert_backend._has_cybert_runtime_dependencies", return_value=False)
     def test_should_report_unavailable_when_runtime_dependencies_are_missing(self, _mock_has_deps):
@@ -145,10 +167,8 @@ class TestCybertBackend:
 
         client_kwargs = httpclient.InferenceServerClient.call_args.kwargs
         assert client_kwargs["url"] == "localhost:8000"
-        assert (
-            client_kwargs.get("network_timeout") is not None
-            or client_kwargs.get("connection_timeout") is not None
-        )
+        assert client_kwargs.get("network_timeout") == 5.0
+        assert client_kwargs.get("connection_timeout") == 5.0
 
     @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
     def test_should_filterConfidence_when_nlpThresholdSet(self):

@@ -1,6 +1,7 @@
 import base64
 import importlib.util
 import logging
+import os
 import re
 import sys
 import urllib.parse
@@ -14,8 +15,21 @@ from tensor_grep.io.reader_fallback import FallbackReader
 
 logger = logging.getLogger(__name__)
 
-TRITON_CONNECTION_TIMEOUT_SECONDS = 5.0
-TRITON_NETWORK_TIMEOUT_SECONDS = 5.0
+_DEFAULT_TRITON_TIMEOUT_SECONDS = 5.0
+_TRITON_TIMEOUT_ENV_VAR = "TENSOR_GREP_TRITON_TIMEOUT_SECONDS"
+
+
+def _get_triton_timeout_seconds() -> float:
+    raw_timeout = os.environ.get(_TRITON_TIMEOUT_ENV_VAR)
+    if raw_timeout is None:
+        return _DEFAULT_TRITON_TIMEOUT_SECONDS
+
+    try:
+        return max(float(raw_timeout), 0.0)
+    except ValueError:
+        logger.debug("Ignoring invalid %s=%r", _TRITON_TIMEOUT_ENV_VAR, raw_timeout)
+        return _DEFAULT_TRITON_TIMEOUT_SECONDS
+
 
 def _module_is_available(module_name: str) -> bool:
     try:
@@ -34,10 +48,12 @@ def _has_cybert_runtime_dependencies() -> bool:
 def _create_triton_http_client(url: str) -> Any:
     import tritonclient.http as httpclient
 
+    timeout_seconds = _get_triton_timeout_seconds()
+
     return httpclient.InferenceServerClient(
         url=url,
-        connection_timeout=TRITON_CONNECTION_TIMEOUT_SECONDS,
-        network_timeout=TRITON_NETWORK_TIMEOUT_SECONDS,
+        connection_timeout=timeout_seconds,
+        network_timeout=timeout_seconds,
     )
 
 
@@ -82,8 +98,6 @@ def tokenize(lines: list[str]) -> dict[str, Any]:
         # We need an explicit path to the vocab file for cuDF's tokenizer
         # In an enterprise environment, this is cached locally.
         vocab_path = "vocab.txt"
-
-        import os
 
         if os.path.exists(vocab_path):
             tokens = subword_tokenize(
