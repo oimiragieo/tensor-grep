@@ -44,6 +44,16 @@ Use this worker for Python architectural fixes, pipeline routing, environment sc
 }
 ```
 
+## Dirty Primary Checkout Strategy
+
+If the primary checkout (`C:\dev\projects\tensor-grep`) has unrelated uncommitted changes on the same files you need to modify, **do NOT work there**. Create a clean isolated git worktree instead:
+
+```powershell
+git -C "C:\dev\projects\tensor-grep" worktree add "C:\dev\projects\tensor-grep-<feature-id>" HEAD
+```
+
+Work in the clean worktree, run all gates there, commit, then merge back using the `git -C` technique in the Final Step below.
+
 ## Final Step: Merge to Main
 
 After all local gates pass and you have committed your work, **merge your feature branch into `main`** before finishing. This is required so that validation workers test against `main`.
