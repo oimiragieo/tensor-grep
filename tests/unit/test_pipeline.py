@@ -194,6 +194,31 @@ class TestPipeline:
         ):
             Pipeline(force_cpu=False, config=config)
 
+    @patch("tensor_grep.backends.torch_backend.TorchBackend", side_effect=ImportError("torch missing"))
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_should_raise_configuration_error_when_explicit_gpu_ids_torch_backend_import_fails(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg, _mock_torch_backend
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = [(3, 512), (7, 512)]
+        mock_cudf.return_value.is_available.return_value = False
+
+        config = SearchConfig(
+            query_pattern="ERROR",
+            input_total_bytes=8 * 1024 * 1024,
+            gpu_device_ids=[3, 7],
+        )
+
+        with pytest.raises(
+            ConfigurationError,
+            match=r"Explicit GPU device selection .*Torch backend imports failed after CuDF was unavailable",
+        ):
+            Pipeline(force_cpu=False, config=config)
+
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
     @patch("tensor_grep.core.pipeline.MemoryManager")
@@ -398,6 +423,31 @@ class TestPipeline:
         with pytest.raises(
             ConfigurationError,
             match="Explicit AST search requires AST dependencies",
+        ):
+            Pipeline(
+                force_cpu=False,
+                config=SearchConfig(
+                    ast=True,
+                    lang="python",
+                    query_pattern="function_definition",
+                ),
+            )
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
+    @patch("tensor_grep.backends.ast_backend.AstBackend")
+    def test_pipeline_fallback_should_raise_configuration_error_when_no_ast_backend_is_available(
+        self, mock_ast_backend, mock_ast_wrapper, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_ast_backend.return_value.is_available.return_value = False
+        mock_ast_wrapper.return_value.is_available.return_value = False
+
+        with pytest.raises(
+            ConfigurationError,
+            match="Explicit AST search requires AST dependencies: no AST backend is available",
         ):
             Pipeline(
                 force_cpu=False,
