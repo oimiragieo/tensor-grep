@@ -18,6 +18,7 @@ from tensor_grep.core.result import MatchLine, SearchResult
 logger = logging.getLogger(__name__)
 
 _DEFAULT_PARSED_SOURCE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_PARSED_SOURCE_CACHE_ENTRY_SIZE_CALIBRATION_MULTIPLIER = 3
 
 FileSignature = tuple[int, int, int, int, int]
 ParsedSourceCacheEntry = tuple[FileSignature, bytes, list[str], Any, int]
@@ -101,7 +102,11 @@ class AstBackend(ComputeBackend):
             return _DEFAULT_PARSED_SOURCE_CACHE_MAX_BYTES
 
     def _estimate_parsed_source_cache_entry_size(self, source_bytes: bytes) -> int:
-        return len(source_bytes)
+        # The cache stores more than raw source bytes: we also retain a decoded
+        # splitlines() list plus a tree-sitter tree wrapper/native tree.
+        # A 3x multiplier keeps the tracked size within the observed ~2-4x real
+        # memory footprint while preserving a cheap O(1) estimator on the hot path.
+        return len(source_bytes) * _PARSED_SOURCE_CACHE_ENTRY_SIZE_CALIBRATION_MULTIPLIER
 
     def _discard_cached_parsed_source(self, cache_key: tuple[str, str]) -> None:
         cached = self._parsed_source_cache.pop(cache_key, None)

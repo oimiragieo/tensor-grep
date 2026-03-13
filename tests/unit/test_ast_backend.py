@@ -566,13 +566,23 @@ class TestAstBackend:
         assert parser_two.parse_calls == 0
         assert parser_two.language.query_calls == 0
 
+    def test_should_apply_calibrated_multiplier_when_estimating_parsed_source_cache_entry_size(self):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        backend = AstBackend()
+        source_bytes = b"def alpha():\n    return 1111111111\n"
+
+        estimated = backend._estimate_parsed_source_cache_entry_size(source_bytes)
+
+        assert estimated == len(source_bytes) * 3
+
     def test_should_evict_least_recently_used_parsed_source_entries_when_byte_budget_is_exceeded(
         self, tmp_path, mocker, monkeypatch
     ):
         from tensor_grep.backends.ast_backend import AstBackend
 
         monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
-        monkeypatch.setenv("TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES", "80")
+        monkeypatch.setenv("TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES", "250")
         AstBackend._clear_shared_caches()
 
         backend = AstBackend()
@@ -598,7 +608,7 @@ class TestAstBackend:
             (str(file_a), "python"),
             (str(file_c), "python"),
         ]
-        assert AstBackend._shared_parsed_source_cache_bytes <= 80
+        assert AstBackend._shared_parsed_source_cache_bytes <= 250
 
         backend.search(str(file_a), _NON_SIMPLE_AST_PATTERN, config)
         assert parser.parse_calls == 3
@@ -621,6 +631,31 @@ class TestAstBackend:
         mocker.patch.object(backend, "_get_parser", return_value=parser)
 
         file_path = tmp_path / "oversized.py"
+        file_path.write_text("def alpha():\n    return 1111111111\n", encoding="utf-8")
+
+        config = SearchConfig(ast=True, lang="python")
+        backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
+        backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
+
+        assert parser.parse_calls == 2
+        assert backend._parsed_source_cache == {}
+        assert AstBackend._shared_parsed_source_cache_bytes == 0
+
+    def test_should_skip_caching_parsed_source_entries_when_calibrated_estimate_exceeds_budget(
+        self, tmp_path, mocker, monkeypatch
+    ):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
+        monkeypatch.setenv("TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES", "100")
+        AstBackend._clear_shared_caches()
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+        parser = _FakeCacheParser()
+        mocker.patch.object(backend, "_get_parser", return_value=parser)
+
+        file_path = tmp_path / "midrange.py"
         file_path.write_text("def alpha():\n    return 1111111111\n", encoding="utf-8")
 
         config = SearchConfig(ast=True, lang="python")
