@@ -1,17 +1,18 @@
 {
   "milestone": "contract-fixes",
-  "round": 1,
+  "round": 2,
   "status": "pass",
   "validatorsRun": {
-    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0 },
-    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
-    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0 }
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0, "summary": "475 passed, 14 skipped in 73.54s" },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0, "summary": "Success: no issues found in 42 source files" },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0, "summary": "All checks passed!" }
   },
   "reviewsSummary": {
     "total": 2,
     "passed": 2,
     "failed": 0,
-    "failedFeatures": []
+    "failedFeatures": [],
+    "note": "Re-run (round 2): Round 1 had no failures and no new fix features were added. Prior reviews for contract-fallback-hardening and nlp-routing-audit remain valid. All validators confirmed passing."
   },
   "blockingIssues": [],
   "appliedUpdates": [],
@@ -43,5 +44,5 @@
       "reason": "already-resolved: The auto-extract-rg-benchmark feature (misc-fixes milestone) teaches run_benchmarks.py to auto-extract benchmarks/rg.zip when rg is missing. This observation predates that fix."
     }
   ],
-  "previousRound": null
+  "previousRound": ".factory/validation/contract-fixes/scrutiny/synthesis.json (round 1)"
 }
