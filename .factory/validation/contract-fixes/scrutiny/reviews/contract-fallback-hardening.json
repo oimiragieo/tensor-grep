@@ -1,0 +1,44 @@
+{
+  "featureId": "contract-fallback-hardening",
+  "reviewedAt": "2026-03-13T13:22:00.000Z",
+  "commitId": "d424873eae9df8c2cdc28ececb921c5ad1e12457",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly converts all explicit-intent fallback paths in pipeline.py from silent degradation to fatal ConfigurationError raises. The commit modifies 2 files (pipeline.py and test_pipeline.py) with +86/-20 lines. A new ConfigurationError exception class is defined, and static helper methods _raise_ast_configuration_error and _raise_explicit_gpu_configuration_error centralize error construction with optional cause chaining. All four fallback paths that violated explicit user intent are now fatal: (1) AST backends both unavailable, (2) AST import failure, (3) no routable GPU chunk plan for explicit device IDs, (4) both CuDF and Torch unavailable for explicit GPU IDs, and (5) Torch import failure after CuDF unavailable. Tests were written TDD-first (confirmed by the failing-first handoff verification entry), and the existing GPU fallback test was correctly converted from asserting silent degradation to asserting ConfigurationError. The heuristic GPU path correctly retains silent fallback behavior, preserving the architectural distinction between explicit intent and heuristic routing. Full gate suite (ruff, mypy, pytest) passed in the worker's isolated worktree.",
+    "issues": [
+      {
+        "file": "tests/unit/test_pipeline.py",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "No dedicated test covers the ImportError path for torch_backend when explicit --gpu-device-ids is used and CuDF is unavailable but Torch fails to import (pipeline.py line 298). The existing test only covers the case where both backends report is_available()=False. A mocked ImportError on the TorchBackend import would fully exercise that catch branch."
+      },
+      {
+        "file": "tests/unit/test_pipeline.py",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "No test covers the case where AST backends import successfully but both report is_available()=False (pipeline.py line 210). This is a distinct path from the ImportError scenario. A test with mocked AstBackend.is_available()=False and AstGrepWrapperBackend.is_available()=False when --ast is set would verify this branch."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker could not execute .factory/init.sh because the host is native Windows with no bash. The worker correctly fell back to using the existing .venv. The services.yaml already has an 'install' command using uv, but the skill's base procedure still references init.sh as the startup step.",
+      "evidence": "skillFeedback.deviations[0]: 'Attempted to execute .factory/init.sh, but the Windows host had no sh'. services.yaml already has 'install: uv pip install -e \".[dev,ast,nlp]\"' which is the Windows-compatible equivalent."
+    },
+    {
+      "area": "conventions",
+      "observation": "The worker used an isolated detached git worktree to avoid touching the user's dirty main checkout. This is a sensible pattern for dirty-worktree scenarios, and the backend-worker skill was later updated to document the merge-from-primary-checkout pattern. The skill now has clear instructions for this workflow.",
+      "evidence": "skillFeedback.deviations[1] and SKILL.md 'Final Step: Merge to Main' section."
+    },
+    {
+      "area": "conventions",
+      "observation": "The original commit's error messages used slightly different wording than the current pipeline.py (e.g., 'Explicit AST search requested via --ast' vs current 'Explicit AST search requires AST dependencies'). A subsequent refactoring appears to have normalized the message format. This is fine but means the test match patterns needed to be updated too — the current tests correctly match the current messages.",
+      "evidence": "Git diff shows original messages like 'Explicit AST search requested via --ast could not initialize an AST backend'; current pipeline.py line 38 reads 'Explicit AST search requires AST dependencies: {detail}'. Test at line 399 matches 'Explicit AST search requires AST dependencies'."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The contract-fallback-hardening feature passes review. It correctly converts all explicit-intent pipeline fallbacks (--ast and --gpu-device-ids) from silent degradation to fatal ConfigurationError exceptions, satisfying VAL-CONTRACT-001 and VAL-CONTRACT-002. The TDD workflow was properly followed (test-first with verified failure). All local gates (ruff, mypy, pytest) passed. Two non-blocking gaps exist: missing test coverage for the Torch ImportError path under explicit GPU routing, and missing coverage for both AST backends being available but reporting is_available()=False. These do not block the feature since the production code correctly handles both paths."
+}

@@ -1,0 +1,50 @@
+{
+  "featureId": "nlp-routing-audit",
+  "reviewedAt": "2026-03-13T13:25:00.000Z",
+  "commitId": "e02b10efc2b5b8bc54cb9699c7e9acb759b9c1de",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, minimal implementation that wires QueryType.NLP routing into Pipeline via QueryAnalyzer and routes matching queries to CybertBackend. The change touches exactly 4 files (pipeline.py, cybert_backend.py, and their corresponding test files) adding 128 lines total. The pipeline routing branch is correctly placed after AST but before count/fixed_strings/context branches. CybertBackend.search() properly reads file lines, classifies them via the existing classify() method with heuristic fallback, applies threshold filtering, and returns SearchResult with complete routing metadata. Tests follow TDD discipline: the failing test was verified first, then the fix was applied. Worker ran all required local gates (ruff, mypy, pytest) and both benchmark suites (run_benchmarks.py, run_hot_query_benchmarks.py) plus regression check, all passing.",
+    "issues": [
+      {
+        "file": "src/tensor_grep/backends/cybert_backend.py",
+        "line": 109,
+        "severity": "non_blocking",
+        "description": "CybertBackend.is_available() unconditionally returns True, making the 'nlp_backend_unavailable_fallback' branch in pipeline.py dead code. Consider checking for actual Triton/model availability or at minimum documenting this as intentional (heuristic fallback always works)."
+      },
+      {
+        "file": "src/tensor_grep/core/pipeline.py",
+        "line": 218,
+        "severity": "non_blocking",
+        "description": "NLP routing branch precedes the count and fixed_strings fast paths. If a user combines '--count' with an NLP-classified query pattern (e.g., 'classify ssh brute force attempts'), the query will route to CybertBackend instead of the optimized Rust count path. This is likely correct semantics (NLP classification overrides counting) but is not explicitly tested or documented."
+      },
+      {
+        "file": "src/tensor_grep/backends/cybert_backend.py",
+        "line": 114,
+        "severity": "non_blocking",
+        "description": "The pattern parameter in search() is discarded (_ = pattern). This is intentional since CybertBackend classifies all lines rather than pattern-matching, but a brief docstring explaining this design choice would improve maintainability."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Both worker sessions (45651c57 and 38fd03b4) reported skillFeedback.followedProcedure=false, deviating from the standard work procedure by using clean detached worktrees instead of the primary checkout. Both sessions independently discovered that the primary checkout had unrelated dirty changes and .git/replay-* worktrees causing spurious Ruff failures. The backend-worker skill doesn't mention this workaround.",
+      "evidence": "Handoff skillFeedback.deviations from both sessions describe creating clean worktrees. The skill's SKILL.md now has a 'Final Step: Merge to Main' section with worktree merge instructions, but doesn't explicitly recommend creating clean worktrees when the primary checkout is dirty."
+    },
+    {
+      "area": "services",
+      "observation": "Both worker sessions discovered that benchmarks/run_benchmarks.py requires 'rg' (ripgrep) on PATH, which is not available in the default PowerShell environment. Workers manually prepended scoop's ripgrep path or extracted benchmarks/rg.zip. This benchmark dependency is not documented in services.yaml.",
+      "evidence": "Worker 45651c57 ran: '$env:PATH = \"C:\\Users\\oimir\\scoop\\apps\\ripgrep\\15.1.0;\" + $env:PATH' before benchmarks. Worker 38fd03b4 extracted benchmarks/rg.zip to a temp directory and prepended it to PATH."
+    },
+    {
+      "area": "conventions",
+      "observation": "The CybertBackend now implements both the original classify() method and a new search() method that conforms to the backend protocol pattern (is_available() + search()). However, CybertBackend does not inherit from ComputeBackend base class, unlike other backends. This duck-typing approach works but differs from the explicit inheritance pattern used by other backends.",
+      "evidence": "src/tensor_grep/backends/cybert_backend.py has no 'class CybertBackend(ComputeBackend)' inheritance, while other backends like RustCoreBackend, CPUBackend etc. inherit from ComputeBackend."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The nlp-routing-audit feature passes review. The implementation correctly wires QueryType.NLP into the Pipeline routing logic so NLP-classified queries (detected by QueryAnalyzer via keywords like 'classify', 'detect', 'anomaly') route to CybertBackend instead of falling back to regex. CybertBackend.search() returns properly structured SearchResult objects with routing_backend='CybertBackend' and routing_reason='nlp_cybert'. Tests cover both the pipeline routing decision and the backend search result metadata. All local gates and benchmark regression checks passed. Three non-blocking issues noted: always-true is_available(), undocumented interaction with --count, and discarded pattern parameter. Three shared state observations recorded regarding worktree workflow, benchmark rg dependency, and CybertBackend's duck-typing vs explicit inheritance."
+}
