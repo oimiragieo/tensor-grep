@@ -70,7 +70,7 @@ To maximize hardware utilization while preserving cross-platform stability, `ten
 ## 3. Evaluation and Benchmarks
 
 ### 3.1 Experimental Setup and Hardware Constraints
-We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite currently passes **448 automated tests** (with environment-specific skips) while asserting exact stdout match counts.
+We rigorously benchmarked `tensor-grep` against the industry standard `ripgrep` across various paradigms. Our comprehensive Test-Driven Development (TDD) suite has continued to grow throughout the current optimization line, with recent local validation branches exceeding **460 passing tests** plus environment-specific skips while locking runtime routing, release contracts, and workflow startup behavior.
 
 **Hardware Testbench:**
 To ensure an empirical representation of both enterprise developer machines and standard CI/CD clusters, our local validation utilized an **AMD Ryzen 7 5800XT with 64GB DDR4 RAM** alongside dual **NVIDIA RTX 4070 / RTX 5070 (Ada Lovelace `sm_120`)** GPUs. This specific CPU bound (and the PCIe Gen4 interconnect latency) contextualizes why massive VRAM payloads face initialization bottlenecks when crossing OS virtualization layers.
@@ -91,7 +91,7 @@ Backend-level timings from `run_gpu_benchmarks.py` on this host:
 
 These runs confirm low backend latency for targeted workloads once dependencies are installed, but they do not imply end-to-end CLI superiority for every search shape. They also show an operational benchmark dependency: cyBERT throughput claims are only meaningful when the Triton inference service is actually reachable, and benchmark scripts now record that case as an explicit skip rather than a synthetic failure.
 
-We also added a workflow-focused AST startup harness (`run_ast_workflow_benchmarks.py`) to measure command-level orchestration instead of only single-pattern search latency. On the current local Windows host, the synthetic `tg run "def $FUNC():\n    $$$BODY" .` workflow now completes in **0.207 seconds**, the synthetic `tg scan --config sgconfig.yml` workflow now completes in **0.226 seconds**, and the synthetic `tg test --config sgconfig.yml` workflow completes in **0.250 seconds** after adding direct bootstrap routing for AST workflows, collapsing wrapper-backed scan execution to a single project-level `ast-grep scan --json --config ...` subprocess instead of one wrapper subprocess per rule, reusing precomputed backend selection in both `scan` and rule-linked `test` cases, deferring heavy scanner imports out of the direct AST workflow module import path, caching `ast-grep` binary resolution across wrapper backend instances instead of reprobing the PATH for every wrapper call, moving wrapper-backed AST test batch directories out of the project tree and into the system temporary directory, batching wrapper-backed AST rule tests through one temporary project-level `ast-grep scan` instead of one wrapper subprocess per pattern group, and preloading test YAML payloads once per command run instead of rediscovering and reparsing them while iterating test cases. This benchmark is intentionally small and deterministic so it can track AST workflow startup regressions without being dominated by huge wrapper-rule corpora.
+We also added a workflow-focused AST startup harness (`run_ast_workflow_benchmarks.py`) to measure command-level orchestration instead of only single-pattern search latency. On the latest accepted Python-entrypoint optimization line before subsequent rejected experiments, the synthetic `tg run "def $FUNC():\n    $$$BODY" .` workflow completed in **0.207 seconds**, the synthetic `tg scan --config sgconfig.yml` workflow completed in **0.226 seconds**, and the synthetic `tg test --config sgconfig.yml` workflow completed in **0.250 seconds**. These numbers were achieved by adding direct bootstrap routing for AST workflows, collapsing wrapper-backed scan execution to a single project-level `ast-grep scan --json --config ...` subprocess instead of one wrapper subprocess per rule, reusing precomputed backend selection in both `scan` and rule-linked `test` cases, skipping native AST backend construction for wrapper-only patterns, and lazily importing the heavy pipeline fallback only when both AST backends were unavailable. This benchmark is intentionally small and deterministic so it can track AST workflow startup regressions without being dominated by huge wrapper-rule corpora.
 
 ### 3.3 Complex Regex Throughput (The GPU Advantage)
 The latest full script-driven CLI benchmark (`run_benchmarks.py`) from this local run shows that end-to-end process costs still dominate most regex/text scenarios, but the new bootstrap entrypoint materially reduced command startup overhead. Once the benchmark harness was switched to measure the installed `tg` fast path instead of `tensor_grep.cli.main`, the stored Windows regression guard passed again:
@@ -204,6 +204,93 @@ To enforce sustainable performance gains, we introduced a benchmark-governance l
 6. Release integrity checks now require `CHECKSUMS.txt` SHA256 entries to match GitHub release `asset.digest` metadata for each managed binary, tightening post-upload artifact parity.
 
 This turns performance claims into continuously verifiable constraints and enables objective rollback decisions when regressions are detected.
+
+### 3.10 Optimization Ledger: Accepted Wins and Rejected Dead Ends
+
+To avoid re-running the same failed ideas, we maintain an explicit optimization ledger in this paper. The results below are taken from the current 2026-03 optimization line on Windows and are intentionally blunt about what did and did not work.
+
+**Accepted text-search wins**
+
+1. **No-`rg` bootstrap fast path**
+   We added a narrow direct text-search path in `tensor_grep.cli.bootstrap` for simple `search` invocations when `rg` is unavailable. This path progressively removed unnecessary parser and import work:
+   * direct no-`rg` text fast path
+   * lazy backend imports
+   * skipping `rg` probing when `PATH` is empty
+   * removing `argparse` from the narrow fast path
+
+   On the controlled no-`rg` benchmark corpus, these changes reduced end-to-end simple-search startup from roughly **0.597s** in the earlier line to approximately **0.093s-0.099s** on the latest accepted line.
+
+2. **Repeated fixed-string index**
+   We added a persistent trigram line index for repeated fixed-string search in `StringZillaBackend`, followed by compact range storage and faster posting decode/intersection. The latest accepted hot-query benchmark line recorded:
+   * repeated fixed string, first hit: **0.2368s**
+   * repeated fixed string, second hit: **0.0048s**
+
+3. **Repeated regex prefilter index**
+   We added a persistent trigram prefilter cache for the Python regex fallback path in `CPUBackend`, then improved its candidate execution path so the cached search iterates only candidate lines instead of re-walking the full source file. On the accepted line:
+   * repeated regex prefilter, first hit: **0.2439s**
+   * repeated regex prefilter, second hit: **0.0350s**
+
+**Accepted AST workflow wins**
+
+1. **Direct AST workflow bootstrap path**
+   `run`, `scan`, and `test` were moved onto a lighter AST workflow entrypoint instead of always loading the full Typer CLI.
+
+2. **Wrapper batching**
+   We collapsed wrapper-backed AST workflows away from one-subprocess-per-file and one-subprocess-per-snippet execution. The accepted sequence included:
+   * batched wrapper scan per rule
+   * batched wrapper run across files
+   * grouped wrapper test execution by pattern
+   * wrapper-backed test batching through project-level scan
+
+3. **AST backend selection cuts**
+   We removed repeated backend selection and skipped native backend construction for wrapper-only rule shapes. The accepted best Python-entrypoint AST workflow line before later regressions measured:
+   * `run`: **0.207s**
+   * `scan`: **0.226s**
+   * `test`: **0.250s**
+
+**Important rejected candidates**
+
+These were implemented, validated, and then intentionally rejected because the benchmark either regressed or the gain was not stable enough to justify merge:
+
+1. **Naive AST helper/session**
+   A local AST helper process for `run`/`scan`/`test` caused a severe regression because helper startup/handshake cost exceeded the remaining workflow startup cost.
+
+2. **Many AST cache/layout micro-optimizations**
+   Several attempts were correct but slower, including:
+   * shared wrapper temp root per test command
+   * manifest-based stable wrapper project roots
+   * extra YAML micro-caches
+   * bootstrap import shaving beyond the accepted lazy pipeline fallback
+
+   The consistent lesson was that AST one-shot startup had reached the point where only larger execution-shape changes matter.
+
+3. **Onefile binary as a speed path**
+   We changed Nuitka builds to target `bootstrap.py` so shipped binaries at least use the optimized entrypoint. However, local timing on the produced Windows onefile binary showed it was still slower than the Python bootstrap path, which strongly suggests onefile extraction/packaging overhead dominates:
+   * built `tg.exe` simple search: roughly **1.10s-1.22s**
+   * Python bootstrap simple search: roughly **0.33s-0.48s**
+   * direct `rg` simple search: roughly **0.26s-0.29s**
+   * built `tg.exe` `--max-count`: roughly **0.82s-1.02s**
+   * Python bootstrap `--max-count`: roughly **0.25s-0.32s**
+   * direct `rg` `--max-count`: roughly **0.14s-0.24s**
+
+   Conclusion: targeting `bootstrap.py` is still the correct release-binary contract, but Nuitka onefile binaries are not the current path to parity with raw `rg`.
+
+4. **Windows `exec`-style `rg` passthrough**
+   Replacing `subprocess.run(...)` with an `exec`-style passthrough on Windows regressed sharply and was discarded.
+
+5. **Alternative posting/decode strategies that looked mathematically plausible but lost empirically**
+   Rejected examples include:
+   * CPU preallocated decode for compact regex postings
+   * bootstrap-native duplicated literal-cache loader
+   * pure Python literal scan replacing the existing backend
+   * `bisect`-based regex posting intersection
+   * several alternative StringZilla decode formats and binary-cache loaders
+
+   These were dropped because the measured end-to-end numbers lost to the current accepted baseline.
+
+**Current honest state**
+
+The remaining performance gap to raw `rg` on cold generic text search is now dominated by launcher/control-plane overhead, not by search kernel quality. Conversely, repeated-query paths still show real room for index-driven gains, and AST workflow speed is now much better than earlier in the project but remains a Python-controlled path rather than a native-first engine. This is why the roadmap below prioritizes native control-plane evolution over additional Python micro-tuning.
 
 ## 4. Related Work and Architectural Novelty
 
