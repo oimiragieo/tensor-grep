@@ -1,0 +1,64 @@
+{
+  "featureId": "auto-extract-rg-benchmark",
+  "milestone": "misc-fixes",
+  "status": "pass",
+  "codeQuality": {
+    "score": 5,
+    "observations": [
+      "Clean separation: extract_windows_rg_bundle is a standalone function with a single responsibility.",
+      "WINDOWS_RG_DIRNAME constant eliminates magic string duplication between the extraction function and resolve_rg_binary.",
+      "The fallback chain in resolve_rg_binary is logical and clearly ordered: PATH -> existing extraction -> auto-extract -> error.",
+      "Good use of next() iterator with default for safe member lookup in the zip archive.",
+      "Minimal diff (48 lines added, 2 changed across 2 files) — follows the 'smallest defensible change' guideline from AGENTS.md."
+    ]
+  },
+  "correctness": {
+    "score": 5,
+    "observations": [
+      "The auto-extraction is correctly gated behind platform.system() == 'Windows', matching the Windows-specific rg.zip bundle contents.",
+      "The resolve_rg_binary fallback chain preserves backward compatibility: PATH lookup first, then pre-existing extraction, then auto-extract.",
+      "extract_windows_rg_bundle correctly handles edge cases: missing archive (returns None), missing rg.exe member in archive (returns None), extraction failure (returns None).",
+      "Verified against actual rg.zip contents — the archive does contain 'ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe' matching the expected path.",
+      "The error message in FileNotFoundError was updated to mention the rg.zip extraction path, aiding debuggability.",
+      "Worker verified end-to-end: ran benchmarks/run_benchmarks.py with rg absent from PATH and all 10 parity rows passed."
+    ]
+  },
+  "testCoverage": {
+    "score": 4,
+    "observations": [
+      "test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing properly creates a fake rg.zip, monkeypatches __file__, shutil.which, and platform.system, and asserts both correct path resolution and file content.",
+      "TDD approach was followed: test was written first and verified failing before the implementation was made.",
+      "Missing test: no explicit test for the case where rg.zip exists but does NOT contain rg.exe (the None-return early exit). This is a non-blocking gap since the function handles it correctly.",
+      "Missing test: no test verifying the non-Windows platform path (where extraction is skipped). Again non-blocking since the platform gate is straightforward."
+    ]
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "file": "benchmarks/run_benchmarks.py",
+      "line": 178,
+      "severity": "non_blocking",
+      "description": "bundle.extractall(benchmarks_dir) extracts all zip contents without path validation. While the zip is a first-party repository bundle (not user-supplied), Python 3.12+ supports extractall(path, filter='data') for zip-slip protection. Consider adding path traversal checks if this pattern is reused for untrusted archives."
+    },
+    {
+      "file": "tests/unit/test_benchmark_scripts.py",
+      "line": 46,
+      "severity": "non_blocking",
+      "description": "No test for the edge case where rg.zip exists but doesn't contain an rg.exe entry. The code handles this correctly (returns None then raises FileNotFoundError) but a test would document the behavior."
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker couldn't execute .factory/init.sh on Windows and ran 'uv pip install -e .[dev,ast,nlp]' directly. This is a known issue documented in mission AGENTS.md ('`.factory/init.sh` not executable on native Windows'). The skillFeedback.followedProcedure was false due to this and the PYTHONPATH workaround. Both deviations are justified by documented pre-existing issues.",
+      "evidence": "Handoff skillFeedback.deviations[0]: 'Ran the equivalent editable install command' because init.sh path resolution failed on Windows."
+    },
+    {
+      "area": "services",
+      "observation": "The feature description mentioned adding a benchmark setup command to .factory/services.yaml as an alternative approach, but the worker chose auto-extraction within the script itself. This is arguably a better design since it requires no manual setup and is fully transparent. However, services.yaml was not updated to document the auto-extraction behavior.",
+      "evidence": "services.yaml still only has 'benchmark_text: python benchmarks/run_benchmarks.py' without noting the auto-extraction capability."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The implementation correctly teaches benchmarks/run_benchmarks.py to auto-extract benchmarks/rg.zip on Windows when rg is missing from PATH. The code is clean, minimal, and well-tested. The fallback chain (PATH -> pre-extracted binary -> auto-extract from zip -> error) is logical and preserves backward compatibility. The worker followed TDD, ran all local gates (lint, typecheck, tests, benchmarks), and verified end-to-end functionality in an isolated worktree. No blocking issues found."
+}
