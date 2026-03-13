@@ -1,0 +1,39 @@
+{
+  "featureId": "fix-cybert-backend-protocol",
+  "reviewedAt": "2026-03-13T14:03:00.000Z",
+  "commitId": "57148639b75b2826d0bfc2607d81ddecad911583",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, well-scoped fix. CybertBackend.is_available() now performs a layered availability check: runtime dependency detection (numpy, transformers, tritonclient.http), Triton client creation, server liveness/readiness, and model readiness. ComputeBackend inheritance added, consistent with all other backends (TorchBackend, RipgrepBackend, CPUBackend, etc.). The model_name class attribute centralizes the 'cybert' constant, eliminating duplicated string literals in infer() calls. Exception handling in is_available() is appropriately broad for an availability probe.",
+    "issues": [
+      {
+        "file": "src/tensor_grep/backends/cybert_backend.py",
+        "line": 117,
+        "severity": "non_blocking",
+        "description": "No explicit connection/network timeout on InferenceServerClient creation or the subsequent is_server_live/is_server_ready/is_model_ready calls. If the Triton server is hanging (accepting TCP but not responding), pipeline initialization could block for the system default TCP timeout. Consider passing a network_timeout or connection_timeout kwarg to InferenceServerClient. This is minor since the NLP path is only triggered for QueryType.NLP queries and tritonclient has internal defaults."
+      },
+      {
+        "file": "tests/unit/test_cybert_backend.py",
+        "line": 7,
+        "severity": "non_blocking",
+        "description": "Test coverage for is_available() only covers model-not-ready and model-ready scenarios. Missing coverage for: (1) dependencies unavailable (no numpy/transformers/tritonclient), (2) Triton client creation failure (connection refused), (3) is_server_live() returning False. These paths are simple and exercised by the broad except clauses, so risk is low, but explicit coverage would strengthen the contract."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "target": "services.yaml",
+      "observation": "services.yaml lists benchmark_text and benchmark_hot commands but not benchmark_gpu or benchmark_ast. Worker had to consult AGENTS.md to determine the correct benchmark for NLP/cyBERT changes (run_gpu_benchmarks.py). Adding benchmark_gpu and benchmark_ast to services.yaml would make benchmark selection more discoverable for future workers.",
+      "evidence": "Current services.yaml only has benchmark_text and benchmark_hot. AGENTS.md documents run_gpu_benchmarks.py for GPU/NLP changes. Worker handoff shows they ran the correct benchmark but had to derive it from AGENTS.md."
+    },
+    {
+      "target": "skills",
+      "observation": "Worker's skillFeedback.suggestedChanges recommends mentioning in the backend-worker skill that cyBERT/NLP availability changes should use run_gpu_benchmarks.py rather than the generic text/hot benchmark pair. The backend-worker skill SKILL.md was not found at .factory/skills/backend-worker/SKILL.md, suggesting it may be defined elsewhere or the skill directory structure differs.",
+      "evidence": "Handoff skillFeedback.suggestedChanges: 'Mention in the backend-worker skill that cyBERT/NLP availability changes should use run_gpu_benchmarks.py'. Glob for .factory/skills/**/SKILL.md returned no results."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The implementation fully satisfies both requirements: (1) CybertBackend.is_available() now performs genuine Triton/model availability checks instead of returning True unconditionally, which unblocks the nlp_backend_unavailable_fallback branch in pipeline.py; (2) CybertBackend inherits ComputeBackend for protocol consistency with all other backends. Tests cover the key positive/negative availability scenarios and protocol inheritance. All validation gates (pytest 480 passed, mypy clean, ruff clean) passed. Two non-blocking observations: missing explicit network timeout on the Triton client and minor test coverage gaps for edge-case availability paths."
+}
