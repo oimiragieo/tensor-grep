@@ -109,3 +109,34 @@ class TestCybertBackend:
 
         assert labels.count("error") >= 2
         assert "warn" in labels
+
+    def test_should_return_search_result_with_nlp_routing_metadata(self, tmp_path):
+        from tensor_grep.backends.cybert_backend import CybertBackend
+        from tensor_grep.core.config import SearchConfig
+
+        log_path = tmp_path / "nlp.log"
+        log_path.write_text("warning: latency is high\ninfo: startup ok\n", encoding="utf-8")
+
+        backend = CybertBackend()
+        with patch.object(
+            backend,
+            "classify",
+            return_value=[
+                {"label": "warn", "confidence": 0.85},
+                {"label": "info", "confidence": 0.20},
+            ],
+        ):
+            result = backend.search(
+                str(log_path),
+                pattern="classify warnings",
+                config=SearchConfig(nlp_threshold=0.5),
+            )
+
+        assert result.total_matches == 1
+        assert result.total_files == 1
+        assert result.matched_file_paths == [str(log_path)]
+        assert result.match_counts_by_file == {str(log_path): 1}
+        assert result.routing_backend == "CybertBackend"
+        assert result.routing_reason == "nlp_cybert"
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "[warn 0.850] warning: latency is high"

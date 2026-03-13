@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import zipfile
 from pathlib import Path
 
 
@@ -40,6 +41,24 @@ def test_run_benchmarks_should_target_bootstrap_entrypoint():
 
     assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
     assert cmd[3:] == ["search", "--no-ignore", "ERROR", "bench_data"]
+
+
+def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatch, tmp_path):
+    module = _load_script_module("run_benchmarks_script_rg_zip", "benchmarks/run_benchmarks.py")
+    bench_dir = tmp_path / "benchmarks"
+    archive = bench_dir / "rg.zip"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe", "fake rg")
+
+    monkeypatch.setattr(module, "__file__", str(bench_dir / "run_benchmarks.py"))
+    monkeypatch.setattr(module.shutil, "which", lambda _binary: None)
+    monkeypatch.setattr(module.platform, "system", lambda: "Windows")
+
+    resolved = Path(module.resolve_rg_binary())
+
+    assert resolved == bench_dir / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
+    assert resolved.read_text(encoding="utf-8") == "fake rg"
 
 
 def test_run_ast_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):

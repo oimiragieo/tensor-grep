@@ -97,27 +97,23 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+        })
 
     return specs
 
@@ -320,15 +316,16 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
 
     print(f"Scanning project using adaptive AST routing based on {project_cfg['config_path']}...")
 
+    resolved_rules: list[tuple[dict[str, str], SearchConfig, ComputeBackend]] = []
+    for rule in rules:
+        rule_cfg = replace(cfg, lang=rule["language"])
+        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        resolved_rules.append((rule, rule_cfg, backend))
+
     wrapper_project_backend: Any | None = None
     wrapper_project_results: dict[str, SearchResult] | None = None
-    if rules:
-        selected_backends = [
-            _select_ast_backend_for_pattern(
-                replace(cfg, lang=rule["language"]), rule["pattern"], backend_cache
-            )
-            for rule in rules
-        ]
+    if resolved_rules:
+        selected_backends = [backend for _, _, backend in resolved_rules]
         if (
             selected_backends
             and all(hasattr(backend, "search_project") for backend in selected_backends)
@@ -345,9 +342,7 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
 
     total_matches = 0
     matched_rules = 0
-    for rule in rules:
-        rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+    for rule, rule_cfg, backend in resolved_rules:
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
         if wrapper_project_results is not None and wrapper_project_backend is backend:
@@ -486,18 +481,16 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                         temp_name.write_text(snippet, encoding="utf-8")
                         try:
                             result = backend.search(str(temp_name), pattern, config=case_cfg)
-                            evaluated_snippets.append(
-                                (
-                                    f"{test_file}:{case_id}",
-                                    snippet,
-                                    expected_match,
-                                    bool(
-                                        result.total_files > 0
-                                        or result.total_matches > 0
-                                        or result.matched_file_paths
-                                    ),
-                                )
-                            )
+                            evaluated_snippets.append((
+                                f"{test_file}:{case_id}",
+                                snippet,
+                                expected_match,
+                                bool(
+                                    result.total_files > 0
+                                    or result.total_matches > 0
+                                    or result.matched_file_paths
+                                ),
+                            ))
                         finally:
                             temp_name.unlink(missing_ok=True)
             except Exception as exc:

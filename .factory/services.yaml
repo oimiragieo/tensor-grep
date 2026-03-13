@@ -5,7 +5,7 @@ commands:
   test: uv run pytest -q
   benchmark_text: python benchmarks/run_benchmarks.py
   benchmark_hot: python benchmarks/run_hot_query_benchmarks.py
-  rust_test: cargo test --manifest-path rust_core/Cargo.toml
-  rust_build: cargo build --manifest-path rust_core/Cargo.toml --release
+  rust_test: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml
+  rust_build: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release
 
 services: {}

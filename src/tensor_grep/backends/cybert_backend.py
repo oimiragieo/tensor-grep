@@ -3,7 +3,12 @@ import importlib.util
 import logging
 import re
 import urllib.parse
+from dataclasses import replace
 from typing import Any
+
+from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.io.reader_fallback import FallbackReader
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +105,62 @@ class CybertBackend:
     def __init__(self, url: str = "localhost:8000"):
         self.url = url
         self.labels = ["info", "warn", "error"]
+
+    def is_available(self) -> bool:
+        return True
+
+    def search(
+        self, file_path: str, pattern: str, config: SearchConfig | None = None
+    ) -> SearchResult:
+        _ = pattern
+        reader = FallbackReader()
+        lines = list(reader.read_lines(file_path))
+        if not lines:
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="CybertBackend",
+                routing_reason="nlp_cybert",
+            )
+
+        threshold = getattr(config, "nlp_threshold", 0.0) if config else 0.0
+        classify_config = config
+        if config is not None and threshold > 0.0:
+            classify_config = replace(config, nlp_threshold=0.0)
+
+        try:
+            classifications = self.classify(lines, config=classify_config)
+        except Exception:
+            classifications = self._heuristic_classify(lines)
+
+        matches: list[MatchLine] = []
+        for line_number, (line, classification) in enumerate(
+            zip(lines, classifications, strict=False),
+            start=1,
+        ):
+            confidence = float(classification.get("confidence", 0.0))
+            if confidence < threshold:
+                continue
+            label = str(classification.get("label", "info"))
+            matches.append(
+                MatchLine(
+                    line_number=line_number,
+                    text=f"[{label} {confidence:.3f}] {line.rstrip()}" if line else line,
+                    file=file_path,
+                )
+            )
+
+        matched_file_paths = [file_path] if matches else []
+        return SearchResult(
+            matches=matches,
+            matched_file_paths=matched_file_paths,
+            match_counts_by_file={file_path: len(matches)} if matches else {},
+            total_files=1 if matches else 0,
+            total_matches=len(matches),
+            routing_backend="CybertBackend",
+            routing_reason="nlp_cybert",
+        )
 
     def classify(self, lines: list[str], config: Any = None) -> list[dict[str, Any]]:
         try:

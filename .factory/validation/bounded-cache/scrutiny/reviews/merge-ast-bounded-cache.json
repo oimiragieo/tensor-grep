@@ -1,0 +1,26 @@
+{
+  "featureId": "merge-ast-bounded-cache",
+  "reviewedAt": "2026-03-13T12:50:00.000Z",
+  "commitId": "13123cd9019f929521f004dbf5f4a955ae1f13cf",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Merge-only task executed correctly. The worker stashed dirty changes, fast-forward merged worker/ast-bounded-cache into main, handled the stash-pop conflict by restoring mission files (ast_backend.py, test_ast_backend.py) from HEAD (the validated implementation), dropped the consumed stash, and confirmed the full test suite passed (473 passed, 14 skipped). The underlying implementation in commit 13123cd is sound: it converts _shared_parsed_source_cache to an OrderedDict with byte-bounded LRU eviction, enriches the file signature with device/inode/ctime for robust invalidation, adds configurable limit via TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES, and fixes CRLF line-splitting with splitlines(). Three new targeted tests cover eviction, oversized-entry bypass, and identity-change invalidation.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The new environment variable TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES (default 64MB) is not documented anywhere in AGENTS.md, library/, or README. Future workers touching AST cache behavior may not know it exists.",
+      "evidence": "src/tensor_grep/backends/ast_backend.py:20 defines _DEFAULT_PARSED_SOURCE_CACHE_MAX_BYTES = 64 * 1024 * 1024; the _get_parsed_source_cache_limit_bytes method reads os.environ.get('TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES'). No mention in .factory/library/ or AGENTS.md."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker skill deviations were justified. The merge-only feature explicitly said 'Do NOT re-implement anything' and specified only 'uv run pytest -q' as verification. Skipping TDD, lint/typecheck, and benchmarking was appropriate for a merge task. The baseline test failure (CRLF mismatch in test_ast_backend.py) was a known pre-existing issue that the merge itself fixed.",
+      "evidence": "Handoff skillFeedback.deviations lists 2 deviations: skipping baseline validation (pre-merge tests failed on the old code) and skipping TDD/lint/benchmark steps. Both are reasonable for a merge-only task."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The merge-only task was executed correctly. Worker stashed pre-existing dirty changes, fast-forward merged the validated ast-bounded-cache branch into main, resolved the stash-pop conflict by keeping the merged (validated) implementation, and confirmed all 473 tests passed. The underlying commit introduces a well-structured byte-bounded LRU cache for AST parsed sources with proper eviction, identity-based invalidation, and CRLF-safe line splitting. No blocking issues found."
+}

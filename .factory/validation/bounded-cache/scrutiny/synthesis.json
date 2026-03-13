@@ -1,0 +1,39 @@
+{
+  "milestone": "bounded-cache",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added .factory/library/ast-cache-config.md documenting TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES env var, cache eviction behavior, invalidation logic, and Windows platform notes.",
+      "sourceFeature": "ast-bounded-cache"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Update backend-worker skill's 'Final Step: Merge to Main' procedure to explicitly handle the case where the primary checkout has uncommitted edits on the same files being modified by the feature branch. Current guidance only covers clean stash/pop. Consider adding guidance: 'If the primary checkout has conflicting uncommitted edits on files the feature modifies, leave the branch unmerged and note the situation in handoff. A separate merge-only feature can be created to handle the integration.'",
+      "evidence": "Feature ast-bounded-cache worker deviated from the merge procedure because primary checkout had pre-existing dirty changes on ast_backend.py and test_ast_backend.py. A separate merge-ast-bounded-cache feature was needed to handle the integration safely.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Merge-only tasks skill deviation justification (skipping TDD, lint/typecheck, and benchmarks for merge tasks)",
+      "reason": "The deviation was appropriate and correctly justified by the merge-only task description. No procedural change needed — merge-only tasks inherently don't require TDD."
+    }
+  ],
+  "previousRound": null
+}

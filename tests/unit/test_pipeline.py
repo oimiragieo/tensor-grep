@@ -1,7 +1,10 @@
+import builtins
 from unittest.mock import patch
 
+import pytest
+
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.pipeline import Pipeline
+from tensor_grep.core.pipeline import ConfigurationError, Pipeline
 
 
 class TestPipeline:
@@ -71,6 +74,24 @@ class TestPipeline:
 
         assert pipeline.backend == mock_ast_wrapper.return_value
         assert pipeline.selected_backend_reason == "ast_wrapper_available"
+
+    @patch("tensor_grep.backends.cybert_backend.CybertBackend")
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_nlp_routing_should_select_cybert_backend_for_nlp_queries(
+        self, mock_rust, mock_rg, mock_cybert_backend
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_cybert_backend.return_value.is_available.return_value = True
+
+        pipeline = Pipeline(
+            force_cpu=False,
+            config=SearchConfig(query_pattern="classify ssh brute force attempts"),
+        )
+
+        assert pipeline.backend == mock_cybert_backend.return_value
+        assert pipeline.selected_backend_reason == "nlp_cybert"
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.MemoryManager")
@@ -152,7 +173,7 @@ class TestPipeline:
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
     @patch("tensor_grep.core.pipeline.MemoryManager")
     @patch("tensor_grep.core.pipeline.CuDFBackend")
-    def test_should_fallback_to_rg_when_explicit_gpu_ids_have_no_available_gpu_backend(
+    def test_should_raise_configuration_error_when_explicit_gpu_ids_have_no_available_gpu_backend(
         self, mock_cudf, mock_mem, mock_rust, mock_rg, mock_torch_backend
     ):
         mock_rg.return_value.is_available.return_value = True
@@ -166,12 +187,12 @@ class TestPipeline:
             input_total_bytes=8 * 1024 * 1024,
             gpu_device_ids=[3, 7],
         )
-        pipeline = Pipeline(force_cpu=False, config=config)
 
-        assert pipeline.backend == mock_rg.return_value
-        assert pipeline.selected_backend_reason == "gpu_explicit_ids_no_gpu_backend_fallback"
-        assert pipeline.selected_gpu_device_ids == []
-        assert pipeline.selected_gpu_chunk_plan_mb == [(3, 512), (7, 512)]
+        with pytest.raises(
+            ConfigurationError,
+            match=r"Explicit GPU device selection .*\[3, 7\]",
+        ):
+            Pipeline(force_cpu=False, config=config)
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -329,6 +350,63 @@ class TestPipeline:
         assert pipeline.selected_gpu_device_ids == [7, 3]
         assert pipeline.selected_gpu_chunk_plan_mb == [(7, 256), (3, 512)]
         mock_torch_backend.assert_called_once_with(device_ids=[7, 3], chunk_sizes_mb=[256, 512])
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.core.pipeline.MemoryManager")
+    @patch("tensor_grep.core.pipeline.CuDFBackend")
+    def test_pipeline_fallback_should_raise_configuration_error_when_explicit_gpu_ids_have_no_routable_chunk_plan(
+        self, mock_cudf, mock_mem, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_mem.return_value.get_device_chunk_plan_mb.return_value = []
+
+        config = SearchConfig(
+            query_pattern="ERROR",
+            input_total_bytes=8 * 1024 * 1024,
+            gpu_device_ids=[3, 7],
+        )
+
+        with pytest.raises(
+            ConfigurationError,
+            match=r"Explicit GPU device selection .*\[3, 7\]",
+        ):
+            Pipeline(force_cpu=False, config=config)
+
+        mock_cudf.assert_not_called()
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_pipeline_fallback_should_raise_configuration_error_when_ast_dependencies_fail_to_import(
+        self, mock_rust, mock_rg, monkeypatch
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        original_import = builtins.__import__
+
+        def failing_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name in {
+                "tensor_grep.backends.ast_backend",
+                "tensor_grep.backends.ast_wrapper_backend",
+            }:
+                raise ImportError("AST dependencies missing")
+            return original_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", failing_import)
+
+        with pytest.raises(
+            ConfigurationError,
+            match="Explicit AST search requires AST dependencies",
+        ):
+            Pipeline(
+                force_cpu=False,
+                config=SearchConfig(
+                    ast=True,
+                    lang="python",
+                    query_pattern="function_definition",
+                ),
+            )
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")

@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 # Ensure local `src/` imports work when running this script directly.
@@ -88,6 +89,8 @@ SCENARIOS = [
     },
 ]
 
+WINDOWS_RG_DIRNAME = "ripgrep-14.1.0-x86_64-pc-windows-msvc"
+
 
 def resolve_bench_data_dir() -> Path:
     """
@@ -163,14 +166,38 @@ def build_tg_benchmark_cmd(tg_args: list[str]) -> list[str]:
     ]
 
 
+def extract_windows_rg_bundle(benchmarks_dir: Path) -> Path | None:
+    archive = benchmarks_dir / "rg.zip"
+    if not archive.exists():
+        return None
+
+    with zipfile.ZipFile(archive) as bundle:
+        rg_member = next((name for name in bundle.namelist() if name.endswith("/rg.exe")), None)
+        if rg_member is None:
+            return None
+        bundle.extractall(benchmarks_dir)
+
+    extracted = benchmarks_dir / Path(rg_member)
+    if extracted.exists():
+        return extracted
+    return None
+
+
 def resolve_rg_binary() -> str:
     path = shutil.which("rg")
     if path:
         return path
-    local = Path(__file__).resolve().parent / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
+    benchmarks_dir = Path(__file__).resolve().parent
+    local = benchmarks_dir / WINDOWS_RG_DIRNAME / "rg.exe"
     if local.exists():
         return str(local)
-    raise FileNotFoundError("ripgrep binary not found on PATH or in benchmarks folder.")
+    if platform.system() == "Windows":
+        extracted = extract_windows_rg_bundle(benchmarks_dir)
+        if extracted is not None:
+            return str(extracted)
+    raise FileNotFoundError(
+        "ripgrep binary not found on PATH, in benchmarks folder, or extractable from benchmarks/rg.zip."
+    )
 
 
 def compare_results(rg_out, tg_out, scenario_name):
