@@ -1,6 +1,6 @@
 {
   "milestone": "contract-fixes",
-  "round": 1,
+  "round": 2,
   "status": "pass",
   "assertionsSummary": {
     "total": 5,
@@ -17,12 +17,6 @@
   ],
   "failedAssertions": [],
   "blockedAssertions": [],
-  "appliedUpdates": [
-    {
-      "target": "user-testing.md",
-      "description": "Added Flow Validator Guidance: contract-fixes assertions section with specific test commands and evidence requirements for all 5 contract-fixes milestone assertions",
-      "source": "setup"
-    }
-  ],
-  "previousRound": null
+  "appliedUpdates": [],
+  "previousRound": ".factory/validation/contract-fixes/user-testing/synthesis.json (round 1)"
 }

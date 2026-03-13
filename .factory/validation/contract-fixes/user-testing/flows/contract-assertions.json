@@ -1,37 +1,29 @@
 {
   "groupId": "contract-assertions",
-  "testedAt": "2026-03-13T09:33:00Z",
+  "testedAt": "2026-03-13T09:37:00Z",
   "isolation": {
     "appDirectory": "C:\\dev\\projects\\tensor-grep",
-    "testingTool": "pytest (via uv run pytest)",
-    "shell": "PowerShell on Windows",
-    "gpuAvailable": false
+    "shell": "PowerShell (Windows)",
+    "python": "python 3.14.0 (uv venv uses 3.12.12)",
+    "packageRunner": "uv run"
   },
-  "toolsUsed": ["pytest"],
   "assertions": {
     "VAL-CONTRACT-001": {
       "status": "pass",
       "title": "Strict Hardware Pinning Failure",
       "steps": [
         {
-          "action": "Run test_should_raise_configuration_error_when_explicit_gpu_ids_have_no_available_gpu_backend",
-          "expected": "Test passes confirming ConfigurationError is raised when explicit GPU device IDs given but no GPU backend available",
-          "observed": "PASSED (exit code 0, 1 passed in 0.43s)"
+          "action": "uv run pytest tests/unit/test_pipeline.py::TestPipeline::test_should_raise_configuration_error_when_explicit_gpu_ids_have_no_available_gpu_backend -v",
+          "expected": "Test passes confirming ConfigurationError raised when GPU backend unavailable with explicit device IDs",
+          "observed": "1 passed in 1.40s, exit code 0"
         },
         {
-          "action": "Run test_pipeline_fallback_should_raise_configuration_error_when_explicit_gpu_ids_have_no_routable_chunk_plan",
-          "expected": "Test passes confirming ConfigurationError on fallback with explicit GPU IDs",
-          "observed": "PASSED (exit code 0, 1 passed in 0.42s)"
+          "action": "uv run pytest tests/unit/test_pipeline.py::TestPipeline::test_pipeline_fallback_should_raise_configuration_error_when_explicit_gpu_ids_have_no_routable_chunk_plan -v",
+          "expected": "Test passes confirming ConfigurationError raised when explicit GPU IDs have no routable chunk plan",
+          "observed": "1 passed in 0.72s, exit code 0"
         }
       ],
-      "evidence": {
-        "terminalOutput": [
-          "contract-fixes/contract-assertions/VAL-CONTRACT-001-gpu-pinning-test1.txt",
-          "contract-fixes/contract-assertions/VAL-CONTRACT-001-gpu-pinning-test2.txt"
-        ],
-        "exitCodes": [0, 0],
-        "testResults": "2/2 tests passed"
-      },
+      "evidence": "Both tests passed: test_should_raise_configuration_error_when_explicit_gpu_ids_have_no_available_gpu_backend (1 passed, 1.40s) and test_pipeline_fallback_should_raise_configuration_error_when_explicit_gpu_ids_have_no_routable_chunk_plan (1 passed, 0.72s). ConfigurationError is correctly raised when GPU backends are unavailable but explicit device IDs are provided.",
       "issues": null
     },
     "VAL-CONTRACT-002": {
@@ -39,18 +31,12 @@
       "title": "Strict AST Fallback Failure",
       "steps": [
         {
-          "action": "Run pytest tests/unit/test_pipeline.py -k 'ast' -v",
-          "expected": "All AST tests pass, including test_pipeline_fallback_should_raise_configuration_error_when_ast_dependencies_fail_to_import",
-          "observed": "4 passed, 26 deselected (exit code 0, 0.44s). Key test test_pipeline_fallback_should_raise_configuration_error_when_ast_dependencies_fail_to_import PASSED."
+          "action": "uv run pytest tests/unit/test_pipeline.py -k \"ast\" -v",
+          "expected": "All AST-related tests pass, including ConfigurationError when --ast explicit but AST backends fail to import",
+          "observed": "4 passed, 26 deselected in 0.41s, exit code 0. Tests: test_should_prefer_ast_backend_over_wrapper_when_both_are_available, test_should_prefer_ast_wrapper_by_default_when_both_ast_backends_are_available, test_should_prefer_ast_wrapper_for_ast_grep_style_patterns_even_when_native_is_requested, test_pipeline_fallback_should_raise_configuration_error_when_ast_dependencies_fail_to_import"
         }
       ],
-      "evidence": {
-        "terminalOutput": [
-          "contract-fixes/contract-assertions/VAL-CONTRACT-002-ast-fallback-tests.txt"
-        ],
-        "exitCodes": [0],
-        "testResults": "4/4 AST tests passed; key assertion test confirmed ConfigurationError on AST import failure"
-      },
+      "evidence": "4 AST-related tests passed including test_pipeline_fallback_should_raise_configuration_error_when_ast_dependencies_fail_to_import. ConfigurationError is correctly raised when --ast is explicit but AST backends fail to import.",
       "issues": null
     },
     "VAL-CONTRACT-003": {
@@ -58,34 +44,50 @@
       "title": "NLP Routing Validation",
       "steps": [
         {
-          "action": "Run test_nlp_routing_should_select_cybert_backend_for_nlp_queries",
-          "expected": "Test passes confirming NLP queries are routed to CybertBackend",
-          "observed": "PASSED (exit code 0, 1 passed in 0.64s)"
+          "action": "uv run pytest tests/unit/test_pipeline.py::TestPipeline::test_nlp_routing_should_select_cybert_backend_for_nlp_queries -v",
+          "expected": "Test passes confirming NLP queries route to CybertBackend",
+          "observed": "1 passed in 0.54s, exit code 0"
         },
         {
-          "action": "Run full CybertBackend unit test suite (test_cybert_backend.py)",
-          "expected": "All CybertBackend tests pass",
-          "observed": "6/6 PASSED (exit code 0, 12.93s)"
+          "action": "uv run pytest tests/unit/test_cybert_backend.py -v",
+          "expected": "All CybertBackend unit tests pass",
+          "observed": "6 passed in 13.03s, exit code 0. Tests: test_should_tokenize_log_lines, test_should_classify_with_model_output, test_should_filterConfidence_when_nlpThresholdSet, test_should_raise_when_inference_fails, test_should_use_heuristic_fallback_when_triton_missing, test_should_return_search_result_with_nlp_routing_metadata"
         },
         {
-          "action": "Run CLI classify e2e test (test_cli_classify.py)",
-          "expected": "classify subcommand works end-to-end",
-          "observed": "PASSED (exit code 0, 1 passed in 13.05s)"
+          "action": "uv run pytest tests/e2e/test_cli_classify.py -v",
+          "expected": "CLI classify e2e test passes",
+          "observed": "1 passed in 12.95s, exit code 0. Test: test_should_classify_log_lines"
         }
       ],
-      "evidence": {
-        "terminalOutput": [
-          "contract-fixes/contract-assertions/VAL-CONTRACT-003-nlp-routing-pipeline.txt",
-          "contract-fixes/contract-assertions/VAL-CONTRACT-003-cybert-backend.txt",
-          "contract-fixes/contract-assertions/VAL-CONTRACT-003-cli-classify.txt"
-        ],
-        "exitCodes": [0, 0, 0],
-        "testResults": "8/8 tests passed across pipeline routing, backend unit tests, and CLI e2e"
-      },
+      "evidence": "Pipeline correctly routes NLP queries to CybertBackend (1 pipeline test passed). CybertBackend unit tests all pass (6/6). CLI classify subcommand e2e test passes (1/1).",
+      "issues": null
+    },
+    "VAL-CROSS-002": {
+      "status": "pass",
+      "title": "CI/Release Gate Cleanliness",
+      "steps": [
+        {
+          "action": "uv run ruff check .",
+          "expected": "Zero lint errors, exit code 0",
+          "observed": "All checks passed! Exit code 0."
+        },
+        {
+          "action": "uv run mypy src/tensor_grep",
+          "expected": "Zero type errors, exit code 0",
+          "observed": "Success: no issues found in 42 source files. Exit code 0."
+        },
+        {
+          "action": "uv run pytest -q",
+          "expected": "All tests pass, exit code 0",
+          "observed": "475 passed, 14 skipped in 75.51s. Exit code 0. Zero failures."
+        }
+      ],
+      "evidence": "All three CI gate commands completed with exit code 0: ruff (all checks passed), mypy (no issues in 42 source files), pytest (475 passed, 14 skipped, 0 failures in 75.51s).",
       "issues": null
     }
   },
   "frictions": [],
   "blockers": [],
-  "summary": "Tested 3 assertions: 3 passed, 0 failed, 0 blocked. All contract-fixes validation assertions confirmed working. VAL-CONTRACT-001 verified via 2 GPU pinning fatal-error tests, VAL-CONTRACT-002 verified via AST fallback fatal-error test, VAL-CONTRACT-003 verified via 8 NLP routing/backend/CLI tests."
+  "toolsUsed": ["uv run pytest", "uv run ruff", "uv run mypy"],
+  "summary": "Tested 4 assertions: all 4 passed. VAL-CONTRACT-001 confirmed GPU pinning fatal error behavior. VAL-CONTRACT-002 confirmed AST fallback fatal error behavior. VAL-CONTRACT-003 confirmed NLP routing to CybertBackend. VAL-CROSS-002 confirmed full CI gate cleanliness (ruff, mypy, pytest all exit 0 with zero errors)."
 }
