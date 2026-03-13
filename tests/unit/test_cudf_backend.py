@@ -3,6 +3,17 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+WINDOWS_WORKER_ISOLATION_TESTS = (
+    "test_worker_isolation_sets_cuda_visible_devices_before_worker_imports",
+    "test_worker_isolation_uses_fresh_process_pool_children_on_windows",
+)
+WINDOWS_ONLY_WORKER_ISOLATION = pytest.mark.skipif(
+    os.name != "nt",
+    reason="Windows-specific CUDA worker isolation assertions",
+)
+
 
 class TestCuDFBackend:
     """Unit tests: mock cuDF so no GPU needed."""
@@ -366,6 +377,30 @@ class TestCuDFBackend:
         mock_pool.assert_not_called()
         assert all(call.args[0] == 3 for call in mock_process_chunk.call_args_list)
 
+    def test_worker_isolation_tests_are_guarded_for_windows_only(self):
+        for test_name in WINDOWS_WORKER_ISOLATION_TESTS:
+            test_func = getattr(type(self), test_name)
+            skipif_marks = [mark for mark in getattr(test_func, "pytestmark", []) if mark.name == "skipif"]
+
+            assert skipif_marks, f"{test_name} should skip on non-Windows platforms"
+            assert any(mark.args == (os.name != "nt",) for mark in skipif_marks)
+
+    def test_configure_cuda_worker_environment_preserves_device_id_on_non_windows(
+        self, monkeypatch
+    ):
+        from tensor_grep.backends import cudf_backend
+
+        monkeypatch.setattr(cudf_backend.os, "name", "posix", raising=False)
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "existing-device")
+        monkeypatch.setenv("CUDA_DEVICE_ORDER", "existing-order")
+
+        local_device_id = cudf_backend._configure_cuda_worker_environment(7)
+
+        assert local_device_id == 7
+        assert os.environ["CUDA_VISIBLE_DEVICES"] == "existing-device"
+        assert os.environ["CUDA_DEVICE_ORDER"] == "existing-order"
+
+    @WINDOWS_ONLY_WORKER_ISOLATION
     def test_worker_isolation_sets_cuda_visible_devices_before_worker_imports(
         self, monkeypatch
     ):
@@ -412,6 +447,7 @@ class TestCuDFBackend:
 
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
     @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
+    @WINDOWS_ONLY_WORKER_ISOLATION
     def test_worker_isolation_uses_fresh_process_pool_children_on_windows(
         self, _mock_as_completed, mock_pool
     ):
