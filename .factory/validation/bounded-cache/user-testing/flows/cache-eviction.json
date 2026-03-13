@@ -1,0 +1,15 @@
+{
+  "flowId": "cache-eviction",
+  "testedAt": "2026-03-13T00:00:00Z",
+  "assertions": {
+    "VAL-CACHE-001": {
+      "status": "pass",
+      "evidence": "All 4 pytest tests passed (exit code 0). Implementation verified: OrderedDict-based LRU with byte tracking, while-loop eviction via popitem(last=False), env var TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES for configurable limits, oversized entry rejection, and file identity invalidation via (st_dev, st_ino, st_mtime_ns, st_ctime_ns, st_size) signature.",
+      "details": "test_should_evict_least_recently_used_parsed_source_entries_when_byte_budget_is_exceeded: PASSED — confirms LRU eviction when byte budget (80 bytes) is exceeded, verifying oldest entry is evicted and recently accessed entries are retained. test_should_skip_caching_parsed_source_entries_that_exceed_the_byte_budget: PASSED — confirms entries larger than the budget (10 bytes) are never cached, parse is called every time. test_should_invalidate_parsed_source_cache_when_file_identity_changes_without_mtime_or_size_change: PASSED — confirms cache invalidation when file inode changes (unlink+recreate) even with same mtime, source content differs. test_should_invalidate_parsed_source_cache_when_file_changes: PASSED — confirms cache invalidation when file content/size changes, triggering re-parse."
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["pytest"],
+  "summary": "Tested 1 assertion (VAL-CACHE-001): PASSED. All 4 targeted pytest tests passed with exit code 0. Implementation uses OrderedDict-based LRU cache with strict byte-budget eviction, oversized entry rejection, and file identity invalidation."
+}
