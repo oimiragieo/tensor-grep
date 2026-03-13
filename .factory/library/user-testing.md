@@ -21,6 +21,31 @@ When testing assertions that are verified via the pytest test suite:
 - Also verify the code structure: `_configure_cuda_worker_environment()` is called before `import cudf` / `import rmm` in `_process_chunk_on_device()`.
 - No shared state concerns for read-only pytest runs.
 
+## Flow Validator Guidance: contract-fixes assertions
+
+### VAL-CONTRACT-001 (GPU pinning fatal error)
+- **Test**: `uv run pytest tests/unit/test_pipeline.py::TestPipeline::test_should_raise_configuration_error_when_explicit_gpu_ids_have_no_available_gpu_backend -v` 
+- **Also**: `uv run pytest tests/unit/test_pipeline.py::TestPipeline::test_pipeline_fallback_should_raise_configuration_error_when_explicit_gpu_ids_have_no_routable_chunk_plan -v`
+- **Evidence**: Both tests must pass, confirming ConfigurationError is raised when GPU backends are unavailable but explicit device IDs are provided.
+
+### VAL-CONTRACT-002 (AST fallback fatal error)
+- **Test**: Run `uv run pytest tests/unit/test_pipeline.py -k "ast" -v` to find AST-related tests.
+- **Code verification**: Check `src/tensor_grep/core/pipeline.py` for the explicit AST import failure → ConfigurationError path.
+- **Evidence**: Test passes confirming ConfigurationError is raised when --ast is explicit but AST backends fail to import.
+
+### VAL-CONTRACT-003 (NLP routing to CybertBackend)
+- **Test**: `uv run pytest tests/unit/test_pipeline.py::TestPipeline::test_nlp_routing_should_select_cybert_backend_for_nlp_queries -v`
+- **Also**: `uv run pytest tests/unit/test_cybert_backend.py -v` and `uv run pytest tests/e2e/test_cli_classify.py -v`
+- **Evidence**: Pipeline correctly routes NLP queries to CybertBackend; classify CLI subcommand works.
+
+### VAL-CROSS-001 (Benchmark governance)
+- **Test**: Run `python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.json` and `python benchmarks/run_hot_query_benchmarks.py --output artifacts/bench_hot_query_benchmarks.json`
+- **Evidence**: No regression detected. Note: benchmarks may show SKIP for GPU paths if no GPU available — this is expected.
+
+### VAL-CROSS-002 (CI/Release gate cleanliness)
+- **Test**: Run in sequence: `uv run ruff check .`, `uv run mypy src/tensor_grep`, `uv run pytest -q`
+- **Evidence**: All three commands exit with code 0 and zero errors.
+
 ## Flow Validator Guidance: Rust CLI / cargo test
 
 When testing assertions related to the Rust core (`rust_core/`):

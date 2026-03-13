@@ -1,0 +1,91 @@
+{
+  "groupId": "contract-assertions",
+  "testedAt": "2026-03-13T09:33:00Z",
+  "isolation": {
+    "appDirectory": "C:\\dev\\projects\\tensor-grep",
+    "testingTool": "pytest (via uv run pytest)",
+    "shell": "PowerShell on Windows",
+    "gpuAvailable": false
+  },
+  "toolsUsed": ["pytest"],
+  "assertions": {
+    "VAL-CONTRACT-001": {
+      "status": "pass",
+      "title": "Strict Hardware Pinning Failure",
+      "steps": [
+        {
+          "action": "Run test_should_raise_configuration_error_when_explicit_gpu_ids_have_no_available_gpu_backend",
+          "expected": "Test passes confirming ConfigurationError is raised when explicit GPU device IDs given but no GPU backend available",
+          "observed": "PASSED (exit code 0, 1 passed in 0.43s)"
+        },
+        {
+          "action": "Run test_pipeline_fallback_should_raise_configuration_error_when_explicit_gpu_ids_have_no_routable_chunk_plan",
+          "expected": "Test passes confirming ConfigurationError on fallback with explicit GPU IDs",
+          "observed": "PASSED (exit code 0, 1 passed in 0.42s)"
+        }
+      ],
+      "evidence": {
+        "terminalOutput": [
+          "contract-fixes/contract-assertions/VAL-CONTRACT-001-gpu-pinning-test1.txt",
+          "contract-fixes/contract-assertions/VAL-CONTRACT-001-gpu-pinning-test2.txt"
+        ],
+        "exitCodes": [0, 0],
+        "testResults": "2/2 tests passed"
+      },
+      "issues": null
+    },
+    "VAL-CONTRACT-002": {
+      "status": "pass",
+      "title": "Strict AST Fallback Failure",
+      "steps": [
+        {
+          "action": "Run pytest tests/unit/test_pipeline.py -k 'ast' -v",
+          "expected": "All AST tests pass, including test_pipeline_fallback_should_raise_configuration_error_when_ast_dependencies_fail_to_import",
+          "observed": "4 passed, 26 deselected (exit code 0, 0.44s). Key test test_pipeline_fallback_should_raise_configuration_error_when_ast_dependencies_fail_to_import PASSED."
+        }
+      ],
+      "evidence": {
+        "terminalOutput": [
+          "contract-fixes/contract-assertions/VAL-CONTRACT-002-ast-fallback-tests.txt"
+        ],
+        "exitCodes": [0],
+        "testResults": "4/4 AST tests passed; key assertion test confirmed ConfigurationError on AST import failure"
+      },
+      "issues": null
+    },
+    "VAL-CONTRACT-003": {
+      "status": "pass",
+      "title": "NLP Routing Validation",
+      "steps": [
+        {
+          "action": "Run test_nlp_routing_should_select_cybert_backend_for_nlp_queries",
+          "expected": "Test passes confirming NLP queries are routed to CybertBackend",
+          "observed": "PASSED (exit code 0, 1 passed in 0.64s)"
+        },
+        {
+          "action": "Run full CybertBackend unit test suite (test_cybert_backend.py)",
+          "expected": "All CybertBackend tests pass",
+          "observed": "6/6 PASSED (exit code 0, 12.93s)"
+        },
+        {
+          "action": "Run CLI classify e2e test (test_cli_classify.py)",
+          "expected": "classify subcommand works end-to-end",
+          "observed": "PASSED (exit code 0, 1 passed in 13.05s)"
+        }
+      ],
+      "evidence": {
+        "terminalOutput": [
+          "contract-fixes/contract-assertions/VAL-CONTRACT-003-nlp-routing-pipeline.txt",
+          "contract-fixes/contract-assertions/VAL-CONTRACT-003-cybert-backend.txt",
+          "contract-fixes/contract-assertions/VAL-CONTRACT-003-cli-classify.txt"
+        ],
+        "exitCodes": [0, 0, 0],
+        "testResults": "8/8 tests passed across pipeline routing, backend unit tests, and CLI e2e"
+      },
+      "issues": null
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: 3 passed, 0 failed, 0 blocked. All contract-fixes validation assertions confirmed working. VAL-CONTRACT-001 verified via 2 GPU pinning fatal-error tests, VAL-CONTRACT-002 verified via AST fallback fatal-error test, VAL-CONTRACT-003 verified via 8 NLP routing/backend/CLI tests."
+}
