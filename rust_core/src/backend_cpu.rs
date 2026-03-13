@@ -1,5 +1,5 @@
 use memchr::memmem;
-use memmap2::MmapOptions;
+use memmap2::{MmapMut, MmapOptions};
 use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
 use std::fs::{File, OpenOptions};
@@ -185,11 +185,7 @@ impl CpuBackend {
     ) -> anyhow::Result<()> {
         let path_obj = Path::new(path);
 
-        if fixed_strings
-            && !ignore_case
-            && !pattern.is_empty()
-            && !replacement.as_bytes().contains(&b'$')
-        {
+        if fixed_strings && !ignore_case && !pattern.is_empty() {
             if path_obj.is_file() {
                 self.replace_file_literal(
                     pattern.as_bytes(),
@@ -260,6 +256,7 @@ impl CpuBackend {
                 let end = start + replacement.len();
                 mmap[start..end].copy_from_slice(replacement);
             }
+            mmap.flush()?;
             return Ok(());
         }
 
@@ -316,7 +313,7 @@ impl CpuBackend {
 
         {
             let mut mmap = unsafe { MmapOptions::new().map_mut(file)? };
-            self.apply_replacements_in_place(&mut mmap[..], original_len, &replacements);
+            self.apply_replacements_in_place(&mut mmap, original_len, &replacements)?;
         }
 
         if new_len < required_len {
@@ -380,10 +377,10 @@ impl CpuBackend {
 
     fn apply_replacements_in_place(
         &self,
-        mmap: &mut [u8],
+        mmap: &mut MmapMut,
         original_len: usize,
         replacements: &[ReplacementOp],
-    ) {
+    ) -> anyhow::Result<()> {
         let mut current_len = original_len;
         let mut delta: isize = 0;
 
@@ -409,6 +406,9 @@ impl CpuBackend {
             let write_end = start + new_match_len;
             mmap[start..write_end].copy_from_slice(&replacement.bytes);
         }
+
+        mmap.flush()?;
+        Ok(())
     }
 
     pub fn count_matches(
