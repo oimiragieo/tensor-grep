@@ -25,7 +25,10 @@ def _get_triton_timeout_seconds() -> float:
         return _DEFAULT_TRITON_TIMEOUT_SECONDS
 
     try:
-        return max(float(raw_timeout), 0.0)
+        parsed_timeout = float(raw_timeout)
+        # Intentionally allow float("inf") so operators can disable Triton HTTP timeouts
+        # entirely, while still clamping accidental negative values to zero seconds.
+        return max(parsed_timeout, 0.0)
     except ValueError:
         logger.debug("Ignoring invalid %s=%r", _TRITON_TIMEOUT_ENV_VAR, raw_timeout)
         return _DEFAULT_TRITON_TIMEOUT_SECONDS

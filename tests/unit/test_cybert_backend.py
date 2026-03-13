@@ -1,3 +1,4 @@
+import math
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -77,6 +78,36 @@ class TestCybertBackend:
         assert client_kwargs["url"] == "localhost:8000"
         assert client_kwargs.get("network_timeout") == 12.5
         assert client_kwargs.get("connection_timeout") == 12.5
+
+    @pytest.mark.parametrize(
+        ("raw_timeout", "expected_timeout"),
+        [
+            pytest.param("-1", 0.0, id="negative-clamps-to-zero"),
+            pytest.param("", None, id="empty-string-falls-back-to-default"),
+            pytest.param("not-a-number", None, id="non-numeric-falls-back-to-default"),
+            pytest.param("inf", float("inf"), id="infinity-is-accepted"),
+        ],
+    )
+    def test_should_handle_triton_timeout_env_var_edge_cases(
+        self, monkeypatch, raw_timeout, expected_timeout
+    ):
+        monkeypatch.setenv("TENSOR_GREP_TRITON_TIMEOUT_SECONDS", raw_timeout)
+
+        from tensor_grep.backends.cybert_backend import (
+            _DEFAULT_TRITON_TIMEOUT_SECONDS,
+            _get_triton_timeout_seconds,
+        )
+
+        timeout_seconds = _get_triton_timeout_seconds()
+        if expected_timeout is None:
+            assert timeout_seconds == _DEFAULT_TRITON_TIMEOUT_SECONDS
+            return
+
+        if math.isinf(expected_timeout):
+            assert math.isinf(timeout_seconds)
+            return
+
+        assert timeout_seconds == expected_timeout
 
     @patch("tensor_grep.backends.cybert_backend._has_cybert_runtime_dependencies", return_value=False)
     def test_should_report_unavailable_when_runtime_dependencies_are_missing(self, _mock_has_deps):
