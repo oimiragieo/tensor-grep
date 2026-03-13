@@ -14,6 +14,9 @@ from tensor_grep.io.reader_fallback import FallbackReader
 
 logger = logging.getLogger(__name__)
 
+TRITON_CONNECTION_TIMEOUT_SECONDS = 5.0
+TRITON_NETWORK_TIMEOUT_SECONDS = 5.0
+
 def _module_is_available(module_name: str) -> bool:
     try:
         return importlib.util.find_spec(module_name) is not None
@@ -25,6 +28,16 @@ def _has_cybert_runtime_dependencies() -> bool:
     return all(
         _module_is_available(module_name)
         for module_name in ("numpy", "transformers", "tritonclient.http")
+    )
+
+
+def _create_triton_http_client(url: str) -> Any:
+    import tritonclient.http as httpclient
+
+    return httpclient.InferenceServerClient(
+        url=url,
+        connection_timeout=TRITON_CONNECTION_TIMEOUT_SECONDS,
+        network_timeout=TRITON_NETWORK_TIMEOUT_SECONDS,
     )
 
 
@@ -116,9 +129,7 @@ class CybertBackend(ComputeBackend):
             return False
 
         try:
-            import tritonclient.http as httpclient
-
-            client = httpclient.InferenceServerClient(url=self.url)
+            client = _create_triton_http_client(self.url)
         except Exception:
             return False
 
@@ -191,7 +202,7 @@ class CybertBackend(ComputeBackend):
         except ImportError:
             return self._heuristic_classify(lines)
 
-        client = httpclient.InferenceServerClient(url=self.url)
+        client = _create_triton_http_client(self.url)
 
         # Simplified simulation of triton prepare and request
         try:

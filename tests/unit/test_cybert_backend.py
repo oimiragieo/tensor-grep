@@ -49,6 +49,57 @@ class TestCybertBackend:
 
         assert CybertBackend().is_available() is True
 
+        client_kwargs = httpclient.InferenceServerClient.call_args.kwargs
+        assert client_kwargs["url"] == "localhost:8000"
+        assert (
+            client_kwargs.get("network_timeout") is not None
+            or client_kwargs.get("connection_timeout") is not None
+        )
+
+    @patch("tensor_grep.backends.cybert_backend._has_cybert_runtime_dependencies", return_value=False)
+    def test_should_report_unavailable_when_runtime_dependencies_are_missing(self, _mock_has_deps):
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        assert CybertBackend().is_available() is False
+
+    @patch.dict(
+        "sys.modules",
+        {
+            "numpy": MagicMock(),
+            "transformers": MagicMock(),
+            "tritonclient": MagicMock(),
+            "tritonclient.http": MagicMock(),
+        },
+    )
+    def test_should_report_unavailable_when_triton_client_creation_fails(self):
+        import tritonclient.http as httpclient
+
+        httpclient.InferenceServerClient.side_effect = RuntimeError("connection refused")
+
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        assert CybertBackend().is_available() is False
+
+    @patch.dict(
+        "sys.modules",
+        {
+            "numpy": MagicMock(),
+            "transformers": MagicMock(),
+            "tritonclient": MagicMock(),
+            "tritonclient.http": MagicMock(),
+        },
+    )
+    def test_should_report_unavailable_when_triton_server_is_not_live(self):
+        import tritonclient.http as httpclient
+
+        mock_client = MagicMock()
+        mock_client.is_server_live.return_value = False
+        httpclient.InferenceServerClient.return_value = mock_client
+
+        from tensor_grep.backends.cybert_backend import CybertBackend
+
+        assert CybertBackend().is_available() is False
+
     def test_should_inherit_compute_backend_protocol(self):
         from tensor_grep.backends.base import ComputeBackend
         from tensor_grep.backends.cybert_backend import CybertBackend
@@ -91,6 +142,13 @@ class TestCybertBackend:
         assert len(results) == 1
         assert results[0]["label"] == "warn"  # index 1 has highest prob 0.8
         assert results[0]["confidence"] == 0.8
+
+        client_kwargs = httpclient.InferenceServerClient.call_args.kwargs
+        assert client_kwargs["url"] == "localhost:8000"
+        assert (
+            client_kwargs.get("network_timeout") is not None
+            or client_kwargs.get("connection_timeout") is not None
+        )
 
     @patch.dict("sys.modules", {"tritonclient": MagicMock(), "tritonclient.http": MagicMock()})
     def test_should_filterConfidence_when_nlpThresholdSet(self):
