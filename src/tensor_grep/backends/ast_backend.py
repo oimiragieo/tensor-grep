@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -16,6 +17,12 @@ from tensor_grep.core.result import MatchLine, SearchResult
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_PARSED_SOURCE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+
+FileSignature = tuple[int, int, int, int, int]
+ParsedSourceCacheEntry = tuple[FileSignature, bytes, list[str], Any, int]
+NodeTypeIndexCacheEntry = tuple[FileSignature, dict[str, list[int]]]
+
 
 class AstBackend(ComputeBackend):
     """
@@ -27,10 +34,11 @@ class AstBackend(ComputeBackend):
     _shared_parsers: ClassVar[dict[str, Any]] = {}
     _shared_queries: ClassVar[dict[tuple[str, str], Any]] = {}
     _shared_parsed_source_cache: ClassVar[
-        dict[tuple[str, str], tuple[tuple[int, int], bytes, list[str], Any]]
-    ] = {}
+        OrderedDict[tuple[str, str], ParsedSourceCacheEntry]
+    ] = OrderedDict()
+    _shared_parsed_source_cache_bytes: ClassVar[int] = 0
     _shared_node_type_index_cache: ClassVar[
-        dict[tuple[str, str], tuple[tuple[int, int], dict[str, list[int]]]]
+        dict[tuple[str, str], NodeTypeIndexCacheEntry]
     ] = {}
 
     def __init__(self) -> None:
@@ -44,6 +52,7 @@ class AstBackend(ComputeBackend):
         cls._shared_parsers.clear()
         cls._shared_queries.clear()
         cls._shared_parsed_source_cache.clear()
+        cls._shared_parsed_source_cache_bytes = 0
         cls._shared_node_type_index_cache.clear()
 
     def _is_persistent_cache_enabled(self) -> bool:
@@ -67,9 +76,92 @@ class AstBackend(ComputeBackend):
             return Path(xdg_cache_home) / "tensor-grep" / "ast-cache"
         return Path.home() / ".cache" / "tensor-grep" / "ast-cache"
 
-    def _build_file_signature(self, file_path: str) -> tuple[int, int]:
+    def _build_file_signature(self, file_path: str) -> FileSignature:
         stat_result = os.stat(file_path)
-        return stat_result.st_mtime_ns, stat_result.st_size
+        return (
+            stat_result.st_dev,
+            stat_result.st_ino,
+            stat_result.st_mtime_ns,
+            getattr(stat_result, "st_ctime_ns", int(stat_result.st_ctime * 1_000_000_000)),
+            stat_result.st_size,
+        )
+
+    def _get_parsed_source_cache_limit_bytes(self) -> int:
+        raw_limit = os.environ.get("TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES")
+        if raw_limit is None:
+            return _DEFAULT_PARSED_SOURCE_CACHE_MAX_BYTES
+
+        try:
+            return max(int(raw_limit), 0)
+        except ValueError:
+            logger.debug(
+                "Ignoring invalid TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES=%r",
+                raw_limit,
+            )
+            return _DEFAULT_PARSED_SOURCE_CACHE_MAX_BYTES
+
+    def _estimate_parsed_source_cache_entry_size(self, source_bytes: bytes) -> int:
+        return len(source_bytes)
+
+    def _discard_cached_parsed_source(self, cache_key: tuple[str, str]) -> None:
+        cached = self._parsed_source_cache.pop(cache_key, None)
+        if cached is None:
+            return
+
+        self.__class__._shared_parsed_source_cache_bytes = max(
+            0,
+            self.__class__._shared_parsed_source_cache_bytes - cached[4],
+        )
+
+    def _get_cached_parsed_source_entry(
+        self, file_path: str, lang: str
+    ) -> tuple[bytes, list[str], Any] | None:
+        cache_key = (file_path, lang)
+        cache_signature = self._build_file_signature(file_path)
+        cached = self._parsed_source_cache.get(cache_key)
+        if cached is None:
+            return None
+        if cached[0] != cache_signature:
+            self._discard_cached_parsed_source(cache_key)
+            return None
+
+        self._parsed_source_cache.move_to_end(cache_key)
+        return cached[1], cached[2], cached[3]
+
+    def _store_parsed_source_cache_entry(
+        self,
+        file_path: str,
+        lang: str,
+        cache_signature: FileSignature,
+        source_bytes: bytes,
+        lines: list[str],
+        tree: Any,
+    ) -> None:
+        cache_limit_bytes = self._get_parsed_source_cache_limit_bytes()
+        cache_key = (file_path, lang)
+
+        self._discard_cached_parsed_source(cache_key)
+
+        entry_size = self._estimate_parsed_source_cache_entry_size(source_bytes)
+        if cache_limit_bytes <= 0 or entry_size > cache_limit_bytes:
+            return
+
+        self._parsed_source_cache[cache_key] = (
+            cache_signature,
+            source_bytes,
+            lines,
+            tree,
+            entry_size,
+        )
+        self._parsed_source_cache.move_to_end(cache_key)
+        self.__class__._shared_parsed_source_cache_bytes += entry_size
+
+        while self.__class__._shared_parsed_source_cache_bytes > cache_limit_bytes:
+            _, evicted = self._parsed_source_cache.popitem(last=False)
+            self.__class__._shared_parsed_source_cache_bytes = max(
+                0,
+                self.__class__._shared_parsed_source_cache_bytes - evicted[4],
+            )
 
     def _is_simple_node_type_pattern(self, pattern: str) -> bool:
         return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", pattern.strip()))
@@ -292,27 +384,31 @@ class AstBackend(ComputeBackend):
     def _get_parsed_source(
         self, parser: Any, file_path: str, lang: str
     ) -> tuple[bytes, list[str], Any]:
-        cache_key = (file_path, lang)
+        cached = self._get_cached_parsed_source_entry(file_path, lang)
+        if cached is not None:
+            return cached
+
         cache_signature = self._build_file_signature(file_path)
-        cached = self._parsed_source_cache.get(cache_key)
-        if cached and cached[0] == cache_signature:
-            _, source_bytes, lines, tree = cached
-            return source_bytes, lines, tree
 
         with open(file_path, "rb") as f:
             source_bytes = f.read()
 
         tree = parser.parse(source_bytes)
-        lines = source_bytes.decode("utf-8").split("\n")
-        self._parsed_source_cache[cache_key] = (cache_signature, source_bytes, lines, tree)
+        lines = source_bytes.decode("utf-8").splitlines()
+        self._store_parsed_source_cache_entry(
+            file_path,
+            lang,
+            cache_signature,
+            source_bytes,
+            lines,
+            tree,
+        )
         return source_bytes, lines, tree
 
     def _get_cached_lines(self, file_path: str, lang: str) -> list[str] | None:
-        cache_key = (file_path, lang)
-        cache_signature = self._build_file_signature(file_path)
-        cached = self._parsed_source_cache.get(cache_key)
-        if cached and cached[0] == cache_signature:
-            return cached[2]
+        cached = self._get_cached_parsed_source_entry(file_path, lang)
+        if cached is not None:
+            return cached[1]
         return None
 
     def _ast_to_graph(
@@ -386,7 +482,7 @@ class AstBackend(ComputeBackend):
             if node_type_index is not None and pattern in node_type_index:
                 lines = self._get_cached_lines(file_path, lang)
                 if lines is None:
-                    lines = Path(file_path).read_text(encoding="utf-8").split("\n")
+                    lines = Path(file_path).read_text(encoding="utf-8").splitlines()
                 result = self._build_matches_from_line_numbers(
                     file_path,
                     lines,

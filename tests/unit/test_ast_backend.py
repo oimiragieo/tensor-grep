@@ -1,8 +1,49 @@
+import os
 from pathlib import Path
 
 import pytest
 
 from tensor_grep.core.config import SearchConfig
+
+_NON_SIMPLE_AST_PATTERN = "(function_definition name: (identifier) @name)"
+
+
+class _FakeCapturedNode:
+    def __init__(self, line_number: int = 0):
+        self.start_point = (line_number, 0)
+
+
+class _FakeCacheQuery:
+    def captures(self, _root):
+        return [(_FakeCapturedNode(), "match")]
+
+
+class _FakeCacheLanguage:
+    def __init__(self):
+        self.query_calls = 0
+
+    def query(self, _pattern):
+        self.query_calls += 1
+        return _FakeCacheQuery()
+
+
+class _FakeCacheTree:
+    class RootNode:
+        type = "module"
+        start_point = (0, 0)
+        children = ()
+
+    root_node = RootNode()
+
+
+class _FakeCacheParser:
+    def __init__(self):
+        self.language = _FakeCacheLanguage()
+        self.parse_calls = 0
+
+    def parse(self, _source):
+        self.parse_calls += 1
+        return _FakeCacheTree()
 
 
 class TestAstBackend:
@@ -524,6 +565,101 @@ class TestAstBackend:
         assert second.total_matches == 1
         assert parser_two.parse_calls == 0
         assert parser_two.language.query_calls == 0
+
+    def test_should_evict_least_recently_used_parsed_source_entries_when_byte_budget_is_exceeded(
+        self, tmp_path, mocker, monkeypatch
+    ):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
+        monkeypatch.setenv("TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES", "80")
+        AstBackend._clear_shared_caches()
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+        parser = _FakeCacheParser()
+        mocker.patch.object(backend, "_get_parser", return_value=parser)
+
+        file_a = tmp_path / "a.py"
+        file_b = tmp_path / "b.py"
+        file_c = tmp_path / "c.py"
+        file_a.write_text("def alpha():\n    return 1111111111\n", encoding="utf-8")
+        file_b.write_text("def bravo():\n    return 2222222222\n", encoding="utf-8")
+        file_c.write_text("def charl():\n    return 3333333333\n", encoding="utf-8")
+
+        config = SearchConfig(ast=True, lang="python")
+        backend.search(str(file_a), _NON_SIMPLE_AST_PATTERN, config)
+        backend.search(str(file_b), _NON_SIMPLE_AST_PATTERN, config)
+        backend.search(str(file_a), _NON_SIMPLE_AST_PATTERN, config)
+        backend.search(str(file_c), _NON_SIMPLE_AST_PATTERN, config)
+
+        assert parser.parse_calls == 3
+        assert list(backend._parsed_source_cache) == [
+            (str(file_a), "python"),
+            (str(file_c), "python"),
+        ]
+        assert AstBackend._shared_parsed_source_cache_bytes <= 80
+
+        backend.search(str(file_a), _NON_SIMPLE_AST_PATTERN, config)
+        assert parser.parse_calls == 3
+
+        backend.search(str(file_b), _NON_SIMPLE_AST_PATTERN, config)
+        assert parser.parse_calls == 4
+
+    def test_should_skip_caching_parsed_source_entries_that_exceed_the_byte_budget(
+        self, tmp_path, mocker, monkeypatch
+    ):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
+        monkeypatch.setenv("TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES", "10")
+        AstBackend._clear_shared_caches()
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+        parser = _FakeCacheParser()
+        mocker.patch.object(backend, "_get_parser", return_value=parser)
+
+        file_path = tmp_path / "oversized.py"
+        file_path.write_text("def alpha():\n    return 1111111111\n", encoding="utf-8")
+
+        config = SearchConfig(ast=True, lang="python")
+        backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
+        backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
+
+        assert parser.parse_calls == 2
+        assert backend._parsed_source_cache == {}
+        assert AstBackend._shared_parsed_source_cache_bytes == 0
+
+    def test_should_invalidate_parsed_source_cache_when_file_identity_changes_without_mtime_or_size_change(
+        self, tmp_path, mocker, monkeypatch
+    ):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
+        AstBackend._clear_shared_caches()
+
+        backend = AstBackend()
+        mocker.patch.object(backend, "is_available", return_value=True)
+        parser = _FakeCacheParser()
+        mocker.patch.object(backend, "_get_parser", return_value=parser)
+
+        file_path = tmp_path / "identity.py"
+        file_path.write_text("def alpha():\n    pass\n", encoding="utf-8")
+        original_stat = file_path.stat()
+
+        config = SearchConfig(ast=True, lang="python")
+        first = backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
+
+        file_path.unlink()
+        file_path.write_text("def bravo():\n    pass\n", encoding="utf-8")
+        os.utime(file_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+
+        second = backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
+
+        assert first.matches[0].text == "def alpha():"
+        assert second.matches[0].text == "def bravo():"
+        assert parser.parse_calls == 2
 
     def test_should_reuse_shared_in_memory_node_index_without_disk_reload(
         self, tmp_path, mocker, monkeypatch
