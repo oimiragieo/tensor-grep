@@ -1,0 +1,49 @@
+{
+  "featureId": "cuda-worker-isolation",
+  "milestone": "worker-safety",
+  "verdict": "pass",
+  "codeQuality": {
+    "score": 5,
+    "notes": "Clean, minimal, well-documented change. Two focused helper functions (_configure_cuda_worker_environment, _create_process_pool) encapsulate the Windows-specific behavior with clear docstrings. The import ordering fix is surgically placed between the safe `import re` and the CUDA-heavy `import cudf`/`import rmm`. No unnecessary refactoring or scope creep."
+  },
+  "correctness": {
+    "score": 5,
+    "notes": "The implementation correctly addresses the Windows spawn() CUDA context corruption problem. Setting CUDA_VISIBLE_DEVICES before cudf/rmm import ensures each spawned worker sees only its assigned GPU. Returning logical device 0 after pinning is the correct CUDA convention (CUDA_VISIBLE_DEVICES remaps physical to logical). max_tasks_per_child=1 prevents worker reuse across different GPU assignments. The os.name=='nt' guard correctly scopes changes to Windows only, since Linux fork() inherits parent context without spawn corruption."
+  },
+  "testCoverage": {
+    "score": 4,
+    "notes": "Two new tests added: (1) test_worker_isolation_sets_cuda_visible_devices_before_worker_imports cleverly patches __import__ to capture env vars at exact import time, verifying CUDA_VISIBLE_DEVICES='7' is visible when cudf and rmm are imported for device_id=7, and that rmm.reinitialize receives devices=[0]. (2) test_worker_isolation_uses_fresh_process_pool_children_on_windows verifies max_tasks_per_child=1 on the process pool. Existing test updated to match new kwargs. Minor gap: tests are inherently Windows-only (they assert os.name=='nt' behavior without monkeypatching os.name) and would fail on Linux CI if cross-platform CI is ever added. No test for the non-Windows passthrough path of _configure_cuda_worker_environment."
+  },
+  "issues": [
+    {
+      "severity": "non_blocking",
+      "description": "Tests test_worker_isolation_sets_cuda_visible_devices_before_worker_imports and test_worker_isolation_uses_fresh_process_pool_children_on_windows are platform-coupled: they assert Windows-specific behavior (CUDA_VISIBLE_DEVICES pinning and max_tasks_per_child=1) without monkeypatching os.name. If the project ever runs CI on Linux, these tests will fail. Consider adding a monkeypatch for os.name or adding pytest.mark.skipif(os.name != 'nt') markers."
+    },
+    {
+      "severity": "non_blocking",
+      "description": "The existing test test_should_cap_process_pool_workers_to_execution_plan_size was modified to assert max_tasks_per_child=1 in kwargs, which is also Windows-only behavior. On non-Windows, _create_process_pool does not pass max_tasks_per_child, so this assertion would KeyError. Same platform-coupling concern applies."
+    },
+    {
+      "severity": "suggestion",
+      "description": "The non-Windows branch of _configure_cuda_worker_environment is untested. A simple unit test verifying that on non-Windows it returns device_id unchanged and does not modify os.environ would improve confidence."
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "target": "skills",
+      "observation": "The backend-worker skill mandates strict TDD (write failing test first, see it fail, then implement). The transcript skeleton shows the worker applied production code and test code patches together rather than writing a failing test first. The handoff's skillFeedback.followedProcedure is false but only documents deviations about init.sh and PYTHONPATH, not the TDD ordering. The deviation from TDD is minor since the final tests are correct, but the skill could clarify that simultaneous code+test patches are acceptable when the test is structurally sound.",
+      "evidence": "Transcript skeleton shows sequential ApplyPatch calls for both source and test files, then test execution. Handoff skillFeedback.deviations only lists steps 1.2 and 1.3 (environment init), not step 1 (TDD)."
+    },
+    {
+      "target": "AGENTS.md",
+      "observation": "The mission AGENTS.md documents the PYTHONPATH workaround and init.sh Windows limitation, which the worker correctly used. No gaps found in AGENTS.md coverage for this feature.",
+      "evidence": "Worker used documented workaround: cmd /c \"set PYTHONPATH=...\\src&& uv run --directory ... pytest -q\""
+    },
+    {
+      "target": "library",
+      "observation": "The worker discovered that Windows CUDA multiprocessing requires CUDA_VISIBLE_DEVICES set before cudf/rmm imports, and that max_tasks_per_child=1 prevents cross-device context leaks. This CUDA worker isolation pattern could be documented in .factory/library/ for future workers touching GPU backends.",
+      "evidence": "Pattern implemented in _configure_cuda_worker_environment and _create_process_pool in cudf_backend.py. This knowledge is non-obvious and specific to Windows spawn() semantics."
+    }
+  ],
+  "summary": "The cuda-worker-isolation feature correctly fixes Windows CUDA multiprocessing spawn() context corruption. The implementation pins CUDA_VISIBLE_DEVICES before cudf/rmm imports in spawned workers and uses max_tasks_per_child=1 to prevent worker reuse contamination. Code quality is high with clean, minimal, well-documented changes. Tests verify the critical import-ordering and pool configuration. Two non-blocking concerns: (1) tests are platform-coupled to Windows without explicit os.name guards or skip markers, and (2) the non-Windows passthrough path is untested. VAL-CUDA-001 is fulfilled: worker processes explicitly set CUDA_VISIBLE_DEVICES before importing cudf/torch, and the pytest suite passes for worker isolation."
+}
