@@ -1,0 +1,22 @@
+{
+  "milestone": "worker-safety",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": ["VAL-CUDA-001"],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Flow Validator Guidance: pytest section documenting worker isolation test locations and testing approach",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
