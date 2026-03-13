@@ -1,3 +1,6 @@
+import os
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 
@@ -337,7 +340,8 @@ class TestCuDFBackend:
             config=None,
         )
 
-        mock_pool.assert_called_once_with(max_workers=2)
+        assert mock_pool.call_args.kwargs["max_workers"] == 2
+        assert mock_pool.call_args.kwargs["max_tasks_per_child"] == 1
 
     @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
@@ -361,3 +365,68 @@ class TestCuDFBackend:
 
         mock_pool.assert_not_called()
         assert all(call.args[0] == 3 for call in mock_process_chunk.call_args_list)
+
+    def test_worker_isolation_sets_cuda_visible_devices_before_worker_imports(
+        self, monkeypatch
+    ):
+        from tensor_grep.backends import cudf_backend
+
+        observed_env: dict[str, str | None] = {}
+        fake_series = MagicMock()
+        fake_series.str.contains.return_value = MagicMock()
+        fake_matched = MagicMock()
+        fake_matched.index.to_pandas.return_value = []
+        fake_matched.to_pandas.return_value = []
+        fake_series.__getitem__.return_value = fake_matched
+
+        fake_cudf = types.SimpleNamespace(read_text=MagicMock(return_value=fake_series))
+        fake_rmm = types.SimpleNamespace(reinitialize=MagicMock())
+
+        real_import = __import__
+
+        def import_with_env_capture(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "cudf":
+                observed_env["cudf"] = os.environ.get("CUDA_VISIBLE_DEVICES")
+                return fake_cudf
+            if name == "rmm":
+                observed_env["rmm"] = os.environ.get("CUDA_VISIBLE_DEVICES")
+                return fake_rmm
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+        monkeypatch.delenv("CUDA_DEVICE_ORDER", raising=False)
+        monkeypatch.setattr("builtins.__import__", import_with_env_capture)
+        monkeypatch.delitem(sys.modules, "cudf", raising=False)
+        monkeypatch.delitem(sys.modules, "rmm", raising=False)
+
+        cudf_backend._process_chunk_on_device(
+            7,
+            "test.log",
+            0,
+            1024,
+            "ERROR",
+        )
+
+        assert observed_env == {"cudf": "7", "rmm": "7"}
+        fake_rmm.reinitialize.assert_called_once_with(devices=[0])
+
+    @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
+    @patch("tensor_grep.backends.cudf_backend.as_completed", return_value=[])
+    def test_worker_isolation_uses_fresh_process_pool_children_on_windows(
+        self, _mock_as_completed, mock_pool
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend(chunk_sizes_mb=[512, 512, 512, 512], device_ids=[0, 1, 2, 3])
+        mock_pool.return_value.__enter__.return_value = MagicMock()
+
+        backend._search_distributed(
+            file_path="test.log",
+            pattern="ERROR",
+            file_size=700 * 1024 * 1024,
+            device_chunks_mb=[(0, 512), (1, 512), (2, 512), (3, 512)],
+            config=None,
+        )
+
+        assert mock_pool.call_args.kwargs["max_workers"] == 2
+        assert mock_pool.call_args.kwargs["max_tasks_per_child"] == 1
