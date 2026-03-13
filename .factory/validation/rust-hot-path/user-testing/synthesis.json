@@ -1,0 +1,22 @@
+{
+  "milestone": "rust-hot-path",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": ["VAL-RUST-001", "VAL-RUST-002"],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added 'Flow Validator Guidance: Rust CLI / cargo test' section with cargo path, replace test details, binary location, benchmark data location, and code structure documentation",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
