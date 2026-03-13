@@ -1,0 +1,54 @@
+{
+  "milestone": "misc-config",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
+    "lint": { "passed": true, "command": "uv run ruff check . --exclude .git", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "services.yaml",
+      "description": "Removed redundant '--exclude .git' from lint command. The fix-ruff-git-exclude feature changed pyproject.toml to use extend-exclude, which preserves Ruff's default .git exclusion, making the CLI flag unnecessary.",
+      "sourceFeature": "fix-ruff-git-exclude"
+    },
+    {
+      "target": "library",
+      "description": "Added .factory/library/windows-rust-env.md documenting that cargo is not on PATH in the Windows environment and workers must use the full path (C:\\Users\\oimir\\.cargo\\bin\\cargo.exe).",
+      "sourceFeature": "rust-replace-robustness"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "In the backend-worker skill's 'Final Step: Merge to Main' section, document git cherry-pick as an approved alternative to git merge for when the primary checkout has unrelated dirty state from other mission work.",
+      "evidence": "Feature fix-ruff-git-exclude worker used cherry-pick instead of merge because the primary main checkout had dirty state. The deviation was justified and the result was correct.",
+      "isSystemic": false
+    },
+    {
+      "target": "skills",
+      "suggestion": "In the rust-worker skill, soften the TDD-first requirement for multi-point quality/correctness fixes where changes are interdependent. Allow applying implementation + tests together when the feature specifies multiple coupled fixes, as long as all tests pass afterward.",
+      "evidence": "Feature rust-replace-robustness had 4 interdependent fixes ($ guard removal, mmap flush, edge-case tests, brittle test rewrite). Strict red-green TDD for each point was impractical since they were coupled. Worker applied all changes together successfully.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "add-cuda-test-guards: Worker skipped TDD because feature was merge-only",
+      "reason": "Justified deviation - the implementation was already complete on a branch; the feature explicitly scoped the task to merge + verify only."
+    },
+    {
+      "observation": "add-cuda-test-guards: Second worker only ran pytest post-merge, not ruff/mypy",
+      "reason": "Justified by feature scope - feature description explicitly said 'run uv run pytest -q to confirm'. The prior worker had already passed all three gates on the feature branch. Not a systemic issue."
+    }
+  ],
+  "previousRound": null
+}

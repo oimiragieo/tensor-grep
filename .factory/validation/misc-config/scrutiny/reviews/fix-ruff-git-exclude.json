@@ -1,0 +1,33 @@
+{
+  "featureId": "fix-ruff-git-exclude",
+  "reviewedAt": "2026-03-13T05:27:00.000Z",
+  "commitId": "2f9d33fce88ffa3278e3323c6fd4e89c8b8a2cc6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, minimal fix. The single-line change from `exclude` to `extend-exclude` in `[tool.ruff]` correctly preserves Ruff's default exclusion list (which includes `.git`) while keeping the repo-specific benchmark directory exclusions. The regression test is well-structured: it asserts both that `exclude` is absent and that `extend-exclude` contains the expected list. The helper refactor (`_pyproject_payload()` extraction) is sensible and improves reusability in the test module. Worker followed TDD: verified the test failed before the fix and passed after. All three local gates (ruff, mypy, pytest) passed in both the main worktree and a clean validation worktree. No code quality issues, no bugs, no security concerns.",
+    "issues": [
+      {
+        "file": ".factory/services.yaml",
+        "line": 4,
+        "severity": "non_blocking",
+        "description": "The `lint` command in services.yaml still uses `uv run ruff check . --exclude .git`, which was the old workaround. After this fix, the `--exclude .git` flag is redundant since `extend-exclude` preserves Ruff's default `.git` exclusion. The command should be updated to `uv run ruff check .` to reflect the fix and avoid confusion."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "services.yaml `lint` command still includes the `--exclude .git` workaround (`uv run ruff check . --exclude .git`) that this fix was specifically designed to eliminate. The command should be simplified to `uv run ruff check .` now that `extend-exclude` preserves Ruff's default `.git` exclusion.",
+      "evidence": ".factory/services.yaml line 4: `lint: uv run ruff check . --exclude .git`. Compare to the feature's stated goal: 'change exclude to extend-exclude so stale .git worktree dirs do not cause F811 lint failures' and verification step: 'Run uv run ruff check . (without --exclude .git) and confirm it passes'."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker used `git cherry-pick` instead of the documented `git merge` path in the backend-worker skill's 'Final Step: Merge to Main' section. The deviation was justified (primary main checkout had unrelated dirty state from other mission work). Worker's skillFeedback suggests documenting cherry-pick as an approved alternative.",
+      "evidence": "Handoff skillFeedback.deviations[1]: 'Validated in a clean feature worktree, then restored the touched files in the dirty main checkout and cherry-picked the validated commit onto main instead of doing git checkout main && git merge <branch>'. Skill SKILL.md only documents merge-based flows."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The fix correctly changes `exclude` to `extend-exclude` in pyproject.toml's [tool.ruff] section, preserving Ruff's default `.git` exclusion while keeping repo-specific benchmark directory exclusions. A well-written regression test was added. All local gates passed. One non-blocking observation: services.yaml still carries the now-redundant `--exclude .git` workaround in its lint command."
+}

@@ -1,7 +1,7 @@
 commands:
   install: uv pip install -e ".[dev,ast,nlp]"
   typecheck: uv run mypy src/tensor_grep
-  lint: uv run ruff check . --exclude .git
+  lint: uv run ruff check .
   test: uv run pytest -q
   benchmark_text: python benchmarks/run_benchmarks.py
   benchmark_hot: python benchmarks/run_hot_query_benchmarks.py
