@@ -1,0 +1,33 @@
+{
+  "featureId": "commit-factory-infrastructure",
+  "reviewedAt": "2026-03-13T13:25:00.000Z",
+  "commitId": "a9e3a5e00db7711cbad8c2d629c1de402a0a1d1e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The commit correctly adds the three previously-untracked .factory infrastructure files (init.sh, skills/backend-worker/SKILL.md, skills/rust-worker/SKILL.md) with 144 insertions. The worker verified that .factory/services.yaml and .factory/library/ were already tracked and had no outstanding changes, so they were correctly excluded. All local gates (ruff, mypy, pytest with 475 passed) were run and passed before the commit. The commit message follows project conventions. One minor unnecessary action: the worker stashed two repo-root audit report files (ast_gnn_audit_report.md, backend_audit_report.md) to produce a clean working tree, but those files would never have been picked up by `git add .factory/` since they live at the repository root, not under .factory/. The stash entry (stash@{0}) persists, hiding those files from the working tree for future sessions.",
+    "issues": [
+      {
+        "file": "N/A (git stash)",
+        "line": null,
+        "severity": "non_blocking",
+        "description": "Worker stashed ast_gnn_audit_report.md and backend_audit_report.md (repo-root files) to achieve a 'clean working tree', but these files are outside .factory/ and would not have been staged by `git add .factory/`. The stash entry (stash@{0}: 'skip audit reports for commit-factory-infrastructure') persists and hides those files from subsequent sessions. A future worker or user may need to `git stash pop` to recover them."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill mandates TDD-first and branch-merge-to-main steps, but commit-only/infrastructure features don't involve code changes. The worker correctly deviated and suggested documenting a lightweight path for infrastructure-only features. The skill's procedure should acknowledge non-code features (git housekeeping, config commits) where TDD and branching are not applicable.",
+      "evidence": "Handoff skillFeedback.followedProcedure=false with two justified deviations: (1) no TDD for non-code commit, (2) direct commit on main since feature explicitly targeted main. Worker suggested: 'Document a lightweight path for commit-only/infrastructure features where the TDD-first coding procedure is not applicable.'"
+    },
+    {
+      "area": "conventions",
+      "observation": "The .gitignore does not mention audit report files. If audit reports are generated artifacts that should not be committed, a .gitignore entry (e.g., '*_audit_report.md') would prevent future accidental commits and remove the need for manual skip/stash handling.",
+      "evidence": "Worker had to manually stash ast_gnn_audit_report.md and backend_audit_report.md. No .gitignore rule covers them. The feature description explicitly said 'Skip audit report files', implying they are known generated artifacts."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The commit correctly tracks the three untracked .factory infrastructure files (init.sh, two SKILL.md files). services.yaml and library/ were already tracked and had no pending changes, so their omission is correct. All gates passed. The only non-blocking issue is an unnecessary git stash of repo-root audit reports that will persist across sessions."
+}

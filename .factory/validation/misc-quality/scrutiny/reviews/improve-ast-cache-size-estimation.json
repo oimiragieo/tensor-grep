@@ -1,0 +1,28 @@
+{
+  "featureId": "improve-ast-cache-size-estimation",
+  "reviewedAt": "2026-03-13T13:25:00.000Z",
+  "commitId": "a141af888f140c091654fccec49ef30a762bde3e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Minimal, well-targeted change. Adds a named module-level constant _PARSED_SOURCE_CACHE_ENTRY_SIZE_CALIBRATION_MULTIPLIER = 3 and applies it in _estimate_parsed_source_cache_entry_size, with a clear inline comment explaining the rationale (decoded splitlines list + tree-sitter metadata = ~2-4x real footprint, 3x chosen as midpoint). The change is O(1), touches a single function, and the existing LRU eviction test budget was correctly adjusted from 80 to 250 to preserve the two-entry-fits / three-entry-evicts behavior under the new 3x accounting. Two new tests were added: a direct contract test for the multiplier and a regression test proving midrange files (35 raw bytes * 3 = 105 > 100 budget) are properly excluded. TDD was followed (failing test first). All local gates (ruff, mypy, pytest) and benchmarks (text search + hot query) passed.",
+    "issues": [
+      {
+        "file": ".factory/library/ast-cache-config.md",
+        "line": 7,
+        "severity": "non_blocking",
+        "description": "Knowledge file still says 'The cache tracks entry sizes based on raw source byte length (conservative lower bound)' but after this change entries are tracked at 3x raw byte length via the calibration multiplier. The documentation should be updated to reflect the new estimation method."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The .factory/library/ast-cache-config.md knowledge file was not updated to reflect the 3x calibration multiplier. It still describes tracking as 'raw source byte length (conservative lower bound)' which is now stale. Future workers reading this file will get an inaccurate picture of cache accounting behavior.",
+      "evidence": ".factory/library/ast-cache-config.md line 7: 'The cache tracks entry sizes based on raw source byte length (conservative lower bound — actual memory usage is higher due to decoded lines, AST objects, and tuple overhead).' vs actual code at src/tensor_grep/backends/ast_backend.py:109: 'return len(source_bytes) * _PARSED_SOURCE_CACHE_ENTRY_SIZE_CALIBRATION_MULTIPLIER'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The implementation is correct, minimal, and well-tested. A 3x calibration multiplier is applied to the parsed-source cache entry size estimator, bringing tracked size within the observed 2-4x real memory footprint. Three tests cover the multiplier contract, LRU eviction under the new accounting, and midrange-file cache bypass. TDD was followed, all gates passed, and benchmarks confirmed no regression. The only non-blocking issue is that the .factory/library/ast-cache-config.md knowledge file was not updated to reflect the new multiplier-based estimation."
+}
