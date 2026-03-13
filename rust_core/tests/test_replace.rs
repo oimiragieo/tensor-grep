@@ -4,6 +4,26 @@ use tempfile::tempdir;
 use tensor_grep_rs::backend_cpu::CpuBackend;
 
 #[test]
+fn test_replace_path_uses_mutable_memmap_instead_of_full_file_reads() {
+    let backend_source =
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/backend_cpu.rs"))
+            .unwrap();
+    let replace_section = backend_source
+        .split("fn replace_file_regex")
+        .nth(1)
+        .expect("replace_file_regex should exist");
+
+    assert!(
+        replace_section.contains("map_mut"),
+        "replace path should use MmapMut for byte mutations"
+    );
+    assert!(
+        !replace_section.contains("std::fs::read"),
+        "replace path should avoid full-file std::fs::read allocation"
+    );
+}
+
+#[test]
 fn test_rust_replace_in_place_literal() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_replace.txt");
@@ -80,4 +100,31 @@ fn test_rust_replace_preserves_formatting() {
         .unwrap();
 
     assert_eq!(new_content, "    let x = 15;\n\n\tlet y = 20;\n");
+}
+
+#[test]
+fn test_rust_replace_handles_mixed_growth_and_shrink_matches() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("test_mixed_lengths.txt");
+    let mut file = File::create(&file_path).unwrap();
+    write!(file, "A:1234\nLONGNAME:5\nBB:67\n").unwrap();
+
+    let backend = CpuBackend::new();
+    backend
+        .replace_in_place(
+            r"([A-Z]+):(\d+)",
+            "$2$2",
+            file_path.to_str().unwrap(),
+            false,
+            false,
+        )
+        .unwrap();
+
+    let mut new_content = String::new();
+    File::open(&file_path)
+        .unwrap()
+        .read_to_string(&mut new_content)
+        .unwrap();
+
+    assert_eq!(new_content, "12341234\n55\n6767\n");
 }
