@@ -1,0 +1,67 @@
+{
+  "featureId": "rust-zero-copy-replace",
+  "reviewedAt": "2026-03-13T04:25:00.000Z",
+  "commitId": "f89e85858c629a50f39d3f1f2b4bf5e74ffe1376",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly replaces the old std::fs::read-based replacement path with mmap-based in-place mutations. Three code paths now exist: (1) a same-length literal fast path that does direct MmapMut overwrites, (2) a variable-length literal path using memmem match collection + planned in-place mutations, and (3) a regex path using captures_iter + planned in-place mutations. The plan_replacements/apply_replacements_in_place algorithm correctly handles mixed growth and shrink by pre-extending the file to the peak intermediate size, applying left-to-right shifts via copy_within, then truncating to the final length. All Rust tests pass (9/9 including 5 replace tests). The implementation is well-structured with clean separation of concerns (collect, plan, apply phases).",
+    "issues": [
+      {
+        "file": "rust_core/src/backend_cpu.rs",
+        "line": 188,
+        "severity": "non_blocking",
+        "description": "The literal fast-path guard checks !replacement.as_bytes().contains(&b'$') to avoid capture-group misinterpretation. However, in fixed_strings mode, '$' in the replacement should be treated literally. The current guard is overly conservative: when replacement contains '$' and fixed_strings is true, the code falls through to the regex path where captures.expand() will misinterpret '$' as capture-group syntax. This is a pre-existing semantic issue (the old regex path had the same behavior), but the new guard makes it more visible. A future fix could remove the '$' check and always use the literal path for fixed_strings."
+      },
+      {
+        "file": "rust_core/src/backend_cpu.rs",
+        "line": 300,
+        "severity": "non_blocking",
+        "description": "apply_replacements_in_place does not explicitly call mmap.flush() before the MmapMut is dropped. While the OS will eventually flush dirty pages, an explicit flush() would provide stronger crash-safety guarantees. The old write_all-based code had a similar lack of fsync(), so this is not a regression."
+      },
+      {
+        "file": "rust_core/src/backend_cpu.rs",
+        "line": 280,
+        "severity": "non_blocking",
+        "description": "plan_replacements, apply_replacements_in_place, and collect_replacements take &self but do not use self. They could be static/associated functions. Minor style issue, consistent with the existing codebase convention of using method syntax."
+      },
+      {
+        "file": "rust_core/tests/test_replace.rs",
+        "line": 7,
+        "severity": "non_blocking",
+        "description": "test_replace_path_uses_mutable_memmap_instead_of_full_file_reads is a source-code-level assertion (grepping the Rust source for 'map_mut' and absence of 'std::fs::read'). This is a novel testing pattern that is brittle if someone adds a comment containing 'std::fs::read'. It works for now but could produce false failures in the future. The approach is acceptable given the TDD context."
+      },
+      {
+        "file": "rust_core/tests/test_replace.rs",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "Missing edge-case tests: empty file replacement, replacement with empty string (deletion), pattern matching entire file content, and single-byte file. All of these are handled by the code (empty file returns early, other cases go through the standard path), but explicit test coverage would strengthen confidence."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "services.yaml lacks Rust-specific commands (cargo test, cargo build, maturin develop). The worker had to manually construct cargo test invocations with --manifest-path. Adding a 'rust_test' command would streamline future Rust workers.",
+      "evidence": "Worker ran: C:\\Users\\oimir\\.cargo\\bin\\cargo.exe test --manifest-path C:\\dev\\projects\\tensor-grep-rust-zero-copy-replace\\rust_core\\Cargo.toml"
+    },
+    {
+      "area": "skills",
+      "observation": "The rust-worker skill does not mention the known worktree pytest/PYTHONPATH workaround documented in mission AGENTS.md. Worker spent time retrying plain 'uv run pytest -q' before discovering the workaround. The worker's own skillFeedback.suggestedChanges confirms this gap.",
+      "evidence": "Skill deviations show worker had to use 'cmd /c set PYTHONPATH=<worktree>\\src&& uv run --directory <worktree> pytest -q' workaround. Mission AGENTS.md documents this but the skill file does not."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker deviated from skill step '1.2 Initialize Environment' by using 'uv pip install -e .[dev,ast,nlp]' instead of .factory/init.sh. This deviation is justified per mission AGENTS.md which documents init.sh is not executable on native Windows. The skill could mention this Windows-specific alternative.",
+      "evidence": "skillFeedback.deviations[0] — init.sh not executable on native Windows"
+    },
+    {
+      "area": "conventions",
+      "observation": "The source-code-level test pattern (test_replace_path_uses_mutable_memmap_instead_of_full_file_reads) is a novel approach that greps the Rust source to verify architectural invariants. This pattern could be documented in AGENTS.md or library as a recommended practice for enforcing zero-copy/mmap invariants in the Rust core.",
+      "evidence": "rust_core/tests/test_replace.rs lines 7-23 — uses std::fs::read_to_string on the source file to verify map_mut presence"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The mmap-based replace refactor is correct and well-implemented. The code removes std::fs::read from both regex and literal replace paths, replacing it with MmapMut-based in-place mutations. The same-length literal fast path is particularly clean — direct overwrites with no file resizing. The variable-length path uses a sound plan-then-apply algorithm with proper file pre-extension and post-truncation. All 5 replace tests pass, including the new mixed-growth/shrink test and the source-level mmap verification. Benchmark shows +6.36% average throughput improvement and 754 MiB/s peak (vs 575 MiB/s baseline). Five non-blocking issues noted: overly conservative $ guard in literal path, no explicit mmap flush, unnecessary &self on pure functions, brittle source-grepping test, and missing edge-case test coverage. VAL-RUST-001 (zero-copy mmap mutation) and VAL-RUST-002 (throughput improvement) are both fulfilled."
+}

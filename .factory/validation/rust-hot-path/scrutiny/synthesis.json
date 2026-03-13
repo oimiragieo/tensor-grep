@@ -1,0 +1,46 @@
+{
+  "milestone": "rust-hot-path",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
+    "lint": { "passed": true, "command": "uv run ruff check . --exclude .git", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "services.yaml",
+      "description": "Added rust_test and rust_build commands so future Rust workers can use standardized cargo invocations without constructing manual --manifest-path arguments.",
+      "sourceFeature": "rust-zero-copy-replace"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Add PYTHONPATH workaround to rust-worker skill: On Windows worktrees, 'uv run pytest -q' may fail with ModuleNotFoundError unless PYTHONPATH is set to <worktree>/src. Document the workaround: 'cmd /c set PYTHONPATH=<worktree>\\src&& uv run --directory <worktree> pytest -q'.",
+      "evidence": "Feature rust-zero-copy-replace worker spent multiple retries discovering this workaround. It's documented in mission AGENTS.md but not in the rust-worker skill itself.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Add Windows-specific note to rust-worker skill step '1.2 Initialize Environment': .factory/init.sh is not executable on native Windows. Workers should use 'uv pip install -e \".[dev,ast,nlp]\"' directly instead.",
+      "evidence": "Feature rust-zero-copy-replace worker deviated from init.sh usage because it's a bash script not executable on native Windows. Worker's own skillFeedback confirms this gap.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Document the source-level architectural test pattern used in rust_core/tests/test_replace.rs: grepping Rust source files to enforce invariants (e.g., verifying mmap usage, absence of std::fs::read in replace path). This pattern is useful for preventing architectural regression in performance-critical paths.",
+      "evidence": "Feature rust-zero-copy-replace introduced test_replace_path_uses_mutable_memmap_instead_of_full_file_reads which reads the Rust source at test time to verify the mmap invariant. Novel and useful but potentially brittle — worth documenting as an accepted practice with known limitations.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

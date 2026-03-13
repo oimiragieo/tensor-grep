@@ -1,0 +1,11 @@
+commands:
+  install: uv pip install -e ".[dev,ast,nlp]"
+  typecheck: uv run mypy src/tensor_grep
+  lint: uv run ruff check . --exclude .git
+  test: uv run pytest -q
+  benchmark_text: python benchmarks/run_benchmarks.py
+  benchmark_hot: python benchmarks/run_hot_query_benchmarks.py
+  rust_test: cargo test --manifest-path rust_core/Cargo.toml
+  rust_build: cargo build --manifest-path rust_core/Cargo.toml --release
+
+services: {}
