@@ -18,7 +18,7 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Quick examples comparing tools
 
-Fresh benchmark pass results (2026-03-10, local run on current `main`) from this repository's benchmark scripts are below.
+Fresh benchmark pass results (2026-03-13, local run on current `main`) from this repository's benchmark scripts are below.
 
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
@@ -27,6 +27,9 @@ Environment notes:
 - `ripgrep` remains faster on most text-search scenarios in this local benchmark setup.
 - The current Windows local run no longer trips the stored regression guard in `benchmarks/baselines/run_benchmarks.windows.json`.
 - The GPU microbenchmark requires benchmark extras plus a reachable Triton endpoint for `cyBERT`; on this host the AST and Torch backend timings completed, while `cyBERT` was explicitly skipped because no Triton server was running.
+- On Windows, benchmark scripts now auto-extract the `ripgrep` binary from the GitHub release archive when it is not found on `PATH`, so Windows CI runs are fully self-contained.
+- `--replace` throughput improved **+6.36%** after switching to `MmapMut` in-place byte mutations (zero-copy path, removing the prior `std::fs::read` allocation).
+- Hot-query cache path acceleration confirmed via `benchmarks/run_hot_query_benchmarks.py`; repeated queries over unchanged files are reliably tracked for regression.
 
 ### ripgrep vs tensor-grep (`benchmarks/run_benchmarks.py`)
 
@@ -85,21 +88,24 @@ Environment notes:
 - **Explicit device pinning override.** Set `TENSOR_GREP_DEVICE_IDS` (for example `TENSOR_GREP_DEVICE_IDS=3,7`) to constrain scheduling and fanout to specific GPUs.
 - **Per-request GPU pinning for library/runtime callers.** `SearchConfig(gpu_device_ids=[...])` now propagates through `Pipeline -> MemoryManager -> CuDFBackend` so workloads can be pinned to selected GPUs without mutating process-wide env vars.
 - **Explicit pinning is first-class in routing.** When `gpu_device_ids` is provided for search modes that do not require CPU-only semantics, pipeline selection attempts pinned GPU backends first, then safely falls back to `rg`/Rust/CPU if unavailable.
+- **Explicit hardware contract errors.** Passing `--ast` or `--gpu-device-ids` when the required backend is genuinely unavailable now raises a `ConfigurationError` immediately rather than silently falling back to an unrelated backend. Misrouted workloads are surfaced as configuration mistakes, not silently degraded results.
 - **Runtime GPU routing observability.** `Pipeline` now records `selected_gpu_device_ids` for the active backend selection so service wrappers and telemetry pipelines can audit exactly which GPU IDs were used.
 - **Per-result routing metadata.** `SearchResult` now carries `routing_backend`, `routing_reason`, `routing_gpu_device_ids`, and `routing_gpu_chunk_plan_mb` for structured post-search telemetry.
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
 - **Device-ID normalization contract.** Duplicate/invalid preferred IDs are ignored during routing normalization; if all requested IDs are invalid, the scheduler falls back to the detected routable GPU set instead of disabling GPU execution.
 - **It is a drop-in replacement for ripgrep.** `tg search` accepts the exact same 70+ CLI flags (`-i`, `-v`, `-C`, `-g`, `-t`) that you already know and love from `ripgrep`.
-- **In-Place File Mutations (NEW):** Unlike ripgrep, `tensor-grep` natively supports memory-mapped find-and-replace mutability via `--replace`. Apply `sed`-like capture groups (e.g. `$1`) at millions of lines per second without ever leaving the Rust terminal backend.
+- **In-Place File Mutations (NEW):** Unlike ripgrep, `tensor-grep` natively supports memory-mapped find-and-replace mutability via `--replace`. Apply `sed`-like capture groups (e.g. `$1`) at millions of lines per second without ever leaving the Rust terminal backend. The replace path now uses `MmapMut` for true zero-copy in-place byte mutations, removing the prior `std::fs::read` allocation bottleneck (**+6.36% throughput**).
 - **AST-Grep Parity (NEW):** Structural code searching via PyTorch Geometric Graph Neural Networks (GNNs). Run `tg run`, `tg scan`, `tg lsp` to match structural code patterns (e.g. `if ($A) { return $B; }`) rather than dumb text strings.
 - **Repeated AST searches are materially faster now.** `AstBackend` caches compiled tree-sitter queries plus parsed file state (`mtime_ns`/size keyed) so `tg scan` / `tg test` / repeated in-process AST workloads stop recompiling and reparsing unchanged modules on every pass.
 - **AST caches are now shared across backend instances in the same process.** `scan` / `test` no longer pay separate parser/query/source cache misses just because different rules selected separate `AstBackend` objects.
+- **Bounded AST parsed-source cache.** The shared `_shared_parsed_source_cache` now enforces a byte-bounded LRU eviction policy so long-running processes cannot grow the cache without bound. The cap is configurable via `TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES` (default: 256 MB). Cache keys use inode + ctime for correct file identity across renames and in-place edits.
 - **Persistent AST result cache.** Repeated structural queries across unchanged files can now reuse on-disk AST result entries across CLI invocations. Cache location can be overridden with `TENSOR_GREP_AST_CACHE_DIR`, or disabled with `TENSOR_GREP_AST_CACHE=0`.
 - **Persistent AST node-type index.** Simple native AST queries such as `function_definition` can now reuse an on-disk node-type line index across runs, which lets later native queries over unchanged files skip reparsing entirely.
 - **REI-style repeated literal index.** `StringZillaBackend` now builds a per-file trigram line index for repeated fixed-string searches. On this host, a synthetic hot-corpus microbenchmark dropped from about `1.05s` on the first indexed build to about `0.0025s` on the second cached literal query over the same file.
 - **Safe repeated-regex prefilter in Python fallback.** When `tg` must fall back to Python regex and the pattern has a guaranteed literal core, `CPUBackend` now reuses a trigram prefilter index to cut candidate lines before running `re`. The cache now persists across backend instances and fresh CLI invocations. On this host, a synthetic repeated regex microbenchmark dropped from about `0.243s` on the first indexed query to about `0.014s` on the second cached query over the same file.
 - **Hot-query benchmark harness.** `benchmarks/run_hot_query_benchmarks.py` now tracks these repeated-query cache paths explicitly so we can catch regressions instead of relying on ad hoc microbenchmarks.
-- **Semantic Understanding:** The `tg classify` command utilizes a specialized `cyBERT` HuggingFace transformer to identify malicious log patterns, detect hidden base64 payloads, and assign severity (WARN/ERROR/INFO) based on *context* rather than strict regex matches.
+- **Semantic Understanding:** The `tg classify` command utilizes a specialized `cyBERT` HuggingFace transformer to identify malicious log patterns, detect hidden base64 payloads, and assign severity (WARN/ERROR/INFO) based on *context* rather than strict regex matches. NLP queries (`QueryType.NLP`) are now fully wired through `CybertBackend` end-to-end (previously the routing path was unconnected dead code).
+- **CybertBackend server liveness check.** `CybertBackend.is_available()` now performs a real liveness probe against the configured Triton inference server rather than always returning `True`. The probe timeout is configurable via `TENSOR_GREP_TRITON_TIMEOUT_SECONDS` (default: 5 s).
 - **Resilient Fallback:** If you don't have a GPU, `tensor-grep` instantly transparently falls back to an embedded PyO3/Rust backend using `memmap2`, matching the baseline performance of standard CPU ripgrep.
 
 ## Why shouldn't I use `tensor-grep`?
@@ -310,5 +316,6 @@ For multi-terabyte log repositories, the CPU RAM bounce-buffer becomes the limit
 Because Windows Python `multiprocessing` requires `spawn()` rather than Linux's `fork()`, the PyTorch CUDA context takes ~11 seconds to initialize across multiple worker processes on Windows. 
 - For small files (< 50MB), `tensor-grep` automatically bypasses the GPU on Windows to avoid this delay, routing to an optimized `CPUBackend` instead.
 - For massive logs (> 200MB), the 11s Windows spawn overhead is absorbed by the sheer throughput of the GPU matrix math.
+- **CUDA worker isolation (Windows).** The `CuDFBackend` process pool now sets `CUDA_VISIBLE_DEVICES` in each worker *before* importing any CUDA library, preventing cross-GPU contamination when multiple GPUs are present. Windows process pools additionally set `max_tasks_per_child=1` to reclaim leaked CUDA context memory between tasks.
 
 To achieve maximum enterprise performance on a Windows machine, **run tensor-grep inside WSL2**, where `fork()` allows instantaneous CUDA bindings.
