@@ -236,15 +236,18 @@ def test_run_ast_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
     assert path == override.resolve()
 
 
-def test_run_ast_benchmarks_should_target_bootstrap_entrypoint():
+def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_ast_benchmarks_script_cmd", "benchmarks/run_ast_benchmarks.py"
     )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
-    cmd = module.build_tg_ast_benchmark_cmd(["run", "--ast", "pattern", "bench_ast_data"])
+    cmd = module.build_tg_ast_benchmark_cmd(["run", "--lang", "python", "pattern", "bench_ast_data"])
 
-    assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
-    assert cmd[3:] == ["run", "--ast", "pattern", "bench_ast_data"]
+    assert cmd[0] == str(tg_binary)
+    assert cmd[1:] == ["run", "--lang", "python", "pattern", "bench_ast_data"]
 
 
 def test_run_ast_workflow_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
@@ -861,25 +864,31 @@ def test_run_ast_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(
     module = _load_script_module(
         "run_ast_benchmarks_missing_ast", "benchmarks/run_ast_benchmarks.py"
     )
+    output_path = tmp_path / "bench_ast_m3.json"
+    tg_binary = tmp_path / "tg.exe"
+    hyperfine_binary = tmp_path / "hyperfine.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    hyperfine_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr("sys.argv", ["run_ast_benchmarks.py", "--output", str(output_path)])
     monkeypatch.setattr(module, "resolve_ast_grep_binary", lambda: None)
-    monkeypatch.setattr(module, "generate_ast_data", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(module, "resolve_ast_bench_data_dir", lambda: tmp_path / "bench_ast_data")
-
-    captured: dict[str, object] = {}
-
-    def _fake_write_json(path, payload):
-        captured["path"] = path
-        captured["payload"] = payload
-
-    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
-    monkeypatch.setattr("tensor_grep.perf_guard.write_json", _fake_write_json)
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+    monkeypatch.setattr(module, "resolve_hyperfine_binary", lambda: hyperfine_binary)
+    monkeypatch.setattr(
+        module,
+        "ensure_ast_bench_corpus",
+        lambda *_args, **_kwargs: {
+            "corpus_dir": tmp_path / "bench_ast_data",
+            "manifest_path": tmp_path / "bench_ast_data.manifest.sha256",
+            "file_count": 1000,
+            "total_loc": 50000,
+        },
+    )
 
     exit_code = module.main()
 
-    assert exit_code == 0
-    assert captured["path"] == tmp_path / "bench_run_ast_benchmarks.json"
-    payload = captured["payload"]
-    assert isinstance(payload, dict)
-    assert payload["suite"] == "run_ast_benchmarks"
-    assert payload["rows"] == []
-    assert payload["parity_failures"] == 0
+    assert exit_code == 2
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_ast_m3"
+    assert payload["passed"] is False
+    assert "ast-grep binary not found" in payload["error"]

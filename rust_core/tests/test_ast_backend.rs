@@ -93,6 +93,20 @@ fn test_ast_backend_matches_rust_reference_snippet() {
 }
 
 #[test]
+fn test_ast_backend_reports_line_numbers_for_multiple_python_matches() {
+    let source = "def first(a): return a\n\n\ndef second(b): return b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let matches = backend
+        .search("def $F($$$ARGS): return $EXPR", "python", file_path.to_str().unwrap())
+        .unwrap();
+
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].line, 1);
+    assert_eq!(matches[1].line, 4);
+}
+#[test]
 fn test_tg_run_json_metadata_uses_ast_backend_routing() {
     let (_dir, file_path) = write_source_file("py", "def add(a, b):\n    return a + b\n");
 

@@ -1,221 +1,270 @@
+from __future__ import annotations
+
+import argparse
+import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SRC_DIR = ROOT_DIR / "src"
+BENCHMARKS_DIR = Path(__file__).resolve().parent
+if str(BENCHMARKS_DIR) not in sys.path:
+    sys.path.insert(0, str(BENCHMARKS_DIR))
 
-SCENARIOS = [
-    {
-        "name": "1. Simple Function Def",
-        "ast_args": ["ast-grep.exe", "run", "-p", "def $FUNC():", "bench_ast_data"],
-        "tg_args": ["tg", "run", "--ast", "--lang", "python", "def $FUNC():", "bench_ast_data"],
-    },
-    {
-        "name": "2. Try/Except Block",
-        "ast_args": ["ast-grep.exe", "run", "-p", "try: $$$ catch: $$$", "bench_ast_data"],
-        "tg_args": [
-            "tg",
-            "run",
-            "--ast",
-            "--lang",
-            "python",
-            "try: $$$ catch: $$$",
-            "bench_ast_data",
-        ],
-    },
-    {
-        "name": "3. Class Declaration",
-        "ast_args": ["ast-grep.exe", "run", "-p", "class $NAME:", "bench_ast_data"],
-        "tg_args": ["tg", "run", "--ast", "--lang", "python", "class $NAME:", "bench_ast_data"],
-    },
-]
+from gen_corpus import generate_python_ast_bench_corpus  # noqa: E402
+
+DEFAULT_PATTERN = "def $F($$$ARGS): return $EXPR"
+
+
+def default_binary_path() -> Path:
+    binary_name = "tg.exe" if os.name == "nt" else "tg"
+    return ROOT_DIR / "rust_core" / "target" / "release" / binary_name
+
+
+def default_output_path() -> Path:
+    return ROOT_DIR / "artifacts" / "bench_ast_m3.json"
 
 
 def resolve_ast_bench_data_dir() -> Path:
-    """
-    Resolve AST benchmark data location. Defaults to artifacts to avoid mutating
-    tracked repository fixtures during repeated local/CI benchmark runs.
-    """
     override = os.environ.get("TENSOR_GREP_AST_BENCH_DATA_DIR")
     if override:
         return Path(override).expanduser().resolve()
     return ROOT_DIR / "artifacts" / "bench_ast_data"
 
 
-def generate_ast_data(directory: str, num_files: int = 10, funcs_per_file: int = 500):
-    print(f"Generating synthetic Python code data in '{directory}'...")
-    os.makedirs(directory, exist_ok=True)
-
-    template = """
-class DataProcessor_{idx}:
-    def __init__(self):
-        self.data = []
-
-    def process_{func_idx}(self):
-        try:
-            x = {func_idx} * 2
-            if x > 100:
-                return x
-        except Exception as e:
-            print(f"Error: {{e}}")
-
-    def validate_{func_idx}(self):
-        return True
-"""
-
-    for i in range(num_files):
-        file_path = os.path.join(directory, f"module_{i}.py")
-        with open(file_path, "w", encoding="utf-8") as f:
-            for j in range(funcs_per_file):
-                f.write(template.format(idx=j, func_idx=j))
-
-
-def run_cmd_capture(cmd):
-    start = time.perf_counter()
-    env = os.environ.copy()
-    existing_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        f"{SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_DIR)
+def ensure_ast_bench_corpus(
+    output_dir: Path,
+    *,
+    file_count: int,
+    total_loc: int,
+    seed: int,
+) -> dict[str, object]:
+    return generate_python_ast_bench_corpus(
+        output_dir,
+        file_count=file_count,
+        total_loc=total_loc,
+        seed=seed,
     )
-    try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            text=True,
-            encoding="utf-8",
-            env=env,
-        )
-        stdout = result.stdout
-    except Exception as e:
-        print(f"Failed to run {' '.join(cmd)}: {e}")
-        stdout = ""
-    return time.perf_counter() - start, stdout
 
 
-def resolve_ast_grep_binary() -> str | None:
-    for candidate in ("sg", "ast-grep", "ast-grep.exe"):
-        found = shutil.which(candidate)
-        if found:
-            return found
+def resolve_tg_binary(binary: str | None = None) -> Path:
+    candidate = Path(binary).expanduser().resolve() if binary else default_binary_path()
+    return candidate
+
+
+def resolve_ast_grep_binary() -> Path | None:
+    env_override = os.environ.get("AST_GREP_BINARY")
+    if env_override:
+        candidate = Path(env_override).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+        return None
+
+    for candidate in ("sg", "sg.exe", "ast-grep", "ast-grep.exe"):
+        if found := shutil.which(candidate):
+            return Path(found)
+
+    for local_name in ("sg.exe", "sg.cmd", "ast-grep.exe", "ast-grep.cmd"):
+        local = BENCHMARKS_DIR / local_name
+        if local.exists():
+            return local
+
     return None
 
 
-def build_tg_ast_benchmark_cmd(args: list[str]) -> list[str]:
-    return [sys.executable, "-m", "tensor_grep.cli.bootstrap", *args]
+def resolve_hyperfine_binary() -> Path | None:
+    if env_value := os.environ.get("HYPERFINE_BINARY"):
+        candidate = Path(env_value).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+
+    for name in ("hyperfine", "hyperfine.exe"):
+        if resolved := shutil.which(name):
+            return Path(resolved)
+
+    cargo_candidate = Path.home() / ".cargo" / "bin" / "hyperfine.exe"
+    if cargo_candidate.exists():
+        return cargo_candidate
+
+    return None
 
 
-def compare_results(ast_out, tg_out, scenario_name):
-    # Both ast-grep and tg will print matches, but formatting differs heavily (ast-grep has color highlighting by default, tg outputs rg style)
-    # Just checking if both found matches
-    ast_lines = len([line for line in ast_out.splitlines() if line.strip()])
-    tg_lines = len([line for line in tg_out.splitlines() if line.strip()])
-
-    if (ast_lines > 0 and tg_lines == 0) or (ast_lines == 0 and tg_lines > 0):
-        print(
-            f"  [!] PARITY FAILURE in {scenario_name}: ast-grep found {ast_lines} output lines, tg found {tg_lines}."
-        )
-        return False
-    return True
+def build_tg_ast_benchmark_cmd(args: list[str], binary: Path | None = None) -> list[str]:
+    return [str(binary or resolve_tg_binary()), *args]
 
 
-def main():
-    from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
+def build_sg_ast_benchmark_cmd(
+    *,
+    binary: Path,
+    lang: str,
+    pattern: str,
+    corpus_dir: Path,
+) -> list[str]:
+    return [str(binary), "run", "--lang", lang, "-p", pattern, str(corpus_dir)]
 
-    bench_dir = resolve_ast_bench_data_dir()
-    # Generates 10 files, each with 500 classes and 1000 functions
-    generate_ast_data(str(bench_dir), num_files=10, funcs_per_file=500)
 
-    print("\nStarting Benchmarks: ast-grep vs tensor-grep (--ast)")
-    print("-" * 75)
-    print(f"{'Scenario':<35} | {'ast-grep':<10} | {'tensor-grep':<10} | {'Parity'}")
-    print("-" * 75)
-    rows: list[dict[str, object]] = []
-    parity_failures = 0
+def build_command_string(args: list[str]) -> str:
+    if os.name == "nt":
+        return subprocess.list2cmdline(args)
+    return " ".join(shlex.quote(part) for part in args)
 
-    ast_bin = resolve_ast_grep_binary()
-    if not ast_bin:
-        print("ast-grep binary not found on PATH. Skipping ast-grep parity baseline.")
-        print("Run `cargo install ast-grep` or install ast-grep binary to enable this benchmark.")
-        artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
-        write_json(
-            artifacts_dir / "bench_run_ast_benchmarks.json",
-            {
-                "suite": "run_ast_benchmarks",
-                "generated_at_epoch_s": time.time(),
-                "environment": {
-                    "platform": platform.system().lower(),
-                    "machine": platform.machine().lower(),
-                    "python_version": platform.python_version(),
-                },
-                "rows": rows,
-                "parity_failures": parity_failures,
-            },
-        )
-        return 0
 
-    tg_cmd = build_tg_ast_benchmark_cmd(["run"])
-
-    for scenario in SCENARIOS:
-        ast_cmd = [
-            ast_bin,
-            *[
-                str(bench_dir) if arg == "bench_ast_data" else arg
-                for arg in scenario["ast_args"][2:]
-            ],
+def run_hyperfine(
+    hyperfine_path: Path,
+    *,
+    commands: list[str],
+    runs: int,
+    warmup: int,
+) -> dict[str, object]:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        export_path = Path(tmp_dir) / "hyperfine.json"
+        cmd = [
+            str(hyperfine_path),
+            "--runs",
+            str(runs),
+            "--warmup",
+            str(warmup),
+            "--export-json",
+            str(export_path),
+            *commands,
         ]
-        actual_tg_cmd = [
-            *tg_cmd,
-            *[
-                str(bench_dir) if arg == "bench_ast_data" else arg
-                for arg in scenario["tg_args"][2:]
-            ],
-        ]
+        completed = subprocess.run(cmd, check=False)
+        if completed.returncode != 0:
+            raise SystemExit(completed.returncode)
+        return json.loads(export_path.read_text(encoding="utf-8"))
 
-        # Warmup caches
-        run_cmd_capture(ast_cmd)
-        run_cmd_capture(actual_tg_cmd)
 
-        # Actual benchmark
-        ast_time, ast_out = run_cmd_capture(ast_cmd)
-        tg_time, tg_out = run_cmd_capture(actual_tg_cmd)
-
-        parity_ok = compare_results(ast_out, tg_out, scenario["name"])
-        parity_str = "PASS" if parity_ok else "FAIL"
-        if not parity_ok:
-            parity_failures += 1
-
-        print(f"{scenario['name']:<35} | {ast_time:>8.3f}s | {tg_time:>8.3f}s | {parity_str}")
-        rows.append({
-            "name": scenario["name"],
-            "ast_time_s": round(ast_time, 6),
-            "tg_time_s": round(tg_time, 6),
-            "parity": parity_str,
-        })
-
-    artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
-    write_json(
-        artifacts_dir / "bench_run_ast_benchmarks.json",
-        {
-            "suite": "run_ast_benchmarks",
-            "generated_at_epoch_s": time.time(),
-            "environment": {
-                "platform": platform.system().lower(),
-                "machine": platform.machine().lower(),
-                "python_version": platform.python_version(),
-            },
-            "rows": rows,
-            "parity_failures": parity_failures,
-        },
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Milestone 3 AST cold-start benchmark gate: tg.exe run vs native sg."
     )
-    if parity_failures:
-        raise SystemExit(1)
+    parser.add_argument("--binary", default=str(default_binary_path()), help="Path to tg.exe.")
+    parser.add_argument(
+        "--output",
+        default=str(default_output_path()),
+        help="Machine-readable output artifact path.",
+    )
+    parser.add_argument("--pattern", default=DEFAULT_PATTERN, help="AST pattern to benchmark.")
+    parser.add_argument("--lang", default="python", help="Pattern language for tg/sg.")
+    parser.add_argument("--runs", type=int, default=10, help="Number of hyperfine runs.")
+    parser.add_argument("--warmup", type=int, default=0, help="Number of hyperfine warmup runs.")
+    parser.add_argument("--files", type=int, default=1000, help="Synthetic corpus file count.")
+    parser.add_argument("--loc", type=int, default=50000, help="Synthetic corpus total LOC.")
+    parser.add_argument("--seed", type=int, default=42, help="Deterministic corpus seed.")
+    parser.add_argument(
+        "--max-ratio",
+        type=float,
+        default=3.0,
+        help="Maximum allowed tg_median / sg_median ratio.",
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    output_path = Path(args.output).expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    corpus_info = ensure_ast_bench_corpus(
+        resolve_ast_bench_data_dir(),
+        file_count=args.files,
+        total_loc=args.loc,
+        seed=args.seed,
+    )
+    corpus_dir = Path(corpus_info["corpus_dir"])
+    tg_binary = resolve_tg_binary(args.binary)
+    sg_binary = resolve_ast_grep_binary()
+    hyperfine_binary = resolve_hyperfine_binary()
+
+    payload: dict[str, object] = {
+        "artifact": "bench_ast_m3",
+        "suite": "ast_search_benchmark_gate",
+        "generated_at_epoch_s": time.time(),
+        "environment": {
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
+        },
+        "file_count": corpus_info["file_count"],
+        "total_loc": corpus_info["total_loc"],
+        "seed": args.seed,
+        "lang": args.lang,
+        "pattern": args.pattern,
+        "threshold": args.max_ratio,
+        "corpus_dir": str(corpus_dir),
+        "manifest_path": str(corpus_info["manifest_path"]),
+    }
+
+    errors: list[str] = []
+    if not tg_binary.exists():
+        errors.append(f"tg binary not found: {tg_binary}")
+    if sg_binary is None:
+        errors.append(
+            "ast-grep binary not found. Install it via `cargo install ast-grep --version 0.41.1` or set AST_GREP_BINARY."
+        )
+    if hyperfine_binary is None:
+        errors.append(
+            "hyperfine was not found. Install it (for example `cargo install hyperfine --locked`) or set HYPERFINE_BINARY."
+        )
+
+    if errors:
+        payload.update({"passed": False, "error": " ".join(errors)})
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        for error in errors:
+            print(error, file=sys.stderr)
+        return 2
+
+    tg_command = build_tg_ast_benchmark_cmd(
+        ["run", "--lang", args.lang, args.pattern, str(corpus_dir)],
+        binary=tg_binary,
+    )
+    sg_command = build_sg_ast_benchmark_cmd(
+        binary=sg_binary,
+        lang=args.lang,
+        pattern=args.pattern,
+        corpus_dir=corpus_dir,
+    )
+    command_strings = [build_command_string(tg_command), build_command_string(sg_command)]
+    hyperfine_data = run_hyperfine(
+        hyperfine_binary,
+        commands=command_strings,
+        runs=args.runs,
+        warmup=args.warmup,
+    )
+    results = hyperfine_data["results"]
+    tg_median = float(results[0]["median"])
+    sg_median = float(results[1]["median"])
+    ratio = tg_median / sg_median if sg_median else float("inf")
+    passed = ratio <= args.max_ratio
+
+    payload.update(
+        {
+            "tg_binary": str(tg_binary),
+            "sg_binary": str(sg_binary),
+            "hyperfine_binary": str(hyperfine_binary),
+            "runs": args.runs,
+            "warmup": args.warmup,
+            "tg_command": command_strings[0],
+            "sg_command": command_strings[1],
+            "tg_median_s": round(tg_median, 6),
+            "sg_median_s": round(sg_median, 6),
+            "ratio": round(ratio, 6),
+            "passed": passed,
+            "hyperfine": hyperfine_data,
+        }
+    )
+    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    print(
+        f"AST benchmark gate: tg_median={tg_median:.3f}s sg_median={sg_median:.3f}s ratio={ratio:.3f} threshold<={args.max_ratio:.3f}"
+    )
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

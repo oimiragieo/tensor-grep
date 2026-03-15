@@ -61,17 +61,23 @@ impl AstBackend {
         let source = std::fs::read_to_string(file)
             .with_context(|| format!("failed to read source file {}", file.display()))?;
         let ast = lang.ast_grep(&source);
+        let line_starts = build_line_starts(&source);
         let mut matches = Vec::new();
 
         for matched in ast.root().find_all(pattern.clone()) {
-            matches.push(build_match(file, &source, matched));
+            matches.push(build_match(file, &source, &line_starts, matched));
         }
 
         Ok(matches)
     }
 }
 
-fn build_match<'tree>(file: &Path, source: &str, matched: NodeMatch<'tree, ast_grep_core::tree_sitter::StrDoc<SupportLang>>) -> AstMatch {
+fn build_match<'tree>(
+    file: &Path,
+    source: &str,
+    line_starts: &[usize],
+    matched: NodeMatch<'tree, ast_grep_core::tree_sitter::StrDoc<SupportLang>>,
+) -> AstMatch {
     let byte_range = matched.range();
     let matched_text = matched.text().to_string();
     let candidate = EditCandidate {
@@ -82,7 +88,7 @@ fn build_match<'tree>(file: &Path, source: &str, matched: NodeMatch<'tree, ast_g
 
     AstMatch {
         file: file.to_path_buf(),
-        line: line_number_for_byte(source, byte_range.start),
+        line: line_number_for_byte(line_starts, byte_range.start),
         matched_text,
         candidate,
     }
@@ -134,12 +140,18 @@ fn file_matches_language(path: &Path, lang: SupportLang) -> bool {
     )
 }
 
-fn line_number_for_byte(source: &str, byte_offset: usize) -> usize {
-    source.as_bytes()[..byte_offset]
-        .iter()
-        .filter(|&&byte| byte == b'\n')
-        .count()
-        + 1
+fn build_line_starts(source: &str) -> Vec<usize> {
+    let mut line_starts = vec![0];
+    for (index, byte) in source.as_bytes().iter().enumerate() {
+        if *byte == b'\n' {
+            line_starts.push(index + 1);
+        }
+    }
+    line_starts
+}
+
+fn line_number_for_byte(line_starts: &[usize], byte_offset: usize) -> usize {
+    line_starts.partition_point(|start| *start <= byte_offset)
 }
 
 fn extract_metavar_env(
