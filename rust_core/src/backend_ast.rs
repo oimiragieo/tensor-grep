@@ -62,6 +62,7 @@ impl AstBackend {
             matches.extend(result?);
         }
 
+        matches.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
         Ok(matches)
     }
 
