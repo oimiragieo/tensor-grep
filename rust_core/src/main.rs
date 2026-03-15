@@ -135,6 +135,14 @@ pub struct RunArgs {
     #[arg(long, default_value = "python")]
     pub lang: String,
 
+    /// Rewrite matched nodes with this replacement pattern (metavar substitution supported)
+    #[arg(long)]
+    pub rewrite: Option<String>,
+
+    /// Apply rewrite edits to files (requires --rewrite)
+    #[arg(long)]
+    pub apply: bool,
+
     /// Emit machine-readable routing metadata as JSON
     #[arg(long)]
     pub json: bool,
@@ -431,6 +439,11 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
 
 fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     let backend = AstBackend::new();
+
+    if let Some(replacement) = &args.rewrite {
+        return handle_ast_rewrite(&backend, &args, replacement);
+    }
+
     let matches = backend.search(&args.pattern, &args.lang, &args.path)?;
 
     if args.json {
@@ -449,6 +462,44 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     for matched in matches {
         println!("{}", matched.format_for_cli());
     }
+
+    Ok(())
+}
+
+fn handle_ast_rewrite(
+    backend: &AstBackend,
+    args: &RunArgs,
+    replacement: &str,
+) -> anyhow::Result<()> {
+    if args.verbose {
+        emit_verbose_metadata(RoutingDecision::AST);
+    }
+
+    let plan = backend.plan_rewrites(&args.pattern, replacement, &args.lang, &args.path)?;
+
+    if !plan.rejected_overlaps.is_empty() {
+        eprintln!(
+            "[rewrite] {} overlapping edit(s) rejected",
+            plan.rejected_overlaps.len()
+        );
+    }
+
+    if plan.edits.is_empty() {
+        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        return Ok(());
+    }
+
+    if args.json || !args.apply {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+        return Ok(());
+    }
+
+    let files_written = AstBackend::apply_rewrites(&plan)?;
+    eprintln!(
+        "[rewrite] applied {} edit(s) across {} file(s)",
+        plan.edits.len(),
+        files_written
+    );
 
     Ok(())
 }

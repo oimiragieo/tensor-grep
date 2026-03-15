@@ -3,6 +3,7 @@ use ast_grep_core::{meta_var::MetaVariable, matcher::NodeMatch, tree_sitter::Lan
 use ast_grep_language::SupportLang;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -26,6 +27,34 @@ impl AstMatch {
     pub fn format_for_cli(&self) -> String {
         format!("{}:{}:{}", self.file.display(), self.line, self.matched_text)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RewriteEdit {
+    pub file: PathBuf,
+    pub line: usize,
+    pub byte_range: Range<usize>,
+    pub original_text: String,
+    pub replacement_text: String,
+    pub metavar_env: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RewritePlan {
+    pub pattern: String,
+    pub replacement: String,
+    pub lang: String,
+    pub edits: Vec<RewriteEdit>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rejected_overlaps: Vec<OverlapRejection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OverlapRejection {
+    pub file: PathBuf,
+    pub edit_a: Range<usize>,
+    pub edit_b: Range<usize>,
+    pub reason: String,
 }
 
 
@@ -64,6 +93,114 @@ impl AstBackend {
 
         matches.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
         Ok(matches)
+    }
+
+    pub fn plan_rewrites(&self, pattern: &str, replacement: &str, lang: &str, path: &str) -> Result<RewritePlan> {
+        let language = resolve_language(lang)?;
+        let compiled_pattern = Pattern::try_new(pattern, language)
+            .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
+        if compiled_pattern.has_error() {
+            anyhow::bail!("Invalid pattern: parse error");
+        }
+        let files = collect_source_files(Path::new(path), language)?;
+
+        let file_results: Vec<Result<Vec<RewriteEdit>>> = files
+            .par_iter()
+            .map(|file| Self::plan_file_rewrites(&compiled_pattern, replacement, language, file))
+            .collect();
+
+        let mut edits = Vec::new();
+        for result in file_results {
+            edits.extend(result?);
+        }
+
+        edits.sort_by(|a, b| a.file.cmp(&b.file).then(a.byte_range.start.cmp(&b.byte_range.start)));
+
+        let (valid_edits, rejected_overlaps) = validate_no_overlaps(edits);
+
+        Ok(RewritePlan {
+            pattern: pattern.to_string(),
+            replacement: replacement.to_string(),
+            lang: lang.to_string(),
+            edits: valid_edits,
+            rejected_overlaps,
+        })
+    }
+
+    pub fn apply_rewrites(plan: &RewritePlan) -> Result<usize> {
+        let mut files_written = 0;
+        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
+        for edit in &plan.edits {
+            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
+        }
+
+        for (file, file_edits) in &edits_by_file {
+            let original = std::fs::read_to_string(file)
+                .with_context(|| format!("failed to read {}", file.display()))?;
+
+            let mut result = String::with_capacity(original.len());
+            let mut cursor = 0usize;
+
+            for edit in file_edits {
+                if edit.byte_range.start < cursor {
+                    anyhow::bail!(
+                        "overlapping edit in {}: byte {} < cursor {}",
+                        file.display(), edit.byte_range.start, cursor
+                    );
+                }
+                result.push_str(&original[cursor..edit.byte_range.start]);
+                result.push_str(&edit.replacement_text);
+                cursor = edit.byte_range.end;
+            }
+            result.push_str(&original[cursor..]);
+
+            std::fs::write(file, &result)
+                .with_context(|| format!("failed to write {}", file.display()))?;
+            files_written += 1;
+        }
+
+        Ok(files_written)
+    }
+
+    fn plan_file_rewrites(
+        pattern: &Pattern,
+        replacement: &str,
+        lang: SupportLang,
+        file: &Path,
+    ) -> Result<Vec<RewriteEdit>> {
+        let bytes = std::fs::read(file)
+            .with_context(|| format!("failed to read source file {}", file.display()))?;
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let source = String::from_utf8(bytes)
+            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
+        let ast = lang.ast_grep(&source);
+        let file_owned = file.to_path_buf();
+        let mut line_starts: Option<Vec<usize>> = None;
+        let mut edits = Vec::new();
+
+        for matched in ast.root().find_all(pattern.clone()) {
+            let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+            let byte_range = matched.range();
+            let original_text = matched.text().to_string();
+            let metavar_env = extract_metavar_env(&source, matched.get_env());
+            let edit = matched.replace_by(replacement);
+            let inserted_bytes = edit.inserted_text;
+            let replacement_text = String::from_utf8(inserted_bytes)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
+
+            edits.push(RewriteEdit {
+                file: file_owned.clone(),
+                line: line_number_for_byte(ls, byte_range.start),
+                byte_range,
+                original_text,
+                replacement_text,
+                metavar_env,
+            });
+        }
+
+        Ok(edits)
     }
 
     fn search_file_static(pattern: &Pattern, lang: SupportLang, file: &Path) -> Result<Vec<AstMatch>> {
@@ -109,6 +246,33 @@ fn build_match<'tree>(
         matched_text,
         candidate,
     }
+}
+
+fn validate_no_overlaps(edits: Vec<RewriteEdit>) -> (Vec<RewriteEdit>, Vec<OverlapRejection>) {
+    let mut valid = Vec::new();
+    let mut rejected = Vec::new();
+
+    let mut prev_end_by_file: HashMap<PathBuf, usize> = HashMap::new();
+
+    for edit in edits {
+        let prev_end = prev_end_by_file.get(&edit.file).copied().unwrap_or(0);
+        if edit.byte_range.start < prev_end {
+            rejected.push(OverlapRejection {
+                file: edit.file.clone(),
+                edit_a: (prev_end.saturating_sub(100))..prev_end,
+                edit_b: edit.byte_range.clone(),
+                reason: format!(
+                    "edit at byte {} overlaps with previous edit ending at byte {}",
+                    edit.byte_range.start, prev_end
+                ),
+            });
+            continue;
+        }
+        prev_end_by_file.insert(edit.file.clone(), edit.byte_range.end);
+        valid.push(edit);
+    }
+
+    (valid, rejected)
 }
 
 fn resolve_language(lang: &str) -> Result<SupportLang> {
