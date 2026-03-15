@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use ast_grep_core::{meta_var::MetaVariable, matcher::NodeMatch, tree_sitter::LanguageExt, Pattern};
 use ast_grep_language::SupportLang;
+use ignore::WalkBuilder;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditCandidate {
@@ -27,6 +28,8 @@ impl AstMatch {
     }
 }
 
+
+
 pub struct AstBackend;
 
 impl Default for AstBackend {
@@ -48,24 +51,36 @@ impl AstBackend {
             anyhow::bail!("Invalid pattern: parse error");
         }
         let files = collect_source_files(Path::new(path), language)?;
-        let mut matches = Vec::new();
 
-        for file in files {
-            matches.extend(self.search_file(&compiled_pattern, language, &file)?);
+        let file_results: Vec<Result<Vec<AstMatch>>> = files
+            .par_iter()
+            .map(|file| Self::search_file_static(&compiled_pattern, language, file))
+            .collect();
+
+        let mut matches = Vec::new();
+        for result in file_results {
+            matches.extend(result?);
         }
 
         Ok(matches)
     }
 
-    fn search_file(&self, pattern: &Pattern, lang: SupportLang, file: &Path) -> Result<Vec<AstMatch>> {
-        let source = std::fs::read_to_string(file)
+    fn search_file_static(pattern: &Pattern, lang: SupportLang, file: &Path) -> Result<Vec<AstMatch>> {
+        let bytes = std::fs::read(file)
             .with_context(|| format!("failed to read source file {}", file.display()))?;
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let source = String::from_utf8(bytes)
+            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
         let ast = lang.ast_grep(&source);
-        let line_starts = build_line_starts(&source);
+        let file_owned = file.to_path_buf();
+        let mut line_starts: Option<Vec<usize>> = None;
         let mut matches = Vec::new();
 
         for matched in ast.root().find_all(pattern.clone()) {
-            matches.push(build_match(file, &source, &line_starts, matched));
+            let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+            matches.push(build_match(&file_owned, &source, ls, matched));
         }
 
         Ok(matches)
@@ -80,14 +95,15 @@ fn build_match<'tree>(
 ) -> AstMatch {
     let byte_range = matched.range();
     let matched_text = matched.text().to_string();
+    let file_path = file.to_path_buf();
     let candidate = EditCandidate {
-        file: file.to_path_buf(),
+        file: file_path.clone(),
         byte_range: byte_range.clone(),
         metavar_env: extract_metavar_env(source, matched.get_env()),
     };
 
     AstMatch {
-        file: file.to_path_buf(),
+        file: file_path,
         line: line_number_for_byte(line_starts, byte_range.start),
         matched_text,
         candidate,
@@ -117,15 +133,16 @@ fn collect_source_files(path: &Path, lang: SupportLang) -> Result<Vec<PathBuf>> 
         return Ok(vec![path.to_path_buf()]);
     }
 
-    let mut files = WalkDir::new(path)
-        .into_iter()
+    let files: Vec<PathBuf> = WalkBuilder::new(path)
+        .hidden(true)
+        .git_ignore(true)
+        .build()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
+        .filter(|entry| entry.file_type().map_or(false, |ft| ft.is_file()))
         .map(|entry| entry.into_path())
         .filter(|file| file_matches_language(file, lang))
-        .collect::<Vec<_>>();
+        .collect();
 
-    files.sort();
     Ok(files)
 }
 
