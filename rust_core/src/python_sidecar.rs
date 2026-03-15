@@ -1,14 +1,16 @@
+use crate::runtime_paths::resolve_existing_relative_to_current_exe;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
 
 const DEFAULT_SIDECAR_MODULE: &str = "tensor_grep.sidecar";
 const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
+const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SidecarRequest {
@@ -231,19 +233,19 @@ fn merge_stderr(process_stderr: &str, response_stderr: &str) -> String {
 }
 
 fn resolve_python_command() -> OsString {
-    if let Some(explicit) = env::var_os("TG_SIDECAR_PYTHON") {
+    if let Some(explicit) = env::var_os(TG_SIDECAR_PYTHON_ENV) {
         return explicit;
     }
 
-    let repo_root = repo_root();
-    let windows_python = repo_root.join(".venv").join("Scripts").join("python.exe");
-    if windows_python.exists() {
-        return windows_python.into_os_string();
-    }
-
-    let unix_python = repo_root.join(".venv").join("bin").join("python");
-    if unix_python.exists() {
-        return unix_python.into_os_string();
+    if let Some(runtime_relative_python) = resolve_existing_relative_to_current_exe(&[
+        &[if cfg!(windows) { "python.exe" } else { "python" }],
+        &[
+            ".venv",
+            if cfg!(windows) { "Scripts" } else { "bin" },
+            if cfg!(windows) { "python.exe" } else { "python" },
+        ],
+    ]) {
+        return runtime_relative_python.into_os_string();
     }
 
     OsString::from("python")
@@ -258,20 +260,14 @@ fn resolve_sidecar_target() -> PythonLaunchTarget {
     PythonLaunchTarget::Module(module)
 }
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
-        .to_path_buf()
-}
-
 fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
     if err.kind() == io::ErrorKind::NotFound {
         return SidecarError {
             exit_code: 2,
             message: format!(
-                "Python sidecar not found. Tried `{}`. Install Python or create `.venv` with `uv pip install -e \".[dev,ast,nlp]\"`.",
-                python.to_string_lossy()
+                "Python sidecar not found. Tried `{}`. Set {} to an interpreter path or create `.venv` with `uv pip install -e \".[dev,ast,nlp]\"`.",
+                python.to_string_lossy(),
+                TG_SIDECAR_PYTHON_ENV
             ),
             stderr: String::new(),
         };

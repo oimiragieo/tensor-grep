@@ -1,9 +1,12 @@
+use crate::runtime_paths::resolve_existing_relative_to_current_exe;
 use anyhow::{anyhow, Context};
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 const WINDOWS_RG_DIRNAME: &str = "ripgrep-14.1.0-x86_64-pc-windows-msvc";
+const TG_RG_PATH_ENV: &str = "TG_RG_PATH";
+const LEGACY_TG_RG_BINARY_ENV: &str = "TG_RG_BINARY";
 
 #[derive(Debug, Clone)]
 pub struct RipgrepSearchArgs {
@@ -24,7 +27,7 @@ pub struct RipgrepSearchArgs {
 pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     let rg_binary = resolve_ripgrep_binary().ok_or_else(|| {
         anyhow!(
-            "ripgrep binary not found. Install `rg` or use the bundled benchmark ripgrep binary."
+            "ripgrep binary not found. Install `rg`, set {TG_RG_PATH_ENV}, or place a bundled ripgrep binary next to `tg`."
         )
     })?;
 
@@ -75,11 +78,19 @@ pub fn ripgrep_is_available() -> bool {
 }
 
 fn resolve_ripgrep_binary() -> Option<PathBuf> {
-    if let Some(path) = env::var_os("TG_RG_BINARY") {
+    if let Some(path) = env::var_os(TG_RG_PATH_ENV).or_else(|| env::var_os(LEGACY_TG_RG_BINARY_ENV)) {
         let candidate = PathBuf::from(path);
         if candidate.is_file() {
             return Some(candidate);
         }
+    }
+
+    if let Some(runtime_relative_rg) = resolve_existing_relative_to_current_exe(&[
+        &[if cfg!(windows) { "rg.exe" } else { "rg" }],
+        &["benchmarks", WINDOWS_RG_DIRNAME, if cfg!(windows) { "rg.exe" } else { "rg" }],
+        &["benchmarks", "rg"],
+    ]) {
+        return Some(runtime_relative_rg);
     }
 
     rg_path_candidates()
@@ -89,18 +100,6 @@ fn resolve_ripgrep_binary() -> Option<PathBuf> {
 
 fn rg_path_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-
-    let repo_root = repo_root();
-    if cfg!(windows) {
-        candidates.push(
-            repo_root
-                .join("benchmarks")
-                .join(WINDOWS_RG_DIRNAME)
-                .join("rg.exe"),
-        );
-    } else {
-        candidates.push(repo_root.join("benchmarks").join("rg"));
-    }
 
     if cfg!(windows) {
         candidates.push(PathBuf::from("rg.exe"));
@@ -117,11 +116,4 @@ fn rg_path_candidates() -> Vec<PathBuf> {
     }
 
     candidates
-}
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")))
-        .to_path_buf()
 }

@@ -1,17 +1,20 @@
-mod rg_passthrough;
-
 use clap::{Args, Parser, Subcommand};
 use std::ffi::OsString;
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_sidecar_command, SidecarError,
 };
-use rg_passthrough::{execute_ripgrep_search, ripgrep_is_available, RipgrepSearchArgs};
+use tensor_grep_rs::rg_passthrough::{
+    execute_ripgrep_search, ripgrep_is_available, RipgrepSearchArgs,
+};
+
+const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON  Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH         Path to the ripgrep executable used for text-search passthrough.";
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
 #[command(version = "0.2.0")]
 #[command(about = "tensor-grep: GPU-Accelerated Log Parsing CLI")]
+#[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 pub struct CommandCli {
     #[command(subcommand)]
     pub command: Commands,
@@ -21,6 +24,7 @@ pub struct CommandCli {
 #[command(name = "tg")]
 #[command(version = "0.2.0")]
 #[command(about = "tensor-grep: GPU-Accelerated Log Parsing CLI")]
+#[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 pub struct PositionalCli {
     /// The search pattern (regex or string)
     pub pattern: Option<String>,
