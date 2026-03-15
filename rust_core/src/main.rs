@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use tensor_grep_rs::backend_cpu::CpuBackend;
-use tensor_grep_rs::backend_gpu::{ensure_python_initialized, execute_python_module_fallback};
+use tensor_grep_rs::python_sidecar::{
+    execute_python_passthrough_command, execute_sidecar_command, SidecarError,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -66,24 +68,22 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if let Some(cmd) = &cli.command {
-        ensure_python_initialized();
-
         match cmd {
-            Commands::Mcp => return execute_python_module_fallback("mcp_server", vec![]),
+            Commands::Mcp => return handle_python_passthrough("mcp", vec![]),
             Commands::Classify { file_path } => {
-                return execute_python_module_fallback("classify", vec![file_path.clone()]);
+                return handle_sidecar_command("classify", vec![file_path.clone()]);
             }
             Commands::Run { pattern, path } => {
                 let mut args = vec![pattern.clone()];
                 if let Some(p) = path {
                     args.push(p.clone());
                 }
-                return execute_python_module_fallback("run", args);
+                return handle_sidecar_command("run", args);
             }
-            Commands::Scan => return execute_python_module_fallback("scan", vec![]),
-            Commands::Test => return execute_python_module_fallback("test", vec![]),
-            Commands::New => return execute_python_module_fallback("new", vec![]),
-            Commands::Lsp => return execute_python_module_fallback("lsp", vec![]),
+            Commands::Scan => return handle_sidecar_command("scan", vec![]),
+            Commands::Test => return handle_sidecar_command("test", vec![]),
+            Commands::New => return handle_sidecar_command("new", vec![]),
+            Commands::Lsp => return handle_python_passthrough("lsp", vec![]),
         }
     }
 
@@ -139,4 +139,43 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn handle_sidecar_command(command: &str, args: Vec<String>) -> anyhow::Result<()> {
+    match execute_sidecar_command(command, args, None) {
+        Ok(result) => {
+            let _ = result.sidecar_pid;
+            if !result.stdout.is_empty() {
+                print!("{}", result.stdout);
+            }
+            if !result.stderr.is_empty() {
+                eprint!("{}", result.stderr);
+            }
+            if result.exit_code != 0 {
+                std::process::exit(result.exit_code.max(1));
+            }
+            Ok(())
+        }
+        Err(err) => exit_with_sidecar_error(err),
+    }
+}
+
+fn handle_python_passthrough(command: &str, args: Vec<String>) -> anyhow::Result<()> {
+    match execute_python_passthrough_command(command, args) {
+        Ok(exit_code) => {
+            if exit_code != 0 {
+                std::process::exit(exit_code.max(1));
+            }
+            Ok(())
+        }
+        Err(err) => exit_with_sidecar_error(err),
+    }
+}
+
+fn exit_with_sidecar_error(err: SidecarError) -> anyhow::Result<()> {
+    if !err.stderr.is_empty() {
+        eprint!("{}", err.stderr);
+    }
+    eprintln!("{}", err.message);
+    std::process::exit(err.exit_code.max(1));
 }

@@ -5,6 +5,7 @@ pub mod backend_cpu;
 pub mod backend_gpu;
 pub mod cli;
 pub mod mmap_arrow;
+pub mod python_sidecar;
 
 use crate::backend_cpu::CpuBackend;
 use arrow_array::Array;
