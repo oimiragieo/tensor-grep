@@ -1,0 +1,67 @@
+{
+  "featureId": "cli-parity-test-suite",
+  "reviewedAt": "2026-03-15T07:15:00.000Z",
+  "commitId": "002c5b7",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The CLI parity gate implementation is solid and covers all three required pillars: (1) 8-scenario sorted-line comparison between tg.exe and rg, (2) JSON schema validation of routing metadata, and (3) pytest suite integration. The Rust-side --json and --verbose flags are correctly wired into both positional and search subcommand paths. The lint fix in commit 9d8962c adequately resolved the E402 errors by moving the module docstring before `from __future__ import`, and also improved jsonschema import error handling and simplified run_pytest_suite(). The schema at tests/schemas/tg_output.schema.json is well-formed with strict additionalProperties:false and proper enum constraints. Python unit tests exercise scenario construction, rg.zip extraction fallback, and the full report aggregation flow with monkeypatched commands. Rust integration tests verify --json and --verbose metadata output. All verification commands reported success.",
+    "issues": [
+      {
+        "file": "benchmarks/run_compat_checks.py",
+        "line": 241,
+        "severity": "non_blocking",
+        "description": "normalize_lines was changed from set comprehension (dedup) in commit 002c5b7 to plain generator (no dedup) in commit 9d8962c. The feature description specifies 'sorted line-set diff' which implies deduplication. The current version preserves duplicate lines, which could cause false FAILs if tg and rg emit different numbers of identical lines. In practice this is unlikely for the 8 scenarios but diverges from the stated contract."
+      },
+      {
+        "file": "rust_core/src/main.rs",
+        "line": 390,
+        "severity": "non_blocking",
+        "description": "emit_json_metadata hardcodes routing_backend='CpuBackend', routing_reason='cpu-native', sidecar_used=false. These values don't reflect actual runtime routing decisions — they are static. When GPU or AST backends are eventually routed to, this function will need to be updated. Acceptable for Milestone 2 where CpuBackend is the only active backend, but worth noting for future milestones."
+      },
+      {
+        "file": "rust_core/src/main.rs",
+        "line": 403,
+        "severity": "non_blocking",
+        "description": "emit_verbose_metadata similarly hardcodes the routing metadata string. Same concern as above — static values rather than reflecting actual routing logic."
+      },
+      {
+        "file": "rust_core/tests/test_cli_routing_metadata.rs",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "#![cfg(windows)] restricts routing metadata Rust integration tests to Windows only. CI on Linux/macOS will not exercise these tests. Acceptable given the project's Windows-first nature but is a coverage gap for cross-platform CI."
+      },
+      {
+        "file": "benchmarks/run_compat_checks.py",
+        "line": 62,
+        "severity": "non_blocking",
+        "description": "zipfile.ZipFile.extractall() is called without path traversal validation. While the rg.zip archive is bundled in the repo and trusted, this is a general security concern for zip extraction. Low practical risk."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Worker created .factory/library/compat-gate-worktree-notes.md in the feature worktree but did not merge it back to main. The file is absent from the primary checkout's .factory/library/. This worktree knowledge (bench_data dir override, PYTHONPATH requirements for isolated worktrees) would be useful for future workers.",
+      "evidence": "Handoff mentions 'recorded the clean-worktree bench_data override gotcha in .factory/library/compat-gate-worktree-notes.md'. File not found in C:\\dev\\projects\\tensor-grep\\.factory\\library\\ (confirmed via Grep search)."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker deviated from skill procedure at Final Step (merge to main). The merge was skipped because the primary checkout had dirty changes on overlapping files. The skill documents worktree merge strategy but doesn't address conflict resolution when overlapping files are dirty in the primary checkout. The skill's 'stash/merge/pop' suggestion may not work when the dirty files overlap with the feature branch changes.",
+      "evidence": "Handoff skillFeedback.deviations confirms merge was not performed. The feature worktree commit 002c5b7 was cherry-picked/merged later by a different session (lint fix commit 9d8962c recreated the file on main)."
+    },
+    {
+      "area": "conventions",
+      "observation": "The lint fix commit (9d8962c) also made behavioral changes beyond fixing E402: (1) removed set-dedup from normalize_lines, (2) simplified run_pytest_suite by removing PYTHONPATH handling, (3) added jsonschema import error handling. These are improvements but mixing behavioral changes with lint fixes in a single commit obscures the change intent. AGENTS.md's 'smallest defensible change' principle suggests these should have been separate commits.",
+      "evidence": "git diff 002c5b7..9d8962c shows 4 distinct behavioral changes in benchmarks/run_compat_checks.py beyond the docstring move."
+    },
+    {
+      "area": "services",
+      "observation": "services.yaml already includes benchmark_compat command pointing to run_compat_checks.py — no gap here.",
+      "evidence": ".factory/services.yaml contains 'benchmark_compat: python benchmarks/run_compat_checks.py'."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The cli-parity-test-suite feature passes review. The implementation correctly delivers all three compatibility gate pillars: 8-scenario tg-vs-rg comparison with sorted-line diff, JSON schema validation of routing metadata (--json/--verbose flags), and integrated pytest gate. The lint fix in 9d8962c adequately resolves the E402 errors from round 1. Five non-blocking issues were identified: normalize_lines lost set-dedup semantics, routing metadata is hardcoded rather than dynamic, Rust tests are Windows-only, and a minor zipfile extractall security note. The .factory/library/compat-gate-worktree-notes.md file created by the worker was not merged to main — this knowledge gap should be addressed separately."
+}

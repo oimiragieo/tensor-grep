@@ -1,13 +1,13 @@
 {
   "milestone": "compatibility-and-benchmark-parity",
-  "round": 1,
-  "status": "fail",
+  "round": 2,
+  "status": "pass",
   "validatorsRun": {
     "test": {
       "passed": true,
       "command": "uv run pytest -q",
       "exitCode": 0,
-      "summary": "503 passed, 14 skipped in 105.59s"
+      "summary": "503 passed, 14 skipped in 80.47s"
     },
     "typecheck": {
       "passed": true,
@@ -16,28 +16,48 @@
       "summary": "Success: no issues found in 44 source files"
     },
     "lint": {
-      "passed": false,
+      "passed": true,
       "command": "uv run ruff check .",
-      "exitCode": 1,
-      "summary": "11 E402 errors in benchmarks/run_compat_checks.py: module-level imports not at top of file due to `from __future__ import annotations` placed before module docstring"
+      "exitCode": 0,
+      "summary": "All checks passed!"
     }
   },
   "reviewsSummary": {
-    "total": 0,
-    "passed": 0,
+    "total": 2,
+    "passed": 2,
     "failed": 0,
-    "failedFeatures": [],
-    "note": "Feature review not performed because lint validator failed"
+    "failedFeatures": []
   },
-  "blockingIssues": [
+  "blockingIssues": [],
+  "appliedUpdates": [
     {
-      "featureId": "cli-parity-test-suite",
-      "severity": "blocking",
-      "description": "benchmarks/run_compat_checks.py has 11 E402 ruff lint errors. The file places `from __future__ import annotations` on line 1 before the module docstring (lines 2-10), causing all subsequent imports (lines 12-22) to be flagged as E402 (module-level import not at top of file). Fix: either move `from __future__ import annotations` after the docstring or add a `# noqa: E402` comment, or restructure the file header so imports follow PEP 257 order."
+      "target": "library",
+      "description": "Created .factory/library/benchmark-conventions.md documenting milestone baseline naming convention, Windows benchmark timing variance, regression gate thresholds, and worktree benchmark gotchas",
+      "sourceFeature": "benchmark-regression-gates, cli-parity-test-suite"
     }
   ],
-  "appliedUpdates": [],
-  "suggestedGuidanceUpdates": [],
-  "rejectedObservations": [],
-  "previousRound": null
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "backend-worker and rust-worker skills should clarify merge conflict resolution when the primary checkout has dirty changes on overlapping files. Current guidance says 'stash/merge/pop' but doesn't address overlapping file conflicts. Consider: (1) require workers to commit to feature branch and let orchestrator handle merge, or (2) document force-checkout resolution for .factory/ files that are frequently dirty.",
+      "evidence": "cli-parity-test-suite worker (bd4777f4) could not merge to main because primary checkout had dirty changes overlapping with feature branch. Merge was skipped and later handled by a separate lint-fix session.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add guidance: lint fixes should be minimal — do not mix behavioral changes (removing dedup, simplifying functions, adding error handling) with pure formatting/import-order fixes in a single commit. This aligns with the existing 'smallest defensible change' principle but should be called out explicitly for lint/format fix commits.",
+      "evidence": "Commit 9d8962c (lint fix for E402 errors) also changed normalize_lines from set-dedup to generator (behavioral), simplified run_pytest_suite (behavioral), and added jsonschema import error handling (behavioral). These 4 changes obscured the actual fix intent."
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "services.yaml check_regression command does not document the --milestone flag",
+      "reason": "The command 'python benchmarks/check_regression.py --baseline auto' works correctly for default usage. The --milestone flag is an advanced option used for specific baseline comparisons and does not need to be in the default services.yaml command."
+    },
+    {
+      "observation": "services.yaml already includes benchmark_compat command",
+      "reason": "Already documented — no gap to address."
+    }
+  ],
+  "previousRound": ".factory/validation/compatibility-and-benchmark-parity/scrutiny/synthesis.json (round 1)"
 }
