@@ -61,6 +61,12 @@ def test_ci_benchmark_regression_jobs_should_use_auto_baseline_resolution() -> N
     assert "--baseline auto" in workflow
 
 
+def test_ci_workflow_should_run_windows_search_golden_parity_job() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "search-golden-parity" in workflow
+    assert "cargo test --test test_search_golden" in workflow
+
+
 def test_release_workflow_should_smoke_test_package_manager_bundle_before_publish() -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "Smoke-test package-manager bundle contracts" in workflow

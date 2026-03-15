@@ -1,0 +1,13 @@
+INFO boot
+WARNING fan speed high
+ERROR database timeout
+DEBUG recoverable timeout marker
+CRITICAL disk full
+TRACE after critical 1
+ERROR socket timeout
+WARNING retrying
+ERROR auth timeout
+ERROR queue timeout
+ERROR cache timeout
+ERROR network timeout
+INFO done

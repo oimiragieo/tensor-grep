@@ -1,0 +1,3 @@
+tests/golden/fixture_data\server_0.log:WARNING fan speed high
+tests/golden/fixture_data\server_0.log:WARNING retrying
+tests/golden/fixture_data\server_1.log:warning lowercase message

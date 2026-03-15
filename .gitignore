@@ -47,6 +47,10 @@ benchmarks/corpus/
 ripgrep-*/
 gpu_bench_data/
 
+!tests/golden/
+!tests/golden/**/*.txt
+!tests/golden/**/*.log
+
 # Tests
 .hypothesis/
 

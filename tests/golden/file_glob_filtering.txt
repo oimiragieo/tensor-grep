@@ -1,0 +1,10 @@
+tests/golden/fixture_data\server_0.log:ERROR database timeout
+tests/golden/fixture_data\server_0.log:ERROR socket timeout
+tests/golden/fixture_data\server_0.log:ERROR auth timeout
+tests/golden/fixture_data\server_0.log:ERROR queue timeout
+tests/golden/fixture_data\server_0.log:ERROR cache timeout
+tests/golden/fixture_data\server_0.log:ERROR network timeout
+tests/golden/fixture_data\server_1.log:ERROR link timeout
+tests/golden/fixture_data\server_1.log:ERROR broken pipe
+tests/golden/fixture_data\server_1.log:ERROR timeout while syncing
+tests/golden/fixture_data\server_1.log:ERROR timeout while syncing again

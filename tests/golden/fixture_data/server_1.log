@@ -1,0 +1,10 @@
+INFO start
+warning lowercase message
+ERROR link timeout
+DEBUG misc
+ERROR broken pipe
+CRITICAL power lost
+NOTICE continue
+ERROR timeout while syncing
+ERROR timeout while syncing again
+DEBUG final
