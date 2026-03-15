@@ -43,6 +43,8 @@ git -C "C:\dev\projects\tensor-grep" stash pop
 - **Shell**: PowerShell is the default shell. Use `$env:PYTHONPATH = '...\src'` syntax.
 - **Cargo path**: `C:\Users\oimir\.cargo\bin\cargo.exe` (may not be on PATH).
 - **init.sh not executable**: Run `uv pip install -e ".[dev,ast,nlp]"` instead.
+- **Fresh worktree venv**: In a fresh worktree, `uv pip install -e` may fail if no venv exists. Run `uv venv` first, or use `$env:PYTHONPATH = '<worktree>\src'; uv run pytest -q` as the standard worktree test invocation.
+- **Runtime-path tests need rg.exe**: Tests in `test_rg_passthrough.rs` or similar expect `rg.exe` discoverable at runtime. Temporarily add `benchmarks/rg.zip`'s extracted `rg.exe` to PATH before running cargo test: extract rg.zip to a temp dir and prepend that dir to `$env:PATH`.
 - **PYTHONPATH in fresh worktrees**: `$env:PYTHONPATH = '<worktree>\src'; uv run pytest -q`.
 - **Cargo for cyBERT/NLP changes**: Use `python benchmarks/run_gpu_benchmarks.py` (requires Triton; may skip if not running).
 
