@@ -1,0 +1,46 @@
+{
+  "featureId": "runtime-binary-path-resolution",
+  "milestone": "misc-2",
+  "reviewedAt": "2026-03-15T04:50:00.000Z",
+  "commitId": "6052a1eb272c8df26d896c9d7c67493c45e881cb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "verdict": "pass",
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid implementation that replaces all CARGO_MANIFEST_DIR compile-time path references in python_sidecar.rs and rg_passthrough.rs with runtime resolution via std::env::current_exe(). A new shared module runtime_paths.rs provides resolve_existing_relative_to_current_exe() that walks ancestor directories to find bundled binaries. Both TG_SIDECAR_PYTHON and TG_RG_PATH env var overrides are implemented and documented in --help text. The rg_passthrough module was promoted from a private mod in main.rs to a public library module in lib.rs, which is architecturally correct for cross-crate testability. Legacy TG_RG_BINARY env var is preserved as a fallback for backward compatibility. Integration tests use wrapper scripts with marker files to prove overrides are honored end-to-end.",
+    "issues": [
+      {
+        "file": "rust_core/src/runtime_paths.rs",
+        "line": 17,
+        "severity": "non_blocking",
+        "description": "The ancestors() traversal is unbounded — it walks from the exe directory all the way to the filesystem root (e.g., C:\\ on Windows). In deep install paths, this could match an unintended python.exe or rg.exe in a parent directory. A bounded traversal (e.g., max 3-4 levels) would reduce the risk of accidental matches. Low practical risk since the env var override takes priority, but worth noting for hardening."
+      },
+      {
+        "file": "rust_core/src/rg_passthrough.rs",
+        "line": 81,
+        "severity": "non_blocking",
+        "description": "The TG_RG_PATH/TG_RG_BINARY env var override checks is_file() before accepting. If the user sets TG_RG_PATH to a valid path that doesn't yet exist (e.g., during build), the override silently falls through to runtime resolution. The error message won't mention that the user's override was ignored. Consider logging a warning when a user-provided override path doesn't exist."
+      }
+    ]
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    "Unbounded ancestor traversal in runtime_paths.rs could match unintended binaries in deep install paths. Consider bounding to 3-4 levels.",
+    "When TG_RG_PATH or TG_RG_BINARY is set but the path doesn't exist as a file, the override is silently ignored without warning."
+  ],
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The TG_RG_PATH env var override for ripgrep binary path is now implemented but not documented in .factory/library/. The python-sidecar-ipc.md documents TG_SIDECAR_PYTHON but there's no equivalent library entry for the rg passthrough env vars (TG_RG_PATH, legacy TG_RG_BINARY).",
+      "evidence": "rust_core/src/rg_passthrough.rs:8-9 defines TG_RG_PATH_ENV and LEGACY_TG_RG_BINARY_ENV. .factory/library/python-sidecar-ipc.md documents TG_SIDECAR_PYTHON but no file documents TG_RG_PATH."
+    },
+    {
+      "area": "conventions",
+      "observation": "The rg_passthrough module was promoted from a private mod in main.rs to a public library module (pub mod in lib.rs). This is architecturally appropriate for testability but changes the module visibility contract — external crate consumers can now access rg_passthrough types and functions.",
+      "evidence": "rust_core/src/lib.rs:9 adds 'pub mod rg_passthrough'. Previously it was 'mod rg_passthrough' in main.rs only."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature fully implemented. All CARGO_MANIFEST_DIR references removed from source files (confirmed: 0 hits in rust_core/src/). TG_SIDECAR_PYTHON and TG_RG_PATH env var overrides work correctly, both documented in tg --help output. New runtime_paths.rs module provides clean shared logic. Three integration tests and two unit tests provide solid coverage. Legacy TG_RG_BINARY compatibility preserved. All verification steps pass (cargo test, clippy, ruff, mypy, pytest 492 passed). Two non-blocking observations: unbounded ancestor traversal and silent fallthrough on invalid override paths."
+}

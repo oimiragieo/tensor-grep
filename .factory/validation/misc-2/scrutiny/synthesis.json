@@ -1,0 +1,34 @@
+{
+  "milestone": "misc-2",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0, "detail": "492 passed, 14 skipped in 66.64s" },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0, "detail": "no issues found in 44 source files" },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0, "detail": "All checks passed" }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Created .factory/library/runtime-path-resolution.md documenting TG_RG_PATH and TG_RG_BINARY env var overrides, runtime path resolution strategy, and rg_passthrough module promotion.",
+      "sourceFeature": "runtime-binary-path-resolution"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Consider adding a note that rg_passthrough is now a public library module (pub mod in lib.rs). Workers modifying its API surface should be aware this is visible to external crate consumers, not just main.rs.",
+      "evidence": "Feature runtime-binary-path-resolution promoted rg_passthrough from private mod in main.rs to pub mod in lib.rs for testability. This changes the module visibility contract.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}
