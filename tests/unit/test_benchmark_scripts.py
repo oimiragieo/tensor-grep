@@ -63,6 +63,75 @@ def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatc
     assert resolved.read_text(encoding="utf-8") == "fake rg"
 
 
+def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_path):
+    module = _load_script_module("run_benchmarks_script_samples", "benchmarks/run_benchmarks.py")
+    monkeypatch.setattr(module, "SCENARIOS", [{
+        "name": "1. Simple String Match",
+        "rg_args": ["rg", "ERROR", "bench_data"],
+        "tg_args": ["tg", "search", "ERROR", "bench_data"],
+    }])
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+
+    timing_samples = iter(
+        [
+            9.9,
+            8.8,
+            0.40,
+            0.20,
+            0.30,
+            0.80,
+            0.60,
+            0.70,
+        ]
+    )
+    timing_calls: list[list[str]] = []
+    capture_calls: list[list[str]] = []
+
+    def _fake_run_cmd_timing(cmd, capture_stdout=False):
+        timing_calls.append(cmd)
+        return next(timing_samples)
+
+    def _fake_run_cmd_capture(cmd):
+        capture_calls.append(cmd)
+        if cmd[0] == "rg":
+            return 0.0, "rg result"
+        return 0.0, "tg result"
+
+    monkeypatch.setattr(module, "run_cmd_timing", _fake_run_cmd_timing)
+    monkeypatch.setattr(module, "run_cmd_capture", _fake_run_cmd_capture)
+
+    captured: dict[str, object] = {}
+
+    def _fake_write_json(path, payload):
+        captured["path"] = path
+        captured["payload"] = payload
+
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr("tensor_grep.perf_guard.write_json", _fake_write_json)
+
+    module.main()
+
+    assert len(timing_calls) == 8
+    assert len(capture_calls) == 2
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["timing_samples_per_scenario"] == 3
+    rows = payload["rows"]
+    assert rows == [
+        {
+            "name": "1. Simple String Match",
+            "rg_samples_s": [0.4, 0.2, 0.3],
+            "rg_time_s": 0.3,
+            "tg_samples_s": [0.8, 0.6, 0.7],
+            "tg_time_s": 0.7,
+            "parity": "PASS",
+        }
+    ]
+
+
 def test_run_ast_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module("run_ast_benchmarks_script", "benchmarks/run_ast_benchmarks.py")
     monkeypatch.delenv("TENSOR_GREP_AST_BENCH_DATA_DIR", raising=False)

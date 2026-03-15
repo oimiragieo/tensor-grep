@@ -45,6 +45,27 @@ def test_detect_environment_mismatch_reports_platform_difference():
     assert mismatch == "platform mismatch: baseline=linux current=windows"
 
 
+def test_detect_environment_mismatch_reports_python_version_difference():
+    baseline = {
+        "environment": {
+            "platform": "windows",
+            "machine": "amd64",
+            "python_version": "3.13.1",
+        }
+    }
+    current = {
+        "environment": {
+            "platform": "windows",
+            "machine": "amd64",
+            "python_version": "3.14.0",
+        }
+    }
+
+    mismatch = detect_environment_mismatch(baseline=baseline, current=current)
+
+    assert mismatch == "python_version mismatch: baseline=3.13.1 current=3.14.0"
+
+
 def test_detect_environment_mismatch_ignores_missing_metadata():
     baseline = {"rows": []}
     current = {"environment": {"platform": "linux"}}

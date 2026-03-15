@@ -1,6 +1,8 @@
+import gc
 import os
 import platform
 import shutil
+import statistics
 import subprocess
 import sys
 import time
@@ -90,6 +92,7 @@ SCENARIOS = [
 ]
 
 WINDOWS_RG_DIRNAME = "ripgrep-14.1.0-x86_64-pc-windows-msvc"
+TIMING_SAMPLES_PER_SCENARIO = 3
 
 
 def resolve_bench_data_dir() -> Path:
@@ -149,6 +152,62 @@ def run_cmd_capture(cmd):
         print(f"Failed to run {' '.join(cmd)}: {e}")
         stdout = ""
     return time.perf_counter() - start, stdout
+
+
+def run_cmd_timing(cmd, capture_stdout: bool = False):
+    start = time.perf_counter()
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_DIR)
+    )
+    try:
+        subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            env=env,
+        )
+    except Exception as e:
+        print(f"Failed to run {' '.join(cmd)}: {e}")
+    return time.perf_counter() - start
+
+
+def collect_timing_samples(
+    cmd: list[str],
+    sample_count: int = TIMING_SAMPLES_PER_SCENARIO,
+    *,
+    capture_stdout: bool = False,
+):
+    samples: list[float] = []
+    for _ in range(sample_count):
+        samples.append(round(run_cmd_timing(cmd, capture_stdout=capture_stdout), 6))
+    return round(statistics.median(samples), 6), samples
+
+
+def scenario_timing_warmup_runs(scenario_name: str) -> int:
+    if "Max Count Limit" in scenario_name:
+        return 5
+    return 1
+
+
+def scenario_timing_should_capture_stdout(scenario_name: str) -> bool:
+    return "Max Count Limit" in scenario_name
+
+
+def collect_count_backend_samples(bench_dir: Path, sample_count: int = TIMING_SAMPLES_PER_SCENARIO):
+    from tensor_grep.backends.rust_backend import RustCoreBackend
+    from tensor_grep.core.config import SearchConfig
+
+    samples: list[float] = []
+    for _ in range(sample_count):
+        cfg = SearchConfig(count=True)
+        backend = RustCoreBackend()
+        start_tg = time.perf_counter()
+        backend.search(str(bench_dir), "ERROR", cfg)
+        samples.append(round(time.perf_counter() - start_tg, 6))
+    return round(statistics.median(samples), 6), samples
 
 
 def build_tg_benchmark_cmd(tg_args: list[str]) -> list[str]:
@@ -261,6 +320,7 @@ def main():
     print("-" * 75)
     rows: list[dict[str, object]] = []
     parity_failures = 0
+    parity_jobs: list[tuple[str, list[str], list[str], dict[str, object]]] = []
 
     # Ensure tg resolves to python module
 
@@ -275,41 +335,56 @@ def main():
         rg_cmd = [rg_bin, "--no-ignore", *rg_args]
 
         actual_tg_cmd = build_tg_benchmark_cmd(tg_args)
+        capture_stdout_for_timing = scenario_timing_should_capture_stdout(scenario["name"])
 
         # Warmup to reduce first-run jitter (regex compilation/import effects).
-        run_cmd_capture(rg_cmd)
-        run_cmd_capture(actual_tg_cmd)
+        for _ in range(scenario_timing_warmup_runs(scenario["name"])):
+            run_cmd_timing(rg_cmd, capture_stdout=capture_stdout_for_timing)
+            run_cmd_timing(actual_tg_cmd, capture_stdout=capture_stdout_for_timing)
 
         # Actual benchmark
-        rg_time, rg_out = run_cmd_capture(rg_cmd)
+        rg_time, rg_samples = collect_timing_samples(
+            rg_cmd,
+            capture_stdout=capture_stdout_for_timing,
+        )
 
-        from tensor_grep.backends.rust_backend import RustCoreBackend
-        from tensor_grep.core.config import SearchConfig
-
-        # We need to test the raw backend speed to avoid Python's ~0.2s interpreter startup time
-        # which skews the 0.1s benchmarks heavily.
         if "Count Matches" in scenario["name"]:
-            cfg = SearchConfig(count=True)
-            backend = RustCoreBackend()
-            start_tg = time.time()
-            backend.search(str(bench_dir), "ERROR", cfg)
-            tg_time = time.time() - start_tg
-            _, tg_out = run_cmd_capture(actual_tg_cmd)  # run again just for parity check
+            # Keep the existing raw-backend timing strategy for count benchmarks,
+            # but reduce variance by taking the median of multiple samples.
+            tg_time, tg_samples = collect_count_backend_samples(bench_dir)
         else:
-            tg_time, tg_out = run_cmd_capture(actual_tg_cmd)
+            tg_time, tg_samples = collect_timing_samples(
+                actual_tg_cmd,
+                capture_stdout=capture_stdout_for_timing,
+            )
 
-        parity_ok = compare_results(rg_out, tg_out, scenario["name"])
+        row = {
+            "name": scenario["name"],
+            "rg_samples_s": rg_samples,
+            "rg_time_s": rg_time,
+            "tg_samples_s": tg_samples,
+            "tg_time_s": tg_time,
+            "parity": "PENDING",
+        }
+        rows.append(row)
+        parity_jobs.append((scenario["name"], rg_cmd, actual_tg_cmd, row))
+
+    for scenario_name, rg_cmd, actual_tg_cmd, row in parity_jobs:
+        _, rg_out = run_cmd_capture(rg_cmd)
+        _, tg_out = run_cmd_capture(actual_tg_cmd)
+
+        parity_ok = compare_results(rg_out, tg_out, scenario_name)
         parity_str = "PASS" if parity_ok else "FAIL"
+        row["parity"] = parity_str
         if not parity_ok:
             parity_failures += 1
 
-        print(f"{scenario['name']:<35} | {rg_time:>8.3f}s | {tg_time:>8.3f}s | {parity_str}")
-        rows.append({
-            "name": scenario["name"],
-            "rg_time_s": round(rg_time, 6),
-            "tg_time_s": round(tg_time, 6),
-            "parity": parity_str,
-        })
+        print(
+            f"{scenario_name:<35} | {row['rg_time_s']:>8.3f}s | {row['tg_time_s']:>8.3f}s | {parity_str}"
+        )
+        del rg_out
+        del tg_out
+        gc.collect()
 
     artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
     write_json(
@@ -317,6 +392,7 @@ def main():
         {
             "suite": "run_benchmarks",
             "generated_at_epoch_s": time.time(),
+            "timing_samples_per_scenario": TIMING_SAMPLES_PER_SCENARIO,
             "environment": {
                 "platform": platform.system().lower(),
                 "machine": platform.machine().lower(),

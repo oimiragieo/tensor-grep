@@ -73,4 +73,16 @@ def detect_environment_mismatch(baseline: dict[str, Any], current: dict[str, Any
     if baseline_machine and current_machine and baseline_machine != current_machine:
         return f"machine mismatch: baseline={baseline_machine} current={current_machine}"
 
+    baseline_python_version = baseline_env.get("python_version")
+    current_python_version = current_env.get("python_version")
+    if (
+        baseline_python_version
+        and current_python_version
+        and baseline_python_version != current_python_version
+    ):
+        return (
+            "python_version mismatch: "
+            f"baseline={baseline_python_version} current={current_python_version}"
+        )
+
     return None
