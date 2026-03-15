@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -340,6 +342,37 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     exit_code = module.main()
 
     assert exit_code == 0
+
+def test_check_regression_should_run_directly_without_site_packages(tmp_path):
+    root = Path(__file__).resolve().parents[2]
+    baseline_path = tmp_path / "baseline.json"
+    current_path = tmp_path / "current.json"
+    payload = {
+        "suite": "run_benchmarks",
+        "environment": {"platform": "windows", "machine": "amd64"},
+        "rows": [{"name": "1. Simple String Match", "tg_time_s": 1.0, "rg_time_s": 0.5}],
+    }
+    baseline_path.write_text(json.dumps(payload), encoding="utf-8")
+    current_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(root / "benchmarks" / "check_regression.py"),
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "No benchmark regressions detected." in result.stdout
 
 
 def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monkeypatch, tmp_path):
