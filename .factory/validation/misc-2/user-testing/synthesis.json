@@ -1,0 +1,17 @@
+{
+  "milestone": "misc-2",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "notes": "No testable assertions for misc-2 milestone. Both implementation features (runtime-binary-path-resolution, runtime-path-hardening) have empty fulfills arrays. No validation contract assertions are mapped to this milestone.",
+  "previousRound": null
+}
