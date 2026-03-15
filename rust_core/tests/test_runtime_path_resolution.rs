@@ -42,6 +42,13 @@ fn write_sample_log(dir: &Path) -> PathBuf {
     file_path
 }
 
+fn configure_classify_env(command: &mut Command) {
+    command
+        .env("TENSOR_GREP_TRITON_TIMEOUT_SECONDS", "0.01")
+        .env("HF_HUB_OFFLINE", "1")
+        .env("TRANSFORMERS_OFFLINE", "1");
+}
+
 fn write_sidecar_probe_script(dir: &Path) -> PathBuf {
     let script = if cfg!(windows) {
         dir.join("sidecar_probe.py")
@@ -163,7 +170,11 @@ fn test_tg_classify_uses_tg_sidecar_python_override() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(marker.exists(), "expected override wrapper marker at {}", marker.display());
+    assert!(
+        marker.exists(),
+        "expected override wrapper marker at {}",
+        marker.display()
+    );
 }
 
 #[test]
@@ -192,5 +203,65 @@ fn test_tg_search_uses_tg_rg_path_override() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "TG_RG_OVERRIDE_SENTINEL", "stdout={stdout}");
-    assert!(marker.exists(), "expected override wrapper marker at {}", marker.display());
+    assert!(
+        marker.exists(),
+        "expected override wrapper marker at {}",
+        marker.display()
+    );
+}
+
+#[test]
+fn test_tg_search_warns_when_tg_rg_path_override_is_missing() {
+    let dir = tempdir().unwrap();
+    let file_path = write_sample_log(dir.path());
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("ERROR")
+        .arg(&file_path)
+        .env("TG_RG_PATH", dir.path().join("missing-rg.exe"));
+
+    let output = run_with_timeout(tg, Duration::from_secs(10));
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("TG_RG_PATH"), "stderr={stderr}");
+    assert!(stderr.contains("is not a file"), "stderr={stderr}");
+}
+
+#[test]
+fn test_tg_classify_warns_when_tg_sidecar_python_override_is_missing() {
+    let dir = tempdir().unwrap();
+    let file_path = write_sample_log(dir.path());
+    let sidecar_script = write_sidecar_probe_script(dir.path());
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("classify")
+        .arg(&file_path)
+        .env("TG_SIDECAR_PYTHON", dir.path().join("missing-python.exe"))
+        .env("TG_SIDECAR_SCRIPT", &sidecar_script);
+    configure_classify_env(&mut tg);
+
+    let output = run_with_timeout(tg, Duration::from_secs(20));
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("TG_SIDECAR_PYTHON"), "stderr={stderr}");
+    assert!(stderr.contains("is not a file"), "stderr={stderr}");
 }

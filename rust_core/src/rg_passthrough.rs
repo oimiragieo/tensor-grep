@@ -1,4 +1,6 @@
-use crate::runtime_paths::resolve_existing_relative_to_current_exe;
+use crate::runtime_paths::{
+    resolve_existing_relative_to_current_exe, resolve_explicit_file_override,
+};
 use anyhow::{anyhow, Context};
 use std::env;
 use std::path::PathBuf;
@@ -78,7 +80,11 @@ pub fn ripgrep_is_available() -> bool {
 }
 
 fn resolve_ripgrep_binary() -> Option<PathBuf> {
-    if let Some(path) = env::var_os(TG_RG_PATH_ENV).or_else(|| env::var_os(LEGACY_TG_RG_BINARY_ENV)) {
+    if let Some(candidate) = resolve_explicit_file_override(TG_RG_PATH_ENV) {
+        return Some(candidate);
+    }
+
+    if let Some(path) = env::var_os(LEGACY_TG_RG_BINARY_ENV) {
         let candidate = PathBuf::from(path);
         if candidate.is_file() {
             return Some(candidate);
@@ -87,7 +93,11 @@ fn resolve_ripgrep_binary() -> Option<PathBuf> {
 
     if let Some(runtime_relative_rg) = resolve_existing_relative_to_current_exe(&[
         &[if cfg!(windows) { "rg.exe" } else { "rg" }],
-        &["benchmarks", WINDOWS_RG_DIRNAME, if cfg!(windows) { "rg.exe" } else { "rg" }],
+        &[
+            "benchmarks",
+            WINDOWS_RG_DIRNAME,
+            if cfg!(windows) { "rg.exe" } else { "rg" },
+        ],
         &["benchmarks", "rg"],
     ]) {
         return Some(runtime_relative_rg);

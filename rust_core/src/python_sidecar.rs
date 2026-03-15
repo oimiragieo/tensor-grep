@@ -1,4 +1,6 @@
-use crate::runtime_paths::resolve_existing_relative_to_current_exe;
+use crate::runtime_paths::{
+    resolve_existing_relative_to_current_exe, resolve_explicit_file_override,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::env;
@@ -101,7 +103,10 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
         }
     }
 
-    child.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    child
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = child
         .spawn()
@@ -233,16 +238,24 @@ fn merge_stderr(process_stderr: &str, response_stderr: &str) -> String {
 }
 
 fn resolve_python_command() -> OsString {
-    if let Some(explicit) = env::var_os(TG_SIDECAR_PYTHON_ENV) {
-        return explicit;
+    if let Some(explicit) = resolve_explicit_file_override(TG_SIDECAR_PYTHON_ENV) {
+        return explicit.into_os_string();
     }
 
     if let Some(runtime_relative_python) = resolve_existing_relative_to_current_exe(&[
-        &[if cfg!(windows) { "python.exe" } else { "python" }],
+        &[if cfg!(windows) {
+            "python.exe"
+        } else {
+            "python"
+        }],
         &[
             ".venv",
             if cfg!(windows) { "Scripts" } else { "bin" },
-            if cfg!(windows) { "python.exe" } else { "python" },
+            if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            },
         ],
     ]) {
         return runtime_relative_python.into_os_string();
@@ -256,7 +269,8 @@ fn resolve_sidecar_target() -> PythonLaunchTarget {
         return PythonLaunchTarget::Script(PathBuf::from(script));
     }
 
-    let module = env::var("TG_SIDECAR_MODULE").unwrap_or_else(|_| DEFAULT_SIDECAR_MODULE.to_string());
+    let module =
+        env::var("TG_SIDECAR_MODULE").unwrap_or_else(|_| DEFAULT_SIDECAR_MODULE.to_string());
     PythonLaunchTarget::Module(module)
 }
 

@@ -25,6 +25,13 @@ fn repo_python() -> PathBuf {
     PathBuf::from("python")
 }
 
+fn isolated_tg_binary(dir: &Path) -> PathBuf {
+    let binary_name = if cfg!(windows) { "tg.exe" } else { "tg" };
+    let target = dir.join(binary_name);
+    fs::copy(env!("CARGO_BIN_EXE_tg"), &target).unwrap();
+    target
+}
+
 fn run_with_timeout(mut command: Command, timeout: Duration) -> Output {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -42,7 +49,10 @@ fn run_with_stdin_timeout(mut command: Command, stdin_bytes: Vec<u8>, timeout: D
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let result = (|| -> std::io::Result<Output> {
-            command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
             let mut child = command.spawn()?;
             if let Some(mut stdin) = child.stdin.take() {
                 stdin.write_all(&stdin_bytes)?;
@@ -154,8 +164,7 @@ fn test_sidecar_crash_reports_error_without_hanging() {
     let crash_script = dir.path().join("mock_sidecar_crash.py");
     fs::write(
         &crash_script,
-        "import sys\n"
-            .to_string()
+        "import sys\n".to_string()
             + "sys.stdin.buffer.read()\n"
             + "sys.stdout.write('{\\\"stdout\\\":')\n"
             + "sys.stdout.flush()\n"
@@ -181,12 +190,13 @@ fn test_sidecar_crash_reports_error_without_hanging() {
 fn test_missing_python_reports_actionable_error() {
     let dir = tempdir().unwrap();
     let file_path = write_sample_log(dir.path());
+    let isolated_tg = isolated_tg_binary(dir.path());
 
-    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
-    tg.current_dir(repo_root())
+    let mut tg = Command::new(&isolated_tg);
+    tg.current_dir(dir.path())
         .arg("classify")
         .arg(&file_path)
-        .env("TG_SIDECAR_PYTHON", "__missing_sidecar_python__");
+        .env("PATH", "");
     configure_classify_env(&mut tg);
     let output = run_with_timeout(tg, Duration::from_secs(5));
 
