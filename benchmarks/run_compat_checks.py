@@ -240,7 +240,7 @@ def run_command(
 
 def normalize_lines(output: str) -> list[str]:
     normalized = output.replace("\r\n", "\n").replace("\\", "/")
-    return sorted(line.strip() for line in normalized.splitlines() if line.strip())
+    return sorted({line.strip() for line in normalized.splitlines() if line.strip()})
 
 
 def extract_total_count(output: str) -> int:
