@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+SUITE_TIME_KEYS: dict[str, tuple[str, ...]] = {
+    "run_benchmarks": ("tg_time_s",),
+    "run_hot_query_benchmarks": ("first_s", "second_s"),
+}
+
 
 def ensure_artifacts_dir(root_dir: Path) -> Path:
     artifacts_dir = root_dir / "artifacts"
@@ -14,6 +19,16 @@ def ensure_artifacts_dir(root_dir: Path) -> Path:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def iter_regression_time_keys(suite: str | None, row: dict[str, Any]) -> tuple[str, ...]:
+    if suite and suite in SUITE_TIME_KEYS:
+        return tuple(key for key in SUITE_TIME_KEYS[suite] if key in row)
+    return tuple(
+        key
+        for key, value in row.items()
+        if isinstance(value, (float, int)) and (key.endswith("_time_s") or key.endswith("_s"))
+    )
 
 
 def check_regressions(
@@ -27,6 +42,7 @@ def check_regressions(
     Lower times are better.
     """
     regressions: list[str] = []
+    suite = current.get("suite") or baseline.get("suite")
     baseline_rows = {row["name"]: row for row in baseline.get("rows", [])}
     current_rows = {row["name"]: row for row in current.get("rows", [])}
 
@@ -34,22 +50,23 @@ def check_regressions(
         base = baseline_rows.get(name)
         if not base:
             continue
-        cur_time = cur.get("tg_time_s")
-        base_time = base.get("tg_time_s")
-        if not isinstance(cur_time, (float, int)) or not isinstance(base_time, (float, int)):
-            continue
-        if base_time <= 0:
-            continue
-        # Tiny baseline durations are noisy on shared CI runners and can
-        # trigger false positives from scheduler jitter.
-        if float(base_time) < float(min_baseline_time_s):
-            continue
-        pct_delta = ((float(cur_time) - float(base_time)) / float(base_time)) * 100.0
-        if pct_delta > max_regression_pct:
-            regressions.append(
-                f"{name}: tg_time_s regressed by {pct_delta:.2f}% "
-                f"(baseline={base_time:.3f}s current={cur_time:.3f}s)"
-            )
+        for metric_key in iter_regression_time_keys(suite if isinstance(suite, str) else None, cur):
+            cur_time = cur.get(metric_key)
+            base_time = base.get(metric_key)
+            if not isinstance(cur_time, (float, int)) or not isinstance(base_time, (float, int)):
+                continue
+            if base_time <= 0:
+                continue
+            # Tiny baseline durations are noisy on shared CI runners and can
+            # trigger false positives from scheduler jitter.
+            if float(base_time) < float(min_baseline_time_s):
+                continue
+            pct_delta = ((float(cur_time) - float(base_time)) / float(base_time)) * 100.0
+            if pct_delta > max_regression_pct:
+                regressions.append(
+                    f"{name}: {metric_key} regressed by {pct_delta:.2f}% "
+                    f"(baseline={base_time:.3f}s current={cur_time:.3f}s)"
+                )
     return regressions
 
 

@@ -1,3 +1,4 @@
+import argparse
 import gc
 import os
 import platform
@@ -304,8 +305,22 @@ def compare_results(rg_out, tg_out, scenario_name):
     return True
 
 
-def main():
+def main() -> int:
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
+
+    parser = argparse.ArgumentParser(description="Run text-search benchmarks for tensor-grep.")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional JSON output path. Defaults to artifacts/bench_run_benchmarks.json",
+    )
+    parser.add_argument(
+        "--milestone",
+        default=None,
+        help="Optional milestone label recorded in the benchmark artifact (for example: m1, m2).",
+    )
+    args = parser.parse_args()
 
     bench_dir = resolve_bench_data_dir()
     generate_test_data(
@@ -387,24 +402,28 @@ def main():
         gc.collect()
 
     artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
-    write_json(
-        artifacts_dir / "bench_run_benchmarks.json",
-        {
-            "suite": "run_benchmarks",
-            "generated_at_epoch_s": time.time(),
-            "timing_samples_per_scenario": TIMING_SAMPLES_PER_SCENARIO,
-            "environment": {
-                "platform": platform.system().lower(),
-                "machine": platform.machine().lower(),
-                "python_version": platform.python_version(),
-            },
-            "rows": rows,
-            "parity_failures": parity_failures,
+    payload = {
+        "suite": "run_benchmarks",
+        "generated_at_epoch_s": time.time(),
+        "timing_samples_per_scenario": TIMING_SAMPLES_PER_SCENARIO,
+        "environment": {
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
         },
+        "rows": rows,
+        "parity_failures": parity_failures,
+    }
+    if args.milestone:
+        payload["milestone"] = args.milestone
+    write_json(
+        args.output or (artifacts_dir / "bench_run_benchmarks.json"),
+        payload,
     )
     if parity_failures:
-        raise SystemExit(1)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

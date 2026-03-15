@@ -8,8 +8,10 @@ import textwrap
 import time
 from pathlib import Path
 
-from tensor_grep.backends.stringzilla_backend import StringZillaBackend
-from tensor_grep.core.config import SearchConfig
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 
 def resolve_hot_bench_data_dir() -> Path:
@@ -20,13 +22,19 @@ def resolve_hot_bench_data_dir() -> Path:
 
 
 def write_cpu_probe_script(path: Path) -> None:
+    src_dir = str(SRC_DIR).replace("\\", "\\\\")
     path.write_text(
         textwrap.dedent(
-            """
+            f"""
             import json
             import sys
             import time
             import types
+            from pathlib import Path
+
+            SRC_DIR = Path(r"{src_dir}")
+            if str(SRC_DIR) not in sys.path:
+                sys.path.insert(0, str(SRC_DIR))
 
             from tensor_grep.backends.cpu_backend import CPUBackend
             from tensor_grep.core.config import SearchConfig
@@ -46,11 +54,11 @@ def write_cpu_probe_script(path: Path) -> None:
             result = CPUBackend().search(target_path, pattern, SearchConfig())
             t1 = time.perf_counter()
             print(json.dumps(
-                {
+                {{
                     "matches": result.total_matches,
                     "routing_reason": result.routing_reason,
                     "seconds": t1 - t0,
-                }
+                }}
             ))
             """
         ).strip()
@@ -69,6 +77,9 @@ def _prepare_corpus(data_dir: Path) -> Path:
 
 
 def _run_stringzilla_hot_query(corpus_path: Path, cache_dir: Path) -> dict[str, object]:
+    from tensor_grep.backends.stringzilla_backend import StringZillaBackend
+    from tensor_grep.core.config import SearchConfig
+
     shutil.rmtree(cache_dir, ignore_errors=True)
     os.environ["TENSOR_GREP_STRING_INDEX"] = "1"
     os.environ["TENSOR_GREP_STRING_INDEX_DIR"] = str(cache_dir)
@@ -119,9 +130,31 @@ def _run_cpu_hot_query(corpus_path: Path, cache_dir: Path, probe_script: Path) -
     }
 
 
+def evaluate_hot_query_row(row: dict[str, object], max_regression_pct: float) -> dict[str, object]:
+    first_s = row.get("first_s")
+    second_s = row.get("second_s")
+    if not isinstance(first_s, (float, int)) or not isinstance(second_s, (float, int)) or first_s <= 0:
+        return {**row, "status": "UNKNOWN"}
+
+    improvement_pct = ((float(first_s) - float(second_s)) / float(first_s)) * 100.0
+    regression_limit = float(first_s) * (1.0 + (max_regression_pct / 100.0))
+    status = "PASS" if float(second_s) <= regression_limit else "FAIL"
+    return {
+        **row,
+        "improvement_pct": round(improvement_pct, 2),
+        "status": status,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Benchmark hot repeated-query cache paths.")
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--max-regression-pct",
+        type=float,
+        default=5.0,
+        help="Maximum allowed slowdown for the cached second query relative to the first query.",
+    )
     args = parser.parse_args()
 
     data_dir = resolve_hot_bench_data_dir()
@@ -133,6 +166,8 @@ def main() -> int:
         _run_stringzilla_hot_query(corpus_path, data_dir / "stringzilla-cache"),
         _run_cpu_hot_query(corpus_path, data_dir / "cpu-prefilter-cache", probe_script),
     ]
+    evaluated_rows = [evaluate_hot_query_row(row, args.max_regression_pct) for row in rows]
+    no_regressions = all(row.get("status") != "FAIL" for row in evaluated_rows)
 
     payload = {
         "suite": "run_hot_query_benchmarks",
@@ -140,7 +175,9 @@ def main() -> int:
             "platform": sys.platform,
             "python": sys.version.split()[0],
         },
-        "rows": rows,
+        "max_regression_pct": args.max_regression_pct,
+        "no_regressions": no_regressions,
+        "rows": evaluated_rows,
     }
 
     output_path = args.output or (Path.cwd() / "artifacts" / "bench_hot_query_benchmarks.json")
@@ -149,14 +186,14 @@ def main() -> int:
 
     print("\nStarting Benchmarks: Hot repeated-query paths")
     print("-" * 75)
-    print(f"{'Scenario':35} | {'First':>9} | {'Second':>9} | Reason")
+    print(f"{'Scenario':35} | {'First':>9} | {'Second':>9} | {'Status':>6} | Reason")
     print("-" * 75)
-    for row in rows:
+    for row in evaluated_rows:
         print(
             f"{row['name']:35} | {row['first_s']:>8.4f}s | {row['second_s']:>8.4f}s | "
-            f"{row['second_reason']}"
+            f"{row['status']:>6} | {row['second_reason']}"
         )
-    return 0
+    return 0 if no_regressions else 1
 
 
 if __name__ == "__main__":

@@ -65,6 +65,7 @@ def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatc
 
 def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_path):
     module = _load_script_module("run_benchmarks_script_samples", "benchmarks/run_benchmarks.py")
+    monkeypatch.setattr("sys.argv", ["run_benchmarks.py"])
     monkeypatch.setattr(module, "SCENARIOS", [{
         "name": "1. Simple String Match",
         "rg_args": ["rg", "ERROR", "bench_data"],
@@ -130,6 +131,90 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
             "parity": "PASS",
         }
     ]
+
+
+def test_run_benchmarks_should_honor_output_and_milestone_args(monkeypatch, tmp_path):
+    module = _load_script_module("run_benchmarks_script_args", "benchmarks/run_benchmarks.py")
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module, "run_cmd_timing", lambda *_args, **_kwargs: 0.25)
+    monkeypatch.setattr(module, "run_cmd_capture", lambda cmd: (0.0, "ok"))
+    output_path = tmp_path / "bench_m2.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--milestone",
+            "m2",
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["milestone"] == "m2"
+
+
+def test_run_hot_query_benchmarks_should_report_regression_status(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_hot_query_benchmarks_script_status", "benchmarks/run_hot_query_benchmarks.py"
+    )
+    monkeypatch.setattr(module, "resolve_hot_bench_data_dir", lambda: tmp_path / "hot")
+    monkeypatch.setattr(module, "_prepare_corpus", lambda data_dir: data_dir / "hot_corpus.log")
+    monkeypatch.setattr(module, "write_cpu_probe_script", lambda _path: None)
+    monkeypatch.setattr(
+        module,
+        "_run_stringzilla_hot_query",
+        lambda *_args, **_kwargs: {
+            "name": "repeated_fixed_string",
+            "first_s": 1.0,
+            "second_s": 0.2,
+            "first_reason": "index_build",
+            "second_reason": "index_hit",
+            "matches": 2000,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_cpu_hot_query",
+        lambda *_args, **_kwargs: {
+            "name": "repeated_regex_prefilter",
+            "first_s": 0.8,
+            "second_s": 0.3,
+            "first_reason": "regex_scan",
+            "second_reason": "regex_prefilter_hit",
+            "matches": 2000,
+        },
+    )
+    output_path = tmp_path / "bench_hot.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_hot_query_benchmarks.py", "--output", str(output_path)],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["no_regressions"] is True
+    assert payload["rows"][0]["status"] == "PASS"
+    assert payload["rows"][1]["status"] == "PASS"
 
 
 def test_run_ast_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
@@ -307,6 +392,27 @@ def test_run_hot_query_benchmarks_should_build_cpu_probe_script(tmp_path):
     text = script_path.read_text(encoding="utf-8")
     assert "CPUBackend" in text
     assert "force python fallback" in text
+    assert "sys.path.insert" in text
+
+
+def test_run_hot_query_benchmarks_should_run_directly_without_site_packages(tmp_path):
+    root = Path(__file__).resolve().parents[2]
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-S",
+            str(root / "benchmarks" / "run_hot_query_benchmarks.py"),
+            "--help",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Benchmark hot repeated-query cache paths." in result.stdout
 
 
 def test_run_gpu_benchmarks_should_skip_cybert_when_triton_is_unreachable():
@@ -412,6 +518,83 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
 
     assert exit_code == 0
 
+
+def test_check_regression_should_use_five_percent_default_threshold(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "check_regression_script_default_threshold", "benchmarks/check_regression.py"
+    )
+    baseline_path = tmp_path / "baseline.json"
+    current_path = tmp_path / "current.json"
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    current_path.write_text(
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.06}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_regression.py",
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 1
+
+
+def test_check_regression_should_compare_hot_query_benchmarks(monkeypatch, tmp_path):
+    module = _load_script_module("check_regression_script_hot", "benchmarks/check_regression.py")
+    baseline_path = tmp_path / "baseline_hot.json"
+    current_path = tmp_path / "current_hot.json"
+    payload = {
+        "suite": "run_hot_query_benchmarks",
+        "environment": {"platform": "windows", "machine": "amd64"},
+        "rows": [{"name": "repeated_fixed_string", "first_s": 1.0, "second_s": 0.4}],
+    }
+    baseline_path.write_text(json.dumps(payload), encoding="utf-8")
+    current_path.write_text(
+        json.dumps(
+            {
+                **payload,
+                "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_regression.py",
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 1
+
 def test_check_regression_should_run_directly_without_site_packages(tmp_path):
     root = Path(__file__).resolve().parents[2]
     baseline_path = tmp_path / "baseline.json"
@@ -484,6 +667,56 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
             str(current_path),
             "--max-regression-pct",
             "20",
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+
+
+def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "check_regression_script_auto_milestone", "benchmarks/check_regression.py"
+    )
+    milestones_dir = tmp_path / "benchmarks"
+    milestones_dir.mkdir(parents=True, exist_ok=True)
+    baseline_path = milestones_dir / "baseline_m1.json"
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "milestone": "m1",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "milestone": "m2",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.04}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_regression.py",
+            "--baseline",
+            "auto",
+            "--milestone",
+            "m1",
+            "--current",
+            str(current_path),
         ],
     )
 

@@ -36,6 +36,23 @@ def test_check_regressions_ignores_tiny_baselines_by_default():
     assert regressions == []
 
 
+def test_check_regressions_supports_hot_query_suite_metrics():
+    baseline = {
+        "suite": "run_hot_query_benchmarks",
+        "rows": [{"name": "repeated_fixed_string", "first_s": 1.0, "second_s": 0.4}],
+    }
+    current = {
+        "suite": "run_hot_query_benchmarks",
+        "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.5}],
+    }
+
+    regressions = check_regressions(baseline=baseline, current=current, max_regression_pct=5.0)
+
+    assert len(regressions) == 1
+    assert "repeated_fixed_string" in regressions[0]
+    assert "second_s" in regressions[0]
+
+
 def test_detect_environment_mismatch_reports_platform_difference():
     baseline = {"environment": {"platform": "linux", "machine": "x86_64"}}
     current = {"environment": {"platform": "windows", "machine": "amd64"}}
