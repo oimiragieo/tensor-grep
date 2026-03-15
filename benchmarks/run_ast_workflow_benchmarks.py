@@ -133,6 +133,12 @@ def parse_args():
         default=str(default_binary_path()),
         help="Path to tg binary. Defaults to rust_core/target/release/tg.exe.",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional JSON output path. Defaults to artifacts/bench_run_ast_workflow_benchmarks.json",
+    )
     return parser.parse_args()
 
 
@@ -191,7 +197,7 @@ def main() -> int:
 
     artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
     write_json(
-        artifacts_dir / "bench_run_ast_workflow_benchmarks.json",
+        args.output or (artifacts_dir / "bench_run_ast_workflow_benchmarks.json"),
         {
             "suite": "run_ast_workflow_benchmarks",
             "generated_at_epoch_s": time.time(),
