@@ -1,5 +1,7 @@
 use clap::{Args, Parser, Subcommand};
+use serde::Serialize;
 use std::ffi::OsString;
+use tensor_grep_rs::backend_ast::AstBackend;
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_sidecar_command, SidecarError,
@@ -55,6 +57,14 @@ pub struct PositionalCli {
     /// Force CPU fallback
     #[arg(long)]
     pub force_cpu: bool,
+
+    /// Emit machine-readable routing metadata as JSON
+    #[arg(long)]
+    pub json: bool,
+
+    /// Emit routing metadata on stderr before executing the search
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -95,10 +105,40 @@ pub struct SearchArgs {
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
 
+    /// Emit machine-readable routing metadata as JSON
+    #[arg(long)]
+    pub json: bool,
+
+    /// Emit routing metadata on stderr before executing the search
+    #[arg(long)]
+    pub verbose: bool,
+
     /// The search pattern (regex or string)
     pub pattern: String,
 
     /// Path to search
+    #[arg(default_value = ".")]
+    pub path: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct RunArgs {
+    /// The AST language to use
+    #[arg(long, default_value = "python")]
+    pub lang: String,
+
+    /// Emit machine-readable routing metadata as JSON
+    #[arg(long)]
+    pub json: bool,
+
+    /// Emit routing metadata on stderr before executing the search
+    #[arg(long)]
+    pub verbose: bool,
+
+    /// The structural ast-grep pattern
+    pub pattern: String,
+
+    /// File or directory to search
     #[arg(default_value = ".")]
     pub path: String,
 }
@@ -112,10 +152,7 @@ pub enum Commands {
     /// Run semantic NLP threat classification on logs via cyBERT
     Classify { file_path: String },
     /// Run GPU-accelerated AST structural queries (ast-grep parity)
-    Run {
-        pattern: String,
-        path: Option<String>,
-    },
+    Run(RunArgs),
     /// Scan code by configuration
     Scan,
     /// Test AST rules
@@ -124,6 +161,37 @@ pub enum Commands {
     New,
     /// Start Language Server
     Lsp,
+}
+
+#[derive(Clone, Copy)]
+struct RoutingDecision {
+    backend: &'static str,
+    reason: &'static str,
+    sidecar_used: bool,
+}
+
+impl RoutingDecision {
+    const CPU: Self = Self {
+        backend: "CpuBackend",
+        reason: "cpu-native",
+        sidecar_used: false,
+    };
+
+    const AST: Self = Self {
+        backend: "AstBackend",
+        reason: "ast-native",
+        sidecar_used: false,
+    };
+}
+
+#[derive(Serialize)]
+struct RoutingMetadata<'a> {
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    query: &'a str,
+    path: &'a str,
+    total_matches: usize,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -151,13 +219,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Search(args) => handle_ripgrep_search(args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
-        Commands::Run { pattern, path } => {
-            let mut args = vec![pattern];
-            if let Some(p) = path {
-                args.push(p);
-            }
-            handle_sidecar_command("run", args)
-        }
+        Commands::Run(args) => handle_ast_run(args),
         Commands::Scan => handle_sidecar_command("scan", vec![]),
         Commands::Test => handle_sidecar_command("test", vec![]),
         Commands::New => handle_sidecar_command("new", vec![]),
@@ -175,6 +237,22 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
     let pattern = cli.pattern.unwrap();
     let path = cli.path.unwrap();
+
+    if cli.json {
+        let backend = CpuBackend::new();
+        let total_matches = backend.count_matches(
+            &pattern,
+            &path,
+            cli.ignore_case,
+            cli.fixed_strings,
+            cli.invert_match,
+        )?;
+        return emit_json_metadata(RoutingDecision::CPU, &pattern, &path, total_matches);
+    }
+
+    if cli.verbose {
+        emit_verbose_metadata(RoutingDecision::CPU);
+    }
 
     if !cli.force_cpu && cli.replace.is_none() && ripgrep_is_available() {
         let exit_code = execute_ripgrep_search(&RipgrepSearchArgs {
@@ -261,6 +339,22 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
 }
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
+    if args.json {
+        let backend = CpuBackend::new();
+        let total_matches = backend.count_matches(
+            &args.pattern,
+            &args.path,
+            args.ignore_case,
+            args.fixed_strings,
+            args.invert_match,
+        )?;
+        return emit_json_metadata(RoutingDecision::CPU, &args.pattern, &args.path, total_matches);
+    }
+
+    if args.verbose {
+        emit_verbose_metadata(RoutingDecision::CPU);
+    }
+
     let exit_code = execute_ripgrep_search(&RipgrepSearchArgs {
         ignore_case: args.ignore_case,
         fixed_strings: args.fixed_strings,
@@ -278,6 +372,30 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
 
     if exit_code != 0 {
         std::process::exit(exit_code.max(1));
+    }
+
+    Ok(())
+}
+
+fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
+    let backend = AstBackend::new();
+    let matches = backend.search(&args.pattern, &args.lang, &args.path)?;
+
+    if args.json {
+        return emit_json_metadata(
+            RoutingDecision::AST,
+            &args.pattern,
+            &args.path,
+            matches.len(),
+        );
+    }
+
+    if args.verbose {
+        emit_verbose_metadata(RoutingDecision::AST);
+    }
+
+    for matched in matches {
+        println!("{}", matched.format_for_cli());
     }
 
     Ok(())
@@ -320,4 +438,30 @@ fn exit_with_sidecar_error(err: SidecarError) -> anyhow::Result<()> {
     }
     eprintln!("{}", err.message);
     std::process::exit(err.exit_code.max(1));
+}
+
+fn emit_json_metadata(
+    decision: RoutingDecision,
+    pattern: &str,
+    path: &str,
+    total_matches: usize,
+) -> anyhow::Result<()> {
+    let payload = RoutingMetadata {
+        routing_backend: decision.backend,
+        routing_reason: decision.reason,
+        sidecar_used: decision.sidecar_used,
+        query: pattern,
+        path,
+        total_matches,
+    };
+
+    println!("{}", serde_json::to_string(&payload)?);
+    Ok(())
+}
+
+fn emit_verbose_metadata(decision: RoutingDecision) {
+    eprintln!(
+        "[routing] routing_backend={} routing_reason={} sidecar_used={}",
+        decision.backend, decision.reason, decision.sidecar_used
+    );
 }

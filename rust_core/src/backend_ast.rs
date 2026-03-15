@@ -1,5 +1,31 @@
-use anyhow::Result;
-use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
+use anyhow::{Context, Result};
+use ast_grep_core::{meta_var::MetaVariable, matcher::NodeMatch, tree_sitter::LanguageExt, Pattern};
+use ast_grep_language::SupportLang;
+use std::collections::HashMap;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditCandidate {
+    pub file: PathBuf,
+    pub byte_range: Range<usize>,
+    pub metavar_env: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstMatch {
+    pub file: PathBuf,
+    pub line: usize,
+    pub matched_text: String,
+    pub candidate: EditCandidate,
+}
+
+impl AstMatch {
+    pub fn format_for_cli(&self) -> String {
+        format!("{}:{}:{}", self.file.display(), self.line, self.matched_text)
+    }
+}
 
 pub struct AstBackend;
 
@@ -14,43 +40,133 @@ impl AstBackend {
         Self
     }
 
-    pub fn run(&self, pattern: &str, lang: &str, path: &str) -> Result<()> {
-        println!("Initializing Tree-sitter for language: {}", lang);
+    pub fn search(&self, pattern: &str, lang: &str, path: &str) -> Result<Vec<AstMatch>> {
+        let language = resolve_language(lang)?;
+        let compiled_pattern = Pattern::try_new(pattern, language)
+            .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
+        if compiled_pattern.has_error() {
+            anyhow::bail!("Invalid pattern: parse error");
+        }
+        let files = collect_source_files(Path::new(path), language)?;
+        let mut matches = Vec::new();
 
-        let mut parser = Parser::new();
-
-        // For this implementation we'll default to python if requested
-        let language = if lang.to_lowercase() == "python" {
-            tree_sitter_python::LANGUAGE.into()
-        } else {
-            anyhow::bail!("Unsupported language: {}", lang);
-        };
-
-        parser.set_language(&language)?;
-
-        let code = std::fs::read_to_string(path)?;
-        let tree = parser
-            .parse(&code, None)
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse code"))?;
-
-        println!("AST parsed successfully. Total bytes: {}", code.len());
-
-        // Execute the structural query
-        let query = Query::new(&language, pattern)?;
-        let mut cursor = QueryCursor::new();
-        let mut matches = cursor.matches(&query, tree.root_node(), code.as_bytes());
-
-        let mut count = 0;
-        while let Some(m) = matches.next() {
-            // Safe access to the first capture
-            if let Some(capture) = m.captures.first() {
-                println!("Match found at byte range: {:?}", capture.node.byte_range());
-                count += 1;
-            }
+        for file in files {
+            matches.extend(self.search_file(&compiled_pattern, language, &file)?);
         }
 
-        println!("Found {} structural matches.", count);
-
-        Ok(())
+        Ok(matches)
     }
+
+    fn search_file(&self, pattern: &Pattern, lang: SupportLang, file: &Path) -> Result<Vec<AstMatch>> {
+        let source = std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read source file {}", file.display()))?;
+        let ast = lang.ast_grep(&source);
+        let mut matches = Vec::new();
+
+        for matched in ast.root().find_all(pattern.clone()) {
+            matches.push(build_match(file, &source, matched));
+        }
+
+        Ok(matches)
+    }
+}
+
+fn build_match<'tree>(file: &Path, source: &str, matched: NodeMatch<'tree, ast_grep_core::tree_sitter::StrDoc<SupportLang>>) -> AstMatch {
+    let byte_range = matched.range();
+    let matched_text = matched.text().to_string();
+    let candidate = EditCandidate {
+        file: file.to_path_buf(),
+        byte_range: byte_range.clone(),
+        metavar_env: extract_metavar_env(source, matched.get_env()),
+    };
+
+    AstMatch {
+        file: file.to_path_buf(),
+        line: line_number_for_byte(source, byte_range.start),
+        matched_text,
+        candidate,
+    }
+}
+
+fn resolve_language(lang: &str) -> Result<SupportLang> {
+    let language = lang
+        .parse::<SupportLang>()
+        .map_err(|_| anyhow::anyhow!("Unsupported language: {lang}"))?;
+
+    match language {
+        SupportLang::Python
+        | SupportLang::JavaScript
+        | SupportLang::TypeScript
+        | SupportLang::Rust => Ok(language),
+        _ => anyhow::bail!("Unsupported language: {lang}"),
+    }
+}
+
+fn collect_source_files(path: &Path, lang: SupportLang) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        anyhow::bail!("Path not found: {}", path.display());
+    }
+
+    if path.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    let mut files = WalkDir::new(path)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.into_path())
+        .filter(|file| file_matches_language(file, lang))
+        .collect::<Vec<_>>();
+
+    files.sort();
+    Ok(files)
+}
+
+fn file_matches_language(path: &Path, lang: SupportLang) -> bool {
+    let extension = path.extension().and_then(|ext| ext.to_str());
+    matches!(
+        (lang, extension),
+        (SupportLang::Python, Some("py" | "py3" | "pyi" | "bzl"))
+            | (SupportLang::JavaScript, Some("js" | "jsx" | "cjs" | "mjs"))
+            | (SupportLang::TypeScript, Some("ts" | "cts" | "mts"))
+            | (SupportLang::Rust, Some("rs"))
+    )
+}
+
+fn line_number_for_byte(source: &str, byte_offset: usize) -> usize {
+    source.as_bytes()[..byte_offset]
+        .iter()
+        .filter(|&&byte| byte == b'\n')
+        .count()
+        + 1
+}
+
+fn extract_metavar_env(
+    source: &str,
+    env: &ast_grep_core::meta_var::MetaVarEnv<'_, ast_grep_core::tree_sitter::StrDoc<SupportLang>>,
+) -> HashMap<String, String> {
+    let mut extracted = HashMap::new();
+
+    for variable in env.get_matched_variables() {
+        match variable {
+            MetaVariable::Capture(name, _) => {
+                if let Some(node) = env.get_match(&name) {
+                    extracted.insert(name, node.text().to_string());
+                }
+            }
+            MetaVariable::MultiCapture(name) => {
+                let nodes = env.get_multiple_matches(&name);
+                if let (Some(first), Some(last)) = (nodes.first(), nodes.last()) {
+                    extracted.insert(
+                        name,
+                        source[first.range().start..last.range().end].to_string(),
+                    );
+                }
+            }
+            MetaVariable::Dropped(_) | MetaVariable::Multiple => {}
+        }
+    }
+
+    extracted
 }
