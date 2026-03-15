@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import gc
 import os
@@ -10,7 +12,6 @@ import time
 import zipfile
 from pathlib import Path
 
-# Ensure local `src/` imports work when running this script directly.
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
@@ -94,6 +95,15 @@ SCENARIOS = [
 
 WINDOWS_RG_DIRNAME = "ripgrep-14.1.0-x86_64-pc-windows-msvc"
 TIMING_SAMPLES_PER_SCENARIO = 3
+
+
+def default_binary_path() -> Path:
+    binary_name = "tg.exe" if os.name == "nt" else "tg"
+    return ROOT_DIR / "rust_core" / "target" / "release" / binary_name
+
+
+def resolve_tg_binary(binary: str | None = None) -> Path:
+    return Path(binary).expanduser().resolve() if binary else default_binary_path()
 
 
 def resolve_bench_data_dir() -> Path:
@@ -197,33 +207,8 @@ def scenario_timing_should_capture_stdout(scenario_name: str) -> bool:
     return "Max Count Limit" in scenario_name
 
 
-def collect_count_backend_samples(bench_dir: Path, sample_count: int = TIMING_SAMPLES_PER_SCENARIO):
-    from tensor_grep.backends.rust_backend import RustCoreBackend
-    from tensor_grep.core.config import SearchConfig
-
-    samples: list[float] = []
-    for _ in range(sample_count):
-        cfg = SearchConfig(count=True)
-        backend = RustCoreBackend()
-        start_tg = time.perf_counter()
-        backend.search(str(bench_dir), "ERROR", cfg)
-        samples.append(round(time.perf_counter() - start_tg, 6))
-    return round(statistics.median(samples), 6), samples
-
-
-def build_tg_benchmark_cmd(tg_args: list[str]) -> list[str]:
-    """
-    Benchmark the same bootstrap entrypoint the installed `tg` console script uses.
-    This keeps local/CI measurements aligned with real user-facing startup cost.
-    """
-    return [
-        sys.executable,
-        "-m",
-        "tensor_grep.cli.bootstrap",
-        "search",
-        "--no-ignore",
-        *tg_args,
-    ]
+def build_tg_benchmark_cmd(tg_args: list[str], binary: Path | None = None) -> list[str]:
+    return [str(binary or resolve_tg_binary()), "search", "--no-ignore", *tg_args]
 
 
 def extract_windows_rg_bundle(benchmarks_dir: Path) -> Path | None:
@@ -310,6 +295,11 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Run text-search benchmarks for tensor-grep.")
     parser.add_argument(
+        "--binary",
+        default=str(default_binary_path()),
+        help="Path to tg binary. Defaults to rust_core/target/release/tg.exe.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -321,6 +311,7 @@ def main() -> int:
         help="Optional milestone label recorded in the benchmark artifact (for example: m1, m2).",
     )
     args = parser.parse_args()
+    tg_binary = resolve_tg_binary(args.binary)
 
     bench_dir = resolve_bench_data_dir()
     generate_test_data(
@@ -337,8 +328,6 @@ def main() -> int:
     parity_failures = 0
     parity_jobs: list[tuple[str, list[str], list[str], dict[str, object]]] = []
 
-    # Ensure tg resolves to python module
-
     for scenario in SCENARIOS:
         rg_args = [
             str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]
@@ -349,7 +338,7 @@ def main() -> int:
 
         rg_cmd = [rg_bin, "--no-ignore", *rg_args]
 
-        actual_tg_cmd = build_tg_benchmark_cmd(tg_args)
+        actual_tg_cmd = build_tg_benchmark_cmd(tg_args, binary=tg_binary)
         capture_stdout_for_timing = scenario_timing_should_capture_stdout(scenario["name"])
 
         # Warmup to reduce first-run jitter (regex compilation/import effects).
@@ -363,15 +352,10 @@ def main() -> int:
             capture_stdout=capture_stdout_for_timing,
         )
 
-        if "Count Matches" in scenario["name"]:
-            # Keep the existing raw-backend timing strategy for count benchmarks,
-            # but reduce variance by taking the median of multiple samples.
-            tg_time, tg_samples = collect_count_backend_samples(bench_dir)
-        else:
-            tg_time, tg_samples = collect_timing_samples(
-                actual_tg_cmd,
-                capture_stdout=capture_stdout_for_timing,
-            )
+        tg_time, tg_samples = collect_timing_samples(
+            actual_tg_cmd,
+            capture_stdout=capture_stdout_for_timing,
+        )
 
         row = {
             "name": scenario["name"],

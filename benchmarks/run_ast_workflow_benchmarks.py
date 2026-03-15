@@ -1,12 +1,22 @@
+from __future__ import annotations
+
 import os
 import platform
 import subprocess
-import sys
 import time
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+
+
+def default_binary_path() -> Path:
+    binary_name = "tg.exe" if os.name == "nt" else "tg"
+    return ROOT_DIR / "rust_core" / "target" / "release" / binary_name
+
+
+def resolve_tg_binary(binary: str | None = None) -> Path:
+    return Path(binary).expanduser().resolve() if binary else default_binary_path()
 
 
 def resolve_ast_workflow_bench_dir() -> Path:
@@ -16,8 +26,8 @@ def resolve_ast_workflow_bench_dir() -> Path:
     return ROOT_DIR / "artifacts" / "bench_ast_workflow"
 
 
-def build_tg_ast_workflow_cmd(args: list[str]) -> list[str]:
-    return [sys.executable, "-m", "tensor_grep.cli.bootstrap", *args]
+def build_tg_ast_workflow_cmd(args: list[str], binary: Path | None = None) -> list[str]:
+    return [str(binary or resolve_tg_binary()), *args]
 
 
 def _write_rules(rules_dir: Path, rule_count: int) -> None:
@@ -103,16 +113,39 @@ def run_cmd_capture(cmd: list[str], cwd: Path) -> tuple[float, int]:
     return time.perf_counter() - start, result.returncode
 
 
+def parse_args() -> tuple:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Benchmark AST workflow startup for tg run/scan/test."
+    )
+    parser.add_argument(
+        "--binary",
+        default=str(default_binary_path()),
+        help="Path to tg binary. Defaults to rust_core/target/release/tg.exe.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
+
+    args = parse_args()
+    tg_binary = resolve_tg_binary(args.binary)
 
     bench_root = resolve_ast_workflow_bench_dir()
     bench_dir = bench_root / f"run_{int(time.time() * 1000)}"
     generate_ast_workflow_project(bench_dir)
 
-    run_cmd = build_tg_ast_workflow_cmd(["run", "def $FUNC():\n    $$$BODY", "."])
-    scan_cmd = build_tg_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
-    test_cmd = build_tg_ast_workflow_cmd(["test", "--config", "sgconfig.yml"])
+    run_cmd = build_tg_ast_workflow_cmd(
+        ["run", "def $FUNC():\n    $$$BODY", "."], binary=tg_binary
+    )
+    scan_cmd = build_tg_ast_workflow_cmd(
+        ["scan", "--config", "sgconfig.yml"], binary=tg_binary
+    )
+    test_cmd = build_tg_ast_workflow_cmd(
+        ["test", "--config", "sgconfig.yml"], binary=tg_binary
+    )
 
     scan_project = bench_dir / "scan_project"
 

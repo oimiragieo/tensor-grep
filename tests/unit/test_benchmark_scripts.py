@@ -36,13 +36,16 @@ def test_run_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path):
     assert path == override.resolve()
 
 
-def test_run_benchmarks_should_target_bootstrap_entrypoint():
+def test_run_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
     module = _load_script_module("run_benchmarks_script_cmd", "benchmarks/run_benchmarks.py")
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
     cmd = module.build_tg_benchmark_cmd(["ERROR", "bench_data"])
 
-    assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
-    assert cmd[3:] == ["search", "--no-ignore", "ERROR", "bench_data"]
+    assert cmd[0] == str(tg_binary)
+    assert cmd[1:] == ["search", "--no-ignore", "ERROR", "bench_data"]
 
 
 def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatch, tmp_path):
@@ -274,16 +277,19 @@ def test_run_ast_workflow_benchmarks_should_honor_data_dir_override(monkeypatch,
     assert path == override.resolve()
 
 
-def test_run_ast_workflow_benchmarks_should_target_bootstrap_entrypoint():
+def test_run_ast_workflow_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_ast_workflow_benchmarks_script_cmd",
         "benchmarks/run_ast_workflow_benchmarks.py",
     )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
     cmd = module.build_tg_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
 
-    assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
-    assert cmd[3:] == ["scan", "--config", "sgconfig.yml"]
+    assert cmd[0] == str(tg_binary)
+    assert cmd[1:] == ["scan", "--config", "sgconfig.yml"]
 
 
 def test_run_ast_workflow_benchmarks_should_generate_rule_tests(tmp_path):
@@ -306,14 +312,18 @@ def test_run_ast_workflow_benchmarks_should_emit_run_scan_and_test_rows(monkeypa
         "run_ast_workflow_benchmarks_script_rows",
         "benchmarks/run_ast_workflow_benchmarks.py",
     )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr("sys.argv", ["run_ast_workflow_benchmarks.py"])
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
     monkeypatch.setattr(module, "resolve_ast_workflow_bench_dir", lambda: tmp_path / "bench")
 
     def _fake_run_cmd_capture(cmd, cwd):
-        if cmd[3] == "run":
+        if cmd[1] == "run":
             return 0.15, 0
-        if cmd[3] == "scan":
+        if cmd[1] == "scan":
             return 0.25, 0
-        if cmd[3] == "test":
+        if cmd[1] == "test":
             return 0.40, 0
         raise AssertionError(f"unexpected command: {cmd}")
 
