@@ -1,0 +1,49 @@
+{
+  "featureId": "refresh-python-benchmark-baseline",
+  "reviewedAt": "2026-03-15T03:10:00.000Z",
+  "commitId": "60ecef1456277b7b2fcb2ab9ee70c462c4592e53",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "verdict": "pass",
+  "codeReview": {
+    "summary": "The worker correctly investigated the reported Invert Match (+22.72%) and Context Lines (+12.81%) regressions by running repeated timing probes, confirming they were due to baseline staleness (Python 3.12 → 3.14 environment drift) rather than a Python-layer search bug. The baseline was refreshed from a fresh run_benchmarks.py artifact on the current Windows/Python 3.14 environment. Additionally, check_regression.py was improved to self-bootstrap its sys.path so it works without site-packages installed, and a new test validates this with python -S. All three expectedBehavior criteria are met: check_regression.py --baseline auto exits 0, benchmarks are within threshold of the refreshed baseline, and baseline files are updated and committed. All local gates (ruff, mypy, pytest 489 passed) passed.",
+    "issues": [
+      {
+        "file": "benchmarks/check_regression.py",
+        "line": 9,
+        "severity": "non_blocking",
+        "description": "The sys.path modification at module level means any import of check_regression.py as a module will mutate sys.path as a side effect. Since this is a CLI script and not a library, this is acceptable, but worth noting if the module is ever imported in-process (as the test suite already does via _load_script_module)."
+      }
+    ]
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "severity": "non_blocking",
+      "description": "Module-level sys.path mutation in check_regression.py could cause side effects if the module is imported in-process. Acceptable for a CLI script but worth noting."
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "target": "AGENTS.md",
+      "area": "conventions",
+      "observation": "Mission AGENTS.md states baselines are 'Off-Limits' and should only be updated via 'explicit benchmark-governance PRs', but this feature was specifically created to refresh baselines. The worker correctly followed the feature instructions, but the off-limits rule could benefit from a carve-out noting that dedicated baseline-refresh features are the expected exception.",
+      "evidence": "Mission AGENTS.md 'Off-Limits' section: 'benchmarks/baselines/ — never modify baseline files during feature work. Only update via explicit benchmark-governance PRs.' vs feature description which explicitly requests baseline refresh."
+    },
+    {
+      "target": "library",
+      "area": "knowledge",
+      "observation": "detect_environment_mismatch() only checks platform and machine, not python_version. The Python 3.12→3.14 upgrade caused baseline staleness that triggered this entire feature. Recording python_version in the mismatch check would surface this automatically instead of requiring manual investigation.",
+      "evidence": "Worker discoveredIssues: 'detect_environment_mismatch() currently checks platform and machine only, so Python-version drift can still compare a newer runtime against an older stored baseline without warning.' Old baseline had python_version 3.12, new one has 3.14.0."
+    },
+    {
+      "target": "library",
+      "area": "knowledge",
+      "observation": "run_benchmarks.py records a single timing sample per scenario, and repeated Windows probes showed noticeable run-to-run variance. This is a known source of false regression signals that future benchmark work should account for.",
+      "evidence": "Worker discoveredIssues: 'Pre-existing: run_benchmarks.py still records a single timing sample per scenario, and repeated Windows probes showed noticeable run-to-run variance in several text-search cases.'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The worker thoroughly investigated the reported Invert Match and Context Lines regressions, correctly determined they were due to baseline staleness from a Python 3.12→3.14 environment change, refreshed the Windows baseline from fresh benchmark artifacts, and added a self-bootstrapping sys.path fix to check_regression.py with a corresponding test. All 3 files changed are correct and well-motivated. All expectedBehavior criteria met. No blocking issues found."
+}
