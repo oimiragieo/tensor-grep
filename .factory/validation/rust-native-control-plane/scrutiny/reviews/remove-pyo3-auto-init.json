@@ -1,0 +1,45 @@
+{
+  "featureId": "remove-pyo3-auto-init",
+  "reviewedAt": "2026-03-15T04:55:00.000Z",
+  "commitId": "5181983363009714a6089e5189e2d021dd30c9e4",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly removes the `auto-initialize` feature from PyO3 in Cargo.toml and adds a `Once`-guarded `ensure_python_initialized()` function in `backend_gpu.rs` that calls `pyo3::prepare_freethreaded_python()`. All three Python-using entry points in `backend_gpu.rs` (`should_use_gpu_pipeline`, `execute_python_module_fallback`, `execute_gpu_pipeline`) now call the guard before `Python::with_gil`. The `main.rs` diff removes the GPU pipeline probe from the positional text-search hot path, ensuring search/count/replace stay on the pure-Rust `CpuBackend` path without ever initializing Python. The worker followed TDD discipline: wrote a failing integration test first (red phase confirmed Python fatally errored under invalid PYTHONHOME), then implemented the fix (green phase). A minor Clippy fix in `backend_cpu.rs` (`needless_borrow`) was also applied. All local gates passed: cargo test (17+3 tests), clippy, ruff, mypy, and pytest (488 passed). The test file `test_python_bootstrap.rs` provides strong coverage by proving search, count, and replace all succeed under a deliberately broken Python runtime.",
+    "issues": [
+      {
+        "file": "rust_core/src/backend_gpu.rs",
+        "line": 7,
+        "severity": "non_blocking",
+        "description": "The `ensure_python_initialized()` function is `pub` and part of the library's public API surface. This is correct for Milestone 1 since `main.rs` needs it, but as the sidecar architecture matures (Milestone 2+), this function may no longer need to be public if Python is only invoked via subprocess sidecar rather than embedded PyO3. Consider marking it `pub(crate)` once external callers are removed."
+      },
+      {
+        "file": "rust_core/src/backend_gpu.rs",
+        "line": 8,
+        "severity": "non_blocking",
+        "description": "`pyo3::prepare_freethreaded_python()` panics on failure (e.g., if Python shared library cannot be loaded). This is acceptable for the current architecture since Python-backed subcommands fundamentally require a working Python, but a future enhancement could catch the panic and return a user-friendly error message."
+      },
+      {
+        "file": "rust_core/src/main.rs",
+        "line": 66,
+        "severity": "non_blocking",
+        "description": "In the commit diff, `ensure_python_initialized()` is called unconditionally before dispatching any subcommand (including Mcp, Classify, etc.). This is correct for the commit's state where subcommands used `execute_python_module_fallback`. Note: subsequent features (sidecar IPC) have since refactored this to use subprocess-based routing, making the embedded Python init less relevant in the current HEAD — but at commit time, the implementation was correct."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The rust-worker skill correctly documents that `benchmarks/run_benchmarks.py` measures the Python bootstrap entrypoint, not `tg.exe`. The worker's `skillFeedback.suggestedChanges` recommends making this clearer for Milestone 1 workers. Reviewing the skill, this guidance is already present in the 'IMPORTANT' note under the benchmarking section, but the worker still initially attempted `check_regression.py` with the Python benchmark output. The guidance could be more prominent or moved earlier in the procedure.",
+      "evidence": "Skill file .factory/skills/rust-worker/SKILL.md line under 'IMPORTANT' says 'benchmarks/run_benchmarks.py measures python -m tensor_grep.cli.bootstrap, NOT rust_core/target/release/tg.exe'. Worker transcript shows worker ran `check_regression.py` with the Python benchmark output and got non-feature regressions, then correctly identified this was supplemental."
+    },
+    {
+      "area": "conventions",
+      "observation": "The worker included a Clippy fix for `needless_borrow` in `backend_cpu.rs` as part of this feature commit. While it made clippy pass cleanly, this is a pre-existing issue bundled into a feature commit. The AGENTS.md doesn't explicitly address whether unrelated lint fixes should be in their own commits or can be bundled.",
+      "evidence": "Diff shows `backend_cpu.rs` change from `&replacements` to `replacements` — a pre-existing Clippy diagnostic unrelated to the PyO3 auto-initialize removal."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The feature correctly removes PyO3 auto-initialize, adds a Once-guarded manual init in backend_gpu.rs, and keeps all pure-Rust text search paths (search, count, replace) completely Python-free. Test coverage is strong — 3 new integration tests prove the binary works under a deliberately broken Python runtime. All local gates passed. The implementation is clean, follows TDD discipline, and fulfills VAL-CTRL-NEW-004. Non-blocking observations: `ensure_python_initialized` could be `pub(crate)`, and the panic behavior of `prepare_freethreaded_python` could eventually get a friendlier error path."
+}
