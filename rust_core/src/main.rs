@@ -58,6 +58,10 @@ pub struct PositionalCli {
     #[arg(long)]
     pub force_cpu: bool,
 
+    /// Route search to GPU backends via Python sidecar (comma-separated device IDs)
+    #[arg(long = "gpu-device-ids", value_delimiter = ',')]
+    pub gpu_device_ids: Vec<i32>,
+
     /// Emit machine-readable routing metadata as JSON
     #[arg(long)]
     pub json: bool,
@@ -104,6 +108,10 @@ pub struct SearchArgs {
     /// Ignore .gitignore / ignore files
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
+
+    /// Route search to GPU backends via Python sidecar (comma-separated device IDs)
+    #[arg(long = "gpu-device-ids", value_delimiter = ',')]
+    pub gpu_device_ids: Vec<i32>,
 
     /// Emit machine-readable routing metadata as JSON
     #[arg(long)]
@@ -182,6 +190,12 @@ impl RoutingDecision {
         reason: "ast-native",
         sidecar_used: false,
     };
+
+    const GPU_SIDECAR: Self = Self {
+        backend: "GpuSidecar",
+        reason: "gpu-device-ids-explicit",
+        sidecar_used: true,
+    };
 }
 
 #[derive(Serialize)]
@@ -237,6 +251,25 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
     let pattern = cli.pattern.unwrap();
     let path = cli.path.unwrap();
+
+    if !cli.gpu_device_ids.is_empty() {
+        return handle_gpu_sidecar_search(GpuSearchParams {
+            pattern: &pattern,
+            path: &path,
+            ignore_case: cli.ignore_case,
+            fixed_strings: cli.fixed_strings,
+            invert_match: cli.invert_match,
+            count: cli.count,
+            context: None,
+            max_count: None,
+            word_regexp: false,
+            globs: Vec::new(),
+            no_ignore: true,
+            gpu_device_ids: &cli.gpu_device_ids,
+            json: cli.json,
+            verbose: cli.verbose,
+        });
+    }
 
     if cli.json {
         let backend = CpuBackend::new();
@@ -339,6 +372,25 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
 }
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
+    if !args.gpu_device_ids.is_empty() {
+        return handle_gpu_sidecar_search(GpuSearchParams {
+            pattern: &args.pattern,
+            path: &args.path,
+            ignore_case: args.ignore_case,
+            fixed_strings: args.fixed_strings,
+            invert_match: args.invert_match,
+            count: args.count,
+            context: args.context,
+            max_count: args.max_count,
+            word_regexp: args.word_regexp,
+            globs: args.globs.clone(),
+            no_ignore: args.no_ignore,
+            gpu_device_ids: &args.gpu_device_ids,
+            json: args.json,
+            verbose: args.verbose,
+        });
+    }
+
     if args.json {
         let backend = CpuBackend::new();
         let total_matches = backend.count_matches(
@@ -399,6 +451,61 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+struct GpuSearchParams<'a> {
+    pattern: &'a str,
+    path: &'a str,
+    ignore_case: bool,
+    fixed_strings: bool,
+    invert_match: bool,
+    count: bool,
+    context: Option<usize>,
+    max_count: Option<usize>,
+    word_regexp: bool,
+    globs: Vec<String>,
+    no_ignore: bool,
+    gpu_device_ids: &'a [i32],
+    json: bool,
+    verbose: bool,
+}
+
+fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
+    if params.verbose {
+        emit_verbose_metadata(RoutingDecision::GPU_SIDECAR);
+    }
+
+    let payload = serde_json::json!({
+        "pattern": params.pattern,
+        "path": params.path,
+        "ignore_case": params.ignore_case,
+        "fixed_strings": params.fixed_strings,
+        "invert_match": params.invert_match,
+        "count": params.count,
+        "context": params.context,
+        "max_count": params.max_count,
+        "word_regexp": params.word_regexp,
+        "globs": params.globs,
+        "no_ignore": params.no_ignore,
+        "gpu_device_ids": params.gpu_device_ids,
+        "json": params.json,
+    });
+
+    match execute_sidecar_command("gpu_search", vec![], Some(payload)) {
+        Ok(result) => {
+            if !result.stdout.is_empty() {
+                print!("{}", result.stdout);
+            }
+            if !result.stderr.is_empty() {
+                eprint!("{}", result.stderr);
+            }
+            if result.exit_code != 0 {
+                std::process::exit(result.exit_code.max(1));
+            }
+            Ok(())
+        }
+        Err(err) => exit_with_sidecar_error(err),
+    }
 }
 
 fn handle_sidecar_command(command: &str, args: Vec<String>) -> anyhow::Result<()> {

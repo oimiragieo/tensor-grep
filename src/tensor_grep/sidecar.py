@@ -105,6 +105,85 @@ def _dispatch_cli(command: str, args: list[str]) -> tuple[str, str, int]:
     return stdout_buffer.getvalue(), stderr_buffer.getvalue(), exit_code
 
 
+def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.core.pipeline import Pipeline
+    from tensor_grep.core.result import SearchResult
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    pattern = payload.get("pattern", "")
+    path = payload.get("path", ".")
+    gpu_device_ids = payload.get("gpu_device_ids")
+    if not isinstance(gpu_device_ids, list) or not gpu_device_ids:
+        return "", "gpu_search requires non-empty gpu_device_ids list\n", 1
+
+    config = SearchConfig(
+        ignore_case=bool(payload.get("ignore_case", False)),
+        fixed_strings=bool(payload.get("fixed_strings", False)),
+        invert_match=bool(payload.get("invert_match", False)),
+        count=bool(payload.get("count", False)),
+        context=payload.get("context"),
+        max_count=payload.get("max_count"),
+        word_regexp=bool(payload.get("word_regexp", False)),
+        no_ignore=bool(payload.get("no_ignore", False)),
+        gpu_device_ids=[int(d) for d in gpu_device_ids],
+        query_pattern=pattern,
+    )
+
+    try:
+        pipeline = Pipeline(config=config)
+        backend = pipeline.get_backend()
+    except Exception as exc:
+        return "", f"{exc}\n", 1
+
+    scanner = DirectoryScanner(config)
+    candidate_files = list(scanner.walk(path))
+
+    all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+    all_results.routing_backend = getattr(
+        pipeline, "selected_backend_name", backend.__class__.__name__
+    )
+    all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+    all_results.routing_gpu_device_ids = list(
+        getattr(pipeline, "selected_gpu_device_ids", []) or []
+    )
+
+    for current_file in candidate_files:
+        result = backend.search(current_file, pattern, config=config)
+        all_results.matches.extend(result.matches)
+        all_results.total_matches += result.total_matches
+        all_results.total_files += result.total_files
+        for fp, count in result.match_counts_by_file.items():
+            all_results.match_counts_by_file[fp] = (
+                all_results.match_counts_by_file.get(fp, 0) + count
+            )
+
+    if payload.get("json"):
+        import json as json_mod
+
+        response = {
+            "total_matches": all_results.total_matches,
+            "total_files": all_results.total_files,
+            "routing_backend": all_results.routing_backend,
+            "routing_reason": all_results.routing_reason,
+            "routing_gpu_device_ids": all_results.routing_gpu_device_ids,
+            "matches": [
+                {"file": m.file, "line_number": m.line_number, "text": m.text}
+                for m in all_results.matches
+            ],
+        }
+        return json_mod.dumps(response) + "\n", "", 0
+
+    lines: list[str] = []
+    if config.count:
+        for file_path, count in all_results.match_counts_by_file.items():
+            lines.append(f"{file_path}:{count}")
+    else:
+        for match in all_results.matches:
+            lines.append(f"{match.file}:{match.line_number}:{match.text}")
+    return "\n".join(lines) + "\n" if lines else "", "", 0
+
+
 def _dispatch_request(request: dict[str, Any]) -> tuple[str, str, int]:
     command = request.get("command")
     args = request.get("args") or []
@@ -116,6 +195,11 @@ def _dispatch_request(request: dict[str, Any]) -> tuple[str, str, int]:
     if command == "classify":
         payload_dict = payload if isinstance(payload, dict) else None
         return _classify_payload([str(arg) for arg in args], payload_dict)
+
+    if command == "gpu_search":
+        if not isinstance(payload, dict):
+            return "", "gpu_search requires a JSON payload\n", 1
+        return _gpu_search(payload)
 
     if command in {"run", "scan", "test", "new"}:
         return _dispatch_cli(command, [str(arg) for arg in args])
