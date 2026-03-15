@@ -1,6 +1,6 @@
 ---
 name: backend-worker
-description: Handles Python-based orchestration, routing, caching, and CI integration.
+description: Handles Python-side work: sidecar IPC receiver, compatibility test suites, benchmark regression gates, and Python-layer changes for the Rust control plane migration.
 ---
 
 # backend-worker
@@ -9,70 +9,96 @@ NOTE: Startup and cleanup are handled by `worker-base`. This skill defines the W
 
 ## When to Use This Skill
 
-Use this worker for Python architectural fixes, pipeline routing, environment scoping, or memory/cache improvements in the `tensor_grep.backends` or `tensor_grep.core` modules.
-
-## Work Procedure
-
-1. **Test-Driven Development (TDD) FIRST**: Write a failing unit or integration test in `tests/` that exposes the specific defect or proves the new behavior contract. Run the test and verify it fails.
-2. Implement the Python logic to make the test pass.
-3. If changing explicit pipeline fallbacks, ensure capability fallback remains observable but intent violations (e.g. `--gpu-device-ids`) fail loudly with `ConfigurationError`.
-4. Run local gates: `uv run ruff check .`, `uv run mypy src/tensor_grep`, and `uv run pytest -q`. Fix any failures.
-5. If you touched hot performance paths (e.g., AST caching or NLP routing), you MUST benchmark the change. Run `python benchmarks/run_benchmarks.py` and `python benchmarks/run_hot_query_benchmarks.py`. Ensure throughput has not degraded.
-
-## Example Handoff
-
-```json
-{
-  "salientSummary": "Fixed silent pipeline fallback when --ast backend fails. Added `test_ast_fallback_fatal` which initially failed, then updated `pipeline.py` to raise ConfigurationError instead of degrading to regex. Ran local gates and `run_benchmarks.py` confirming no regression in standard text-search throughput.",
-  "whatWasImplemented": "Modified tensor_grep.core.pipeline to throw ConfigurationError on ast_import_error. Added integration test asserting exit code != 0.",
-  "whatWasLeftUndone": "",
-  "verification.commandsRun": [
-    {
-      "command": "uv run pytest tests/unit/test_pipeline.py",
-      "exitCode": 0,
-      "observation": "Passed successfully."
-    }
-  ],
-  "verification.interactiveChecks": [],
-  "tests.added": [
-    {
-      "file": "tests/unit/test_pipeline.py",
-      "cases": [{"name": "test_ast_fallback_fatal", "verifies": "Raises ConfigurationError on missing AST dependencies"}]
-    }
-  ],
-  "discoveredIssues": []
-}
-```
+Use this worker for:
+- Python sidecar protocol (`src/tensor_grep/sidecar.py`)
+- CLI parity test suite (`benchmarks/run_compat_checks.py`)
+- Benchmark regression gates and baseline management
+- Minor Python-layer compatibility fixes when Rust migration breaks Python tests
+- JSON output schema validation files
 
 ## Dirty Primary Checkout Strategy
 
-If the primary checkout (`C:\dev\projects\tensor-grep`) has unrelated uncommitted changes on the same files you need to modify, **do NOT work there**. Create a clean isolated git worktree instead:
+If `C:\dev\projects\tensor-grep` has unrelated uncommitted changes on files you need to modify, **do NOT work there**. Create a clean isolated git worktree:
 
 ```powershell
 git -C "C:\dev\projects\tensor-grep" worktree add "C:\dev\projects\tensor-grep-<feature-id>" HEAD
 ```
 
-Work in the clean worktree, run all gates there, commit, then merge back using the `git -C` technique in the Final Step below.
+Work there, commit, then merge back:
+
+```powershell
+git -C "C:\dev\projects\tensor-grep" merge <branch> --no-edit
+```
+
+If merge fails due to conflicts:
+
+```powershell
+git -C "C:\dev\projects\tensor-grep" stash
+git -C "C:\dev\projects\tensor-grep" merge <branch> --no-edit
+git -C "C:\dev\projects\tensor-grep" stash pop
+```
+
+## Windows-Specific Notes
+
+- **Shell**: PowerShell is the default shell. Use `$env:PYTHONPATH = '...\src'` syntax.
+- **init.sh not executable**: Run `uv pip install -e ".[dev,ast,nlp]"` instead.
+- **PYTHONPATH in fresh worktrees**: `$env:PYTHONPATH = '<worktree>\src'; uv run pytest -q`.
+- **Cargo path**: `C:\Users\oimir\.cargo\bin\cargo.exe` (may not be on PATH). Use full path when needed.
+- **Benchmark rg.zip**: If `rg` is not on PATH, `run_benchmarks.py` now auto-extracts `benchmarks/rg.zip`.
+
+## Work Procedure
+
+1. **Test-Driven Development FIRST**: Write a failing test in `tests/` that exposes the specific defect or proves the new behavior contract. Run the test and verify it fails.
+
+2. Implement the Python logic to make the test pass. Follow:
+   - Sidecar protocol: JSON over stdin/stdout, fields: `{command, args, payload}` → `{status, result, error}`.
+   - Compat checks: compare sorted line-sets of `tg.exe` vs `rg` for all 8 scenarios.
+   - Schema files: use JSON Schema Draft-7 format in `tests/schemas/`.
+
+3. Run local Python gates:
+   ```powershell
+   uv run ruff check .
+   uv run mypy src/tensor_grep
+   $env:PYTHONPATH = 'src'; uv run pytest -q
+   ```
+
+4. Run relevant benchmarks if touching performance paths:
+   ```powershell
+   python benchmarks/run_benchmarks.py --output artifacts/bench.json
+   python benchmarks/check_regression.py --baseline auto --current artifacts/bench.json
+   ```
 
 ## Final Step: Merge to Main
 
-After all local gates pass and you have committed your work, **merge your feature branch into `main`** before finishing. This is required so that validation workers test against `main`.
-
-**If working in an isolated worktree**, `main` is already checked out in the primary checkout. Do NOT try to `git checkout main` from within the worktree — it will fail. Instead, merge from the primary checkout using:
+After all local gates pass and work is committed, merge back:
 
 ```powershell
 git -C "C:\dev\projects\tensor-grep" merge <feature-branch> --no-edit
 ```
 
-This works even if the primary checkout has untracked/unstaged changes, as long as there are no conflicting edits. If the merge fails due to conflicts, stash changes first:
+## Example Handoff
 
-```powershell
-git -C "C:\dev\projects\tensor-grep" stash
-git -C "C:\dev\projects\tensor-grep" merge <feature-branch> --no-edit
-git -C "C:\dev\projects\tensor-grep" stash pop
+```json
+{
+  "salientSummary": "Implemented CLI parity test suite in benchmarks/run_compat_checks.py. All 8 scenarios show zero divergent lines between tg.exe and rg. Added tests/schemas/tg_output.schema.json for routing metadata. pytest -q: 488 passed. compat_report.json shows 8/8 PASS.",
+  "whatWasImplemented": "Created benchmarks/run_compat_checks.py which runs all 8 benchmark scenarios for both tg.exe and rg, sorts output, and diffs. Also validates --json flag emits routing_backend/routing_reason/sidecar_used fields. Committed tests/schemas/tg_output.schema.json.",
+  "whatWasLeftUndone": "",
+  "verification": {
+    "commandsRun": [
+      { "command": "python benchmarks/run_compat_checks.py", "exitCode": 0, "observation": "8/8 PASS, compat_report.json written" },
+      { "command": "uv run pytest -q", "exitCode": 0, "observation": "488 passed, 14 skipped" }
+    ]
+  },
+  "tests": {
+    "added": [{ "file": "benchmarks/run_compat_checks.py", "cases": [{ "name": "all 8 scenarios parity", "verifies": "tg.exe output matches rg" }] }],
+    "updated": []
+  },
+  "discoveredIssues": []
+}
 ```
 
 ## When to Return to Orchestrator
 
-- The benchmark degraded and you cannot isolate the regression without abandoning the feature.
-- You encounter an explicit contradiction in `docs/paper.md` or existing `benchmarks/baselines/`.
+- Benchmark degraded after Rust migration and you cannot determine if it is a Python-layer or Rust-layer issue.
+- Sidecar IPC protocol has a fundamental design conflict with how GPU paths work.
+- The Python test suite has failures caused by Rust-side behavior changes outside this feature's scope.

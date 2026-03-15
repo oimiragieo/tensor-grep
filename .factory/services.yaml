@@ -8,7 +8,11 @@ commands:
   benchmark_ast: python benchmarks/run_ast_benchmarks.py
   benchmark_ast_workflow: python benchmarks/run_ast_workflow_benchmarks.py
   benchmark_gpu: python benchmarks/run_gpu_benchmarks.py
+  benchmark_compat: python benchmarks/run_compat_checks.py
   rust_test: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml
   rust_build: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release
+  rust_clippy: C:\Users\oimir\.cargo\bin\cargo.exe clippy --manifest-path rust_core/Cargo.toml -- -D warnings
+  rust_check: C:\Users\oimir\.cargo\bin\cargo.exe check --manifest-path rust_core/Cargo.toml
+  check_regression: python benchmarks/check_regression.py --baseline auto
 
 services: {}

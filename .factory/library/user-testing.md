@@ -1,12 +1,54 @@
-## Validation Surface
+## Validation Surface (v2: Rust-first control plane)
 
-The primary validation surfaces for tensor-grep are the `tg` CLI, its Python API bindings, and its `pytest` integration test suite.
+**Mission v2 note:** The primary testing surface is now the Rust-compiled `tg.exe` binary and `cargo test`. Python pytest suite is a secondary regression gate. Validation runs on Windows native (no CI runner — local machine is the test host).
+
+The primary validation surfaces for tensor-grep are the `tg` CLI (now Rust-native), its Python API bindings (sidecar protocol), and its `pytest` integration test suite.
 
 ## Validation Concurrency
 
 Due to the extreme memory overhead of cuDF/Torch GPU contexts and Rust memory-mapping across a CI host:
 - `CLI Tests`: Max 2 concurrent validators.
 - `GPU Edge Tests`: Max 1 concurrent validator (strictly serialized to avoid VRAM collisions).
+
+## Flow Validator Guidance: v2 Rust cargo tests
+
+For Rust-layer assertions (VAL-CTRL-*, VAL-AST-*, VAL-IDX-*, VAL-REWRITE-*):
+- **Run Rust tests**: `$env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"; cd C:\dev\projects\tensor-grep\rust_core; cargo test 2>&1`
+- **Run clippy**: `cargo clippy -- -D warnings`
+- **Build release binary**: `cargo build --release` (binary at `rust_core/target/release/tg.exe` or `target/release/tg.exe`)
+- For cold-start / process-spawn assertions: use `hyperfine` (pre-installed) with `--runs 30 --warmup 3`
+- For "no Python spawn" assertions: use Process Monitor (Sysinternals) if available; otherwise use timing proxy (cold-start improvement ≥50 ms confirms Python not loaded)
+- Rust compilation takes ~30-60s on this machine — do not retry unnecessarily
+
+## Flow Validator Guidance: v2 sidecar IPC (VAL-CTRL-002)
+
+- Sidecar test: `tg.exe classify <file>` vs `python -m tensor_grep classify <file>` — diff stdout
+- Process presence: use `Get-Process | Where-Object {$_.Name -like "*python*"}` in PowerShell
+- Stress test: create a 2 MB payload file; pipe through classify; verify complete JSON response
+
+## Flow Validator Guidance: v2 compat checks (VAL-COMPAT-*)
+
+- Run: `python benchmarks/run_compat_checks.py` — check for `compat_report.json` with all PASS
+- JSON schema validation: `tg.exe --json <pattern> <path> | python -m jsonschema tests/schemas/tg_output.schema.json`
+- rg binary: available via `C:\Users\oimir\.cargo\bin\rg.exe` or `benchmarks/rg.zip` auto-extract
+
+## Flow Validator Guidance: v2 AST search (VAL-AST-*)
+
+- Run 4 language reference tests: `tg.exe run --lang python "def $F($$$): $$$" tests/fixtures/add.py`
+- Parity check against sg (ast-grep CLI): `python benchmarks/run_ast_parity_check.py`
+- Benchmark: `hyperfine --runs 10 --warmup 0 "tg.exe run ..." "sg ..."` — ratio must be ≤3.0
+
+## Flow Validator Guidance: v2 index engine (VAL-IDX-*)
+
+- Index presence: check for `.tg-index/` directory after first run
+- Re-index test: modify 1 file, run again, check log for "1 file re-indexed" message
+- Speedup benchmark: `hyperfine --runs 10 "tg.exe --index <first-run>" "tg.exe --index <second-run>"` — ratio ≥5.0
+
+## Flow Validator Guidance: v2 rewrite (VAL-REWRITE-*)
+
+- Dry-run safety: `sha256sum` manifest before/after `--dry-run` — hashes must be identical
+- JSON patch schema: `tg.exe run ... --output-format json | python -m jsonschema tests/schemas/tg_patch.schema.json`
+- Throughput: `hyperfine --runs 5 "tg.exe run ... --rewrite ..."` on 5000-file corpus; ≥500 files/s
 
 ## Flow Validator Guidance: pytest
 
