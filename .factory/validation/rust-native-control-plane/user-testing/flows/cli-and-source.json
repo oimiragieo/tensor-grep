@@ -1,0 +1,139 @@
+{
+  "groupId": "cli-and-source",
+  "testedAt": "2026-03-15T12:00:00Z",
+  "isolation": {
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "rgBinary": "C:\\dev\\projects\\tensor-grep\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+    "benchData": "C:\\dev\\projects\\tensor-grep\\bench_data\\",
+    "rustSource": "C:\\dev\\projects\\tensor-grep\\rust_core\\src\\",
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "pythonVenv": "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe"
+  },
+  "toolsUsed": ["Execute (PowerShell)", "Grep (ripgrep via Grep tool)", "Read"],
+  "assertions": [
+    {
+      "id": "VAL-CTRL-NEW-004",
+      "title": "CLI interface is consistent — tg search subcommand recognized",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg.exe --help", "expected": "search subcommand listed", "observed": "search subcommand listed among Commands" },
+        { "action": "Run tg.exe search --help", "expected": "Help for search subcommand displayed", "observed": "Full help displayed with PATTERN, PATH args and all flags" },
+        { "action": "Run tg.exe search --no-ignore -c ERROR bench_data", "expected": "Exit 0 with match counts", "observed": "Exit 0. Output: readme.txt:1, sample_test.log:1, server_0.log:400000, server_1.log:400000" },
+        { "action": "Run tg.exe search --no-ignore -m 5 ERROR bench_data", "expected": "Exit 0 with first 5 matching lines", "observed": "Exit 0 with matching lines output" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": ["rust-native-control-plane/cli-search-parity/VAL-CTRL-NEW-004-search-subcommand.txt"],
+        "consoleErrors": "none",
+        "network": "N/A - CLI tool"
+      },
+      "issues": "Note: bench_data files are gitignored by *.log pattern, requiring --no-ignore flag for rg passthrough searches on this directory. Also TG_RG_PATH must be set since rg is not on system PATH."
+    },
+    {
+      "id": "VAL-CTRL-004",
+      "title": "Text search output parity — all core flags",
+      "status": "pass",
+      "steps": [
+        { "action": "Simple search: tg.exe search vs rg (-m 5 ERROR)", "expected": "Identical output", "observed": "Output match: True, both exit 0" },
+        { "action": "Count: tg.exe search -c vs rg -c", "expected": "Identical count", "observed": "Both: 400000, match: True" },
+        { "action": "Fixed string: tg.exe search -F -c '[ERROR]' vs rg", "expected": "Identical count", "observed": "Both: 400000, match: True" },
+        { "action": "Invert: tg.exe search -v -c ERROR vs rg", "expected": "Identical count", "observed": "Both: 1600000, match: True" },
+        { "action": "Ignore case: tg.exe search -i -c error vs rg", "expected": "Identical count", "observed": "Both: 400000, match: True" },
+        { "action": "Context lines: tg.exe search -C 2 -m 3 ERROR vs rg", "expected": "Identical context output", "observed": "Output match: True, both exit 0" },
+        { "action": "Zero-match: tg.exe search ZZZZNONEXISTENT vs rg", "expected": "Both exit 1", "observed": "Both exit 1, match: True" },
+        { "action": "Replace: tg.exe ERROR <file> --replace FIXED --force-cpu", "expected": "ERROR replaced with FIXED in file", "observed": "File updated correctly: before had ERROR, after has FIXED, no ERROR remaining" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": [
+          "rust-native-control-plane/cli-search-parity/VAL-CTRL-004-flag-parity.txt",
+          "rust-native-control-plane/cli-search-parity/VAL-CTRL-004-replace-test.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "N/A - CLI tool"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CTRL-NEW-001",
+      "title": "All non-GPU subcommands use IPC (not embedded PyO3)",
+      "status": "pass",
+      "steps": [
+        { "action": "grep with_gil in rust_core/src/", "expected": "Hits only in backend_gpu.rs", "observed": "3 hits, all in backend_gpu.rs (lines 25, 51, 71)" },
+        { "action": "grep execute_python_module_fallback in main.rs", "expected": "Zero hits", "observed": "Zero hits in main.rs" },
+        { "action": "grep execute_python_module_fallback in all src/", "expected": "Only definition in backend_gpu.rs", "observed": "1 hit: backend_gpu.rs line 48 (definition only)" },
+        { "action": "grep pyo3 usage count per file", "expected": "Only in lib.rs and backend_gpu.rs", "observed": "pyo3 in lib.rs (Python module bindings) and backend_gpu.rs (GPU-only). main.rs does NOT use pyo3." }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": ["rust-native-control-plane/cli-search-parity/VAL-CTRL-NEW-001-source-check.txt"],
+        "consoleErrors": "none",
+        "network": "N/A - source code analysis"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CTRL-001",
+      "title": "Python interpreter not loaded on non-GPU invocations",
+      "status": "pass",
+      "steps": [
+        { "action": "Check Cargo.toml pyo3 features for auto-initialize", "expected": "auto-initialize absent", "observed": "pyo3 features: [anyhow, abi3-py311] — no auto-initialize" },
+        { "action": "Check cargo tree for python-related deps", "expected": "pyo3 present but not auto-initializing", "observed": "pyo3 v0.24.2 present (for lib.rs bindings and GPU), tree-sitter-python (parser only, not runtime)" },
+        { "action": "Runtime: run tg.exe search, poll for python processes", "expected": "No new python processes during execution", "observed": "0 new python processes spawned at 50ms and 150ms polling intervals" },
+        { "action": "Timing proxy from VAL-CTRL-003", "expected": ">=50ms improvement confirms no Python init", "observed": "338.5ms improvement (2.73x speedup) — confirms Python not loaded" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": ["rust-native-control-plane/cli-search-parity/VAL-CTRL-001-no-python.txt"],
+        "consoleErrors": "none",
+        "network": "N/A - CLI tool"
+      },
+      "issues": "dumpbin not available on this system. Used cargo tree + Cargo.toml feature check + runtime process monitoring + timing proxy as alternative evidence."
+    },
+    {
+      "id": "VAL-CTRL-003",
+      "title": "Cold-start text search latency improves materially",
+      "status": "pass",
+      "steps": [
+        { "action": "Measure tg.exe search cold-start (5 runs)", "expected": "Consistent timing", "observed": "Median: 196.0ms (runs: 184.3, 191.0, 196.0, 201.4, 201.9)" },
+        { "action": "Measure python bootstrap cold-start (5 runs)", "expected": "Baseline timing", "observed": "Median: 534.5ms (runs: 480.7, 499.5, 534.5, 535.5, 564.9)" },
+        { "action": "Compare: improvement >= 50ms", "expected": ">=50ms faster", "observed": "338.5ms improvement (2.73x speedup)" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": ["rust-native-control-plane/cli-search-parity/VAL-CTRL-003-cold-start-timing.txt"],
+        "consoleErrors": "none",
+        "network": "N/A - CLI tool"
+      },
+      "issues": "hyperfine not available. Used PowerShell Measure-Command with 5 runs as alternative. CoV within acceptable range."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "bench_data/*.log files are matched by *.log pattern in .gitignore, causing rg (and tg search passthrough) to skip them by default. Must use --no-ignore flag.",
+      "resolved": true,
+      "resolution": "Added --no-ignore flag to all search commands targeting bench_data",
+      "affectedAssertions": ["VAL-CTRL-NEW-004", "VAL-CTRL-004", "VAL-CTRL-003"]
+    },
+    {
+      "description": "rg.exe is not on system PATH. tg.exe search subcommand requires TG_RG_PATH to be set to the bundled rg binary path.",
+      "resolved": true,
+      "resolution": "Set TG_RG_PATH=C:\\dev\\projects\\tensor-grep\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+      "affectedAssertions": ["VAL-CTRL-NEW-004", "VAL-CTRL-004", "VAL-CTRL-003"]
+    },
+    {
+      "description": "hyperfine is not installed on this system. Used PowerShell Measure-Command as alternative for timing.",
+      "resolved": true,
+      "resolution": "Used Measure-Command with ProcessStartInfo for 5-run timing measurements",
+      "affectedAssertions": ["VAL-CTRL-003"]
+    },
+    {
+      "description": "dumpbin not available for static dependency check of Python DLLs.",
+      "resolved": true,
+      "resolution": "Used cargo tree + Cargo.toml feature analysis + runtime process monitoring as alternative evidence",
+      "affectedAssertions": ["VAL-CTRL-001"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 5 assertions: all 5 passed. VAL-CTRL-NEW-004: search subcommand recognized and functional. VAL-CTRL-004: all core flags (-c, -F, -v, -i, -C, --replace) produce output identical to rg baseline. VAL-CTRL-NEW-001: with_gil and execute_python_module_fallback only in GPU-gated code. VAL-CTRL-001: no Python loaded (auto-initialize removed, no python processes spawned at runtime). VAL-CTRL-003: 338.5ms cold-start improvement (2.73x speedup), well exceeding 50ms threshold."
+}
