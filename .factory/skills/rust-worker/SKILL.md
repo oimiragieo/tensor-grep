@@ -73,6 +73,7 @@ git -C "C:\dev\projects\tensor-grep" stash pop
    ```
 
 5. If touching a performance-sensitive path, run the relevant benchmark and confirm no regression:
+   - **IMPORTANT:** `benchmarks/run_benchmarks.py` measures `python -m tensor_grep.cli.bootstrap` (the Python entrypoint), NOT `rust_core/target/release/tg.exe`. For Rust-only control-plane changes, use hyperfine directly on the Rust binary as the authoritative measurement: `hyperfine --runs 30 'rust_core\target\release\tg.exe ERROR bench_data'`. The Python bootstrap benchmark is supplemental context only.
    - Text search changes: `python benchmarks/run_benchmarks.py --output artifacts/bench.json` then `python benchmarks/check_regression.py --baseline auto --current artifacts/bench.json`
    - AST changes: `python benchmarks/run_ast_benchmarks.py`
    - Hot-query changes: `python benchmarks/run_hot_query_benchmarks.py`
