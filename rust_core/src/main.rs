@@ -1,8 +1,6 @@
 use clap::{Parser, Subcommand};
 use tensor_grep_rs::backend_cpu::CpuBackend;
-use tensor_grep_rs::backend_gpu::{
-    execute_gpu_pipeline, execute_python_module_fallback, should_use_gpu_pipeline, CliFlags,
-};
+use tensor_grep_rs::backend_gpu::{ensure_python_initialized, execute_python_module_fallback};
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -65,10 +63,11 @@ pub enum Commands {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Note: Due to pyo3 auto-initialize feature, Python interpreter initializes on start seamlessly
     let cli = Cli::parse();
 
     if let Some(cmd) = &cli.command {
+        ensure_python_initialized();
+
         match cmd {
             Commands::Mcp => return execute_python_module_fallback("mcp_server", vec![]),
             Commands::Classify { file_path } => {
@@ -98,20 +97,8 @@ fn main() -> anyhow::Result<()> {
     let pattern = cli.pattern.unwrap();
     let path = cli.path.unwrap();
 
-    let flags = CliFlags {
-        count: cli.count,
-        fixed_strings: cli.fixed_strings,
-        invert_match: cli.invert_match,
-        ignore_case: cli.ignore_case,
-    };
-
-    // Check if we should execute in Python/GPU land
-    // We strictly force CPU execution if a replacement query is passed, since the Python GPU bindings don't support file mutability yet
-    if !cli.force_cpu && cli.replace.is_none() && should_use_gpu_pipeline() {
-        return execute_gpu_pipeline(&pattern, &path, &flags);
-    }
-
-    // Fallback to ultra-fast zero-copy Rust tier
+    // Keep the plain text hot path in pure Rust. Python is initialized only for
+    // explicit Python-backed subcommands until the GPU sidecar routing lands.
     let backend = CpuBackend::new();
 
     if let Some(replacement) = cli.replace {

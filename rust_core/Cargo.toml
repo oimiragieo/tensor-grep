@@ -20,7 +20,7 @@ regex = "1.12.3"
 tree-sitter = "0.26.6"
 tree-sitter-python = "0.25.0"
 walkdir = "2.5.0"
-pyo3 = { version = "0.24.1", features = ["anyhow", "auto-initialize", "abi3-py311"] }
+pyo3 = { version = "0.24.1", features = ["anyhow", "abi3-py311"] }
 memchr = "2.7.1"
 arrow = "55.0.0"
 arrow-array = "55.0.0"

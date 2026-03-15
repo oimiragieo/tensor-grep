@@ -313,7 +313,7 @@ impl CpuBackend {
 
         {
             let mut mmap = unsafe { MmapOptions::new().map_mut(file)? };
-            self.apply_replacements_in_place(&mut mmap, original_len, &replacements)?;
+            self.apply_replacements_in_place(&mut mmap, original_len, replacements)?;
         }
 
         if new_len < required_len {
