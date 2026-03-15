@@ -3,11 +3,14 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 
 def default_binary_path() -> Path:
@@ -27,7 +30,13 @@ def resolve_ast_workflow_bench_dir() -> Path:
 
 
 def build_tg_ast_workflow_cmd(args: list[str], binary: Path | None = None) -> list[str]:
+    """Build command for native tg binary (used for ``run``)."""
     return [str(binary or resolve_tg_binary()), *args]
+
+
+def build_sidecar_ast_workflow_cmd(args: list[str]) -> list[str]:
+    """Build command for Python bootstrap (used for ``scan``/``test`` which are sidecar-only)."""
+    return [sys.executable, "-m", "tensor_grep.cli.bootstrap", *args]
 
 
 def _write_rules(rules_dir: Path, rule_count: int) -> None:
@@ -113,7 +122,7 @@ def run_cmd_capture(cmd: list[str], cwd: Path) -> tuple[float, int]:
     return time.perf_counter() - start, result.returncode
 
 
-def parse_args() -> tuple:
+def parse_args():
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -137,18 +146,20 @@ def main() -> int:
     bench_dir = bench_root / f"run_{int(time.time() * 1000)}"
     generate_ast_workflow_project(bench_dir)
 
+    # `run` is native Rust — benchmark the native binary.
     run_cmd = build_tg_ast_workflow_cmd(
-        ["run", "def $FUNC():\n    $$$BODY", "."], binary=tg_binary
+        ["run", "--lang", "python", "def $FUNC():\n    $$$BODY", "."], binary=tg_binary
     )
-    scan_cmd = build_tg_ast_workflow_cmd(
-        ["scan", "--config", "sgconfig.yml"], binary=tg_binary
-    )
-    test_cmd = build_tg_ast_workflow_cmd(
-        ["test", "--config", "sgconfig.yml"], binary=tg_binary
-    )
+    # `scan` and `test` are sidecar-backed — the native Rust CLI currently
+    # accepts no args for these subcommands and forwards them to Python.
+    # Benchmark through the Python bootstrap which is what the sidecar
+    # dispatches to.
+    scan_cmd = build_sidecar_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
+    test_cmd = build_sidecar_ast_workflow_cmd(["test", "--config", "sgconfig.yml"])
 
     scan_project = bench_dir / "scan_project"
 
+    # Warmup
     run_cmd_capture(run_cmd, scan_project)
     run_cmd_capture(scan_cmd, scan_project)
     run_cmd_capture(test_cmd, scan_project)
@@ -160,16 +171,19 @@ def main() -> int:
     rows = [
         {
             "name": "ast_run_workflow",
+            "backend": "native",
             "tg_time_s": round(run_time_s, 6),
             "exit_code": run_exit,
         },
         {
             "name": "ast_scan_workflow",
+            "backend": "sidecar",
             "tg_time_s": round(scan_time_s, 6),
             "exit_code": scan_exit,
         },
         {
             "name": "ast_test_workflow",
+            "backend": "sidecar",
             "tg_time_s": round(test_time_s, 6),
             "exit_code": test_exit,
         },

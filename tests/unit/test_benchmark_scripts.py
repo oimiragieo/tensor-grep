@@ -277,7 +277,7 @@ def test_run_ast_workflow_benchmarks_should_honor_data_dir_override(monkeypatch,
     assert path == override.resolve()
 
 
-def test_run_ast_workflow_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
+def test_run_ast_workflow_benchmarks_should_target_native_tg_binary_for_run(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_ast_workflow_benchmarks_script_cmd",
         "benchmarks/run_ast_workflow_benchmarks.py",
@@ -286,10 +286,22 @@ def test_run_ast_workflow_benchmarks_should_target_native_tg_binary(monkeypatch,
     tg_binary.write_text("binary", encoding="utf-8")
     monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
-    cmd = module.build_tg_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
+    cmd = module.build_tg_ast_workflow_cmd(["run", "--lang", "python", "pattern", "."])
 
     assert cmd[0] == str(tg_binary)
-    assert cmd[1:] == ["scan", "--config", "sgconfig.yml"]
+    assert cmd[1:] == ["run", "--lang", "python", "pattern", "."]
+
+
+def test_run_ast_workflow_benchmarks_should_use_sidecar_for_scan_test():
+    module = _load_script_module(
+        "run_ast_workflow_benchmarks_script_sidecar",
+        "benchmarks/run_ast_workflow_benchmarks.py",
+    )
+
+    cmd = module.build_sidecar_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
+
+    assert cmd[:3] == [module.sys.executable, "-m", "tensor_grep.cli.bootstrap"]
+    assert cmd[3:] == ["scan", "--config", "sgconfig.yml"]
 
 
 def test_run_ast_workflow_benchmarks_should_generate_rule_tests(tmp_path):
@@ -319,12 +331,15 @@ def test_run_ast_workflow_benchmarks_should_emit_run_scan_and_test_rows(monkeypa
     monkeypatch.setattr(module, "resolve_ast_workflow_bench_dir", lambda: tmp_path / "bench")
 
     def _fake_run_cmd_capture(cmd, cwd):
-        if cmd[1] == "run":
-            return 0.15, 0
-        if cmd[1] == "scan":
-            return 0.25, 0
-        if cmd[1] == "test":
-            return 0.40, 0
+        # Native binary: [tg.exe, run, ...]
+        # Sidecar: [python, -m, tensor_grep.cli.bootstrap, scan/test, ...]
+        for token in cmd:
+            if token == "run":
+                return 0.15, 0
+            if token == "scan":
+                return 0.25, 0
+            if token == "test":
+                return 0.40, 0
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr(module, "run_cmd_capture", _fake_run_cmd_capture)
@@ -345,11 +360,16 @@ def test_run_ast_workflow_benchmarks_should_emit_run_scan_and_test_rows(monkeypa
     assert isinstance(payload, dict)
     assert payload["suite"] == "run_ast_workflow_benchmarks"
     rows = payload["rows"]
-    assert rows == [
-        {"name": "ast_run_workflow", "tg_time_s": 0.15, "exit_code": 0},
-        {"name": "ast_scan_workflow", "tg_time_s": 0.25, "exit_code": 0},
-        {"name": "ast_test_workflow", "tg_time_s": 0.4, "exit_code": 0},
-    ]
+    assert len(rows) == 3
+    assert rows[0]["name"] == "ast_run_workflow"
+    assert rows[0]["backend"] == "native"
+    assert rows[0]["tg_time_s"] == 0.15
+    assert rows[1]["name"] == "ast_scan_workflow"
+    assert rows[1]["backend"] == "sidecar"
+    assert rows[1]["tg_time_s"] == 0.25
+    assert rows[2]["name"] == "ast_test_workflow"
+    assert rows[2]["backend"] == "sidecar"
+    assert rows[2]["tg_time_s"] == 0.4
 
 
 def test_run_gpu_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
