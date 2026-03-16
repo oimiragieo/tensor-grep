@@ -262,3 +262,152 @@ fn test_tg_run_rewrite_no_matches_reports_nothing() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("no matches"), "stderr={stderr}");
 }
+
+#[test]
+fn test_tg_run_rewrite_diff_shows_unified_diff() {
+    let source = "x = 1\ndef add(x, y): return x + y\nz = 3\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--diff")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--- a/"), "should contain --- header: {stdout}");
+    assert!(stdout.contains("+++ b/"), "should contain +++ header: {stdout}");
+    assert!(stdout.contains("@@"), "should contain hunk header: {stdout}");
+    assert!(stdout.contains("-def add(x, y): return x + y"), "should show removed line: {stdout}");
+    assert!(stdout.contains("+lambda x, y: x + y"), "should show added line: {stdout}");
+
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(content, source, "diff should not modify file");
+}
+
+#[test]
+fn test_apply_rewrite_is_idempotent_when_pattern_no_longer_matches() {
+    let source = "def add(x, y): return x + y\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(plan.edits.len(), 1);
+    AstBackend::apply_rewrites(&plan).unwrap();
+
+    let after_first = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(after_first, "lambda x, y: x + y\n");
+
+    let plan2 = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+    assert!(plan2.edits.is_empty(), "pattern should not match after rewrite");
+
+    let after_second = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(after_second, after_first, "file should be unchanged after idempotent re-run");
+}
+
+#[test]
+fn test_apply_rewrite_preserves_surrounding_code() {
+    let source = "import os\n\ndef add(x, y): return x + y\n\nresult = add(1, 2)\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    AstBackend::apply_rewrites(&plan).unwrap();
+    let result = fs::read_to_string(&file_path).unwrap();
+    assert!(result.starts_with("import os\n"), "should preserve import: {result}");
+    assert!(result.contains("lambda x, y: x + y"), "should have rewrite: {result}");
+    assert!(result.ends_with("result = add(1, 2)\n"), "should preserve trailing code: {result}");
+}
+
+#[test]
+fn test_apply_rewrite_handles_replacement_length_change() {
+    let source = "def f(x): return x\ndef g(a, b, c): return a + b + c\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.edits.len(), 2);
+    AstBackend::apply_rewrites(&plan).unwrap();
+
+    let result = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(result, "lambda x: x\nlambda a, b, c: a + b + c\n");
+}
+
+#[test]
+fn test_apply_rewrite_rust_language() {
+    let source = "fn add(a: i32, b: i32) -> i32 { a + b }\n";
+    let (_dir, file_path) = write_source_file("rs", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "fn $F($$$PARAMS) -> $RET { $BODY }",
+            "fn $F($$$PARAMS) -> $RET { return $BODY; }",
+            "rust",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.edits.len(), 1);
+    AstBackend::apply_rewrites(&plan).unwrap();
+
+    let result = fs::read_to_string(&file_path).unwrap();
+    assert!(result.contains("return a + b;"), "should insert return: {result}");
+}
+
+#[test]
+fn test_rewrite_newline_preservation() {
+    let source = "def add(x, y): return x + y\r\ndef mul(a, b): return a * b\r\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    AstBackend::apply_rewrites(&plan).unwrap();
+    let result = fs::read_to_string(&file_path).unwrap();
+    assert!(result.contains("\r\n"), "should preserve CRLF line endings: {:?}", result.as_bytes());
+}

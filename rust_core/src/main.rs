@@ -143,6 +143,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub apply: bool,
 
+    /// Show unified diff preview of rewrites (requires --rewrite)
+    #[arg(long)]
+    pub diff: bool,
+
     /// Emit machine-readable routing metadata as JSON
     #[arg(long)]
     pub json: bool,
@@ -486,6 +490,11 @@ fn handle_ast_rewrite(
 
     if plan.edits.is_empty() {
         eprintln!("[rewrite] no matches found, nothing to rewrite");
+        return Ok(());
+    }
+
+    if args.diff {
+        print!("{}", plan.generate_diff()?);
         return Ok(());
     }
 

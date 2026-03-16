@@ -57,6 +57,146 @@ pub struct OverlapRejection {
     pub reason: String,
 }
 
+impl RewritePlan {
+    pub fn generate_diff(&self) -> Result<String> {
+        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
+        for edit in &self.edits {
+            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
+        }
+
+        let mut output = String::new();
+        let mut files: Vec<&&Path> = edits_by_file.keys().collect();
+        files.sort();
+
+        for file in files {
+            let file_edits = &edits_by_file[*file];
+            let original = std::fs::read_to_string(file)
+                .with_context(|| format!("failed to read {}", file.display()))?;
+
+            let mut rewritten = String::with_capacity(original.len());
+            let mut cursor = 0usize;
+            for edit in file_edits {
+                rewritten.push_str(&original[cursor..edit.byte_range.start]);
+                rewritten.push_str(&edit.replacement_text);
+                cursor = edit.byte_range.end;
+            }
+            rewritten.push_str(&original[cursor..]);
+
+            let orig_lines: Vec<&str> = original.lines().collect();
+            let new_lines: Vec<&str> = rewritten.lines().collect();
+
+            let display_path = file.display();
+            output.push_str(&format!("--- a/{display_path}\n"));
+            output.push_str(&format!("+++ b/{display_path}\n"));
+            emit_unified_hunks(&orig_lines, &new_lines, 3, &mut output);
+        }
+
+        Ok(output)
+    }
+}
+
+fn emit_unified_hunks(old: &[&str], new: &[&str], context: usize, out: &mut String) {
+    let mut i = 0;
+    let mut j = 0;
+
+    while i < old.len() || j < new.len() {
+        if i < old.len() && j < new.len() && old[i] == new[j] {
+            i += 1;
+            j += 1;
+            continue;
+        }
+
+        let hunk_start_i = i.saturating_sub(context);
+        let hunk_start_j = j.saturating_sub(context);
+
+        let mut hunk_old: Vec<(char, &str)> = Vec::new();
+        let mut hunk_new: Vec<(char, &str)> = Vec::new();
+
+        for line in &old[hunk_start_i..i] {
+            hunk_old.push((' ', line));
+        }
+        for line in &new[hunk_start_j..j] {
+            hunk_new.push((' ', line));
+        }
+
+        while i < old.len() || j < new.len() {
+            if i < old.len() && j < new.len() && old[i] == new[j] {
+                let mut trailing = 0;
+                let mut ti = i;
+                let mut tj = j;
+                while ti < old.len() && tj < new.len() && old[ti] == new[tj] {
+                    trailing += 1;
+                    ti += 1;
+                    tj += 1;
+                }
+                if trailing > context * 2 || (ti >= old.len() && tj >= new.len()) {
+                    let take = trailing.min(context);
+                    for k in 0..take {
+                        hunk_old.push((' ', old[i + k]));
+                        hunk_new.push((' ', new[j + k]));
+                    }
+                    i += trailing;
+                    j += trailing;
+                    break;
+                }
+                for k in 0..trailing {
+                    hunk_old.push((' ', old[i + k]));
+                    hunk_new.push((' ', new[j + k]));
+                }
+                i += trailing;
+                j += trailing;
+            } else {
+                if i < old.len() && (j >= new.len() || old[i] != *new.get(j).unwrap_or(&"")) {
+                    hunk_old.push(('-', old[i]));
+                    i += 1;
+                }
+                if j < new.len() && (i >= old.len() || new[j] != *old.get(i).unwrap_or(&"")) {
+                    hunk_new.push(('+', new[j]));
+                    j += 1;
+                }
+            }
+        }
+
+        let old_count = hunk_old.len();
+        let new_count = hunk_new.len();
+        out.push_str(&format!(
+            "@@ -{},{} +{},{} @@\n",
+            hunk_start_i + 1,
+            old_count,
+            hunk_start_j + 1,
+            new_count,
+        ));
+
+        let mut oi = 0;
+        let mut ni = 0;
+        while oi < hunk_old.len() || ni < hunk_new.len() {
+            if oi < hunk_old.len() && hunk_old[oi].0 == ' '
+                && ni < hunk_new.len() && hunk_new[ni].0 == ' '
+                && hunk_old[oi].1 == hunk_new[ni].1
+            {
+                out.push_str(&format!(" {}\n", hunk_old[oi].1));
+                oi += 1;
+                ni += 1;
+            } else {
+                while oi < hunk_old.len() && hunk_old[oi].0 == '-' {
+                    out.push_str(&format!("-{}\n", hunk_old[oi].1));
+                    oi += 1;
+                }
+                while ni < hunk_new.len() && hunk_new[ni].0 == '+' {
+                    out.push_str(&format!("+{}\n", hunk_new[ni].1));
+                    ni += 1;
+                }
+                if oi < hunk_old.len() && hunk_old[oi].0 == ' ' {
+                    continue;
+                }
+                if ni < hunk_new.len() && hunk_new[ni].0 == ' ' {
+                    continue;
+                }
+            }
+        }
+    }
+}
+
 
 
 pub struct AstBackend;
