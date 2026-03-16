@@ -19,6 +19,8 @@ mcp = FastMCP("tensor-grep")
 
 _REWRITE_ROUTING_BACKEND = "AstBackend"
 _REWRITE_ROUTING_REASON = "ast-native"
+_INDEX_ROUTING_BACKEND = "TrigramIndex"
+_INDEX_ROUTING_REASON = "index-accelerated"
 
 
 def _repo_root() -> Path:
@@ -53,11 +55,42 @@ def _rewrite_error(message: str, *, code: str) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _index_search_envelope() -> dict[str, Any]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": _INDEX_ROUTING_BACKEND,
+        "routing_reason": _INDEX_ROUTING_REASON,
+        "sidecar_used": False,
+    }
+
+
+def _index_search_error(message: str, *, code: str, pattern: str, path: str) -> str:
+    payload = _index_search_envelope()
+    payload["query"] = pattern
+    payload["path"] = path
+    payload["error"] = {"code": code, "message": message}
+    return json.dumps(payload, indent=2)
+
+
 def _normalize_rewrite_json_payload(payload: object) -> str:
     if not isinstance(payload, dict):
         return _rewrite_error("Rewrite command returned non-object JSON.", code="invalid_output")
     normalized = dict(payload)
     for key, value in _rewrite_envelope().items():
+        normalized.setdefault(key, value)
+    return json.dumps(normalized, indent=2)
+
+
+def _normalize_index_search_json_payload(payload: object, *, pattern: str, path: str) -> str:
+    if not isinstance(payload, dict):
+        return _index_search_error(
+            "Index search command returned non-object JSON.",
+            code="invalid_output",
+            pattern=pattern,
+            path=path,
+        )
+    normalized = dict(payload)
+    for key, value in _index_search_envelope().items():
         normalized.setdefault(key, value)
     return json.dumps(normalized, indent=2)
 
@@ -109,6 +142,16 @@ def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
     return None
 
 
+def _validate_index_search_inputs(pattern: str, path: str) -> str | None:
+    if not pattern.strip():
+        return "Pattern must not be empty."
+    if not path.strip():
+        return "Path must not be empty."
+    if not Path(path).expanduser().exists():
+        return f"Path not found: {path}"
+    return None
+
+
 def _build_rewrite_command(
     *,
     pattern: str,
@@ -141,6 +184,17 @@ def _build_rewrite_command(
 
     command.extend([pattern, path])
     return command
+
+
+def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
+    return [
+        str(_resolve_native_tg_binary()),
+        "search",
+        "--index",
+        "--json",
+        pattern,
+        path,
+    ]
 
 
 def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -208,6 +262,52 @@ def _execute_rewrite_diff_command(command: list[str]) -> str:
     payload = _rewrite_envelope()
     payload["diff"] = diff_preview
     return json.dumps(payload, indent=2)
+
+
+def _execute_index_search_command(command: list[str], *, pattern: str, path: str) -> str:
+    try:
+        completed = _run_rewrite_subprocess(command)
+    except FileNotFoundError as exc:
+        return _index_search_error(str(exc), code="unavailable", pattern=pattern, path=path)
+    except OSError as exc:
+        return _index_search_error(
+            f"Failed to execute index search command: {exc}",
+            code="execution_failed",
+            pattern=pattern,
+            path=path,
+        )
+
+    if completed.returncode != 0:
+        return _index_search_error(
+            _extract_rewrite_error_message(
+                completed.stderr or "",
+                f"Index search command failed with exit code {completed.returncode}.",
+            ),
+            code="invalid_input",
+            pattern=pattern,
+            path=path,
+        )
+
+    stdout = (completed.stdout or "").strip()
+    if not stdout:
+        return _index_search_error(
+            "Index search command produced no JSON output.",
+            code="invalid_output",
+            pattern=pattern,
+            path=path,
+        )
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return _index_search_error(
+            "Index search command produced invalid JSON output.",
+            code="invalid_output",
+            pattern=pattern,
+            path=path,
+        )
+
+    return _normalize_index_search_json_payload(payload, pattern=pattern, path=path)
 
 
 def _routing_summary(result: SearchResult) -> str:
@@ -582,6 +682,28 @@ def tg_devices(json_output: bool = False) -> str:
     for device in inventory.devices:
         lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
     return "\n".join(lines)
+
+
+@mcp.tool()  # type: ignore
+def tg_index_search(pattern: str, path: str = ".") -> str:
+    """
+    Search files via the native trigram index path and return machine-readable JSON.
+
+    Args:
+        pattern: Regex or literal search pattern.
+        path: File or directory to search.
+    """
+    validation_error = _validate_index_search_inputs(pattern, path)
+    if validation_error:
+        return _index_search_error(
+            validation_error,
+            code="invalid_input",
+            pattern=pattern,
+            path=path,
+        )
+
+    command = _build_index_search_command(pattern=pattern, path=path)
+    return _execute_index_search_command(command, pattern=pattern, path=path)
 
 
 @mcp.tool()  # type: ignore

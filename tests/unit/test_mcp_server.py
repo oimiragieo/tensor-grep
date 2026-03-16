@@ -464,3 +464,65 @@ def test_tg_rewrite_plan_returns_structured_error_for_missing_path():
     assert parsed["error"]["code"] == "invalid_input"
     assert "Path not found" in parsed["error"]["message"]
     assert "Traceback" not in parsed["error"]["message"]
+
+
+def test_tg_index_search_returns_native_index_search_json_shape():
+    from tensor_grep.cli import mcp_server
+
+    payload = {
+        "version": 1,
+        "routing_backend": "TrigramIndex",
+        "routing_reason": "index-accelerated",
+        "sidecar_used": False,
+        "query": "ERROR",
+        "path": "src",
+        "total_matches": 1,
+        "matches": [
+            {
+                "file": "C:/tmp/sample.log",
+                "line": 2,
+                "text": "ERROR database failed",
+            }
+        ],
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_index_search(pattern="ERROR", path="src")
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "search",
+        "--index",
+        "--json",
+        "ERROR",
+        "src",
+    ]
+
+
+def test_tg_index_search_returns_structured_error_for_missing_path():
+    from tensor_grep.cli import mcp_server
+
+    out = mcp_server.tg_index_search(
+        pattern="ERROR",
+        path="C:/definitely-missing-for-mcp-server-tests",
+    )
+
+    parsed = json.loads(out)
+    assert parsed["routing_backend"] == "TrigramIndex"
+    assert parsed["routing_reason"] == "index-accelerated"
+    assert parsed["error"]["code"] == "invalid_input"
+    assert "Path not found" in parsed["error"]["message"]
+    assert "Traceback" not in parsed["error"]["message"]
