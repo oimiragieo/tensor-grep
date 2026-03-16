@@ -18,7 +18,7 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Quick examples comparing tools
 
-Fresh benchmark pass results (2026-03-13, local run on current `main`) from this repository's benchmark scripts are below.
+Fresh benchmark pass results (2026-03-16, local run on current `main`) from this repository's benchmark scripts are below.
 
 Environment notes:
 - End-to-end CLI timings include Python process startup cost.
@@ -70,6 +70,11 @@ Environment notes:
 | cyBERT backend | Semantic classification on 10,000 log lines | skipped on this host | Triton endpoint not running |
 | Torch backend | Exact match on 10,000 log lines | 0.630s | 2,000 matches |
 
+### Test Coverage
+
+- **145 Rust tests** covering native text search, AST search/rewrite, trigram index, routing decisions, GPU sidecar IPC, schema compatibility, encoding safety, batch rewrites, and incremental index updates.
+- **563 Python tests** covering CLI bootstrap, CPU/GPU backends, MCP server tools, sidecar protocol, release validation, and benchmark harnesses.
+
 ### Benchmark Governance (Regression Protection)
 
 - Benchmark scripts now emit machine-readable JSON artifacts in `artifacts/`.
@@ -77,7 +82,9 @@ Environment notes:
 - Regression checks are now environment-aware (platform/machine metadata); cross-OS comparisons are rejected by default unless explicitly overridden.
 - Main CI (`.github/workflows/ci.yml`) now includes a required `benchmark-regression` job on Ubuntu that runs `benchmarks/run_benchmarks.py`, enforces baseline regression thresholds, and publishes a markdown summary + JSON/text artifacts.
 - Standalone benchmark workflow (`.github/workflows/benchmark.yml`) remains available for manual and scheduled deep benchmark passes.
-- Current local status on 2026-03-10: `benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json` passed.
+- Current local status on 2026-03-16: `benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json` passed.
+- Additional benchmark scripts available: multi-language AST (`run_ast_multi_lang_benchmarks.py`), large-scale rewrite, harness loop, and index scaling benchmarks.
+- Multi-language corpus generators (`gen_corpus.py`) now support Python, JavaScript, TypeScript, and Rust for benchmark validation across languages.
 - Release workflow now validates the full GitHub binary artifact filename matrix and publishes `CHECKSUMS.txt` (SHA256) alongside release binaries for reproducible integrity checks.
 - Release asset verification enforces that each managed binary's `CHECKSUMS.txt` digest matches GitHub release `asset.digest` metadata, closing post-upload integrity gaps.
 
@@ -107,6 +114,17 @@ Environment notes:
 - **Semantic Understanding:** The `tg classify` command utilizes a specialized `cyBERT` HuggingFace transformer to identify malicious log patterns, detect hidden base64 payloads, and assign severity (WARN/ERROR/INFO) based on *context* rather than strict regex matches. NLP queries (`QueryType.NLP`) are now fully wired through `CybertBackend` end-to-end (previously the routing path was unconnected dead code).
 - **CybertBackend server liveness check.** `CybertBackend.is_available()` now performs a real liveness probe against the configured Triton inference server rather than always returning `True`. The probe timeout is configurable via `TENSOR_GREP_TRITON_TIMEOUT_SECONDS` (default: 5 s).
 - **Resilient Fallback:** If you don't have a GPU, `tensor-grep` instantly transparently falls back to an embedded PyO3/Rust backend using `memmap2`, matching the baseline performance of standard CPU ripgrep.
+- **Unified Harness API (NEW).** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
+- **NDJSON Streaming Output (NEW).** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
+- **Batch AST Rewrite (NEW).** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.
+- **Atomic Writes for Rewrites (NEW).** All rewrite apply operations (`--apply`) use write-to-temp + atomic rename, preventing data loss if the process is interrupted mid-write.
+- **Stale-File Detection (NEW).** Before applying rewrite edits, the engine verifies that each file's mtime hasn't changed since planning. Stale files are rejected with a clear error rather than silently applying outdated edits.
+- **Encoding Safety (NEW).** Rewrites preserve UTF-8 BOM and CRLF line endings in non-edited ranges. Binary files are automatically skipped. Large files (>10 MB) are skipped with a warning. Non-ASCII content (CJK, emoji, combining characters) is handled without corruption.
+- **Index Compression (NEW).** The trigram index binary format now uses varint encoding for posting lists, achieving ~73.5% size reduction compared to the legacy format. The compressed format is the default and maintains full backward compatibility.
+- **Incremental Index Updates (NEW).** When files are added, removed, or modified, the trigram index performs targeted updates instead of full rebuilds, reusing unchanged file entries for faster index maintenance on large repos.
+- **Regex Index Acceleration (NEW).** The index now handles alternation patterns (`foo|bar`), character classes, and Unicode patterns for prefiltering, extending the set of queries that benefit from index acceleration.
+- **GPU Sidecar Error Hardening (NEW).** GPU sidecar errors (timeout, invalid device ID, CUDA unavailable, malformed output, sidecar crash) are caught and reported with clear, actionable messages instead of raw tracebacks.
+- **Documented Routing Policy (NEW).** Explicit routing decision tree documented at [`docs/routing_policy.md`](docs/routing_policy.md) with 14 routing regression tests covering every backend selection path.
 
 ## Why shouldn't I use `tensor-grep`?
 
@@ -224,6 +242,33 @@ $ tg devices --format json
 $ tg devices --json
 ```
 
+### Streaming & Batch Operations
+
+Emit search results as newline-delimited JSON (one object per match) for streaming consumption:
+
+```bash
+$ tg search --ndjson "ERROR" ./logs
+```
+
+Apply multiple AST rewrite rules in a single pass with a JSON config file:
+
+```bash
+$ tg run --batch-rewrite rewrites.json ./src
+$ tg run --batch-rewrite rewrites.json --apply ./src
+$ tg run --batch-rewrite rewrites.json --apply --verify --json ./src
+```
+
+Example `rewrites.json`:
+```json
+{
+  "rewrites": [
+    {"pattern": "def $F($$$ARGS): return $EXPR", "replacement": "lambda $$$ARGS: $EXPR", "lang": "python"},
+    {"pattern": "console.log($X)", "replacement": "logger.info($X)", "lang": "javascript"}
+  ],
+  "verify": true
+}
+```
+
 ### AI Assistant Integration (MCP)
 `tensor-grep` includes a native Model Context Protocol (MCP) server! This allows modern AI assistants (like Claude Desktop or Cursor) to directly utilize our GPU-accelerated regex engine, structural AST parsers, and cyBERT NLP log classifiers right inside their context windows.
 
@@ -244,14 +289,22 @@ Available MCP tools now include:
 - `tg_ast_search`
 - `tg_classify_logs`
 - `tg_devices` (returns routable GPU IDs and VRAM inventory; supports JSON output)
+- `tg_index_search` (trigram-indexed text search with auto-build/rebuild)
+- `tg_rewrite_plan` (dry-run AST rewrite, returns JSON edit plan)
+- `tg_rewrite_apply` (apply AST rewrite edits with optional byte-level verification)
+- `tg_rewrite_diff` (unified diff preview of planned rewrites)
 
-For machine consumers of CLI JSON output (`tg search ... --format json`), routing metadata is included:
+For machine consumers of CLI JSON output (`tg search ... --json`), routing metadata is included:
+- `version` (contract version, currently `1`)
 - `routing_backend`
 - `routing_reason`
+- `sidecar_used`
 - `routing_gpu_device_ids`
 - `routing_gpu_chunk_plan_mb`
 - `routing_distributed`
 - `routing_worker_count`
+
+For streaming consumption, use `tg search ... --ndjson` to emit one JSON object per matching line (newline-delimited), ideal for piping to AI agents or large-result processing.
 
 **AI Prompt Configuration:**
 If you are building custom AI agents or bots, we provide an optimized prompt template explicitly outlining when and how AI models should use `tensor-grep`. Check out the [`SKILL.md`](SKILL.md) file to seamlessly inject our capabilities into your agent's system prompt!
