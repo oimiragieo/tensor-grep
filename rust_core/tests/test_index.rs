@@ -279,6 +279,100 @@ fn test_tg_search_auto_routes_to_warm_index() {
 }
 
 #[test]
+fn test_tg_search_auto_route_falls_through_for_short_pattern() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // Build index
+    tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // Short pattern (<3 chars) should NOT use index
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--verbose")
+        .arg("--count")
+        .arg("hi")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("warm index"),
+        "short pattern should not auto-route to index: stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_tg_search_auto_route_falls_through_for_invert() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    // Invert match should NOT use index
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("-v")
+        .arg("--verbose")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("warm index"),
+        "invert match should not auto-route to index: stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_tg_search_index_old_format_triggers_rebuild() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // Write an index file with wrong magic (simulates old/incompatible format)
+    fs::write(dir.path().join(".tg_index"), b"OLD_FORMAT_DATA_HERE").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--verbose")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "should recover from old format");
+    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    assert_eq!(count, 2);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed to load") || stderr.contains("rebuilding"), "stderr={stderr}");
+}
+
+#[test]
 fn test_tg_search_index_case_insensitive() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());

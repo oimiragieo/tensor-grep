@@ -564,3 +564,98 @@ fn test_end_to_end_search_plan_diff_apply_verify() {
     assert_eq!(verification.verified, 2);
     assert!(verification.mismatches.is_empty());
 }
+
+#[test]
+fn test_tg_run_apply_verify_json_is_single_document() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_str(&stdout).expect("stdout must be single valid JSON document");
+    assert!(parsed["plan"].is_object(), "must have plan field");
+    assert!(parsed["verification"].is_object(), "must have verification field");
+    assert_eq!(parsed["plan"]["version"], 1);
+    assert_eq!(parsed["verification"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert!(parsed["verification"]["mismatches"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn test_verify_detects_tampered_file() {
+    let source = "def add(x, y): return x + y\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_and_apply(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    fs::write(&file_path, "TAMPERED CONTENT\n").unwrap();
+
+    let verification = plan.verify(&backend).unwrap();
+    assert!(!verification.mismatches.is_empty(), "should detect tampered file");
+    assert_eq!(verification.verified, 0);
+}
+
+#[test]
+fn test_verify_multi_edit_with_length_changes() {
+    let source = "def f(x): return x\ndef g(a, b, c): return a + b + c\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_and_apply(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.edits.len(), 2);
+    let v = plan.verify(&backend).unwrap();
+    assert_eq!(v.verified, 2);
+    assert!(v.mismatches.is_empty());
+}
+
+#[test]
+fn test_plan_and_apply_does_not_write_rejected_overlaps() {
+    let source = "def add(x, y): return x + y\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_and_apply(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert!(plan.rejected_overlaps.is_empty());
+    assert_eq!(plan.edits.len(), 1);
+
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(content, "lambda x, y: x + y\n");
+}
