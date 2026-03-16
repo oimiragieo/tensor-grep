@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use grep_matcher::LineTerminator;
-use grep_printer::{JSONBuilder, StandardBuilder, SummaryBuilder, SummaryKind};
+use grep_printer::StandardBuilder;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::Lossy;
 use grep_searcher::{
@@ -12,10 +12,10 @@ use memchr::{memchr, memchr_iter};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use serde::Serialize;
-use serde_json::Value;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 const JSON_OUTPUT_VERSION: u32 = 1;
@@ -184,7 +184,276 @@ impl Default for NativeSearchConfig {
 struct FileSearchResult {
     matches: Vec<NativeSearchMatch>,
     match_count: usize,
+    binary_detected: bool,
     used_chunk_parallel: bool,
+}
+
+#[derive(Debug)]
+struct BinaryAwareSink<S> {
+    inner: S,
+    saw_binary: bool,
+}
+
+impl<S> BinaryAwareSink<S> {
+    fn new(inner: S) -> Self {
+        Self {
+            inner,
+            saw_binary: false,
+        }
+    }
+
+    fn saw_binary(&self) -> bool {
+        self.saw_binary
+    }
+
+    fn into_inner(self) -> S {
+        self.inner
+    }
+}
+
+impl<S> Sink for BinaryAwareSink<S>
+where
+    S: Sink<Error = io::Error>,
+{
+    type Error = io::Error;
+
+    fn matched(&mut self, searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        self.inner.matched(searcher, mat)
+    }
+
+    fn context(&mut self, searcher: &Searcher, context: &SinkContext<'_>) -> Result<bool, Self::Error> {
+        self.inner.context(searcher, context)
+    }
+
+    fn context_break(&mut self, searcher: &Searcher) -> Result<bool, Self::Error> {
+        self.inner.context_break(searcher)
+    }
+
+    fn binary_data(
+        &mut self,
+        searcher: &Searcher,
+        binary_byte_offset: u64,
+    ) -> Result<bool, Self::Error> {
+        self.saw_binary = true;
+        self.inner.binary_data(searcher, binary_byte_offset)
+    }
+
+    fn begin(&mut self, searcher: &Searcher) -> Result<bool, Self::Error> {
+        self.inner.begin(searcher)
+    }
+
+    fn finish(&mut self, searcher: &Searcher, finish: &SinkFinish) -> Result<(), Self::Error> {
+        self.inner.finish(searcher, finish)
+    }
+}
+
+#[derive(Debug, Default)]
+struct SearchInputs {
+    files: Vec<PathBuf>,
+    roots: Vec<PathBuf>,
+}
+
+#[derive(Debug)]
+struct ParallelWalkWorker {
+    config: Arc<NativeSearchConfig>,
+    matcher: RegexMatcher,
+    searcher_with_line_numbers: Searcher,
+    output_buffer: Vec<u8>,
+    search_path: String,
+    local_stats: SearchStats,
+    shared_stats: Arc<Mutex<SearchStats>>,
+}
+
+impl ParallelWalkWorker {
+    fn new(config: Arc<NativeSearchConfig>, shared_stats: Arc<Mutex<SearchStats>>) -> Result<Self> {
+        Ok(Self {
+            matcher: build_matcher(&config)?,
+            searcher_with_line_numbers: build_searcher(&config, true),
+            output_buffer: Vec::with_capacity(STREAMING_OUTPUT_FLUSH_BYTES),
+            search_path: display_search_path(&config.paths),
+            local_stats: SearchStats::default(),
+            shared_stats,
+            config,
+        })
+    }
+
+    fn search_path(&mut self, path: &Path) -> Result<()> {
+        self.output_buffer.clear();
+
+        let file_result = if self.config.count {
+            self.search_count(path)?
+        } else if self.config.json {
+            search_file_collect_matches_with_searcher(
+                &self.config,
+                &self.matcher,
+                path,
+                &mut self.searcher_with_line_numbers,
+            )?
+        } else if self.config.ndjson {
+            self.search_ndjson(path)?
+        } else {
+            self.search_plain_streaming(path)?
+        };
+
+        let FileSearchResult {
+            matches,
+            match_count,
+            binary_detected,
+            ..
+        } = file_result;
+
+        self.local_stats.searched_files += 1;
+        if binary_detected {
+            self.local_stats.skipped_binary_files += 1;
+            self.output_buffer.clear();
+            return Ok(());
+        }
+
+        if !self.output_buffer.is_empty() {
+            self.config.output_target.write_all(&self.output_buffer)?;
+            self.output_buffer.clear();
+        }
+
+        if match_count > 0 {
+            self.local_stats.matched_files += 1;
+            self.local_stats.total_matches += match_count;
+            if !matches.is_empty() {
+                self.local_stats.matches.extend(matches);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn search_plain_streaming(&mut self, path: &Path) -> Result<FileSearchResult> {
+        let retain_matches = matches!(self.config.output_target, NativeOutputTarget::Buffer(_))
+            || cfg!(debug_assertions);
+        let mut matches = Vec::new();
+        let mut match_count = 0usize;
+        let path_buf = path.to_path_buf();
+        let path_display = path.display().to_string();
+        let output_buffer = &mut self.output_buffer;
+        let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
+            let trimmed_line = line.trim_end_matches(['\n', '\r']);
+            append_standard_match_bytes(
+                output_buffer,
+                &self.config,
+                &path_display,
+                line_number,
+                trimmed_line,
+            )
+            .map_err(io::Error::other)?;
+            match_count = match_count.saturating_add(1);
+            if retain_matches {
+                matches.push(NativeSearchMatch {
+                    path: path_buf.clone(),
+                    line_number: Some(line_number),
+                    text: trimmed_line.to_string(),
+                });
+            }
+            Ok(true)
+        }));
+
+        self.searcher_with_line_numbers
+            .search_path(&self.matcher, path, &mut sink)
+            .with_context(|| format!("native standard output search failed for {}", path.display()))?;
+
+        let binary_detected = sink.saw_binary();
+        if binary_detected {
+            matches.clear();
+            match_count = 0;
+            self.output_buffer.clear();
+        }
+
+        Ok(FileSearchResult {
+            matches,
+            match_count,
+            binary_detected,
+            used_chunk_parallel: false,
+        })
+    }
+
+    fn search_ndjson(&mut self, path: &Path) -> Result<FileSearchResult> {
+        let mut matches = Vec::new();
+        let mut match_count = 0usize;
+        let path_buf = path.to_path_buf();
+        let search_path = self.search_path.clone();
+        let output_buffer = &mut self.output_buffer;
+        let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
+            let trimmed_line = line.trim_end_matches(['\n', '\r']);
+            let matched = NativeSearchMatch {
+                path: path_buf.clone(),
+                line_number: Some(line_number),
+                text: trimmed_line.to_string(),
+            };
+            append_ndjson_match_bytes(output_buffer, &self.config, &search_path, &matched)
+                .map_err(io::Error::other)?;
+            match_count = match_count.saturating_add(1);
+            matches.push(matched);
+            Ok(true)
+        }));
+
+        self.searcher_with_line_numbers
+            .search_path(&self.matcher, path, &mut sink)
+            .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
+
+        let binary_detected = sink.saw_binary();
+        if binary_detected {
+            matches.clear();
+            match_count = 0;
+            self.output_buffer.clear();
+        }
+
+        Ok(FileSearchResult {
+            matches,
+            match_count,
+            binary_detected,
+            used_chunk_parallel: false,
+        })
+    }
+
+    fn search_count(&mut self, path: &Path) -> Result<FileSearchResult> {
+        let mut match_count = 0usize;
+        let mut sink = BinaryAwareSink::new(Lossy(|_, _| {
+            match_count = match_count.saturating_add(1);
+            Ok(true)
+        }));
+
+        self.searcher_with_line_numbers
+            .search_path(&self.matcher, path, &mut sink)
+            .with_context(|| format!("native count output search failed for {}", path.display()))?;
+
+        let binary_detected = sink.saw_binary();
+        if !binary_detected {
+            append_count_output_bytes(&mut self.output_buffer, path, match_count)?;
+        } else {
+            match_count = 0;
+        }
+
+        Ok(FileSearchResult {
+            matches: Vec::new(),
+            match_count,
+            binary_detected,
+            used_chunk_parallel: false,
+        })
+    }
+}
+
+impl Drop for ParallelWalkWorker {
+    fn drop(&mut self) {
+        if self.local_stats.searched_files == 0
+            && self.local_stats.matched_files == 0
+            && self.local_stats.total_matches == 0
+            && self.local_stats.skipped_binary_files == 0
+            && self.local_stats.matches.is_empty()
+        {
+            return;
+        }
+
+        if let Ok(mut shared_stats) = self.shared_stats.lock() {
+            merge_search_stats(&mut shared_stats, std::mem::take(&mut self.local_stats));
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -245,40 +514,6 @@ where
     }
 }
 
-#[derive(Debug)]
-struct StreamingNdjsonSink<'a> {
-    config: &'a NativeSearchConfig,
-    path: PathBuf,
-    search_path: String,
-    matches: Vec<NativeSearchMatch>,
-}
-
-impl<'a> StreamingNdjsonSink<'a> {
-    fn new(config: &'a NativeSearchConfig, path: PathBuf) -> Self {
-        Self {
-            config,
-            path,
-            search_path: display_search_path(&config.paths),
-            matches: Vec::new(),
-        }
-    }
-
-    fn into_matches(self) -> Vec<NativeSearchMatch> {
-        self.matches
-    }
-}
-
-impl Sink for StreamingNdjsonSink<'_> {
-    type Error = io::Error;
-
-    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
-        let matched = native_match_from_sink(&self.path, mat);
-        emit_ndjson_match(self.config, &self.search_path, &matched).map_err(io::Error::other)?;
-        self.matches.push(matched);
-        Ok(true)
-    }
-}
-
 #[derive(Debug, Clone)]
 struct FileChunkPlan {
     byte_start: usize,
@@ -329,34 +564,65 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     }
 
     let matcher = build_matcher(&config)?;
-    let files = collect_files(&config)?;
+    let inputs = split_search_inputs(&config)?;
+    let mut stats = SearchStats::default();
+
+    if !inputs.files.is_empty() {
+        let file_stats = run_native_search_files(&config, &matcher, inputs.files)?;
+        merge_search_stats(&mut stats, file_stats);
+    }
+
+    if !inputs.roots.is_empty() {
+        let root_stats = if should_use_parallel_walk_search(&config) {
+            search_walk_roots_parallel(&config, &inputs.roots)?
+        } else {
+            let files = collect_walked_files(&config, &inputs.roots)?;
+            run_native_search_files(&config, &matcher, files)?
+        };
+        merge_search_stats(&mut stats, root_stats);
+    }
+
+    sort_search_matches(&mut stats.matches);
+
+    if config.json {
+        emit_json_matches(&config, &stats)?;
+    }
+
+    Ok(stats)
+}
+
+fn run_native_search_files(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    files: Vec<PathBuf>,
+) -> Result<SearchStats> {
     let mut stats = SearchStats::default();
     let mut emitted_stream_output = false;
 
     for file_path in files {
-        if is_binary_file(&file_path)? {
-            stats.searched_files += 1;
-            stats.skipped_binary_files += 1;
-            continue;
-        }
-
         let file_result = if config.json {
-            search_file(&config, &matcher, &file_path)?
+            search_file(config, matcher, &file_path)?
         } else if config.ndjson {
-            search_file_streaming_ndjson(&config, &matcher, &file_path)?
+            search_file_streaming_ndjson(config, matcher, &file_path)?
         } else if config.count || config.quiet {
-            search_file(&config, &matcher, &file_path)?
+            search_file(config, matcher, &file_path)?
         } else {
-            search_file_streaming_standard(&config, &matcher, &file_path, !emitted_stream_output)?
+            search_file_streaming_standard(config, matcher, &file_path, !emitted_stream_output)?
         };
 
         let FileSearchResult {
             matches,
             match_count,
+            binary_detected,
             used_chunk_parallel,
         } = file_result;
 
         stats.searched_files += 1;
+        if binary_detected {
+            stats.skipped_binary_files += 1;
+            continue;
+        }
+
         if match_count > 0 {
             stats.matched_files += 1;
             stats.total_matches += match_count;
@@ -378,18 +644,137 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
 
         if config.count {
             if used_chunk_parallel {
-                emit_count_output_from_matches(&config, &file_path, match_count)?;
+                emit_count_output_from_matches(config, &file_path, match_count)?;
             } else {
-                emit_count_output(&config, &matcher, &file_path)?;
+                emit_count_output(config, matcher, &file_path)?;
             }
         }
     }
 
-    if config.json {
-        emit_json_matches(&config, &stats)?;
+    Ok(stats)
+}
+
+fn split_search_inputs(config: &NativeSearchConfig) -> Result<SearchInputs> {
+    let mut inputs = SearchInputs::default();
+
+    for path in &config.paths {
+        if !path.exists() {
+            return Err(anyhow!("native search path does not exist: {}", path.display()));
+        }
+        if path.is_file() {
+            inputs.files.push(path.clone());
+        } else {
+            inputs.roots.push(path.clone());
+        }
     }
 
+    inputs.files.sort_unstable();
+    inputs.files.dedup();
+    Ok(inputs)
+}
+
+fn should_use_parallel_walk_search(config: &NativeSearchConfig) -> bool {
+    !config.quiet
+        && config.before_context == 0
+        && config.after_context == 0
+        && !config.only_matching
+        && config.max_count.is_none()
+}
+
+fn search_walk_roots_parallel(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<SearchStats> {
+    let shared_stats = Arc::new(Mutex::new(SearchStats::default()));
+    let shared_error = Arc::new(Mutex::new(None));
+    let should_quit = Arc::new(AtomicBool::new(false));
+    let config = Arc::new(config.clone());
+    let walker = build_walk_builder(config.as_ref(), roots)?;
+
+    walker.build_parallel().run(|| {
+        let config = Arc::clone(&config);
+        let shared_stats = Arc::clone(&shared_stats);
+        let shared_error = Arc::clone(&shared_error);
+        let should_quit = Arc::clone(&should_quit);
+        let mut worker = ParallelWalkWorker::new(config, shared_stats);
+        Box::new(move |entry| {
+            if should_quit.load(Ordering::Relaxed) {
+                return WalkState::Quit;
+            }
+
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    should_quit.store(true, Ordering::Relaxed);
+                    if let Ok(mut guard) = shared_error.lock() {
+                        if guard.is_none() {
+                            *guard = Some(anyhow!(err.to_string()));
+                        }
+                    }
+                    return WalkState::Quit;
+                }
+            };
+
+            if !entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+                return WalkState::Continue;
+            }
+
+            let worker = match worker.as_mut() {
+                Ok(worker) => worker,
+                Err(err) => {
+                    should_quit.store(true, Ordering::Relaxed);
+                    if let Ok(mut guard) = shared_error.lock() {
+                        if guard.is_none() {
+                            *guard = Some(anyhow!(err.to_string()));
+                        }
+                    }
+                    return WalkState::Quit;
+                }
+            };
+
+            if let Err(err) = worker.search_path(entry.path()) {
+                should_quit.store(true, Ordering::Relaxed);
+                if let Ok(mut guard) = shared_error.lock() {
+                    if guard.is_none() {
+                        *guard = Some(err);
+                    }
+                }
+                return WalkState::Quit;
+            }
+
+            WalkState::Continue
+        })
+    });
+
+    if let Some(err) = shared_error
+        .lock()
+        .map_err(|_| anyhow!("failed to inspect native search worker errors"))?
+        .take()
+    {
+        return Err(err);
+    }
+
+    let mut stats = std::mem::take(
+        &mut *shared_stats
+            .lock()
+            .map_err(|_| anyhow!("failed to collect native search worker stats"))?,
+    );
+    sort_search_matches(&mut stats.matches);
     Ok(stats)
+}
+
+fn merge_search_stats(target: &mut SearchStats, source: SearchStats) {
+    target.searched_files += source.searched_files;
+    target.matched_files += source.matched_files;
+    target.total_matches += source.total_matches;
+    target.skipped_binary_files += source.skipped_binary_files;
+    target.matches.extend(source.matches);
+}
+
+fn sort_search_matches(matches: &mut [NativeSearchMatch]) {
+    matches.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then_with(|| left.line_number.cmp(&right.line_number))
+            .then_with(|| left.text.cmp(&right.text))
+    });
 }
 
 fn search_file_streaming_standard(
@@ -423,18 +808,29 @@ fn search_file_streaming_standard_sequential(
 
     let mut printer = builder.build_no_color(writer);
     let mut searcher = build_searcher(config, config.line_number);
-    let matches = {
-        let mut sink = CollectingSink::new(printer.sink_with_path(matcher, path), path.to_path_buf());
+    let (matches, binary_detected) = {
+        let sink = CollectingSink::new(printer.sink_with_path(matcher, path), path.to_path_buf());
+        let mut sink = BinaryAwareSink::new(sink);
         searcher
             .search_path(matcher, path, &mut sink)
             .with_context(|| format!("native standard output search failed for {}", path.display()))?;
-        sink.into_matches()
+        let binary_detected = sink.saw_binary();
+        let matches = sink.into_inner().into_matches();
+        (matches, binary_detected)
     };
     printer.get_mut().get_mut().finish()?;
 
+    let (matches, match_count) = if binary_detected {
+        (Vec::new(), 0)
+    } else {
+        let match_count = matches.len();
+        (matches, match_count)
+    };
+
     Ok(FileSearchResult {
-        match_count: matches.len(),
+        match_count,
         matches,
+        binary_detected,
         used_chunk_parallel: false,
     })
 }
@@ -459,46 +855,50 @@ fn search_file_streaming_plain_sequential(
     let path_buf = path.to_path_buf();
     let path_display = path.display().to_string();
     let mut searcher = build_searcher(config, true);
-    searcher
-        .search_path(
-            matcher,
-            path,
-            Lossy(|line_number, line| {
-                let trimmed_line = line.trim_end_matches(['\n', '\r']);
-                append_standard_match_bytes(
-                    &mut pending_output,
-                    config,
-                    &path_display,
-                    line_number,
-                    trimmed_line,
-                )
-                .map_err(io::Error::other)?;
-                if flush_first_match_immediately && !emitted_first_chunk {
-                    config
-                        .output_target
-                        .write_all(&pending_output)
-                        .map_err(io::Error::other)?;
-                    pending_output.clear();
-                    emitted_first_chunk = true;
-                } else if pending_output.len() >= streaming_output_flush_bytes {
-                    config
-                        .output_target
-                        .write_all(&pending_output)
-                        .map_err(io::Error::other)?;
-                    pending_output.clear();
-                }
-                match_count = match_count.saturating_add(1);
-                if retain_matches {
-                    matches.push(NativeSearchMatch {
-                        path: path_buf.clone(),
-                        line_number: Some(line_number),
-                        text: trimmed_line.to_string(),
-                    });
-                }
-                Ok(true)
-            }),
+    let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
+        let trimmed_line = line.trim_end_matches(['\n', '\r']);
+        append_standard_match_bytes(
+            &mut pending_output,
+            config,
+            &path_display,
+            line_number,
+            trimmed_line,
         )
+        .map_err(io::Error::other)?;
+        if flush_first_match_immediately && !emitted_first_chunk {
+            config
+                .output_target
+                .write_all(&pending_output)
+                .map_err(io::Error::other)?;
+            pending_output.clear();
+            emitted_first_chunk = true;
+        } else if pending_output.len() >= streaming_output_flush_bytes {
+            config
+                .output_target
+                .write_all(&pending_output)
+                .map_err(io::Error::other)?;
+            pending_output.clear();
+        }
+        match_count = match_count.saturating_add(1);
+        if retain_matches {
+            matches.push(NativeSearchMatch {
+                path: path_buf.clone(),
+                line_number: Some(line_number),
+                text: trimmed_line.to_string(),
+            });
+        }
+        Ok(true)
+    }));
+    searcher
+        .search_path(matcher, path, &mut sink)
         .with_context(|| format!("native standard output search failed for {}", path.display()))?;
+
+    let binary_detected = sink.saw_binary();
+    if binary_detected {
+        matches.clear();
+        match_count = 0;
+        pending_output.clear();
+    }
 
     if !pending_output.is_empty() {
         config.output_target.write_all(&pending_output)?;
@@ -507,6 +907,7 @@ fn search_file_streaming_plain_sequential(
     Ok(FileSearchResult {
         matches,
         match_count,
+        binary_detected,
         used_chunk_parallel: false,
     })
 }
@@ -524,26 +925,16 @@ fn search_file_streaming_ndjson_sequential(
     matcher: &RegexMatcher,
     path: &Path,
 ) -> Result<FileSearchResult> {
-
-    let mut sink = StreamingNdjsonSink::new(config, path.to_path_buf());
     let mut searcher = build_searcher(config, true);
-    searcher
-        .search_path(matcher, path, &mut sink)
-        .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
-    let matches = sink.into_matches();
-
-    Ok(FileSearchResult {
-        match_count: matches.len(),
-        matches,
-        used_chunk_parallel: false,
-    })
+    search_file_ndjson_with_searcher(config, matcher, path, &mut searcher)
 }
 
 fn search_file(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<FileSearchResult> {
     if should_use_chunk_parallel_search(config, path)? {
         return search_file_chunk_parallel(config, matcher, path);
     }
-    search_file_json(config, matcher, path)
+    let mut searcher = build_searcher(config, true);
+    search_file_collect_matches_with_searcher(config, matcher, path, &mut searcher)
 }
 
 fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
@@ -584,27 +975,34 @@ fn build_searcher(config: &NativeSearchConfig, line_number: bool) -> Searcher {
     builder.build()
 }
 
-fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    let mut roots = Vec::new();
+fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let builder = build_walk_builder(config, roots)?;
+    let walked_files = Arc::new(Mutex::new(Vec::new()));
+    let shared_files = Arc::clone(&walked_files);
+    builder.build_parallel().run(|| {
+        let shared_files = Arc::clone(&shared_files);
+        Box::new(move |entry| {
+            if let Ok(entry) = entry {
+                if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+                    if let Ok(mut guard) = shared_files.lock() {
+                        guard.push(entry.path().to_path_buf());
+                    }
+                }
+            }
+            WalkState::Continue
+        })
+    });
 
-    for path in &config.paths {
-        if !path.exists() {
-            return Err(anyhow!("native search path does not exist: {}", path.display()));
-        }
-        if path.is_file() {
-            files.push(path.clone());
-        } else {
-            roots.push(path.clone());
-        }
-    }
+    let mut walked_files = walked_files
+        .lock()
+        .map_err(|_| anyhow!("failed to collect native search walk results"))?
+        .clone();
+    walked_files.sort_unstable();
+    walked_files.dedup();
+    Ok(walked_files)
+}
 
-    if roots.is_empty() {
-        files.sort_unstable();
-        files.dedup();
-        return Ok(files);
-    }
-
+fn build_walk_builder(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<WalkBuilder> {
     let first_root = roots[0].clone();
     let mut builder = WalkBuilder::new(&first_root);
     for root in roots.iter().skip(1) {
@@ -621,7 +1019,7 @@ fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
         builder.git_exclude(false);
         builder.parents(false);
     } else {
-        for root in &roots {
+        for root in roots {
             for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
                 let ignore_path = root.join(ignore_name);
                 if ignore_path.is_file() {
@@ -645,39 +1043,7 @@ fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
         );
     }
 
-    let walked_files = Arc::new(Mutex::new(Vec::new()));
-    let shared_files = Arc::clone(&walked_files);
-    builder.build_parallel().run(|| {
-        let shared_files = Arc::clone(&shared_files);
-        Box::new(move |entry| {
-            if let Ok(entry) = entry {
-                if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
-                    if let Ok(mut guard) = shared_files.lock() {
-                        guard.push(entry.path().to_path_buf());
-                    }
-                }
-            }
-            WalkState::Continue
-        })
-    });
-
-    let walked_files = walked_files
-        .lock()
-        .map_err(|_| anyhow!("failed to collect native search walk results"))?;
-    files.extend(walked_files.iter().cloned());
-    files.sort_unstable();
-    files.dedup();
-    Ok(files)
-}
-
-fn is_binary_file(path: &Path) -> Result<bool> {
-    let mut file = File::open(path)
-        .with_context(|| format!("failed to open native search path {}", path.display()))?;
-    let mut sample = [0u8; 8192];
-    let bytes_read = file
-        .read(&mut sample)
-        .with_context(|| format!("failed to read native search path {}", path.display()))?;
-    Ok(sample[..bytes_read].contains(&0))
+    Ok(builder)
 }
 
 fn should_use_chunk_parallel_search(config: &NativeSearchConfig, path: &Path) -> Result<bool> {
@@ -746,6 +1112,7 @@ fn search_file_chunk_parallel(
         return Ok(FileSearchResult {
             matches: Vec::new(),
             match_count,
+            binary_detected: false,
             used_chunk_parallel: true,
         });
     }
@@ -763,6 +1130,7 @@ fn search_file_chunk_parallel(
     Ok(FileSearchResult {
         match_count: matches.len(),
         matches,
+        binary_detected: false,
         used_chunk_parallel: true,
     })
 }
@@ -902,49 +1270,122 @@ fn search_chunk_count(
     Ok(match_count)
 }
 
+fn search_file_collect_matches_with_searcher(
+    _config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+    searcher: &mut Searcher,
+) -> Result<FileSearchResult> {
+    let path_buf = path.to_path_buf();
+    let mut matches = Vec::new();
+    let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
+        matches.push(NativeSearchMatch {
+            path: path_buf.clone(),
+            line_number: Some(line_number),
+            text: line.trim_end_matches(['\n', '\r']).to_string(),
+        });
+        Ok(true)
+    }));
+    searcher
+        .search_path(matcher, path, &mut sink)
+        .with_context(|| format!("native search failed for {}", path.display()))?;
+
+    let binary_detected = sink.saw_binary();
+    if binary_detected {
+        matches.clear();
+    }
+
+    Ok(FileSearchResult {
+        match_count: matches.len(),
+        matches,
+        binary_detected,
+        used_chunk_parallel: false,
+    })
+}
+
+fn search_file_ndjson_with_searcher(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+    searcher: &mut Searcher,
+) -> Result<FileSearchResult> {
+    let mut matches = Vec::new();
+    let path_buf = path.to_path_buf();
+    let search_path = display_search_path(&config.paths);
+    let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
+        let matched = NativeSearchMatch {
+            path: path_buf.clone(),
+            line_number: Some(line_number),
+            text: line.trim_end_matches(['\n', '\r']).to_string(),
+        };
+        emit_ndjson_match(config, &search_path, &matched).map_err(io::Error::other)?;
+        matches.push(matched);
+        Ok(true)
+    }));
+    searcher
+        .search_path(matcher, path, &mut sink)
+        .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
+
+    let binary_detected = sink.saw_binary();
+    if binary_detected {
+        matches.clear();
+    }
+
+    Ok(FileSearchResult {
+        match_count: matches.len(),
+        matches,
+        binary_detected,
+        used_chunk_parallel: false,
+    })
+}
+
+fn count_matches_with_searcher(
+    matcher: &RegexMatcher,
+    path: &Path,
+    searcher: &mut Searcher,
+) -> Result<usize> {
+    let mut match_count = 0usize;
+    let mut sink = BinaryAwareSink::new(Lossy(|_, _| {
+        match_count = match_count.saturating_add(1);
+        Ok(true)
+    }));
+    searcher
+        .search_path(matcher, path, &mut sink)
+        .with_context(|| format!("native count output search failed for {}", path.display()))?;
+
+    if sink.saw_binary() {
+        Ok(0)
+    } else {
+        Ok(match_count)
+    }
+}
+
 fn search_file_json(
     config: &NativeSearchConfig,
     matcher: &RegexMatcher,
     path: &Path,
 ) -> Result<FileSearchResult> {
-    let mut printer_builder = JSONBuilder::new();
-    printer_builder.always_begin_end(true);
-
-    let mut printer = printer_builder.build(Vec::new());
     let mut searcher = build_searcher(config, true);
-    searcher
-        .search_path(matcher, path, printer.sink_with_path(matcher, path))
-        .with_context(|| format!("native search failed for {}", path.display()))?;
-
-    let raw_json_lines = printer.into_inner();
-    let matches = parse_json_printer_output(&raw_json_lines, path)?;
-    Ok(FileSearchResult {
-        match_count: matches.len(),
-        matches,
-        used_chunk_parallel: false,
-    })
+    search_file_collect_matches_with_searcher(config, matcher, path, &mut searcher)
 }
 
 fn emit_count_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<()> {
-    let mut builder = SummaryBuilder::new();
-    builder.kind(SummaryKind::Count);
-    builder.path(true);
-    builder.exclude_zero(false);
-
-    let mut printer = builder.build_no_color(Vec::new());
-    let mut searcher = build_searcher(config, false);
-    searcher
-        .search_path(matcher, path, printer.sink_with_path(matcher, path))
-        .with_context(|| format!("native count output search failed for {}", path.display()))?;
-
-    let bytes = printer.into_inner().into_inner();
+    let mut searcher = build_searcher(config, true);
+    let count = count_matches_with_searcher(matcher, path, &mut searcher)?;
+    let mut bytes = Vec::new();
+    append_count_output_bytes(&mut bytes, path, count)?;
     config.output_target.write_all(&bytes)
 }
 
 fn emit_count_output_from_matches(config: &NativeSearchConfig, path: &Path, count: usize) -> Result<()> {
     let mut bytes = Vec::new();
-    writeln!(&mut bytes, "{}:{count}", path.display())?;
+    append_count_output_bytes(&mut bytes, path, count)?;
     config.output_target.write_all(&bytes)
+}
+
+fn append_count_output_bytes(bytes: &mut Vec<u8>, path: &Path, count: usize) -> Result<()> {
+    writeln!(bytes, "{}:{count}", path.display())?;
+    Ok(())
 }
 
 fn can_stream_plain_matches(config: &NativeSearchConfig) -> bool {
@@ -976,54 +1417,6 @@ fn native_match_from_sink(path: &Path, mat: &SinkMatch<'_>) -> NativeSearchMatch
     }
 }
 
-fn parse_json_printer_output(raw_json_lines: &[u8], default_path: &Path) -> Result<Vec<NativeSearchMatch>> {
-    let raw = std::str::from_utf8(raw_json_lines).context("native JSON printer emitted non-UTF-8 output")?;
-    let mut matches = Vec::new();
-
-    for line in raw.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let payload: Value = serde_json::from_str(line)
-            .with_context(|| format!("failed to parse native JSON printer line: {line}"))?;
-        if payload.get("type").and_then(Value::as_str) != Some("match") {
-            continue;
-        }
-
-        let data = payload
-            .get("data")
-            .ok_or_else(|| anyhow!("native JSON printer match entry missing data field"))?;
-        let path = data
-            .get("path")
-            .and_then(extract_text_value)
-            .map(PathBuf::from)
-            .unwrap_or_else(|| default_path.to_path_buf());
-        let text = data
-            .get("lines")
-            .and_then(extract_text_value)
-            .unwrap_or_default()
-            .trim_end_matches(['\n', '\r'])
-            .to_string();
-        let line_number = data.get("line_number").and_then(Value::as_u64);
-
-        matches.push(NativeSearchMatch {
-            path,
-            line_number,
-            text,
-        });
-    }
-
-    Ok(matches)
-}
-
-fn extract_text_value(value: &Value) -> Option<String> {
-    value
-        .get("text")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .or_else(|| value.get("bytes").and_then(Value::as_str).map(ToOwned::to_owned))
-}
-
 fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result<()> {
     let payload = NativeJsonOutput {
         version: JSON_OUTPUT_VERSION,
@@ -1050,6 +1443,17 @@ fn emit_ndjson_match(
     search_path: &str,
     matched: &NativeSearchMatch,
 ) -> Result<()> {
+    let mut bytes = Vec::new();
+    append_ndjson_match_bytes(&mut bytes, config, search_path, matched)?;
+    config.output_target.write_all(&bytes)
+}
+
+fn append_ndjson_match_bytes(
+    bytes: &mut Vec<u8>,
+    config: &NativeSearchConfig,
+    search_path: &str,
+    matched: &NativeSearchMatch,
+) -> Result<()> {
     let line = native_match_line_number(matched)?;
     let file = matched.path.to_string_lossy().into_owned();
     let payload = NativeNdjsonMatch {
@@ -1064,9 +1468,10 @@ fn emit_ndjson_match(
         text: &matched.text,
     };
 
-    let mut bytes = serde_json::to_vec(&payload)?;
-    bytes.push(b'\n');
-    config.output_target.write_all(&bytes)
+    let mut encoded = serde_json::to_vec(&payload)?;
+    encoded.push(b'\n');
+    bytes.extend_from_slice(&encoded);
+    Ok(())
 }
 
 fn native_match_to_json(matched: &NativeSearchMatch) -> Result<NativeJsonMatch> {

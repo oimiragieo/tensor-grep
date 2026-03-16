@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -14,11 +14,13 @@ use tensor_grep_rs::native_search::{
 
 const LARGE_FILE_LINE_BYTES: usize = 1024;
 const LARGE_FILE_LINE_COUNT: usize = 102_400;
+const LARGE_STREAMING_FILE_LINE_COUNT: usize = 131_072;
 const LARGE_FILE_CHUNK_COUNT: usize = 4;
 const LARGE_FILE_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
 const LARGE_FILE_PATTERN: &str = "NEEDLE-BOUNDARY";
 const STREAMING_PATTERN: &str = "STREAM-NEEDLE";
 const STREAMING_MATCH_INTERVAL: usize = 24;
+const MANY_FILE_STREAMING_LINES_PER_FILE: usize = 64;
 
 struct StreamCapture {
     status: std::process::ExitStatus,
@@ -94,7 +96,7 @@ fn write_large_streaming_fixture(dir: &Path) -> (PathBuf, usize) {
     let mut writer = BufWriter::new(file);
     let mut expected_matches = 0usize;
 
-    for line_number in 1..=LARGE_FILE_LINE_COUNT {
+    for line_number in 1..=LARGE_STREAMING_FILE_LINE_COUNT {
         let mut line = if line_number % STREAMING_MATCH_INTERVAL == 0 {
             expected_matches += 1;
             format!("INFO {STREAMING_PATTERN} streaming-line-{line_number}")
@@ -110,10 +112,32 @@ fn write_large_streaming_fixture(dir: &Path) -> (PathBuf, usize) {
 
     assert_eq!(
         fs::metadata(&file_path).unwrap().len(),
-        (LARGE_FILE_LINE_BYTES * LARGE_FILE_LINE_COUNT) as u64
+        (LARGE_FILE_LINE_BYTES * LARGE_STREAMING_FILE_LINE_COUNT) as u64
     );
 
     (file_path, expected_matches)
+}
+
+fn write_many_file_streaming_fixture(dir: &Path, file_count: usize) -> (PathBuf, usize) {
+    let root = dir.join("many-streaming");
+    fs::create_dir_all(&root).unwrap();
+    let mut expected_matches = 0usize;
+
+    for file_index in 0..file_count {
+        let file_path = root.join(format!("fixture-{file_index:04}.log"));
+        let mut lines = Vec::new();
+        for line_index in 0..MANY_FILE_STREAMING_LINES_PER_FILE {
+            if file_index % 23 == 0 && line_index == 7 {
+                expected_matches += 1;
+                lines.push(format!("INFO {STREAMING_PATTERN} file={file_index} line={line_index}\n"));
+            } else {
+                lines.push(format!("INFO filler file={file_index} line={line_index}\n"));
+            }
+        }
+        fs::write(file_path, lines.concat()).unwrap();
+    }
+
+    (root, expected_matches)
 }
 
 fn capture_streaming_output(command: &mut Command) -> StreamCapture {
@@ -157,6 +181,14 @@ fn median_duration(samples: &[Duration]) -> Duration {
     let mut sorted = samples.to_vec();
     sorted.sort_unstable();
     sorted[sorted.len() / 2]
+}
+
+fn timing_test_guard() -> MutexGuard<'static, ()> {
+    static TIMING_TEST_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    TIMING_TEST_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn assert_streaming_ratio(capture: &StreamCapture, mode: &str) {
@@ -498,6 +530,7 @@ fn test_native_search_large_file_verbose_logs_chunk_boundaries() {
 
 #[test]
 fn test_native_search_default_output_streams_before_search_completion() {
+    let _guard = timing_test_guard();
     if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
         return;
     }
@@ -520,6 +553,7 @@ fn test_native_search_default_output_streams_before_search_completion() {
 
 #[test]
 fn test_native_search_ndjson_output_streams_before_search_completion() {
+    let _guard = timing_test_guard();
     if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
         return;
     }
@@ -544,6 +578,30 @@ fn test_native_search_ndjson_output_streams_before_search_completion() {
 
     assert_streaming_ratio(&capture, "ndjson");
     assert_eq!(payloads.len(), expected_matches);
+}
+
+#[test]
+fn test_native_search_many_file_directory_streams_before_walk_completion() {
+    let _guard = timing_test_guard();
+    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let (fixture_dir, expected_matches) = write_many_file_streaming_fixture(dir.path(), 4_000);
+
+    let mut command = tg();
+    command
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg(STREAMING_PATTERN)
+        .arg(&fixture_dir);
+    let capture = capture_streaming_output(&mut command);
+    let stdout = String::from_utf8(capture.stdout.clone()).unwrap();
+
+    assert_streaming_ratio(&capture, "many-file-directory");
+    assert_eq!(stdout.lines().count(), expected_matches, "stdout={stdout}");
 }
 
 #[test]
