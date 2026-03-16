@@ -1,8 +1,10 @@
 use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use tensor_grep_rs::backend_ast::AstBackend;
 use tensor_grep_rs::backend_cpu::CpuBackend;
+use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_sidecar_command, SidecarError,
 };
@@ -109,6 +111,10 @@ pub struct SearchArgs {
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
 
+    /// Use trigram index for accelerated repeated queries
+    #[arg(long)]
+    pub index: bool,
+
     /// Route search to GPU backends via Python sidecar (comma-separated device IDs)
     #[arg(long = "gpu-device-ids", value_delimiter = ',')]
     pub gpu_device_ids: Vec<i32>,
@@ -207,6 +213,12 @@ impl RoutingDecision {
         backend: "GpuSidecar",
         reason: "gpu-device-ids-explicit",
         sidecar_used: true,
+    };
+
+    const INDEX: Self = Self {
+        backend: "TrigramIndex",
+        reason: "index-accelerated",
+        sidecar_used: false,
     };
 }
 
@@ -384,6 +396,10 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
 }
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
+    if args.index {
+        return handle_index_search(&args);
+    }
+
     if !args.gpu_device_ids.is_empty() {
         return handle_gpu_sidecar_search(GpuSearchParams {
             pattern: &args.pattern,
@@ -436,6 +452,83 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
 
     if exit_code != 0 {
         std::process::exit(exit_code.max(1));
+    }
+
+    Ok(())
+}
+
+fn resolve_index_path(search_path: &str) -> PathBuf {
+    let root = Path::new(search_path);
+    if root.is_file() {
+        root.parent()
+            .unwrap_or(Path::new("."))
+            .join(".tg_index")
+    } else {
+        root.join(".tg_index")
+    }
+}
+
+fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
+    let index_path = resolve_index_path(&args.path);
+
+    let index = if index_path.exists() {
+        let loaded = TrigramIndex::load(&index_path)?;
+        if loaded.is_stale() {
+            if args.verbose {
+                eprintln!("[index] stale index detected, rebuilding...");
+            }
+            let fresh = TrigramIndex::build(Path::new(&args.path))?;
+            fresh.save(&index_path)?;
+            fresh
+        } else {
+            if args.verbose {
+                eprintln!(
+                    "[index] loaded cached index: {} files, {} trigrams",
+                    loaded.file_count(),
+                    loaded.trigram_count()
+                );
+            }
+            loaded
+        }
+    } else {
+        if args.verbose {
+            eprintln!("[index] building index for {}...", args.path);
+        }
+        let fresh = TrigramIndex::build(Path::new(&args.path))?;
+        fresh.save(&index_path)?;
+        if args.verbose {
+            eprintln!(
+                "[index] built index: {} files, {} trigrams, {} postings",
+                fresh.file_count(),
+                fresh.trigram_count(),
+                fresh.total_postings()
+            );
+        }
+        fresh
+    };
+
+    if args.verbose {
+        emit_verbose_metadata(RoutingDecision::INDEX);
+    }
+
+    let results = index.search(&args.pattern, args.ignore_case, args.fixed_strings)?;
+
+    if args.json {
+        return emit_json_metadata(
+            RoutingDecision::INDEX,
+            &args.pattern,
+            &args.path,
+            results.len(),
+        );
+    }
+
+    if args.count {
+        println!("{}", results.len());
+        return Ok(());
+    }
+
+    for result in &results {
+        println!("{}:{}:{}", result.file.display(), result.line, result.text);
     }
 
     Ok(())
