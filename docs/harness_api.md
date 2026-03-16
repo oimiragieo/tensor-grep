@@ -76,6 +76,8 @@ The shape matches Search JSON exactly; only the routing envelope changes.
 
 Emitted by `tg.exe run --rewrite <replacement> <pattern> <path>` when `--diff` and `--apply` are not set.
 
+`tg.exe run --batch-rewrite <config.json> <path>` emits the same common rewrite-plan envelope, but replaces the single `pattern` / `replacement` / `lang` fields with a `rewrites` array copied from the config file.
+
 Example: [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 
 | Field | Type | Notes |
@@ -106,6 +108,38 @@ Each `edits[]` object has:
 | `metavar_env` | `object<string,string>` | Bound metavariables captured from the match. |
 
 If `rejected_overlaps` is present, each object contains `file`, `edit_a`, `edit_b`, and `reason`.
+
+## Batch Rewrite Config
+
+Batch rewrite is configured with `tg.exe run --batch-rewrite <config.json> <path>`.
+
+Config schema:
+
+```json
+{
+  "rewrites": [
+    {
+      "pattern": "def $F($$$ARGS): return $EXPR",
+      "replacement": "lambda $$$ARGS: $EXPR",
+      "lang": "python"
+    }
+  ],
+  "verify": true
+}
+```
+
+Rules:
+
+- `rewrites` is required and must be a non-empty array.
+- Each rewrite object must include string `pattern`, `replacement`, and `lang` fields.
+- `verify` is optional; if present it must be a boolean and enables post-apply byte-level verification for batch apply.
+- Invalid configs fail with field-specific errors such as `rewrites[0].replacement`.
+
+Batch planning/apply behavior:
+
+- all configured patterns are planned against the original file contents before any write occurs
+- `rejected_overlaps` reports cross-pattern conflicts, and conflicted files are left unchanged
+- batch apply reuses the same atomic-write, BOM/CRLF preservation, binary-skip, and stale-file protections as single rewrites
 
 ## Apply + Verify JSON
 
@@ -213,6 +247,7 @@ tg.exe search --no-ignore --json ERROR bench_data\<temp-search-dir>
 tg.exe search --index --no-ignore --fixed-strings --json ERROR bench_data\<temp-index-dir>
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --apply --verify --json 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
+tg.exe run --batch-rewrite batch-rewrite.json --apply --json bench_data\<temp-rewrite-dir>
 tg.exe search --gpu-device-ids 0 --json ERROR bench_data\<temp-gpu-dir>
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --diff 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
 ```

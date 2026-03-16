@@ -3,8 +3,8 @@ use ast_grep_core::{meta_var::MetaVariable, matcher::NodeMatch, tree_sitter::Lan
 use ast_grep_language::SupportLang;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
-use serde::Serialize;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::convert::TryFrom;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -73,6 +73,27 @@ pub struct RewritePlan {
     pub rejected_overlaps: Vec<OverlapRejection>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BatchRewriteRule {
+    pub pattern: String,
+    pub replacement: String,
+    pub lang: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BatchRewritePlan {
+    pub version: u32,
+    pub routing_backend: &'static str,
+    pub routing_reason: &'static str,
+    pub sidecar_used: bool,
+    pub rewrites: Vec<BatchRewriteRule>,
+    pub total_files_scanned: usize,
+    pub total_edits: usize,
+    pub edits: Vec<RewriteEdit>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rejected_overlaps: Vec<OverlapRejection>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OverlapRejection {
     pub file: PathBuf,
@@ -99,92 +120,21 @@ pub struct VerifyMismatch {
 
 impl RewritePlan {
     pub fn verify(&self, _backend: &AstBackend) -> Result<VerifyResult> {
-        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
-        for edit in &self.edits {
-            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
-        }
-
-        let mut mismatches = Vec::new();
-
-        for (file, file_edits) in &edits_by_file {
-            let content = std::fs::read_to_string(file)
-                .with_context(|| format!("verify: failed to read {}", file.display()))?;
-
-            let mut byte_offset_delta: isize = 0;
-
-            for edit in file_edits {
-                let adjusted_start = (edit.byte_range.start as isize + byte_offset_delta) as usize;
-                let adjusted_end = adjusted_start + edit.replacement_text.len();
-
-                if adjusted_end > content.len() {
-                    mismatches.push(VerifyMismatch {
-                        edit_id: edit.id.clone(),
-                        file: edit.file.clone(),
-                        line: edit.line,
-                        expected: edit.replacement_text.clone(),
-                        actual: format!("<out of bounds: file len {}, expected end {}>", content.len(), adjusted_end),
-                    });
-                    continue;
-                }
-
-                let actual = &content[adjusted_start..adjusted_end];
-                if actual != edit.replacement_text {
-                    mismatches.push(VerifyMismatch {
-                        edit_id: edit.id.clone(),
-                        file: edit.file.clone(),
-                        line: edit.line,
-                        expected: edit.replacement_text.clone(),
-                        actual: actual.to_string(),
-                    });
-                }
-
-                byte_offset_delta += edit.replacement_text.len() as isize
-                    - (edit.byte_range.end - edit.byte_range.start) as isize;
-            }
-        }
-
-        let verified = self.edits.len() - mismatches.len();
-        Ok(VerifyResult {
-            total_edits: self.edits.len(),
-            verified,
-            mismatches,
-        })
+        verify_rewrite_edits(&self.edits)
     }
 
     pub fn generate_diff(&self) -> Result<String> {
-        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
-        for edit in &self.edits {
-            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
-        }
+        generate_diff_for_edits(&self.edits)
+    }
+}
 
-        let mut output = String::new();
-        let mut files: Vec<&&Path> = edits_by_file.keys().collect();
-        files.sort();
+impl BatchRewritePlan {
+    pub fn verify(&self, _backend: &AstBackend) -> Result<VerifyResult> {
+        verify_rewrite_edits(&self.edits)
+    }
 
-        for file in files {
-            let file_edits = &edits_by_file[*file];
-            let original = std::fs::read_to_string(file)
-                .with_context(|| format!("failed to read {}", file.display()))?;
-
-            let mut rewritten = String::with_capacity(original.len());
-            let mut cursor = 0usize;
-            for edit in file_edits {
-                rewritten.push_str(&original[cursor..edit.byte_range.start]);
-                rewritten.push_str(&edit.replacement_text);
-                cursor = edit.byte_range.end;
-            }
-            rewritten.push_str(&original[cursor..]);
-
-            let orig_lines: Vec<&str> = original.lines().collect();
-            let new_lines: Vec<&str> = rewritten.lines().collect();
-
-            let display_path = file.display();
-            output.push_str(&format!("--- a/{display_path}\n"));
-            output.push_str(&format!("+++ b/{display_path}\n"));
-            emit_unified_hunks(&orig_lines, &new_lines, 3, &mut output);
-        }
-
-        Ok(output)
+    pub fn generate_diff(&self) -> Result<String> {
+        generate_diff_for_edits(&self.edits)
     }
 }
 
@@ -294,6 +244,11 @@ fn emit_unified_hunks(old: &[&str], new: &[&str], context: usize, out: &mut Stri
 
 pub struct AstBackend;
 
+struct CompiledBatchRewrite {
+    replacement: String,
+    pattern: Pattern,
+}
+
 impl Default for AstBackend {
     fn default() -> Self {
         Self::new()
@@ -367,26 +322,70 @@ impl AstBackend {
         })
     }
 
+    pub fn plan_batch_rewrites(&self, rewrites: &[BatchRewriteRule], path: &str) -> Result<BatchRewritePlan> {
+        if rewrites.is_empty() {
+            anyhow::bail!("batch rewrite config requires at least one rewrite rule");
+        }
+
+        let mut compiled_by_lang: BTreeMap<String, Vec<CompiledBatchRewrite>> = BTreeMap::new();
+        for rewrite in rewrites {
+            let language = resolve_language(&rewrite.lang)?;
+            let compiled_pattern = Pattern::try_new(&rewrite.pattern, language)
+                .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
+            if compiled_pattern.has_error() {
+                anyhow::bail!("Invalid pattern: parse error");
+            }
+            compiled_by_lang
+                .entry(rewrite.lang.clone())
+                .or_default()
+                .push(CompiledBatchRewrite {
+                    replacement: rewrite.replacement.clone(),
+                    pattern: compiled_pattern,
+                });
+        }
+
+        let search_root = Path::new(path);
+        let mut total_files_scanned = 0usize;
+        let mut edits = Vec::new();
+
+        for (lang_name, rules) in &compiled_by_lang {
+            let language = resolve_language(lang_name)?;
+            let files = collect_batch_source_files(search_root, language)?;
+            total_files_scanned += files.len();
+
+            let file_results: Vec<Result<Vec<RewriteEdit>>> = files
+                .par_iter()
+                .map(|file| Self::plan_file_batch_rewrites(rules, language, file))
+                .collect();
+
+            for result in file_results {
+                edits.extend(result?);
+            }
+        }
+
+        edits.sort_by(|a, b| a.file.cmp(&b.file).then(a.byte_range.start.cmp(&b.byte_range.start)));
+        assign_edit_ids(&mut edits);
+        let (valid_edits, rejected_overlaps) = validate_batch_no_overlaps(edits);
+
+        Ok(BatchRewritePlan {
+            version: 1,
+            routing_backend: "AstBackend",
+            routing_reason: "ast-native",
+            sidecar_used: false,
+            rewrites: rewrites.to_vec(),
+            total_files_scanned,
+            total_edits: valid_edits.len(),
+            edits: valid_edits,
+            rejected_overlaps,
+        })
+    }
+
     pub fn apply_rewrites(plan: &RewritePlan) -> Result<usize> {
-        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
-        for edit in &plan.edits {
-            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
-        }
+        apply_edit_set(&plan.edits)
+    }
 
-        let files: Vec<(&Path, &Vec<&RewriteEdit>)> = edits_by_file.iter().map(|(k, v)| (*k, v)).collect();
-        ensure_files_not_stale(&files)?;
-        let results: Vec<Result<()>> = files
-            .par_iter()
-            .map(|(file, file_edits)| apply_edits_to_file(file, file_edits))
-            .collect();
-
-        let mut files_written = 0;
-        for result in results {
-            result?;
-            files_written += 1;
-        }
-
-        Ok(files_written)
+    pub fn apply_batch_rewrites(plan: &BatchRewritePlan) -> Result<usize> {
+        apply_edit_set(&plan.edits)
     }
 
     pub fn plan_and_apply(&self, pattern: &str, replacement: &str, lang: &str, path: &str) -> Result<RewritePlan> {
@@ -413,17 +412,7 @@ impl AstBackend {
         assign_edit_ids(&mut all_edits);
         let (valid_edits, rejected_overlaps) = validate_no_overlaps(all_edits);
 
-        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
-        for edit in &valid_edits {
-            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
-        }
-
-        let write_ops: Vec<(&Path, &Vec<&RewriteEdit>)> =
-            edits_by_file.iter().map(|(k, v)| (*k, v)).collect();
-        ensure_files_not_stale(&write_ops)?;
-        write_ops
-            .par_iter()
-            .try_for_each(|(file, file_edits)| apply_edits_to_file(file, file_edits))?;
+        apply_edit_set(&valid_edits)?;
 
         Ok(RewritePlan {
             version: 1,
@@ -438,6 +427,12 @@ impl AstBackend {
             edits: valid_edits,
             rejected_overlaps,
         })
+    }
+
+    pub fn plan_and_apply_batch(&self, rewrites: &[BatchRewriteRule], path: &str) -> Result<BatchRewritePlan> {
+        let plan = self.plan_batch_rewrites(rewrites, path)?;
+        apply_edit_set(&plan.edits)?;
+        Ok(plan)
     }
 
     fn plan_file_rewrites(
@@ -481,6 +476,53 @@ impl AstBackend {
                 replacement_text,
                 metavar_env,
             });
+        }
+
+        Ok(edits)
+    }
+
+    fn plan_file_batch_rewrites(
+        rewrites: &[CompiledBatchRewrite],
+        lang: SupportLang,
+        file: &Path,
+    ) -> Result<Vec<RewriteEdit>> {
+        let planned_mtime_ns = file_mtime_ns(file)?;
+        let Some(rewrite_source) = load_rewrite_source(file)? else {
+            return Ok(Vec::new());
+        };
+        let RewriteSource { bom_len, source } = rewrite_source;
+        if source.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let ast = lang.ast_grep(&source);
+        let file_owned = file.to_path_buf();
+        let mut line_starts: Option<Vec<usize>> = None;
+        let mut edits = Vec::new();
+
+        for rewrite in rewrites {
+            for matched in ast.root().find_all(rewrite.pattern.clone()) {
+                let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+                let byte_range = matched.range();
+                ensure_valid_utf8_range(&source, file, &byte_range)?;
+                let original_text = matched.text().to_string();
+                let metavar_env = extract_metavar_env(&source, matched.get_env());
+                let edit = matched.replace_by(rewrite.replacement.as_str());
+                let inserted_bytes = edit.inserted_text;
+                let replacement_text = String::from_utf8(inserted_bytes)
+                    .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
+
+                edits.push(RewriteEdit {
+                    id: String::new(),
+                    file: file_owned.clone(),
+                    planned_mtime_ns,
+                    line: line_number_for_byte(ls, byte_range.start),
+                    byte_range: (byte_range.start + bom_len)..(byte_range.end + bom_len),
+                    original_text,
+                    replacement_text,
+                    metavar_env,
+                });
+            }
         }
 
         Ok(edits)
@@ -608,6 +650,117 @@ fn apply_edits_to_file(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
     }
     result.push_str(&original[cursor..]);
     atomic_write_file(file, result.as_bytes())
+}
+
+fn apply_edit_set(edits: &[RewriteEdit]) -> Result<usize> {
+    let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
+    for edit in edits {
+        edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
+    }
+
+    let files: Vec<(&Path, &Vec<&RewriteEdit>)> = edits_by_file.iter().map(|(k, v)| (*k, v)).collect();
+    ensure_files_not_stale(&files)?;
+    let results: Vec<Result<()>> = files
+        .par_iter()
+        .map(|(file, file_edits)| apply_edits_to_file(file, file_edits))
+        .collect();
+
+    let mut files_written = 0;
+    for result in results {
+        result?;
+        files_written += 1;
+    }
+
+    Ok(files_written)
+}
+
+fn verify_rewrite_edits(edits: &[RewriteEdit]) -> Result<VerifyResult> {
+    let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
+    for edit in edits {
+        edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
+    }
+
+    let mut mismatches = Vec::new();
+
+    for (file, file_edits) in &edits_by_file {
+        let content = std::fs::read_to_string(file)
+            .with_context(|| format!("verify: failed to read {}", file.display()))?;
+
+        let mut byte_offset_delta: isize = 0;
+
+        for edit in file_edits {
+            let adjusted_start = (edit.byte_range.start as isize + byte_offset_delta) as usize;
+            let adjusted_end = adjusted_start + edit.replacement_text.len();
+
+            if adjusted_end > content.len() {
+                mismatches.push(VerifyMismatch {
+                    edit_id: edit.id.clone(),
+                    file: edit.file.clone(),
+                    line: edit.line,
+                    expected: edit.replacement_text.clone(),
+                    actual: format!("<out of bounds: file len {}, expected end {}>", content.len(), adjusted_end),
+                });
+                continue;
+            }
+
+            let actual = &content[adjusted_start..adjusted_end];
+            if actual != edit.replacement_text {
+                mismatches.push(VerifyMismatch {
+                    edit_id: edit.id.clone(),
+                    file: edit.file.clone(),
+                    line: edit.line,
+                    expected: edit.replacement_text.clone(),
+                    actual: actual.to_string(),
+                });
+            }
+
+            byte_offset_delta += edit.replacement_text.len() as isize
+                - (edit.byte_range.end - edit.byte_range.start) as isize;
+        }
+    }
+
+    let verified = edits.len() - mismatches.len();
+    Ok(VerifyResult {
+        total_edits: edits.len(),
+        verified,
+        mismatches,
+    })
+}
+
+fn generate_diff_for_edits(edits: &[RewriteEdit]) -> Result<String> {
+    let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
+    for edit in edits {
+        edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
+    }
+
+    let mut output = String::new();
+    let mut files: Vec<&&Path> = edits_by_file.keys().collect();
+    files.sort();
+
+    for file in files {
+        let file_edits = &edits_by_file[*file];
+        let original = std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read {}", file.display()))?;
+
+        let mut rewritten = String::with_capacity(original.len());
+        let mut cursor = 0usize;
+        for edit in file_edits {
+            rewritten.push_str(&original[cursor..edit.byte_range.start]);
+            rewritten.push_str(&edit.replacement_text);
+            cursor = edit.byte_range.end;
+        }
+        rewritten.push_str(&original[cursor..]);
+
+        let orig_lines: Vec<&str> = original.lines().collect();
+        let new_lines: Vec<&str> = rewritten.lines().collect();
+
+        let display_path = file.display();
+        output.push_str(&format!("--- a/{display_path}\n"));
+        output.push_str(&format!("+++ b/{display_path}\n"));
+        emit_unified_hunks(&orig_lines, &new_lines, 3, &mut output);
+    }
+
+    Ok(output)
 }
 
 fn ensure_files_not_stale(files: &[(&Path, &Vec<&RewriteEdit>)]) -> Result<()> {
@@ -774,24 +927,63 @@ fn validate_no_overlaps(edits: Vec<RewriteEdit>) -> (Vec<RewriteEdit>, Vec<Overl
     let mut valid = Vec::new();
     let mut rejected = Vec::new();
 
-    let mut prev_end_by_file: HashMap<PathBuf, usize> = HashMap::new();
+    let mut prev_range_by_file: HashMap<PathBuf, Range<usize>> = HashMap::new();
 
     for edit in edits {
-        let prev_end = prev_end_by_file.get(&edit.file).copied().unwrap_or(0);
-        if edit.byte_range.start < prev_end {
-            rejected.push(OverlapRejection {
-                file: edit.file.clone(),
-                edit_a: (prev_end.saturating_sub(100))..prev_end,
-                edit_b: edit.byte_range.clone(),
-                reason: format!(
-                    "edit at byte {} overlaps with previous edit ending at byte {}",
-                    edit.byte_range.start, prev_end
-                ),
-            });
-            continue;
+        if let Some(prev_range) = prev_range_by_file.get(&edit.file) {
+            if edit.byte_range.start < prev_range.end {
+                rejected.push(OverlapRejection {
+                    file: edit.file.clone(),
+                    edit_a: prev_range.clone(),
+                    edit_b: edit.byte_range.clone(),
+                    reason: format!(
+                        "edit at byte {} overlaps with previous edit ending at byte {}",
+                        edit.byte_range.start, prev_range.end
+                    ),
+                });
+                continue;
+            }
         }
-        prev_end_by_file.insert(edit.file.clone(), edit.byte_range.end);
+        prev_range_by_file.insert(edit.file.clone(), edit.byte_range.clone());
         valid.push(edit);
+    }
+
+    (valid, rejected)
+}
+
+fn validate_batch_no_overlaps(edits: Vec<RewriteEdit>) -> (Vec<RewriteEdit>, Vec<OverlapRejection>) {
+    let mut edits_by_file: BTreeMap<PathBuf, Vec<RewriteEdit>> = BTreeMap::new();
+    for edit in edits {
+        edits_by_file.entry(edit.file.clone()).or_default().push(edit);
+    }
+
+    let mut valid = Vec::new();
+    let mut rejected = Vec::new();
+
+    for (file, file_edits) in edits_by_file {
+        let mut file_rejections = Vec::new();
+
+        for pair in file_edits.windows(2) {
+            let edit_a = &pair[0];
+            let edit_b = &pair[1];
+            if edit_b.byte_range.start < edit_a.byte_range.end {
+                file_rejections.push(OverlapRejection {
+                    file: file.clone(),
+                    edit_a: edit_a.byte_range.clone(),
+                    edit_b: edit_b.byte_range.clone(),
+                    reason: format!(
+                        "batch rewrite overlap prevents applying edits to {}",
+                        file.display()
+                    ),
+                });
+            }
+        }
+
+        if file_rejections.is_empty() {
+            valid.extend(file_edits);
+        } else {
+            rejected.extend(file_rejections);
+        }
     }
 
     (valid, rejected)
@@ -831,6 +1023,21 @@ fn collect_source_files(path: &Path, lang: SupportLang) -> Result<Vec<PathBuf>> 
         .collect();
 
     Ok(files)
+}
+
+fn collect_batch_source_files(path: &Path, lang: SupportLang) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        anyhow::bail!("Path not found: {}", path.display());
+    }
+
+    if path.is_file() {
+        if file_matches_language(path, lang) {
+            return Ok(vec![path.to_path_buf()]);
+        }
+        return Ok(Vec::new());
+    }
+
+    collect_source_files(path, lang)
 }
 
 fn file_matches_language(path: &Path, lang: SupportLang) -> bool {

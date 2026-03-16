@@ -7,7 +7,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use serde_json::Value;
 use tempfile::{tempdir, TempDir};
-use tensor_grep_rs::backend_ast::AstBackend;
+use tensor_grep_rs::backend_ast::{AstBackend, BatchRewriteRule};
 
 fn write_source_file(extension: &str, content: &str) -> (TempDir, PathBuf) {
     let dir = tempdir().unwrap();
@@ -26,6 +26,16 @@ fn write_source_bytes_file(extension: &str, content: &[u8]) -> (TempDir, PathBuf
 fn create_sparse_file(path: &std::path::Path, len: u64) {
     let file = std::fs::File::create(path).unwrap();
     file.set_len(len).unwrap();
+}
+
+fn write_batch_config(dir: &std::path::Path, payload: &Value) -> PathBuf {
+    let config_path = dir.join("batch-rewrite.json");
+    fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(payload).unwrap(),
+    )
+    .unwrap();
+    config_path
 }
 
 fn file_mtime_ns(path: &std::path::Path) -> u64 {
@@ -894,4 +904,261 @@ fn test_plan_and_apply_does_not_write_rejected_overlaps() {
 
     let content = fs::read_to_string(&file_path).unwrap();
     assert_eq!(content, "lambda x, y: x + y\n");
+}
+
+#[test]
+fn test_tg_run_batch_rewrite_apply_executes_multiple_rules_in_one_pass() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("fixture.py");
+    fs::write(
+        &file_path,
+        "def add(x): return x\ndef mul(y): return y\nvalue = add(1)\nprint(value)\n",
+    )
+    .unwrap();
+
+    let config_path = write_batch_config(
+        dir.path(),
+        &serde_json::json!({
+            "rewrites": [
+                {
+                    "pattern": "def $F($$$ARGS): return $EXPR",
+                    "replacement": "lambda $$$ARGS: $EXPR",
+                    "lang": "python"
+                },
+                {
+                    "pattern": "value = $EXPR",
+                    "replacement": "result = $EXPR",
+                    "lang": "python"
+                },
+                {
+                    "pattern": "print($MSG)",
+                    "replacement": "emit($MSG)",
+                    "lang": "python"
+                }
+            ],
+            "verify": true
+        }),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--batch-rewrite")
+        .arg(&config_path)
+        .arg("--apply")
+        .arg("--json")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["routing_backend"], "AstBackend");
+    assert_eq!(payload["routing_reason"], "ast-native");
+    assert_eq!(payload["sidecar_used"], false);
+    assert_eq!(payload["plan"]["total_edits"], 4);
+    assert_eq!(payload["plan"]["rewrites"].as_array().unwrap().len(), 3);
+    assert_eq!(payload["verification"]["verified"], 4);
+
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(
+        content,
+        "lambda x: x\nlambda y: y\nresult = add(1)\nemit(value)\n"
+    );
+}
+
+#[test]
+fn test_tg_run_batch_rewrite_reports_cross_pattern_overlap_and_leaves_file_unchanged() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("fixture.py");
+    let original = "def add(x): return x\n";
+    fs::write(&file_path, original).unwrap();
+
+    let config_path = write_batch_config(
+        dir.path(),
+        &serde_json::json!({
+            "rewrites": [
+                {
+                    "pattern": "def $F($$$ARGS): return $EXPR",
+                    "replacement": "lambda $$$ARGS: $EXPR",
+                    "lang": "python"
+                },
+                {
+                    "pattern": "return $EXPR",
+                    "replacement": "yield $EXPR",
+                    "lang": "python"
+                }
+            ],
+            "verify": false
+        }),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--batch-rewrite")
+        .arg(&config_path)
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["total_edits"], 0);
+    let rejected = payload["rejected_overlaps"].as_array().unwrap();
+    assert!(!rejected.is_empty(), "payload={payload}");
+    assert!(
+        rejected[0]["reason"].as_str().unwrap().contains("overlap"),
+        "payload={payload}"
+    );
+    assert_eq!(fs::read_to_string(&file_path).unwrap(), original);
+}
+
+#[test]
+fn test_batch_rewrite_preserves_bom_crlf_and_skips_binary_files() {
+    const UTF8_BOM: &[u8; 3] = b"\xEF\xBB\xBF";
+
+    let dir = tempdir().unwrap();
+    let text_path = dir.path().join("fixture.py");
+    let binary_path = dir.path().join("binary.py");
+
+    let mut source = UTF8_BOM.to_vec();
+    source.extend_from_slice(b"import os\r\ndef add(x): return x\r\nvalue = add(1)\r\n");
+    fs::write(&text_path, source).unwrap();
+    fs::write(&binary_path, b"def add(x): return x\0garbage\n").unwrap();
+
+    let config_path = write_batch_config(
+        dir.path(),
+        &serde_json::json!({
+            "rewrites": [
+                {
+                    "pattern": "def $F($$$ARGS): return $EXPR",
+                    "replacement": "lambda $$$ARGS: $EXPR",
+                    "lang": "python"
+                },
+                {
+                    "pattern": "value = $EXPR",
+                    "replacement": "result = $EXPR",
+                    "lang": "python"
+                }
+            ],
+            "verify": true
+        }),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--batch-rewrite")
+        .arg(&config_path)
+        .arg("--apply")
+        .arg("--json")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let rewritten = fs::read(&text_path).unwrap();
+    assert!(rewritten.starts_with(UTF8_BOM));
+    assert_eq!(&rewritten[..UTF8_BOM.len()], UTF8_BOM);
+    assert_eq!(
+        &rewritten[UTF8_BOM.len()..],
+        b"import os\r\nlambda x: x\r\nresult = add(1)\r\n"
+    );
+    assert_eq!(
+        fs::read(&binary_path).unwrap(),
+        b"def add(x): return x\0garbage\n"
+    );
+}
+
+#[test]
+fn test_batch_rewrite_apply_rejects_stale_file_without_writing_other_files() {
+    let dir = tempdir().unwrap();
+    let stale_file = dir.path().join("a.py");
+    let untouched_file = dir.path().join("b.py");
+    fs::write(&stale_file, "def add(x): return x\n").unwrap();
+    fs::write(&untouched_file, "def mul(y): return y\n").unwrap();
+    let backend = AstBackend::new();
+    let rewrites = vec![
+        BatchRewriteRule {
+            pattern: "def $F($$$ARGS): return $EXPR".to_string(),
+            replacement: "lambda $$$ARGS: $EXPR".to_string(),
+            lang: "python".to_string(),
+        },
+        BatchRewriteRule {
+            pattern: "lambda $ARGS: $EXPR".to_string(),
+            replacement: "lambda $ARGS: $EXPR".to_string(),
+            lang: "python".to_string(),
+        },
+    ];
+
+    let plan = backend
+        .plan_batch_rewrites(&rewrites, dir.path().to_str().unwrap())
+        .unwrap();
+
+    std::thread::sleep(Duration::from_millis(25));
+    let modified_content = "def add(x): return x + 1\n";
+    fs::write(&stale_file, modified_content).unwrap();
+
+    let error = AstBackend::apply_batch_rewrites(&plan).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("stale") || message.contains("modified"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        message.contains(stale_file.to_str().unwrap()),
+        "error should include file path: {message}"
+    );
+
+    assert_eq!(fs::read_to_string(&stale_file).unwrap(), modified_content);
+    assert_eq!(
+        fs::read_to_string(&untouched_file).unwrap(),
+        "def mul(y): return y\n",
+        "other files should not be rewritten when any planned file is stale"
+    );
+}
+
+#[test]
+fn test_tg_run_batch_rewrite_invalid_config_reports_field_level_error() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("fixture.py");
+    fs::write(&file_path, "def add(x): return x\n").unwrap();
+    let config_path = write_batch_config(
+        dir.path(),
+        &serde_json::json!({
+            "rewrites": [
+                {
+                    "pattern": "def $F($$$ARGS): return $EXPR",
+                    "lang": "python"
+                }
+            ],
+            "verify": false
+        }),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--batch-rewrite")
+        .arg(&config_path)
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("rewrites[0].replacement"), "stderr={stderr}");
 }

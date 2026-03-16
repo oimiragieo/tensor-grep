@@ -19,12 +19,16 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Search JSON" in doc
     assert "## Index Search JSON" in doc
     assert "## Rewrite Plan JSON" in doc
+    assert "## Batch Rewrite Config" in doc
     assert "## Apply + Verify JSON" in doc
     assert "## GPU Sidecar JSON" in doc
     assert "## Diff Output" in doc
     assert "routing_backend" in doc
     assert "routing_reason" in doc
     assert "version" in doc
+    assert "--batch-rewrite" in doc
+    assert "rewrites" in doc
+    assert "verify" in doc
     assert "line_number" in doc
     assert "line" in doc
     assert "---" in doc

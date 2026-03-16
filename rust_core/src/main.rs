@@ -1,9 +1,10 @@
+use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use tensor_grep_rs::backend_ast::AstBackend;
+use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::python_sidecar::{
@@ -152,8 +153,12 @@ pub struct RunArgs {
     pub lang: String,
 
     /// Rewrite matched nodes with this replacement pattern (metavar substitution supported)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "batch_rewrite")]
     pub rewrite: Option<String>,
+
+    /// Apply multiple rewrite rules from a JSON config file
+    #[arg(long = "batch-rewrite", conflicts_with = "rewrite")]
+    pub batch_rewrite: Option<PathBuf>,
 
     /// Apply rewrite edits to files (requires --rewrite)
     #[arg(long)]
@@ -176,11 +181,10 @@ pub struct RunArgs {
     pub verbose: bool,
 
     /// The structural ast-grep pattern
-    pub pattern: String,
+    pub pattern: Option<String>,
 
     /// File or directory to search
-    #[arg(default_value = ".")]
-    pub path: String,
+    pub path: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -716,6 +720,22 @@ struct ApplyVerifyJson<'a> {
 }
 
 #[derive(Serialize)]
+struct BatchApplyVerifyJson<'a> {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    plan: &'a BatchRewritePlan,
+    verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
+}
+
+#[derive(Debug, Clone)]
+struct BatchRewriteConfig {
+    rewrites: Vec<BatchRewriteRule>,
+    verify: bool,
+}
+
+#[derive(Serialize)]
 struct SearchMatchJson {
     file: String,
     line: usize,
@@ -751,23 +771,136 @@ struct GpuSidecarSearchMatch {
     text: String,
 }
 
+fn run_search_path(args: &RunArgs) -> &str {
+    args.path.as_deref().unwrap_or(".")
+}
+
+fn run_batch_path(args: &RunArgs) -> anyhow::Result<&str> {
+    if args.path.is_some() {
+        anyhow::bail!("tg run --batch-rewrite accepts exactly one PATH argument")
+    }
+
+    Ok(args.pattern.as_deref().unwrap_or("."))
+}
+
+fn run_pattern(args: &RunArgs) -> anyhow::Result<&str> {
+    args.pattern.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("tg run requires PATTERN unless --batch-rewrite <config.json> is provided")
+    })
+}
+
+fn load_batch_rewrite_config(config_path: &Path) -> anyhow::Result<BatchRewriteConfig> {
+    let contents = std::fs::read_to_string(config_path)
+        .with_context(|| format!("failed to read batch rewrite config {}", config_path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&contents)
+        .with_context(|| format!("failed to parse batch rewrite config {}", config_path.display()))?;
+    parse_batch_rewrite_config_value(&value)
+}
+
+fn parse_batch_rewrite_config_value(value: &serde_json::Value) -> anyhow::Result<BatchRewriteConfig> {
+    let object = value.as_object().ok_or_else(|| {
+        anyhow::anyhow!("invalid batch rewrite config field `$`: expected object")
+    })?;
+
+    for key in object.keys() {
+        if key != "rewrites" && key != "verify" {
+            anyhow::bail!("invalid batch rewrite config field `{key}`: unknown field");
+        }
+    }
+
+    let rewrites_value = object.get("rewrites").ok_or_else(|| {
+        anyhow::anyhow!("invalid batch rewrite config field `rewrites`: missing required field")
+    })?;
+    let rewrites_array = rewrites_value.as_array().ok_or_else(|| {
+        anyhow::anyhow!("invalid batch rewrite config field `rewrites`: expected array")
+    })?;
+    if rewrites_array.is_empty() {
+        anyhow::bail!("invalid batch rewrite config field `rewrites`: expected at least one rewrite rule");
+    }
+
+    let verify = match object.get("verify") {
+        Some(serde_json::Value::Bool(value)) => *value,
+        Some(_) => anyhow::bail!("invalid batch rewrite config field `verify`: expected boolean"),
+        None => false,
+    };
+
+    let mut rewrites = Vec::with_capacity(rewrites_array.len());
+    for (index, rule_value) in rewrites_array.iter().enumerate() {
+        let field_prefix = format!("rewrites[{index}]");
+        let rule_object = rule_value.as_object().ok_or_else(|| {
+            anyhow::anyhow!("invalid batch rewrite config field `{field_prefix}`: expected object")
+        })?;
+
+        for key in rule_object.keys() {
+            if key != "pattern" && key != "replacement" && key != "lang" {
+                anyhow::bail!(
+                    "invalid batch rewrite config field `{field_prefix}.{key}`: unknown field"
+                );
+            }
+        }
+
+        let pattern = read_batch_rewrite_string_field(rule_object, &field_prefix, "pattern")?;
+        let replacement = read_batch_rewrite_string_field(rule_object, &field_prefix, "replacement")?;
+        let lang = read_batch_rewrite_string_field(rule_object, &field_prefix, "lang")?;
+
+        rewrites.push(BatchRewriteRule {
+            pattern,
+            replacement,
+            lang,
+        });
+    }
+
+    Ok(BatchRewriteConfig { rewrites, verify })
+}
+
+fn read_batch_rewrite_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field_prefix: &str,
+    field_name: &str,
+) -> anyhow::Result<String> {
+    let field_path = format!("{field_prefix}.{field_name}");
+    let value = object.get(field_name).ok_or_else(|| {
+        anyhow::anyhow!("invalid batch rewrite config field `{field_path}`: missing required field")
+    })?;
+    let string_value = value.as_str().ok_or_else(|| {
+        anyhow::anyhow!("invalid batch rewrite config field `{field_path}`: expected string")
+    })?;
+    if string_value.is_empty() {
+        anyhow::bail!("invalid batch rewrite config field `{field_path}`: expected non-empty string");
+    }
+    Ok(string_value.to_string())
+}
+
 fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     let backend = AstBackend::new();
 
-    if let Some(replacement) = &args.rewrite {
+    if let Some(config_path) = &args.batch_rewrite {
+        let config = load_batch_rewrite_config(config_path)?;
+        let path = run_batch_path(&args)?;
         if args.apply && !args.diff {
-            return handle_ast_rewrite_apply(&backend, &args, replacement);
+            return handle_ast_batch_rewrite_apply(&backend, &args, &config, path);
         }
-        return handle_ast_rewrite(&backend, &args, replacement);
+        return handle_ast_batch_rewrite(&backend, &args, &config, path);
     }
 
-    let matches = backend.search(&args.pattern, &args.lang, &args.path)?;
+    let path = run_search_path(&args);
+
+    if let Some(replacement) = &args.rewrite {
+        if args.apply && !args.diff {
+            return handle_ast_rewrite_apply(&backend, &args, replacement, path);
+        }
+        return handle_ast_rewrite(&backend, &args, replacement, path);
+    }
+
+    let pattern = run_pattern(&args)?;
+
+    let matches = backend.search(pattern, &args.lang, path)?;
 
     if args.json {
         return emit_json_search_results(
             RoutingDecision::AST,
-            &args.pattern,
-            &args.path,
+            pattern,
+            path,
             matches
                 .into_iter()
                 .map(|matched| SearchMatchJson {
@@ -794,12 +927,14 @@ fn handle_ast_rewrite(
     backend: &AstBackend,
     args: &RunArgs,
     replacement: &str,
+    path: &str,
 ) -> anyhow::Result<()> {
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::AST);
     }
 
-    let plan = backend.plan_rewrites(&args.pattern, replacement, &args.lang, &args.path)?;
+    let pattern = run_pattern(args)?;
+    let plan = backend.plan_rewrites(pattern, replacement, &args.lang, path)?;
 
     if !plan.rejected_overlaps.is_empty() {
         eprintln!(
@@ -837,12 +972,14 @@ fn handle_ast_rewrite_apply(
     backend: &AstBackend,
     args: &RunArgs,
     replacement: &str,
+    path: &str,
 ) -> anyhow::Result<()> {
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::AST);
     }
 
-    let plan = backend.plan_and_apply(&args.pattern, replacement, &args.lang, &args.path)?;
+    let pattern = run_pattern(args)?;
+    let plan = backend.plan_and_apply(pattern, replacement, &args.lang, path)?;
 
     if !plan.rejected_overlaps.is_empty() {
         eprintln!(
@@ -881,6 +1018,120 @@ fn handle_ast_rewrite_apply(
 
     if args.json {
         let payload = ApplyVerifyJson {
+            version: plan.version,
+            routing_backend: plan.routing_backend,
+            routing_reason: plan.routing_reason,
+            sidecar_used: plan.sidecar_used,
+            plan: &plan,
+            verification: verification.as_ref(),
+        };
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    }
+
+    Ok(())
+}
+
+fn handle_ast_batch_rewrite(
+    backend: &AstBackend,
+    args: &RunArgs,
+    config: &BatchRewriteConfig,
+    path: &str,
+) -> anyhow::Result<()> {
+    if args.verbose {
+        emit_verbose_metadata(RoutingDecision::AST);
+    }
+
+    let plan = backend.plan_batch_rewrites(&config.rewrites, path)?;
+
+    if !plan.rejected_overlaps.is_empty() {
+        eprintln!(
+            "[rewrite] {} overlapping edit(s) rejected",
+            plan.rejected_overlaps.len()
+        );
+    }
+
+    if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
+        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        return Ok(());
+    }
+
+    if args.diff {
+        if plan.edits.is_empty() {
+            eprintln!("[rewrite] no non-overlapping matches found, nothing to diff");
+            return Ok(());
+        }
+        print!("{}", plan.generate_diff()?);
+        return Ok(());
+    }
+
+    if !args.apply {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+        return Ok(());
+    }
+
+    let files_written = AstBackend::apply_batch_rewrites(&plan)?;
+    if plan.edits.is_empty() {
+        eprintln!("[rewrite] no non-overlapping edits applied");
+    } else {
+        eprintln!(
+            "[rewrite] applied {} edit(s) across {} file(s)",
+            plan.edits.len(),
+            files_written
+        );
+    }
+
+    Ok(())
+}
+
+fn handle_ast_batch_rewrite_apply(
+    backend: &AstBackend,
+    args: &RunArgs,
+    config: &BatchRewriteConfig,
+    path: &str,
+) -> anyhow::Result<()> {
+    if args.verbose {
+        emit_verbose_metadata(RoutingDecision::AST);
+    }
+
+    let plan = backend.plan_and_apply_batch(&config.rewrites, path)?;
+
+    if !plan.rejected_overlaps.is_empty() {
+        eprintln!(
+            "[rewrite] {} overlapping edit(s) rejected",
+            plan.rejected_overlaps.len()
+        );
+    }
+
+    if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
+        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        return Ok(());
+    }
+
+    if plan.edits.is_empty() {
+        eprintln!("[rewrite] no non-overlapping edits applied");
+    } else {
+        eprintln!("[rewrite] applied {} edit(s)", plan.edits.len());
+    }
+
+    let verification = if config.verify || args.verify {
+        let result = plan.verify(backend)?;
+        if result.mismatches.is_empty() {
+            eprintln!("[verify] {}/{} edits verified", result.verified, result.total_edits);
+        } else {
+            eprintln!(
+                "[verify] {}/{} edits verified, {} mismatches",
+                result.verified,
+                result.total_edits,
+                result.mismatches.len()
+            );
+        }
+        Some(result)
+    } else {
+        None
+    };
+
+    if args.json {
+        let payload = BatchApplyVerifyJson {
             version: plan.version,
             routing_backend: plan.routing_backend,
             routing_reason: plan.routing_reason,
