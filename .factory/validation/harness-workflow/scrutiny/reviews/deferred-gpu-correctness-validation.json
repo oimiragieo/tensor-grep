@@ -1,0 +1,27 @@
+{
+  "featureId": "deferred-gpu-correctness-validation",
+  "milestone": "harness-workflow",
+  "reviewer": "scrutiny-feature-reviewer",
+  "verdict": "pass",
+  "codeQualityIssues": [
+    {
+      "severity": "non_blocking",
+      "description": "Library note uses hardcoded absolute Windows paths (C:\\dev\\projects\\tensor-grep\\...) which are host-specific. Consider using repo-relative paths or a variable placeholder so the note remains useful if the checkout location changes.",
+      "file": ".factory/library/gpu-correctness-validation.md",
+      "line": 4
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "target": "skills",
+      "observation": "Worker deviated from backend-worker skill step 2 (Test-Driven Development FIRST) because this was a validation/evidence task, not a behavior change. The deviation is justified — the skill procedure should explicitly note that validation-only evidence tasks may be satisfied with runtime verification plus .factory/library updates instead of a new failing test.",
+      "action": "update"
+    },
+    {
+      "target": "library",
+      "observation": "The new gpu-correctness-validation.md correctly documents the live GPU validation procedure and historical fallback. It complements the existing gpu-benchmark-env.md note. Both notes reference the same RTX 5070 sm_120 limitation, which is consistent.",
+      "action": "add"
+    }
+  ],
+  "summary": "The feature satisfies VAL-GPU-006. The worker performed live GPU search correctness validation on RTX 4070 (device 0) using .venv_cuda, comparing GPU tg, CPU tg, and rg results for 3 patterns (gpu benchmark sentinel, WARN retry budget exhausted, Database connection timeout). All match counts and file sets were identical across all three backends. The historical evidence in artifacts/bench_gpu_scale.json independently corroborates the same 3 patterns as PASS. The only committed artifact is a .factory/library knowledge note documenting the reproducible procedure and fallback path. No source code changes were made, which is appropriate for a deferred validation/evidence task. All lint, type, and test gates passed (543 passed, 14 skipped). One non-blocking observation: hardcoded absolute paths in the library note are host-specific."
+}

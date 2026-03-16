@@ -1,0 +1,39 @@
+{
+  "featureId": "mcp-index-search-tool",
+  "milestone": "harness-workflow",
+  "reviewer": "scrutiny-feature-reviewer",
+  "reviewedAt": "2026-03-16T11:26:00.000Z",
+  "commitId": "97b53bc4e563c092ddebf8f35009e1f2daab69bd",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "verdict": "pass",
+  "codeQualityIssues": [
+    {
+      "severity": "non_blocking",
+      "description": "_run_rewrite_subprocess is reused for index-search subprocess execution but the name implies rewrite-only scope. Consider renaming to _run_native_subprocess or similar to reflect its broader usage now that both rewrite and index-search tools call it.",
+      "file": "src/tensor_grep/cli/mcp_server.py",
+      "line": 201
+    },
+    {
+      "severity": "non_blocking",
+      "description": "_extract_rewrite_error_message is reused for index-search error extraction but the name implies rewrite-only scope. Same naming concern as _run_rewrite_subprocess.",
+      "file": "src/tensor_grep/cli/mcp_server.py",
+      "line": 103
+    },
+    {
+      "severity": "suggestion",
+      "description": "Test coverage could be expanded to cover additional edge cases: empty pattern validation, subprocess failure (non-zero exit code), and invalid JSON output from the native binary. The current 2 tests (success path + missing path error) satisfy the feature description but leave some error branches untested.",
+      "file": "tests/unit/test_mcp_server.py",
+      "line": 467
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "target": "AGENTS.md",
+      "observation": "The MCP tool list in AGENTS.md does not enumerate available MCP tools. Now that there are 8 tools (tg_search, tg_ast_search, tg_classify_logs, tg_devices, tg_index_search, tg_rewrite_plan, tg_rewrite_apply, tg_rewrite_diff), it may be worth documenting the full tool inventory somewhere for future workers.",
+      "action": "update"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The tg_index_search MCP tool implementation is clean and follows existing codebase patterns exactly. It correctly: (1) sets routing_backend to 'TrigramIndex' as required, (2) delegates to the native `tg search --index --json` command for index build/reuse transparency, (3) provides structured JSON error responses with envelope metadata for all failure modes (FileNotFoundError, OSError, non-zero exit, empty output, invalid JSON), (4) validates inputs before subprocess execution, and (5) preserves all existing MCP tools unchanged (confirmed by 16/16 tests passing). The only non-blocking concerns are naming of shared helper functions (_run_rewrite_subprocess, _extract_rewrite_error_message) that now serve both rewrite and index-search tools, and the opportunity for additional test coverage on error branches."
+}

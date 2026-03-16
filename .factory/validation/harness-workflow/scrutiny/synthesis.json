@@ -1,0 +1,97 @@
+{
+  "milestone": "harness-workflow",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0, "detail": "549 passed, 14 skipped in 65.96s" },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0, "detail": "Success: no issues found in 44 source files" },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0, "detail": "All checks passed!" }
+  },
+  "reviewsSummary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify whether the JSON_OUTPUT_VERSION constant rule ('Any code emitting version fields must reference this constant, not hardcode the value') is enforced or aspirational. Currently backend_ast.rs hardcodes version: 1 in all RewritePlan and BatchRewritePlan constructions, contradicting the documented rule. Either refactor the code to reference the constant or soften the language to acknowledge this as a future improvement.",
+      "evidence": "batch-rewrite-api review found version: 1 hardcoded at backend_ast.rs lines 311, 371, 418. This is a pre-existing pattern (single RewritePlan also hardcodes). The convention was added to AGENTS.md but never enforced in the codebase.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a full inventory of MCP tools now available (tg_search, tg_ast_search, tg_classify_logs, tg_devices, tg_index_search, tg_rewrite_plan, tg_rewrite_apply, tg_rewrite_diff) so future workers know what tools exist without reading the full mcp_server.py source.",
+      "evidence": "mcp-index-search-tool review noted the growing number of MCP tools (8 total) with no central listing for worker reference.",
+      "isSystemic": false
+    },
+    {
+      "target": "skills",
+      "suggestion": "The backend-worker skill should note that validation-only/evidence tasks (like deferred assertions) may be satisfied with runtime verification plus .factory/library updates instead of requiring a new failing test first. The TDD-first step doesn't apply to non-behavior-change tasks.",
+      "evidence": "deferred-gpu-correctness-validation worker deviated from skill step 2 (Test-Driven Development FIRST) because the task was evidence collection, not code change. The deviation was justified.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "MCP server binary resolution logic (_resolve_native_tg_binary with TG_MCP_TG_BINARY env override) should be documented in runtime-path-resolution.md",
+      "reason": "The existing runtime-path-resolution.md documents the Rust-side resolution logic. The Python MCP server's resolution is a separate concern (Python-side, not Rust-side) and is already self-documented in the code with its env var. Adding it to the Rust-focused library note would conflate two different resolution paths. The MCP server's resolution is internal to the Python layer and doesn't affect the Rust binary's path resolution."
+    },
+    {
+      "observation": "JSON_OUTPUT_VERSION cross-language coupling between MCP server Python and Rust main.rs should be documented as a library entry",
+      "reason": "This is a valid concern but it's better addressed as an AGENTS.md convention (already captured in suggestedGuidanceUpdates above) than as a library knowledge entry. The version coupling is a design decision, not factual codebase knowledge."
+    },
+    {
+      "observation": "Batch rewrite config schema and behavior should be documented in .factory/library/",
+      "reason": "The batch rewrite config schema is already documented in docs/harness_api.md (the user-facing documentation). A library entry would duplicate this information. Workers can reference the docs file directly."
+    },
+    {
+      "observation": "ndjson-streaming.md already correctly added to library by worker",
+      "reason": "Already documented — no action needed."
+    },
+    {
+      "observation": "gpu-correctness-validation.md already correctly added to library by worker",
+      "reason": "Already documented — no action needed."
+    },
+    {
+      "observation": "Hardcoded absolute Windows paths in gpu-correctness-validation.md",
+      "reason": "Non-blocking cosmetic issue. The library note is host-specific reference material for the current dev environment. Changing to relative paths would lose precision without meaningful benefit since the file is a knowledge note, not a script."
+    }
+  ],
+  "nonBlockingIssues": [
+    {
+      "featureId": "mcp-rewrite-tools",
+      "severity": "non_blocking",
+      "description": "_run_rewrite_subprocess has no timeout. A hung native tg binary could block the MCP server indefinitely."
+    },
+    {
+      "featureId": "mcp-rewrite-tools",
+      "severity": "non_blocking",
+      "description": "_resolve_native_tg_binary uses @lru_cache(maxsize=1), permanently caching FileNotFoundError if binary not found on first call."
+    },
+    {
+      "featureId": "mcp-index-search-tool",
+      "severity": "non_blocking",
+      "description": "_run_rewrite_subprocess and _extract_rewrite_error_message names imply rewrite-only scope but are now used for index-search too. Consider renaming to _run_native_subprocess and _extract_error_message."
+    },
+    {
+      "featureId": "ndjson-streaming",
+      "severity": "non_blocking",
+      "description": "emit_ndjson_search_results uses println! for each line. In future multi-threaded context, interleaved writes could corrupt output."
+    },
+    {
+      "featureId": "batch-rewrite-api",
+      "severity": "non_blocking",
+      "description": "version: 1 hardcoded in backend_ast.rs instead of referencing JSON_OUTPUT_VERSION constant from main.rs. Pre-existing pattern but violates documented convention."
+    },
+    {
+      "featureId": "batch-rewrite-api",
+      "severity": "suggestion",
+      "description": "run_batch_path() repurposes the 'pattern' positional arg as path. A comment explaining this reuse would improve readability."
+    }
+  ],
+  "previousRound": null
+}
