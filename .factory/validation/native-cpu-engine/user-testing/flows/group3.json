@@ -1,0 +1,113 @@
+{
+  "groupId": "group3",
+  "testedAt": "2026-03-16T16:28:00Z",
+  "isolation": {
+    "directory": "C:\\dev\\projects\\tensor-grep",
+    "interface": "CLI execution"
+  },
+  "toolsUsed": ["CLI execution"],
+  "assertions": [
+    {
+      "id": "VAL-CPU-014",
+      "title": "Cold search within 5% of rg",
+      "status": "pass",
+      "steps": [
+        { "action": "Run run_native_cpu_benchmarks.py", "expected": "median(tg_time) <= median(rg_time) * 1.05", "observed": "tg-native cold_standard_corpus 0.125s vs rg 0.188s" }
+      ],
+      "evidence": {
+        "terminal": ["native-cpu-engine/group3/run_native_cpu_benchmarks.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-015",
+      "title": "Large file search faster than rg",
+      "status": "pass",
+      "steps": [
+        { "action": "Run run_native_cpu_benchmarks.py", "expected": "median(tg_time) < median(rg_time) for 100MB+ file", "observed": "large_file_200mb tg-native 0.112s vs rg 0.214s" }
+      ],
+      "evidence": {
+        "terminal": ["native-cpu-engine/group3/run_native_cpu_benchmarks.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-016",
+      "title": "Many-file directory search competitive with rg",
+      "status": "pass",
+      "steps": [
+        { "action": "Run run_native_cpu_benchmarks.py", "expected": "median(tg_time) <= median(rg_time) * 1.05", "observed": "many_file_directory tg-native 0.044s vs rg 0.175s" }
+      ],
+      "evidence": {
+        "terminal": ["native-cpu-engine/group3/run_native_cpu_benchmarks.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-017",
+      "title": "No performance regression in hot path",
+      "status": "pass",
+      "steps": [
+        { "action": "Run run_hot_query_benchmarks.py", "expected": "PASS status for hot query benchmarks", "observed": "Status PASS for repeated_fixed_string and repeated_regex_prefilter" }
+      ],
+      "evidence": {
+        "terminal": ["native-cpu-engine/group3/run_hot_query_benchmarks.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-022",
+      "title": "All existing tests pass after integration",
+      "status": "pass",
+      "steps": [
+        { "action": "Run uv run pytest -q", "expected": "Tests pass", "observed": "556 passed, 14 skipped" },
+        { "action": "Run cargo test", "expected": "Tests pass", "observed": "All tests passed" }
+      ],
+      "evidence": {
+        "terminal": [
+          "native-cpu-engine/group3/pytest_output.txt",
+          "native-cpu-engine/group3/cargo_test_output.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-023",
+      "title": "Lint and type check pass",
+      "status": "fail",
+      "steps": [
+        { "action": "Run uv run ruff check .", "expected": "Exit code 0", "observed": "Found 43 errors due to untracked stream_test.py and test_group2.py" },
+        { "action": "Run uv run mypy src/tensor_grep", "expected": "Exit code 0", "observed": "Success: no issues found in 44 source files" }
+      ],
+      "evidence": {
+        "terminal": [
+          "native-cpu-engine/group3/ruff_output.txt",
+          "native-cpu-engine/group3/mypy_output.txt"
+        ]
+      },
+      "issues": "Ruff check failed because of untracked files `stream_test.py` and `test_group2.py` generated during testing which violate lint rules."
+    },
+    {
+      "id": "VAL-CPU-024",
+      "title": "Benchmark regression check passes",
+      "status": "fail",
+      "steps": [
+        { "action": "Run benchmarks/check_regression.py", "expected": "Exit code 0", "observed": "Benchmark regressions detected: 8. File Glob Filtering regressed by 8.80%" }
+      ],
+      "evidence": {
+        "terminal": ["native-cpu-engine/group3/check_regression.txt"]
+      },
+      "issues": "Regression check failed: tg_time_s regressed by 8.80% for File Glob Filtering."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "check_regression.py required an input JSON file that was not explicitly requested to be generated in the task prompt, causing an initial execution failure.",
+      "resolved": true,
+      "resolution": "Generated bench_run_benchmarks.json first using run_benchmarks.py --output, then reran check_regression.py.",
+      "affectedAssertions": ["VAL-CPU-024"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 7 assertions: 5 passed, 2 failed. VAL-CPU-023 failed due to lint errors in untracked test scripts. VAL-CPU-024 failed due to an 8.8% regression in File Glob Filtering."
+}
