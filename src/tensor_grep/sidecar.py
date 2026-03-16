@@ -105,9 +105,61 @@ def _dispatch_cli(command: str, args: list[str]) -> tuple[str, str, int]:
     return stdout_buffer.getvalue(), stderr_buffer.getvalue(), exit_code
 
 
+def _format_gpu_device_ids(device_ids: Sequence[int]) -> str:
+    return "[" + ", ".join(str(device_id) for device_id in device_ids) + "]"
+
+
+def _detect_available_gpu_device_ids() -> list[int]:
+    from tensor_grep.core.hardware.device_detect import DeviceDetector
+
+    detector = DeviceDetector()
+    if hasattr(detector, "enumerate_device_ids"):
+        return [int(device_id) for device_id in detector.enumerate_device_ids()]
+    if hasattr(detector, "get_device_ids"):
+        return [int(device_id) for device_id in detector.get_device_ids()]
+    return []
+
+
+def _gpu_device_validation_error(
+    *,
+    requested_ids: Sequence[int],
+    available_ids: Sequence[int],
+) -> str:
+    requested_text = _format_gpu_device_ids(requested_ids)
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+        return (
+            "CUDA is unavailable for requested GPU device IDs "
+            f"{requested_text}: CUDA_VISIBLE_DEVICES is empty, so no GPUs are visible to the sidecar.\n"
+        )
+
+    available_text = (
+        _format_gpu_device_ids(available_ids) if available_ids else "none"
+    )
+    return (
+        f"Requested GPU device IDs {requested_text} are not available to the sidecar. "
+        f"Available device IDs: {available_text}.\n"
+    )
+
+
+def _gpu_import_error(requested_ids: Sequence[int], exc: ImportError) -> str:
+    requested_text = _format_gpu_device_ids(requested_ids)
+    message = (
+        f"CUDA GPU backends could not be imported for requested GPU device IDs {requested_text}: "
+        f"{exc}."
+    )
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+        message += " CUDA_VISIBLE_DEVICES is empty, so no GPUs are visible to the sidecar."
+    return message + "\n"
+
+
+def _gpu_runtime_error(requested_ids: Sequence[int], exc: Exception) -> str:
+    requested_text = _format_gpu_device_ids(requested_ids)
+    return f"GPU search failed for requested GPU device IDs {requested_text}: {exc}\n"
+
+
 def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.pipeline import Pipeline
+    from tensor_grep.core.pipeline import ConfigurationError, Pipeline
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -116,6 +168,45 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
     gpu_device_ids = payload.get("gpu_device_ids")
     if not isinstance(gpu_device_ids, list) or not gpu_device_ids:
         return "", "gpu_search requires non-empty gpu_device_ids list\n", 1
+
+    requested_gpu_device_ids: list[int] = []
+    for raw_device_id in gpu_device_ids:
+        try:
+            device_id = int(raw_device_id)
+        except (TypeError, ValueError):
+            return (
+                "",
+                f"gpu_search received invalid GPU device ID {raw_device_id!r}; expected integers.\n",
+                1,
+            )
+        if device_id < 0:
+            return (
+                "",
+                f"gpu_search received invalid GPU device ID {raw_device_id!r}; device IDs must be non-negative.\n",
+                1,
+            )
+        requested_gpu_device_ids.append(device_id)
+
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+        return (
+            "",
+            _gpu_device_validation_error(
+                requested_ids=requested_gpu_device_ids,
+                available_ids=[],
+            ),
+            1,
+        )
+
+    available_gpu_device_ids = _detect_available_gpu_device_ids()
+    if any(device_id not in set(available_gpu_device_ids) for device_id in requested_gpu_device_ids):
+        return (
+            "",
+            _gpu_device_validation_error(
+                requested_ids=requested_gpu_device_ids,
+                available_ids=available_gpu_device_ids,
+            ),
+            1,
+        )
 
     config = SearchConfig(
         ignore_case=bool(payload.get("ignore_case", False)),
@@ -126,37 +217,42 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         max_count=payload.get("max_count"),
         word_regexp=bool(payload.get("word_regexp", False)),
         no_ignore=bool(payload.get("no_ignore", False)),
-        gpu_device_ids=[int(d) for d in gpu_device_ids],
+        gpu_device_ids=requested_gpu_device_ids,
         query_pattern=pattern,
     )
 
     try:
         pipeline = Pipeline(config=config)
         backend = pipeline.get_backend()
-    except Exception as exc:
+    except ConfigurationError as exc:
         return "", f"{exc}\n", 1
 
-    scanner = DirectoryScanner(config)
-    candidate_files = list(scanner.walk(path))
+    try:
+        scanner = DirectoryScanner(config)
+        candidate_files = list(scanner.walk(path))
 
-    all_results = SearchResult(matches=[], total_files=0, total_matches=0)
-    all_results.routing_backend = getattr(
-        pipeline, "selected_backend_name", backend.__class__.__name__
-    )
-    all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
-    all_results.routing_gpu_device_ids = list(
-        getattr(pipeline, "selected_gpu_device_ids", []) or []
-    )
+        all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+        all_results.routing_backend = getattr(
+            pipeline, "selected_backend_name", backend.__class__.__name__
+        )
+        all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+        all_results.routing_gpu_device_ids = list(
+            getattr(pipeline, "selected_gpu_device_ids", []) or []
+        )
 
-    for current_file in candidate_files:
-        result = backend.search(current_file, pattern, config=config)
-        all_results.matches.extend(result.matches)
-        all_results.total_matches += result.total_matches
-        all_results.total_files += result.total_files
-        for fp, count in result.match_counts_by_file.items():
-            all_results.match_counts_by_file[fp] = (
-                all_results.match_counts_by_file.get(fp, 0) + count
-            )
+        for current_file in candidate_files:
+            result = backend.search(current_file, pattern, config=config)
+            all_results.matches.extend(result.matches)
+            all_results.total_matches += result.total_matches
+            all_results.total_files += result.total_files
+            for fp, count in result.match_counts_by_file.items():
+                all_results.match_counts_by_file[fp] = (
+                    all_results.match_counts_by_file.get(fp, 0) + count
+                )
+    except ImportError as exc:
+        return "", _gpu_import_error(requested_gpu_device_ids, exc), 1
+    except Exception as exc:
+        return "", _gpu_runtime_error(requested_gpu_device_ids, exc), 1
 
     if payload.get("json"):
         import json as json_mod

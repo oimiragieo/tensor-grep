@@ -9,4 +9,6 @@
   - `TG_SIDECAR_PYTHON`: override Python executable path.
   - `TG_SIDECAR_MODULE`: override `python -m ...` module (default `tensor_grep.sidecar`).
   - `TG_SIDECAR_SCRIPT`: run `python <script>` instead of module for crash/sleep mocks.
+  - `TG_SIDECAR_TIMEOUT_MS`: override the Rust sidecar wait timeout (default 30000 ms) for timeout/kill tests.
+- GPU sidecar searches now reject invalid requested device IDs before backend selection and return a user-facing CUDA-unavailable error when `CUDA_VISIBLE_DEVICES` is explicitly empty.
 - Windows note: when launching `.venv\Scripts\python.exe`, the live interpreter PID observed from Python may be a child of a venv shim process rather than directly of `tg.exe`. Verification should at least confirm distinct live `tg` and `python` PIDs.

@@ -1,5 +1,5 @@
 use clap::{Args, Parser, Subcommand};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use tensor_grep_rs::backend_ast::AstBackend;
@@ -622,6 +622,22 @@ struct SearchMatchJson {
     text: String,
 }
 
+#[derive(Deserialize)]
+struct GpuSidecarSearchPayload {
+    total_matches: usize,
+    total_files: usize,
+    matches: Vec<GpuSidecarSearchMatch>,
+    #[serde(default)]
+    routing_gpu_device_ids: Vec<u32>,
+}
+
+#[derive(Deserialize)]
+struct GpuSidecarSearchMatch {
+    file: String,
+    line_number: usize,
+    text: String,
+}
+
 fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     let backend = AstBackend::new();
 
@@ -886,30 +902,34 @@ fn emit_json_search_results(
 }
 
 fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value> {
-    let mut payload: serde_json::Value = serde_json::from_str(stdout)
-        .map_err(|err| anyhow::anyhow!("GPU sidecar returned invalid JSON payload: {err}"))?;
-    let object = payload
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("GPU sidecar JSON payload must be a top-level object"))?;
+    let payload: GpuSidecarSearchPayload = serde_json::from_str(stdout).map_err(|err| {
+        anyhow::anyhow!(
+            "GPU sidecar returned malformed search JSON payload: expected {{total_matches, total_files, matches[]}} with string file/text fields and integer line_number values ({err})"
+        )
+    })?;
 
-    object.insert(
-        "version".to_string(),
-        serde_json::Value::from(JSON_OUTPUT_VERSION),
-    );
-    object.insert(
-        "routing_backend".to_string(),
-        serde_json::Value::from(RoutingDecision::GPU_SIDECAR.backend),
-    );
-    object.insert(
-        "routing_reason".to_string(),
-        serde_json::Value::from(RoutingDecision::GPU_SIDECAR.reason),
-    );
-    object.insert(
-        "sidecar_used".to_string(),
-        serde_json::Value::from(RoutingDecision::GPU_SIDECAR.sidecar_used),
-    );
+    let normalized_matches = payload
+        .matches
+        .into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "file": entry.file,
+                "line_number": entry.line_number,
+                "text": entry.text,
+            })
+        })
+        .collect::<Vec<_>>();
 
-    Ok(payload)
+    Ok(serde_json::json!({
+        "version": JSON_OUTPUT_VERSION,
+        "routing_backend": RoutingDecision::GPU_SIDECAR.backend,
+        "routing_reason": RoutingDecision::GPU_SIDECAR.reason,
+        "sidecar_used": RoutingDecision::GPU_SIDECAR.sidecar_used,
+        "total_matches": payload.total_matches,
+        "total_files": payload.total_files,
+        "routing_gpu_device_ids": payload.routing_gpu_device_ids,
+        "matches": normalized_matches,
+    }))
 }
 
 fn emit_verbose_metadata(decision: RoutingDecision) {

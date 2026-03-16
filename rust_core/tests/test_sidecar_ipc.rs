@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tempfile::tempdir;
@@ -94,6 +94,35 @@ fn configure_classify_env(command: &mut Command) {
         .env("TENSOR_GREP_TRITON_TIMEOUT_SECONDS", "0.01")
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1");
+}
+
+fn is_pid_running(pid: u32) -> bool {
+    if cfg!(windows) {
+        let output = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        stdout.contains(&format!("\"{pid}\","))
+    } else {
+        Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+}
+
+fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !is_pid_running(pid) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    !is_pid_running(pid)
 }
 
 #[test]
@@ -229,6 +258,133 @@ fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
     assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit");
     assert_eq!(payload["sidecar_used"], true);
     assert_eq!(payload["total_matches"], 1);
+}
+
+#[test]
+fn test_gpu_search_invalid_device_id_reports_clear_error_without_traceback() {
+    let dir = tempdir().unwrap();
+    let corpus_dir = dir.path().join("corpus");
+    fs::create_dir(&corpus_dir).unwrap();
+    write_sample_log(&corpus_dir);
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("99")
+        .arg("ERROR")
+        .arg(&corpus_dir)
+        .env("TG_SIDECAR_PYTHON", repo_python());
+
+    let output = run_with_timeout(tg, Duration::from_secs(5));
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Requested GPU device ID"), "stderr={stderr}");
+    assert!(stderr.contains("99"), "stderr={stderr}");
+    assert!(stderr.contains("Available device IDs"), "stderr={stderr}");
+    assert!(!stderr.contains("Traceback"), "stderr={stderr}");
+}
+
+#[test]
+fn test_gpu_search_cuda_visible_devices_empty_reports_clear_error_without_traceback() {
+    let dir = tempdir().unwrap();
+    let corpus_dir = dir.path().join("corpus");
+    fs::create_dir(&corpus_dir).unwrap();
+    write_sample_log(&corpus_dir);
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("ERROR")
+        .arg(&corpus_dir)
+        .env("TG_SIDECAR_PYTHON", repo_python())
+        .env("CUDA_VISIBLE_DEVICES", "");
+
+    let output = run_with_timeout(tg, Duration::from_secs(5));
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("CUDA_VISIBLE_DEVICES"), "stderr={stderr}");
+    assert!(stderr.contains("GPU device IDs [0]"), "stderr={stderr}");
+    assert!(!stderr.contains("Traceback"), "stderr={stderr}");
+}
+
+#[test]
+fn test_sidecar_timeout_kills_child_and_reports_error() {
+    let dir = tempdir().unwrap();
+    let corpus_dir = dir.path().join("corpus");
+    fs::create_dir(&corpus_dir).unwrap();
+    write_sample_log(&corpus_dir);
+    let pid_file = dir.path().join("sleeping_sidecar.pid");
+    let sleep_script = dir.path().join("mock_sidecar_sleep.py");
+    fs::write(
+        &sleep_script,
+        format!(
+            "import pathlib\nimport sys\nimport time\nimport os\npathlib.Path({:?}).write_text(str(os.getpid()), encoding='utf-8')\nsys.stdin.buffer.read()\ntime.sleep(10)\n",
+            pid_file.display().to_string()
+        ),
+    )
+    .unwrap();
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("ERROR")
+        .arg(&corpus_dir)
+        .env("TG_SIDECAR_PYTHON", repo_python())
+        .env("TG_SIDECAR_SCRIPT", &sleep_script)
+        .env("TG_SIDECAR_TIMEOUT_MS", "300");
+
+    let output = run_with_timeout(tg, Duration::from_secs(5));
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("timed out"), "stderr={stderr}");
+    assert!(stderr.contains("terminated"), "stderr={stderr}");
+
+    let pid: u32 = fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+    assert!(
+        wait_for_process_exit(pid, Duration::from_secs(2)),
+        "expected sidecar pid {pid} to be terminated"
+    );
+}
+
+#[test]
+fn test_gpu_search_schema_invalid_json_reports_clear_error() {
+    let dir = tempdir().unwrap();
+    let corpus_dir = dir.path().join("corpus");
+    fs::create_dir(&corpus_dir).unwrap();
+    write_sample_log(&corpus_dir);
+    let mock_script = dir.path().join("mock_gpu_sidecar_schema_invalid.py");
+    fs::write(
+        &mock_script,
+        "import json\nimport os\nimport sys\nsys.stdin.buffer.read()\nresponse = {\"stdout\": json.dumps({\"total_matches\": 1, \"total_files\": 1, \"matches\": \"not-a-list\"}) + '\\n', \"stderr\": \"\", \"exit_code\": 0, \"pid\": os.getpid()}\nsys.stdout.write(json.dumps(response))\n",
+    )
+    .unwrap();
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--json")
+        .arg("ERROR")
+        .arg(&corpus_dir)
+        .env("TG_SIDECAR_PYTHON", repo_python())
+        .env("TG_SIDECAR_SCRIPT", &mock_script);
+
+    let output = run_with_timeout(tg, Duration::from_secs(5));
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("malformed"), "stderr={stderr}");
+    assert!(stderr.contains("matches"), "stderr={stderr}");
+    assert!(!stderr.contains("panic"), "stderr={stderr}");
 }
 
 #[test]

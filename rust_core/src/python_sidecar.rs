@@ -7,12 +7,15 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
+use std::time::{Duration, Instant};
 
 const DEFAULT_SIDECAR_MODULE: &str = "tensor_grep.sidecar";
 const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
 const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
+const TG_SIDECAR_TIMEOUT_MS_ENV: &str = "TG_SIDECAR_TIMEOUT_MS";
+const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SidecarRequest {
@@ -47,6 +50,11 @@ struct SidecarResponse {
 enum PythonLaunchTarget {
     Module(String),
     Script(PathBuf),
+}
+
+enum SidecarWaitOutcome {
+    Exited(ExitStatus),
+    TimedOut,
 }
 
 pub fn execute_sidecar_command(
@@ -87,6 +95,7 @@ pub fn execute_python_passthrough_command(
 pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, SidecarError> {
     let python = resolve_python_command();
     let launch_target = resolve_sidecar_target();
+    let sidecar_timeout = resolve_sidecar_timeout();
     let request_bytes = serde_json::to_vec(&request).map_err(|err| SidecarError {
         exit_code: 1,
         message: format!("Failed to encode Python sidecar request: {err}"),
@@ -137,11 +146,7 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
     let stdout_reader = read_all_thread(stdout);
     let stderr_reader = read_all_thread(stderr);
 
-    let status = child.wait().map_err(|err| SidecarError {
-        exit_code: 1,
-        message: format!("Failed while waiting for Python sidecar: {err}"),
-        stderr: String::new(),
-    })?;
+    let wait_outcome = wait_for_sidecar_or_kill(&mut child, sidecar_timeout)?;
 
     let write_result = writer.join().map_err(|_| SidecarError {
         exit_code: 1,
@@ -181,6 +186,21 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
         stderr: stderr_text.clone(),
     })?;
 
+    if matches!(wait_outcome, SidecarWaitOutcome::TimedOut) {
+        return Err(SidecarError {
+            exit_code: 124,
+            message: format!(
+                "Python sidecar timed out after {} ms and was terminated",
+                sidecar_timeout.as_millis()
+            ),
+            stderr: stderr_text,
+        });
+    }
+
+    let status = match wait_outcome {
+        SidecarWaitOutcome::Exited(status) => status,
+        SidecarWaitOutcome::TimedOut => unreachable!("timed out sidecar handled above"),
+    };
     let child_exit_code = status.code().unwrap_or(1);
     let response: SidecarResponse = serde_json::from_slice(&stdout_bytes).map_err(|err| {
         let mut message = format!("Python sidecar returned invalid JSON: {err}");
@@ -211,6 +231,52 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
         stderr: response.stderr,
         sidecar_pid: response.pid,
     })
+}
+
+fn wait_for_sidecar_or_kill(
+    child: &mut Child,
+    timeout: Duration,
+) -> Result<SidecarWaitOutcome, SidecarError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(SidecarWaitOutcome::Exited(status)),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    terminate_sidecar_process(child)?;
+                    return Ok(SidecarWaitOutcome::TimedOut);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => {
+                return Err(SidecarError {
+                    exit_code: 1,
+                    message: format!("Failed while waiting for Python sidecar: {err}"),
+                    stderr: String::new(),
+                });
+            }
+        }
+    }
+}
+
+fn terminate_sidecar_process(child: &mut Child) -> Result<(), SidecarError> {
+    if let Err(err) = child.kill() {
+        if err.kind() != io::ErrorKind::InvalidInput {
+            return Err(SidecarError {
+                exit_code: 1,
+                message: format!("Failed to terminate timed-out Python sidecar: {err}"),
+                stderr: String::new(),
+            });
+        }
+    }
+
+    child.wait().map_err(|err| SidecarError {
+        exit_code: 1,
+        message: format!("Failed to reap timed-out Python sidecar: {err}"),
+        stderr: String::new(),
+    })?;
+
+    Ok(())
 }
 
 fn read_all_thread<R>(mut reader: R) -> thread::JoinHandle<io::Result<Vec<u8>>>
@@ -272,6 +338,15 @@ fn resolve_sidecar_target() -> PythonLaunchTarget {
     let module =
         env::var("TG_SIDECAR_MODULE").unwrap_or_else(|_| DEFAULT_SIDECAR_MODULE.to_string());
     PythonLaunchTarget::Module(module)
+}
+
+fn resolve_sidecar_timeout() -> Duration {
+    let timeout_ms = env::var(TG_SIDECAR_TIMEOUT_MS_ENV)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_SIDECAR_TIMEOUT_MS);
+    Duration::from_millis(timeout_ms)
 }
 
 fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
