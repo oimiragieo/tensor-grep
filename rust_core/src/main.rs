@@ -442,6 +442,7 @@ fn native_search_config_for_positional(
         no_ignore: true,
         json: cli.json,
         ndjson: cli.ndjson,
+        verbose: cli.verbose,
         line_number: true,
         ..NativeSearchConfig::default()
     }
@@ -466,6 +467,7 @@ fn native_search_config_for_command(args: &SearchArgs, decision: RoutingDecision
         no_ignore: args.no_ignore,
         json: args.json,
         ndjson: args.ndjson,
+        verbose: args.verbose,
         line_number: false,
         ..NativeSearchConfig::default()
     }

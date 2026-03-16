@@ -2,8 +2,12 @@ use anyhow::{anyhow, Context, Result};
 use grep_matcher::LineTerminator;
 use grep_printer::{JSONBuilder, StandardBuilder, SummaryBuilder, SummaryKind};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
+use grep_searcher::sinks::Lossy;
 use grep_searcher::{BinaryDetection, MmapChoice, Searcher, SearcherBuilder};
 use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
+use memchr::{memchr, memchr_iter};
+use memmap2::MmapOptions;
+use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -13,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const JSON_OUTPUT_VERSION: u32 = 1;
+const LARGE_FILE_CHUNK_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NativeSearchMatch {
@@ -83,6 +88,10 @@ pub struct NativeSearchConfig {
     pub mmap: bool,
     pub json: bool,
     pub ndjson: bool,
+    pub verbose: bool,
+    pub large_file_chunk_threshold_bytes: usize,
+    pub parallel_large_files: bool,
+    pub chunk_parallelism_threads: Option<usize>,
     pub output_target: NativeOutputTarget,
 }
 
@@ -114,6 +123,10 @@ impl Default for NativeSearchConfig {
             mmap: true,
             json: false,
             ndjson: false,
+            verbose: false,
+            large_file_chunk_threshold_bytes: LARGE_FILE_CHUNK_THRESHOLD_BYTES,
+            parallel_large_files: true,
+            chunk_parallelism_threads: None,
             output_target: NativeOutputTarget::Stdout,
         }
     }
@@ -122,6 +135,14 @@ impl Default for NativeSearchConfig {
 #[derive(Debug, Clone, Default)]
 struct FileSearchResult {
     matches: Vec<NativeSearchMatch>,
+    used_chunk_parallel: bool,
+}
+
+#[derive(Debug, Clone)]
+struct FileChunkPlan {
+    byte_start: usize,
+    byte_end: usize,
+    first_line_number: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,7 +198,7 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
             continue;
         }
 
-        let file_result = search_file_json(&config, &matcher, &file_path)?;
+        let file_result = search_file(&config, &matcher, &file_path)?;
 
         stats.searched_files += 1;
         if !file_result.matches.is_empty() {
@@ -198,9 +219,17 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
             continue;
         }
         if config.count {
-            emit_count_output(&config, &matcher, &file_path)?;
+            if file_result.used_chunk_parallel {
+                emit_count_output_from_matches(&config, &file_path, file_result.matches.len())?;
+            } else {
+                emit_count_output(&config, &matcher, &file_path)?;
+            }
         } else if !config.quiet {
-            emit_standard_output(&config, &matcher, &file_path)?;
+            if file_result.used_chunk_parallel {
+                emit_standard_matches(&config, &file_result.matches)?;
+            } else {
+                emit_standard_output(&config, &matcher, &file_path)?;
+            }
         }
     }
 
@@ -209,6 +238,13 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     }
 
     Ok(stats)
+}
+
+fn search_file(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<FileSearchResult> {
+    if should_use_chunk_parallel_search(config, path)? {
+        return search_file_chunk_parallel(config, matcher, path);
+    }
+    search_file_json(config, matcher, path)
 }
 
 fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
@@ -341,6 +377,183 @@ fn is_binary_file(path: &Path) -> Result<bool> {
     Ok(sample[..bytes_read].contains(&0))
 }
 
+fn should_use_chunk_parallel_search(config: &NativeSearchConfig, path: &Path) -> Result<bool> {
+    if !config.parallel_large_files
+        || !config.mmap
+        || config.null_data
+        || config.only_matching
+        || config.before_context > 0
+        || config.after_context > 0
+        || config.max_count.is_some()
+        || configured_chunk_parallelism_threads(config) < 2
+    {
+        return Ok(false);
+    }
+
+    let file_len = std::fs::metadata(path)
+        .with_context(|| format!("failed to read native search metadata for {}", path.display()))?
+        .len();
+    Ok(file_len >= config.large_file_chunk_threshold_bytes as u64)
+}
+
+fn configured_chunk_parallelism_threads(config: &NativeSearchConfig) -> usize {
+    config.chunk_parallelism_threads.unwrap_or_else(|| {
+        std::thread::available_parallelism()
+            .map(|count| count.get())
+            .unwrap_or(1)
+    })
+}
+
+fn search_file_chunk_parallel(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
+    let file = File::open(path)
+        .with_context(|| format!("failed to open native search path {}", path.display()))?;
+    let mmap = {
+        // SAFETY: The file handle remains alive for the lifetime of the mmap, and the mapping is read-only.
+        unsafe { MmapOptions::new().map(&file) }
+    }
+    .with_context(|| format!("failed to memory-map native search path {}", path.display()))?;
+
+    let requested_chunk_count = configured_chunk_parallelism_threads(config);
+    let chunk_plan = plan_file_chunks(&mmap, requested_chunk_count);
+    if chunk_plan.len() <= 1 {
+        return search_file_json(config, matcher, path);
+    }
+
+    if config.verbose {
+        emit_chunk_parallel_debug(path, mmap.len(), requested_chunk_count, &chunk_plan);
+    }
+
+    let chunk_matches = chunk_plan
+        .par_iter()
+        .map(|chunk| search_chunk(config, matcher, path, &mmap[chunk.byte_start..chunk.byte_end], chunk.first_line_number))
+        .collect::<Vec<_>>();
+
+    let mut matches = Vec::new();
+    for chunk_result in chunk_matches {
+        matches.extend(chunk_result?);
+    }
+
+    Ok(FileSearchResult {
+        matches,
+        used_chunk_parallel: true,
+    })
+}
+
+fn plan_file_chunks(contents: &[u8], requested_chunk_count: usize) -> Vec<FileChunkPlan> {
+    if contents.is_empty() || requested_chunk_count == 0 {
+        return Vec::new();
+    }
+
+    let target_chunk_size = contents.len().div_ceil(requested_chunk_count);
+    let mut ranges = Vec::new();
+    let mut byte_start = 0usize;
+
+    while byte_start < contents.len() {
+        let minimum_end = byte_start.saturating_add(target_chunk_size).min(contents.len());
+        let byte_end = if minimum_end >= contents.len() {
+            contents.len()
+        } else {
+            align_chunk_end_to_newline(contents, minimum_end)
+        };
+        if byte_end <= byte_start {
+            break;
+        }
+        ranges.push((byte_start, byte_end));
+        byte_start = byte_end;
+    }
+
+    let mut chunks = Vec::with_capacity(ranges.len());
+    let mut first_line_number = 1u64;
+    for (byte_start, byte_end) in ranges {
+        chunks.push(FileChunkPlan {
+            byte_start,
+            byte_end,
+            first_line_number,
+        });
+        first_line_number = first_line_number.saturating_add(count_lines(&contents[byte_start..byte_end]));
+    }
+    chunks
+}
+
+fn align_chunk_end_to_newline(contents: &[u8], minimum_end: usize) -> usize {
+    if minimum_end == 0 || minimum_end >= contents.len() {
+        return contents.len();
+    }
+    if contents[minimum_end - 1] == b'\n' {
+        return minimum_end;
+    }
+    match memchr(b'\n', &contents[minimum_end..]) {
+        Some(relative_offset) => minimum_end + relative_offset + 1,
+        None => contents.len(),
+    }
+}
+
+fn count_lines(contents: &[u8]) -> u64 {
+    if contents.is_empty() {
+        return 0;
+    }
+    let newline_count = memchr_iter(b'\n', contents).count() as u64;
+    if contents.last() == Some(&b'\n') {
+        newline_count
+    } else {
+        newline_count + 1
+    }
+}
+
+fn emit_chunk_parallel_debug(
+    path: &Path,
+    file_len: usize,
+    requested_chunk_count: usize,
+    chunk_plan: &[FileChunkPlan],
+) {
+    eprintln!(
+        "[native-search] chunk_parallel file={} size_bytes={} requested_chunk_count={} chunk_count={}",
+        path.display(),
+        file_len,
+        requested_chunk_count,
+        chunk_plan.len()
+    );
+    for (index, chunk) in chunk_plan.iter().enumerate() {
+        eprintln!(
+            "[native-search] chunk[{index}] byte_start={} byte_end={} first_line={}",
+            chunk.byte_start,
+            chunk.byte_end,
+            chunk.first_line_number
+        );
+    }
+}
+
+fn search_chunk(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+    contents: &[u8],
+    first_line_number: u64,
+) -> Result<Vec<NativeSearchMatch>> {
+    let mut matches = Vec::new();
+    let mut searcher = build_searcher(config, true);
+    let path_buf = path.to_path_buf();
+    searcher
+        .search_slice(
+            matcher,
+            contents,
+            Lossy(|line_number, line| {
+                matches.push(NativeSearchMatch {
+                    path: path_buf.clone(),
+                    line_number: Some(first_line_number + line_number - 1),
+                    text: line.trim_end_matches(['\n', '\r']).to_string(),
+                });
+                Ok(true)
+            }),
+        )
+        .with_context(|| format!("native chunk-parallel search failed for {}", path.display()))?;
+    Ok(matches)
+}
+
 fn search_file_json(
     config: &NativeSearchConfig,
     matcher: &RegexMatcher,
@@ -357,7 +570,10 @@ fn search_file_json(
 
     let raw_json_lines = printer.into_inner();
     let matches = parse_json_printer_output(&raw_json_lines, path)?;
-    Ok(FileSearchResult { matches })
+    Ok(FileSearchResult {
+        matches,
+        used_chunk_parallel: false,
+    })
 }
 
 fn emit_standard_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<()> {
@@ -388,6 +604,30 @@ fn emit_count_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: 
         .with_context(|| format!("native count output search failed for {}", path.display()))?;
 
     let bytes = printer.into_inner().into_inner();
+    config.output_target.write_all(&bytes)
+}
+
+fn emit_count_output_from_matches(config: &NativeSearchConfig, path: &Path, count: usize) -> Result<()> {
+    let mut bytes = Vec::new();
+    writeln!(&mut bytes, "{}:{count}", path.display())?;
+    config.output_target.write_all(&bytes)
+}
+
+fn emit_standard_matches(config: &NativeSearchConfig, matches: &[NativeSearchMatch]) -> Result<()> {
+    let mut bytes = Vec::new();
+    for matched in matches {
+        if config.line_number {
+            writeln!(
+                &mut bytes,
+                "{}:{}:{}",
+                matched.path.display(),
+                native_match_line_number(matched)?,
+                matched.text
+            )?;
+        } else {
+            writeln!(&mut bytes, "{}:{}", matched.path.display(), matched.text)?;
+        }
+    }
     config.output_target.write_all(&bytes)
 }
 

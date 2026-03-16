@@ -1,12 +1,26 @@
+use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tempfile::tempdir;
 use tensor_grep_rs::native_search::{
     run_native_search, NativeOutputTarget, NativeSearchConfig,
 };
+
+const LARGE_FILE_LINE_BYTES: usize = 1024;
+const LARGE_FILE_LINE_COUNT: usize = 102_400;
+const LARGE_FILE_CHUNK_COUNT: usize = 4;
+const LARGE_FILE_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
+const LARGE_FILE_PATTERN: &str = "NEEDLE-BOUNDARY";
+
+fn tg() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_tg"))
+}
 
 fn buffer_target() -> (NativeOutputTarget, Arc<Mutex<Vec<u8>>>) {
     let buffer = Arc::new(Mutex::new(Vec::new()));
@@ -24,6 +38,50 @@ fn base_config(pattern: &str, path: &Path, output_target: NativeOutputTarget) ->
         output_target,
         ..NativeSearchConfig::default()
     }
+}
+
+fn write_large_chunk_boundary_fixture(dir: &Path) -> (PathBuf, Vec<u64>) {
+    let file_path = dir.join("chunk-boundary.log");
+    let file = fs::File::create(&file_path).unwrap();
+    let mut writer = BufWriter::new(file);
+    let lines_per_chunk = LARGE_FILE_LINE_COUNT / LARGE_FILE_CHUNK_COUNT;
+    let expected_lines = vec![
+        1,
+        lines_per_chunk as u64,
+        (lines_per_chunk + 1) as u64,
+        (lines_per_chunk * 2) as u64,
+        (lines_per_chunk * 2 + 1) as u64,
+        (lines_per_chunk * 3) as u64,
+        (lines_per_chunk * 3 + 1) as u64,
+        LARGE_FILE_LINE_COUNT as u64,
+    ];
+    let expected_set = expected_lines.iter().copied().collect::<BTreeSet<_>>();
+
+    for line_number in 1..=LARGE_FILE_LINE_COUNT {
+        let mut line = if expected_set.contains(&(line_number as u64)) {
+            format!("INFO {LARGE_FILE_PATTERN} boundary-line-{line_number}")
+        } else {
+            format!("INFO filler-line-{line_number}")
+        };
+        assert!(line.len() < LARGE_FILE_LINE_BYTES);
+        line.push_str(&"x".repeat(LARGE_FILE_LINE_BYTES - line.len() - 1));
+        line.push('\n');
+        writer.write_all(line.as_bytes()).unwrap();
+    }
+    writer.flush().unwrap();
+
+    assert_eq!(
+        fs::metadata(&file_path).unwrap().len(),
+        (LARGE_FILE_LINE_BYTES * LARGE_FILE_LINE_COUNT) as u64
+    );
+
+    (file_path, expected_lines)
+}
+
+fn median_duration(samples: &[Duration]) -> Duration {
+    let mut sorted = samples.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2]
 }
 
 #[test]
@@ -282,4 +340,127 @@ fn test_native_search_parallel_walk_counts_expected_files() {
     assert_eq!(stats.searched_files, 13);
     assert_eq!(stats.total_matches, 9);
     assert_eq!(stats.matched_files, 9);
+}
+
+#[test]
+fn test_native_search_large_file_chunk_parallelism_preserves_boundaries_and_global_line_numbers() {
+    let dir = tempdir().unwrap();
+    let (file_path, expected_lines) = write_large_chunk_boundary_fixture(dir.path());
+
+    let (target, _buffer) = buffer_target();
+    let mut config = base_config(LARGE_FILE_PATTERN, &file_path, target);
+    config.fixed_strings = true;
+    config.json = true;
+    config.verbose = true;
+    config.large_file_chunk_threshold_bytes = LARGE_FILE_THRESHOLD_BYTES;
+    config.chunk_parallelism_threads = Some(LARGE_FILE_CHUNK_COUNT);
+
+    let stats = run_native_search(config).unwrap();
+    let actual_lines = stats
+        .matches
+        .iter()
+        .map(|entry| entry.line_number.unwrap())
+        .collect::<Vec<_>>();
+    let unique_lines = actual_lines.iter().copied().collect::<BTreeSet<_>>();
+
+    assert_eq!(stats.total_matches, expected_lines.len());
+    assert_eq!(actual_lines, expected_lines);
+    assert_eq!(unique_lines.len(), expected_lines.len(), "duplicate boundary matches found");
+    assert!(stats.matches.iter().all(|entry| entry.text.contains(LARGE_FILE_PATTERN)));
+}
+
+#[test]
+fn test_native_search_large_file_verbose_logs_chunk_boundaries() {
+    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let (file_path, expected_lines) = write_large_chunk_boundary_fixture(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("--verbose")
+        .arg(LARGE_FILE_PATTERN)
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "status={:?}\nstdout={}\nstderr={}", output.status.code(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(payload["total_matches"], expected_lines.len() as u64);
+    assert!(stderr.contains("chunk_parallel file="), "stderr={stderr}");
+    assert!(stderr.contains("chunk_count="), "stderr={stderr}");
+    assert!(stderr.contains("chunk[0]"), "stderr={stderr}");
+    assert!(stderr.contains("byte_start="), "stderr={stderr}");
+}
+
+#[test]
+#[ignore = "benchmark-style validation for large-file chunk parallelism"]
+fn test_native_search_large_file_chunk_parallelism_is_faster_than_sequential() {
+    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let (file_path, expected_lines) = write_large_chunk_boundary_fixture(dir.path());
+
+    let mut parallel_samples = Vec::new();
+    let mut sequential_samples = Vec::new();
+
+    for parallel_large_files in [true, false] {
+        let (target, _buffer) = buffer_target();
+        let mut config = base_config(LARGE_FILE_PATTERN, &file_path, target);
+        config.fixed_strings = true;
+        config.json = true;
+        config.large_file_chunk_threshold_bytes = LARGE_FILE_THRESHOLD_BYTES;
+        config.chunk_parallelism_threads = Some(LARGE_FILE_CHUNK_COUNT);
+        config.parallel_large_files = parallel_large_files;
+        let stats = run_native_search(config).unwrap();
+        assert_eq!(stats.total_matches, expected_lines.len());
+    }
+
+    for _ in 0..3 {
+        let (target, _buffer) = buffer_target();
+        let mut parallel = base_config(LARGE_FILE_PATTERN, &file_path, target);
+        parallel.fixed_strings = true;
+        parallel.json = true;
+        parallel.large_file_chunk_threshold_bytes = LARGE_FILE_THRESHOLD_BYTES;
+        parallel.chunk_parallelism_threads = Some(LARGE_FILE_CHUNK_COUNT);
+        parallel.parallel_large_files = true;
+        let started = Instant::now();
+        let stats = run_native_search(parallel).unwrap();
+        parallel_samples.push(started.elapsed());
+        assert_eq!(stats.total_matches, expected_lines.len());
+
+        let (target, _buffer) = buffer_target();
+        let mut sequential = base_config(LARGE_FILE_PATTERN, &file_path, target);
+        sequential.fixed_strings = true;
+        sequential.json = true;
+        sequential.large_file_chunk_threshold_bytes = LARGE_FILE_THRESHOLD_BYTES;
+        sequential.chunk_parallelism_threads = Some(LARGE_FILE_CHUNK_COUNT);
+        sequential.parallel_large_files = false;
+        let started = Instant::now();
+        let stats = run_native_search(sequential).unwrap();
+        sequential_samples.push(started.elapsed());
+        assert_eq!(stats.total_matches, expected_lines.len());
+    }
+
+    let parallel_median = median_duration(&parallel_samples);
+    let sequential_median = median_duration(&sequential_samples);
+    eprintln!(
+        "parallel_median={parallel_median:?} sequential_median={sequential_median:?}"
+    );
+    assert!(
+        parallel_median < sequential_median,
+        "expected parallel median {:?} to beat sequential median {:?}",
+        parallel_median,
+        sequential_median
+    );
 }
