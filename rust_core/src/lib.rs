@@ -6,6 +6,7 @@ pub mod backend_gpu;
 pub mod cli;
 pub mod index;
 pub mod mmap_arrow;
+pub mod native_search;
 pub mod python_sidecar;
 pub mod rg_passthrough;
 pub mod runtime_paths;

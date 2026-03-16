@@ -30,3 +30,8 @@ searcher.search_path(&matcher, "path/to/file", printer.sink(&matcher))?;
 - Cold search: within 5% of rg (eliminating process spawn overhead is the main win)
 - Large file: faster than rg (chunk parallelism gives 1.5-2x)
 - Many files: within 5% of rg (ignore::WalkParallel matches rg's walker)
+
+## Implementation notes (2026-03-16)
+- `rust_core/src/native_search.rs` now embeds `grep-searcher`, `grep-regex`, `grep-matcher`, `grep-printer`, and `grep-cli` behind a public `run_native_search(NativeSearchConfig)` entrypoint.
+- For temp directories or non-repo roots, `ignore::WalkBuilder` needed explicit `add_ignore` calls for `.gitignore` / `.ignore` / `.rgignore` to make fixture-level ignore behavior deterministic in tests.
+- Current native NDJSON mode emits raw `grep-printer` JSON-lines messages (`begin`/`match`/`end`), while JSON mode aggregates parsed matches into one document for testability; future routing work should normalize this to the CLI contract when wiring `main.rs`.
