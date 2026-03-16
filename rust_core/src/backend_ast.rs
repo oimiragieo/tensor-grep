@@ -43,6 +43,9 @@ pub struct RewriteEdit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RewritePlan {
     pub version: u32,
+    pub routing_backend: &'static str,
+    pub routing_reason: &'static str,
+    pub sidecar_used: bool,
     pub pattern: String,
     pub replacement: String,
     pub lang: String,
@@ -334,6 +337,9 @@ impl AstBackend {
 
         Ok(RewritePlan {
             version: 1,
+            routing_backend: "AstBackend",
+            routing_reason: "ast-native",
+            sidecar_used: false,
             pattern: pattern.to_string(),
             replacement: replacement.to_string(),
             lang: lang.to_string(),
@@ -402,6 +408,9 @@ impl AstBackend {
 
         Ok(RewritePlan {
             version: 1,
+            routing_backend: "AstBackend",
+            routing_reason: "ast-native",
+            sidecar_used: false,
             pattern: pattern.to_string(),
             replacement: replacement.to_string(),
             lang: lang.to_string(),
@@ -584,7 +593,7 @@ fn collect_source_files(path: &Path, lang: SupportLang) -> Result<Vec<PathBuf>> 
         .git_ignore(true)
         .build()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().map_or(false, |ft| ft.is_file()))
+        .filter(|entry| entry.file_type().is_some_and(|ft| ft.is_file()))
         .map(|entry| entry.into_path())
         .filter(|file| file_matches_language(file, lang))
         .collect();

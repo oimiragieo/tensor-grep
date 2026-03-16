@@ -283,6 +283,9 @@ fn test_rewrite_plan_json_contract_fields() {
     let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
 
     assert_eq!(plan["version"], 1);
+    assert_eq!(plan["routing_backend"], "AstBackend");
+    assert_eq!(plan["routing_reason"], "ast-native");
+    assert_eq!(plan["sidecar_used"], false);
     assert_eq!(plan["total_files_scanned"], 1);
     assert_eq!(plan["total_edits"], 2);
     assert_eq!(plan["pattern"], "def $F($$$ARGS): return $EXPR");
@@ -587,6 +590,10 @@ fn test_tg_run_apply_verify_json_is_single_document() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: Value = serde_json::from_str(&stdout).expect("stdout must be single valid JSON document");
+    assert_eq!(parsed["version"], 1);
+    assert_eq!(parsed["routing_backend"], "AstBackend");
+    assert_eq!(parsed["routing_reason"], "ast-native");
+    assert_eq!(parsed["sidecar_used"], false);
     assert!(parsed["plan"].is_object(), "must have plan field");
     assert!(parsed["verification"].is_object(), "must have verification field");
     assert_eq!(parsed["plan"]["version"], 1);

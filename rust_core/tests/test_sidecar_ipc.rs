@@ -187,6 +187,51 @@ fn test_sidecar_crash_reports_error_without_hanging() {
 }
 
 #[test]
+fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
+    let dir = tempdir().unwrap();
+    let corpus_dir = dir.path().join("corpus");
+    fs::create_dir(&corpus_dir).unwrap();
+    let file_path = write_sample_log(&corpus_dir);
+    let mock_script = dir.path().join("mock_gpu_sidecar.py");
+    fs::write(
+        &mock_script,
+        format!(
+            "import json\nimport os\nimport sys\nrequest = json.loads(sys.stdin.buffer.read())\nresponse = {{\"stdout\": json.dumps({{\"total_matches\": 1, \"total_files\": 1, \"matches\": [{{\"file\": {:?}, \"line_number\": 2, \"text\": \"ERROR database failed\"}}]}}) + \'\\n\', \"stderr\": \"\", \"exit_code\": 0, \"pid\": os.getpid()}}\nsys.stdout.write(json.dumps(response))\n",
+            file_path.display().to_string()
+        ),
+    )
+    .unwrap();
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--json")
+        .arg("ERROR")
+        .arg(&corpus_dir)
+        .env("TG_SIDECAR_PYTHON", repo_python())
+        .env("TG_SIDECAR_SCRIPT", &mock_script);
+
+    let output = run_with_timeout(tg, Duration::from_secs(5));
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["routing_backend"], "GpuSidecar");
+    assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit");
+    assert_eq!(payload["sidecar_used"], true);
+    assert_eq!(payload["total_matches"], 1);
+}
+
+#[test]
 fn test_missing_python_reports_actionable_error() {
     let dir = tempdir().unwrap();
     let file_path = write_sample_log(dir.path());

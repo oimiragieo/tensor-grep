@@ -9,6 +9,8 @@ use std::time::SystemTime;
 
 const TRIGRAM_LEN: usize = 3;
 
+type FileTrigramHits = Vec<([u8; 3], u32)>;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FileEntry {
     path: PathBuf,
@@ -198,7 +200,7 @@ impl TrigramIndex {
 
         let paths: Vec<PathBuf> = walker
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+            .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
             .map(|e| e.into_path())
             .collect();
 
@@ -220,7 +222,7 @@ impl TrigramIndex {
             })
             .collect();
 
-        let per_file: Vec<(u32, Vec<([u8; 3], u32)>)> = file_entries
+        let per_file: Vec<(u32, FileTrigramHits)> = file_entries
             .par_iter()
             .enumerate()
             .map(|(file_id, entry)| {
@@ -382,7 +384,7 @@ impl TrigramIndex {
                 .git_ignore(true)
                 .build()
                 .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+                .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
                 .map(|e| e.into_path())
                 .collect();
 

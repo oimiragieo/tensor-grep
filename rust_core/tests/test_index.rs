@@ -85,6 +85,7 @@ fn test_tg_search_index_json_contract() {
     assert_eq!(result["version"], 1);
     assert_eq!(result["routing_backend"], "TrigramIndex");
     assert_eq!(result["routing_reason"], "index-accelerated");
+    assert_eq!(result["sidecar_used"], false);
     assert_eq!(result["total_matches"], 2);
     assert!(result["query"].is_string());
     assert!(result["path"].is_string());
@@ -96,6 +97,31 @@ fn test_tg_search_index_json_contract() {
         assert!(m["line"].is_number());
         assert!(m["text"].is_string());
     }
+}
+
+#[test]
+fn test_tg_search_json_contract_includes_unified_envelope() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["version"], 1);
+    assert_eq!(result["routing_backend"], "CpuBackend");
+    assert_eq!(result["routing_reason"], "cpu-native");
+    assert_eq!(result["sidecar_used"], false);
+    assert_eq!(result["total_matches"], 2);
+    assert!(result["query"].is_string());
+    assert!(result["path"].is_string());
 }
 
 #[test]

@@ -129,6 +129,7 @@ fn test_tg_run_json_metadata_uses_ast_backend_routing() {
     );
 
     let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["version"], 1);
     assert_eq!(payload["routing_backend"], "AstBackend");
     assert_eq!(payload["routing_reason"], "ast-native");
     assert_eq!(payload["sidecar_used"], false);

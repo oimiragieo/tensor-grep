@@ -13,6 +13,7 @@ use tensor_grep_rs::rg_passthrough::{
 };
 
 const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON  Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH         Path to the ripgrep executable used for text-search passthrough.";
+const JSON_OUTPUT_VERSION: u32 = 1;
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -228,6 +229,7 @@ impl RoutingDecision {
 
 #[derive(Serialize)]
 struct RoutingMetadata<'a> {
+    version: u32,
     routing_backend: &'static str,
     routing_reason: &'static str,
     sidecar_used: bool,
@@ -552,9 +554,10 @@ fn run_index_query(args: &SearchArgs, index: &TrigramIndex) -> anyhow::Result<()
 
     if args.json {
         let payload = SearchResultJson {
-            version: 1,
+            version: JSON_OUTPUT_VERSION,
             routing_backend: RoutingDecision::INDEX.backend,
             routing_reason: RoutingDecision::INDEX.reason,
+            sidecar_used: RoutingDecision::INDEX.sidecar_used,
             query: &args.pattern,
             path: &args.path,
             total_matches: results.len(),
@@ -588,10 +591,21 @@ struct SearchResultJson<'a> {
     version: u32,
     routing_backend: &'static str,
     routing_reason: &'static str,
+    sidecar_used: bool,
     query: &'a str,
     path: &'a str,
     total_matches: usize,
     matches: Vec<SearchMatchJson>,
+}
+
+#[derive(Serialize)]
+struct ApplyVerifyJson<'a> {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    plan: &'a tensor_grep_rs::backend_ast::RewritePlan,
+    verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
 }
 
 #[derive(Serialize)]
@@ -723,10 +737,14 @@ fn handle_ast_rewrite_apply(
     };
 
     if args.json {
-        let payload = serde_json::json!({
-            "plan": plan,
-            "verification": verification,
-        });
+        let payload = ApplyVerifyJson {
+            version: plan.version,
+            routing_backend: plan.routing_backend,
+            routing_reason: plan.routing_reason,
+            sidecar_used: plan.sidecar_used,
+            plan: &plan,
+            verification: verification.as_ref(),
+        };
         println!("{}", serde_json::to_string_pretty(&payload)?);
     }
 
@@ -774,7 +792,12 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
     match execute_sidecar_command("gpu_search", vec![], Some(payload)) {
         Ok(result) => {
             if !result.stdout.is_empty() {
-                print!("{}", result.stdout);
+                if params.json {
+                    let normalized = normalize_gpu_sidecar_json(&result.stdout)?;
+                    println!("{}", serde_json::to_string_pretty(&normalized)?);
+                } else {
+                    print!("{}", result.stdout);
+                }
             }
             if !result.stderr.is_empty() {
                 eprint!("{}", result.stderr);
@@ -834,6 +857,7 @@ fn emit_json_metadata(
     total_matches: usize,
 ) -> anyhow::Result<()> {
     let payload = RoutingMetadata {
+        version: JSON_OUTPUT_VERSION,
         routing_backend: decision.backend,
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used,
@@ -844,6 +868,33 @@ fn emit_json_metadata(
 
     println!("{}", serde_json::to_string(&payload)?);
     Ok(())
+}
+
+fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value> {
+    let mut payload: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|err| anyhow::anyhow!("GPU sidecar returned invalid JSON payload: {err}"))?;
+    let object = payload
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("GPU sidecar JSON payload must be a top-level object"))?;
+
+    object.insert(
+        "version".to_string(),
+        serde_json::Value::from(JSON_OUTPUT_VERSION),
+    );
+    object.insert(
+        "routing_backend".to_string(),
+        serde_json::Value::from(RoutingDecision::GPU_SIDECAR.backend),
+    );
+    object.insert(
+        "routing_reason".to_string(),
+        serde_json::Value::from(RoutingDecision::GPU_SIDECAR.reason),
+    );
+    object.insert(
+        "sidecar_used".to_string(),
+        serde_json::Value::from(RoutingDecision::GPU_SIDECAR.sidecar_used),
+    );
+
+    Ok(payload)
 }
 
 fn emit_verbose_metadata(decision: RoutingDecision) {
