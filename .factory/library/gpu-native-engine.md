@@ -76,3 +76,10 @@ extern "C" __global__ void text_search(
 - The current native path batches all discovered files into one contiguous host buffer with `\0` file separators, does one host-to-device transfer, runs one kernel launch, then maps byte offsets back to `(file, line_number, line_text)` matches on the host.
 - Current native GPU routing intentionally falls back to the Python sidecar for unsupported search modes (`--ignore-case`, regex syntax, context lines, `--max-count`, `-w`, invert-match). This keeps the explicit GPU flag working while advanced GPU features are still pending.
 - On this Windows host, `CUDA_VISIBLE_DEVICES=""` did not reliably hide devices from the native cudarc path during tests. Future fallback work should not depend on that env var alone for negative-path coverage.
+
+## Testing and Mocking
+- Test hooks: `TG_TEST_CUDA_BEHAVIOR` and `TG_TEST_NATIVE_SEARCH_FORCE_ERROR` environment variables can be used to mock GPU initialization failures, CUDA unavailability, and CPU search engine failures during testing. Since `CUDA_VISIBLE_DEVICES=""` does not reliably hide devices from the native cudarc path on Windows, use `TG_TEST_CUDA_BEHAVIOR=not_found` or `TG_TEST_CUDA_BEHAVIOR=init_failure` instead.
+
+## Windows DLL Dynamic Loading Quirk
+- `cudarc` dynamic loading on Windows requires `nvrtc64*.dll` to be locatable. If the CUDA bin directory is not on the `PATH`, `cudarc` can panic or fail.
+- The current implementation attempts to locate the CUDA toolkit and temporarily modifies the process `PATH` using `env::set_var` at runtime before calling `CudaContext::new`. Note that modifying the environment at runtime is not thread-safe in Rust and can race with other threads.

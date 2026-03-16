@@ -1,0 +1,46 @@
+{
+  "milestone": "native-gpu-engine",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q && cargo test --features cuda", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
+    "lint": { "passed": true, "command": "uv run ruff check . && cargo clippy --features cuda", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Documented TG_TEST_CUDA_BEHAVIOR test hooks and cudarc Windows DLL loading quirks in gpu-native-engine.md.",
+      "sourceFeature": "gpu-auto-routing-and-fallback, cudarc-foundation"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add guidance for workers on thread-safe environment variable modifications, explicitly discouraging the use of `env::set_var` at runtime due to thread safety issues (UB risk).",
+      "evidence": "In cudarc-foundation, the worker used `env::set_var` to modify PATH at runtime to ensure cudarc could find the DLLs. This is an unsafe practice.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Provide guidance that pre-search synchronous file tree traversals (e.g. for counting bytes to determine auto-routing thresholds) can introduce latency on very large codebases, violating the goal to reduce control-plane overhead. Suggest lazy or background evaluation for routing metrics when possible.",
+      "evidence": "In gpu-auto-routing-and-fallback, the worker added a synchronous WalkBuilder iteration over all files before starting the search just to check if the total size exceeds the 50MB threshold.",
+      "isSystemic": false
+    },
+    {
+      "target": ".factory/skills/backend-worker",
+      "suggestion": "Add the Windows fallback directly to the base startup procedure instead of just inside the backend-worker skill notes.",
+      "evidence": "In gpu-scale-benchmarks, the worker initially attempted to execute `.factory/init.sh` which fails natively on Windows, before discovering the fallback.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}
