@@ -62,6 +62,7 @@ impl TrigramIndex {
             let bytes = hex_to_trigram(&key)?;
             postings.insert(bytes, value);
         }
+        normalize_postings(&mut postings);
         Ok(Self {
             root: PathBuf::new(),
             files: s.files,
@@ -71,7 +72,69 @@ impl TrigramIndex {
 }
 
 const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
-const INDEX_FORMAT_VERSION: u8 = 1;
+const INDEX_FORMAT_VERSION: u8 = 2;
+
+fn normalize_postings(postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>) {
+    for entries in postings.values_mut() {
+        entries.sort_unstable_by_key(|entry| (entry.file_id, entry.line));
+        entries.dedup_by_key(|entry| (entry.file_id, entry.line));
+    }
+}
+
+fn read_exact<'a>(data: &'a [u8], pos: &mut usize, len: usize) -> Result<&'a [u8]> {
+    let end = pos
+        .checked_add(len)
+        .ok_or_else(|| anyhow::anyhow!("index file is truncated"))?;
+    if end > data.len() {
+        anyhow::bail!("index file is truncated");
+    }
+    let slice = &data[*pos..end];
+    *pos = end;
+    Ok(slice)
+}
+
+fn read_u8(data: &[u8], pos: &mut usize) -> Result<u8> {
+    Ok(read_exact(data, pos, 1)?[0])
+}
+
+fn read_u32_le(data: &[u8], pos: &mut usize) -> Result<u32> {
+    let bytes = read_exact(data, pos, 4)?;
+    Ok(u32::from_le_bytes(bytes.try_into()?))
+}
+
+fn read_u64_le(data: &[u8], pos: &mut usize) -> Result<u64> {
+    let bytes = read_exact(data, pos, 8)?;
+    Ok(u64::from_le_bytes(bytes.try_into()?))
+}
+
+fn read_u128_le(data: &[u8], pos: &mut usize) -> Result<u128> {
+    let bytes = read_exact(data, pos, 16)?;
+    Ok(u128::from_le_bytes(bytes.try_into()?))
+}
+
+fn write_varint_u32(buf: &mut Vec<u8>, mut value: u32) {
+    while value >= 0x80 {
+        buf.push(((value & 0x7f) as u8) | 0x80);
+        value >>= 7;
+    }
+    buf.push(value as u8);
+}
+
+fn read_varint_u32(data: &[u8], pos: &mut usize) -> Result<u32> {
+    let mut value = 0u32;
+    let mut shift = 0u32;
+
+    for _ in 0..5 {
+        let byte = read_u8(data, pos)?;
+        value |= u32::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
+        shift += 7;
+    }
+
+    anyhow::bail!("invalid varint in index postings")
+}
 
 fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
@@ -97,9 +160,33 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     for (trigram, postings) in &index.postings {
         buf.extend_from_slice(trigram);
         buf.extend_from_slice(&(postings.len() as u32).to_le_bytes());
-        for p in postings {
-            buf.extend_from_slice(&p.file_id.to_le_bytes());
-            buf.extend_from_slice(&p.line.to_le_bytes());
+        let mut previous_file_id = 0u32;
+        let mut previous_line = 0u32;
+        let mut first = true;
+        for posting in postings {
+            let file_delta = if first {
+                posting.file_id
+            } else {
+                posting
+                    .file_id
+                    .checked_sub(previous_file_id)
+                    .ok_or_else(|| anyhow::anyhow!("postings are not sorted by file_id"))?
+            };
+            let line_delta = if first || file_delta > 0 {
+                posting.line
+            } else {
+                posting
+                    .line
+                    .checked_sub(previous_line)
+                    .ok_or_else(|| anyhow::anyhow!("postings are not sorted by line number"))?
+            };
+
+            write_varint_u32(&mut buf, file_delta);
+            write_varint_u32(&mut buf, line_delta);
+
+            previous_file_id = posting.file_id;
+            previous_line = posting.line;
+            first = false;
         }
     }
 
@@ -109,12 +196,15 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
 fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     let mut pos = 0;
 
-    if data.len() < 5 || &data[0..4] != INDEX_MAGIC {
+    if data.len() < 5 {
+        anyhow::bail!("index file is truncated");
+    }
+
+    if read_exact(data, &mut pos, 4)? != INDEX_MAGIC {
         anyhow::bail!("invalid index file magic");
     }
-    pos += 4;
 
-    let version = data[pos];
+    let version = read_u8(data, &mut pos)?;
     if version != INDEX_FORMAT_VERSION {
         anyhow::bail!(
             "unsupported index format version {} (expected {})",
@@ -122,26 +212,18 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
             INDEX_FORMAT_VERSION
         );
     }
-    pos += 1;
 
-    let root_len = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
-    pos += 4;
-    let root_str = String::from_utf8_lossy(&data[pos..pos + root_len]).to_string();
-    pos += root_len;
+    let root_len = read_u32_le(data, &mut pos)? as usize;
+    let root_str = String::from_utf8_lossy(read_exact(data, &mut pos, root_len)?).to_string();
 
-    let files_count = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
-    pos += 4;
+    let files_count = read_u32_le(data, &mut pos)? as usize;
 
     let mut files = Vec::with_capacity(files_count);
     for _ in 0..files_count {
-        let path_len = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
-        pos += 4;
-        let path_str = String::from_utf8_lossy(&data[pos..pos + path_len]).to_string();
-        pos += path_len;
-        let mtime_ns = u128::from_le_bytes(data[pos..pos + 16].try_into()?);
-        pos += 16;
-        let size = u64::from_le_bytes(data[pos..pos + 8].try_into()?);
-        pos += 8;
+        let path_len = read_u32_le(data, &mut pos)? as usize;
+        let path_str = String::from_utf8_lossy(read_exact(data, &mut pos, path_len)?).to_string();
+        let mtime_ns = read_u128_le(data, &mut pos)?;
+        let size = read_u64_le(data, &mut pos)?;
         files.push(FileEntry {
             path: PathBuf::from(path_str),
             mtime_ns,
@@ -149,22 +231,37 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
         });
     }
 
-    let trigram_count = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
-    pos += 4;
+    let trigram_count = read_u32_le(data, &mut pos)? as usize;
 
     let mut postings = HashMap::with_capacity(trigram_count);
     for _ in 0..trigram_count {
-        let trigram: [u8; 3] = data[pos..pos + 3].try_into()?;
-        pos += 3;
-        let posting_count = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
-        pos += 4;
+        let trigram: [u8; 3] = read_exact(data, &mut pos, 3)?.try_into()?;
+        let posting_count = read_u32_le(data, &mut pos)? as usize;
         let mut entries = Vec::with_capacity(posting_count);
+        let mut previous_file_id = 0u32;
+        let mut previous_line = 0u32;
+        let mut first = true;
         for _ in 0..posting_count {
-            let file_id = u32::from_le_bytes(data[pos..pos + 4].try_into()?);
-            pos += 4;
-            let line = u32::from_le_bytes(data[pos..pos + 4].try_into()?);
-            pos += 4;
+            let file_delta = read_varint_u32(data, &mut pos)?;
+            let line_delta = read_varint_u32(data, &mut pos)?;
+            let file_id = if first {
+                file_delta
+            } else {
+                previous_file_id
+                    .checked_add(file_delta)
+                    .ok_or_else(|| anyhow::anyhow!("index file contains invalid file_id delta"))?
+            };
+            let line = if first || file_delta > 0 {
+                line_delta
+            } else {
+                previous_line
+                    .checked_add(line_delta)
+                    .ok_or_else(|| anyhow::anyhow!("index file contains invalid line delta"))?
+            };
             entries.push(PostingEntry { file_id, line });
+            previous_file_id = file_id;
+            previous_line = line;
+            first = false;
         }
         postings.insert(trigram, entries);
     }
@@ -240,6 +337,7 @@ impl TrigramIndex {
                     .push(PostingEntry { file_id, line });
             }
         }
+        normalize_postings(&mut postings);
 
         Ok(Self {
             root: root.to_path_buf(),
@@ -569,10 +667,61 @@ fn verify_candidates(
 mod tests {
     use super::*;
     use std::fs;
+    use std::fmt::Write as _;
     use tempfile::tempdir;
 
     fn write_test_file(dir: &Path, name: &str, content: &str) {
         fs::write(dir.join(name), content).unwrap();
+    }
+
+    fn serialize_legacy_v1(index: &TrigramIndex) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(INDEX_MAGIC);
+        buf.push(1);
+
+        let root_bytes = index.root.to_string_lossy().as_bytes().to_vec();
+        buf.extend_from_slice(&(root_bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&root_bytes);
+
+        buf.extend_from_slice(&(index.files.len() as u32).to_le_bytes());
+        for entry in &index.files {
+            let path_bytes = entry.path.to_string_lossy().as_bytes().to_vec();
+            buf.extend_from_slice(&(path_bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(&path_bytes);
+            buf.extend_from_slice(&entry.mtime_ns.to_le_bytes());
+            buf.extend_from_slice(&entry.size.to_le_bytes());
+        }
+
+        buf.extend_from_slice(&(index.postings.len() as u32).to_le_bytes());
+        for (trigram, postings) in &index.postings {
+            buf.extend_from_slice(trigram);
+            buf.extend_from_slice(&(postings.len() as u32).to_le_bytes());
+            for posting in postings {
+                buf.extend_from_slice(&posting.file_id.to_le_bytes());
+                buf.extend_from_slice(&posting.line.to_le_bytes());
+            }
+        }
+
+        buf
+    }
+
+    fn write_size_reduction_corpus(dir: &Path, file_count: usize) {
+        for file_idx in 0..file_count {
+            let mut contents = String::new();
+            for line_idx in 0..24 {
+                writeln!(
+                    &mut contents,
+                    "shared needle alpha beta gamma file_{file_idx:04} line_{line_idx:02}"
+                )
+                .unwrap();
+                writeln!(
+                    &mut contents,
+                    "error repeated payload delta epsilon zeta file_{file_idx:04} line_{line_idx:02}"
+                )
+                .unwrap();
+            }
+            write_test_file(dir, &format!("file_{file_idx:04}.txt"), &contents);
+        }
     }
 
     #[test]
@@ -627,6 +776,43 @@ mod tests {
 
         let results = loaded.search("hello", false, true).unwrap();
         assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_compressed_index_round_trip_preserves_results() {
+        let dir = tempdir().unwrap();
+        write_test_file(
+            dir.path(),
+            "a.txt",
+            "alpha beta gamma\nerror: something failed\nregex-target-123\n",
+        );
+        write_test_file(
+            dir.path(),
+            "b.txt",
+            "alpha beta gamma\nwarning: ok\nregex-target-999\n",
+        );
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let index_path = dir.path().join(".tg_index");
+        index.save(&index_path).unwrap();
+
+        let loaded = TrigramIndex::load(&index_path).unwrap();
+
+        let fixed_original = index.search("alpha beta", false, true).unwrap();
+        let fixed_loaded = loaded.search("alpha beta", false, true).unwrap();
+        assert_eq!(fixed_loaded.len(), fixed_original.len());
+        assert_eq!(
+            fixed_loaded.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>(),
+            fixed_original.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>()
+        );
+
+        let regex_original = index.search(r"regex-target-\d+", false, false).unwrap();
+        let regex_loaded = loaded.search(r"regex-target-\d+", false, false).unwrap();
+        assert_eq!(regex_loaded.len(), regex_original.len());
+        assert_eq!(
+            regex_loaded.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>(),
+            regex_original.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -724,7 +910,24 @@ mod tests {
 
         let data = fs::read(&index_path).unwrap();
         assert_eq!(&data[0..4], b"TGI\x00", "magic bytes");
-        assert_eq!(data[4], 1, "format version should be 1");
+        assert_eq!(data[4], 2, "format version should be 2");
+    }
+
+    #[test]
+    fn test_compressed_index_is_at_least_40_percent_smaller_than_legacy_format_on_1000_files() {
+        let dir = tempdir().unwrap();
+        write_size_reduction_corpus(dir.path(), 1000);
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let legacy = serialize_legacy_v1(&index);
+        let compressed = bincode_serialize(&index).unwrap();
+
+        assert!(
+            compressed.len() * 100 <= legacy.len() * 60,
+            "expected compressed index to be >= 40% smaller than legacy format; compressed={} legacy={}",
+            compressed.len(),
+            legacy.len()
+        );
     }
 
     #[test]

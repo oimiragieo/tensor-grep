@@ -1,10 +1,12 @@
 #![cfg(windows)]
 
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
 use tempfile::tempdir;
+use tensor_grep_rs::index::TrigramIndex;
 
 fn tg() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg"))
@@ -22,6 +24,70 @@ fn write_corpus(dir: &std::path::Path) {
     )
     .unwrap();
     fs::write(dir.join("c.log"), "error: something failed\nok\nerror: again\n").unwrap();
+}
+
+fn decode_hex_trigram(key: &str) -> [u8; 3] {
+    fn byte_at(key: &str, offset: usize) -> u8 {
+        u8::from_str_radix(&key[offset..offset + 2], 16).unwrap()
+    }
+
+    [byte_at(key, 0), byte_at(key, 2), byte_at(key, 4)]
+}
+
+fn write_legacy_v1_index(dir: &Path) {
+    let index = TrigramIndex::build(dir).unwrap();
+    let json_path = dir.join("legacy-index.json");
+    index.save_json(&json_path).unwrap();
+
+    let payload: Value = serde_json::from_slice(&fs::read(&json_path).unwrap()).unwrap();
+    fs::remove_file(&json_path).unwrap();
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(b"TGI\x00");
+    buf.push(1);
+
+    let root_bytes = dir.to_string_lossy().as_bytes().to_vec();
+    buf.extend_from_slice(&(root_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&root_bytes);
+
+    let files = payload["files"].as_array().unwrap();
+    buf.extend_from_slice(&(files.len() as u32).to_le_bytes());
+    for entry in files {
+        let path = entry["path"].as_str().unwrap().as_bytes().to_vec();
+        buf.extend_from_slice(&(path.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&path);
+        buf.extend_from_slice(&(entry["mtime_ns"].as_u64().unwrap() as u128).to_le_bytes());
+        buf.extend_from_slice(&entry["size"].as_u64().unwrap().to_le_bytes());
+    }
+
+    let postings = payload["postings"].as_object().unwrap();
+    buf.extend_from_slice(&(postings.len() as u32).to_le_bytes());
+    for (key, value) in postings {
+        buf.extend_from_slice(&decode_hex_trigram(key));
+        let entries = value.as_array().unwrap();
+        buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+        for entry in entries {
+            buf.extend_from_slice(&(entry["file_id"].as_u64().unwrap() as u32).to_le_bytes());
+            buf.extend_from_slice(&(entry["line"].as_u64().unwrap() as u32).to_le_bytes());
+        }
+    }
+
+    fs::write(dir.join(".tg_index"), buf).unwrap();
+}
+
+fn match_tuples(payload: &Value) -> Vec<(String, u64, String)> {
+    payload["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["file"].as_str().unwrap().to_string(),
+                entry["line"].as_u64().unwrap(),
+                entry["text"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -381,18 +447,49 @@ fn test_tg_search_auto_route_falls_through_for_invert() {
 }
 
 #[test]
+fn test_tg_search_index_query_result_parity_for_multiple_patterns() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    for (pattern, fixed_strings) in [
+        ("hello", true),
+        ("error", true),
+        (r"error:.*failed", false),
+    ] {
+        let mut plain = tg();
+        plain.arg("search");
+        if fixed_strings {
+            plain.arg("--fixed-strings");
+        }
+        let plain_output = plain.arg("--json").arg(pattern).arg(dir.path()).output().unwrap();
+        assert!(plain_output.status.success(), "stderr={}", String::from_utf8_lossy(&plain_output.stderr));
+        let plain_json: Value = serde_json::from_slice(&plain_output.stdout).unwrap();
+
+        let mut indexed = tg();
+        indexed.arg("search").arg("--index");
+        if fixed_strings {
+            indexed.arg("--fixed-strings");
+        }
+        let indexed_output = indexed.arg("--json").arg(pattern).arg(dir.path()).output().unwrap();
+        assert!(indexed_output.status.success(), "stderr={}", String::from_utf8_lossy(&indexed_output.stderr));
+        let indexed_json: Value = serde_json::from_slice(&indexed_output.stdout).unwrap();
+
+        assert_eq!(indexed_json["total_matches"], plain_json["total_matches"], "pattern={pattern}");
+        assert_eq!(match_tuples(&indexed_json), match_tuples(&plain_json), "pattern={pattern}");
+    }
+}
+
+#[test]
 fn test_tg_search_index_old_format_triggers_rebuild() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());
 
-    // Write an index file with wrong magic (simulates old/incompatible format)
-    fs::write(dir.path().join(".tg_index"), b"OLD_FORMAT_DATA_HERE").unwrap();
+    write_legacy_v1_index(dir.path());
 
     let output = tg()
         .arg("search")
         .arg("--index")
         .arg("--fixed-strings")
-        .arg("--verbose")
         .arg("--count")
         .arg("hello")
         .arg(dir.path())
@@ -402,8 +499,16 @@ fn test_tg_search_index_old_format_triggers_rebuild() {
     assert!(output.status.success(), "should recover from old format");
     let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
     assert_eq!(count, 2);
+
+    let rebuilt = fs::read(dir.path().join(".tg_index")).unwrap();
+    assert_eq!(&rebuilt[0..4], b"TGI\x00");
+    assert_eq!(rebuilt[4], 2, "expected rebuilt index to use the new format");
+
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("failed to load") || stderr.contains("rebuilding"), "stderr={stderr}");
+    assert!(
+        stderr.contains("warning") || stderr.contains("failed to load") || stderr.contains("rebuilding"),
+        "stderr={stderr}"
+    );
 }
 
 #[test]

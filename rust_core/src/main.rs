@@ -513,9 +513,7 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
         let loaded = match TrigramIndex::load(&index_path) {
             Ok(idx) => idx,
             Err(e) => {
-                if args.verbose {
-                    eprintln!("[index] failed to load index: {e}, rebuilding...");
-                }
+                eprintln!("[index] warning: failed to load index: {e}, rebuilding...");
                 let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
                 fresh.save(&index_path)?;
                 return run_index_query(args, &fresh);
