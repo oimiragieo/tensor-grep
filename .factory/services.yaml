@@ -5,8 +5,11 @@ commands:
   test: uv run pytest -q
   rust_test: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml
   rust_build: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release
+  rust_build_cuda: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release --features cuda
   rust_clippy: C:\Users\oimir\.cargo\bin\cargo.exe clippy --manifest-path rust_core/Cargo.toml -- -D warnings
+  rust_clippy_cuda: C:\Users\oimir\.cargo\bin\cargo.exe clippy --manifest-path rust_core/Cargo.toml --features cuda -- -D warnings
   rust_check: C:\Users\oimir\.cargo\bin\cargo.exe check --manifest-path rust_core/Cargo.toml
+  rust_test_cuda: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml --features cuda
   benchmark_text: python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.json
   benchmark_hot: python benchmarks/run_hot_query_benchmarks.py --output artifacts/bench_hot_query_benchmarks.json
   benchmark_ast: python benchmarks/run_ast_benchmarks.py --output artifacts/bench_run_ast_benchmarks.json
