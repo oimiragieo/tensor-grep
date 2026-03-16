@@ -4,6 +4,8 @@ pub mod backend_ast;
 pub mod backend_cpu;
 pub mod backend_gpu;
 pub mod cli;
+#[cfg(feature = "cuda")]
+pub mod gpu_native;
 pub mod index;
 pub mod mmap_arrow;
 pub mod native_search;

@@ -11,6 +11,10 @@ readme = "README.md"
 name = "tensor_grep_rs"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+cuda = ["dep:cudarc"]
+
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
@@ -38,6 +42,7 @@ grep-matcher = "0.1.8"
 grep-printer = { version = "0.3.1", features = ["serde"] }
 grep-regex = "0.1.14"
 grep-searcher = "0.1.16"
+cudarc = { version = "0.19.3", optional = true, features = ["cuda-13010"] }
 
 [[bin]]
 name = "tg"
