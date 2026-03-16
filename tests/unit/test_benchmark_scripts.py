@@ -448,6 +448,125 @@ def test_run_ast_rewrite_benchmarks_should_emit_phase_timings_and_total_rewrites
     assert payload["phase_timings_s"]["apply"]["median"] == 0.95
 
 
+def test_run_harness_loop_iteration_should_require_zero_remaining_matches(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_harness_loop_benchmark_iteration",
+        "benchmarks/run_harness_loop_benchmark.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir()
+
+    responses = iter(
+        [
+            (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
+            (0.22, {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]}),
+            (0.33, {"plan": {"total_edits": 3}, "verification": None}),
+            (0.14, {"total_matches": 0, "matches": []}),
+        ]
+    )
+    commands: list[list[str]] = []
+
+    def _fake_run_json_command(command):
+        commands.append(command)
+        return next(responses)
+
+    monkeypatch.setattr(module, "run_json_command", _fake_run_json_command)
+
+    row = module.run_harness_loop_iteration(
+        tg_binary=tg_binary,
+        corpus_dir=corpus_dir,
+        iteration_index=1,
+        pattern=module.DEFAULT_PATTERN,
+        replacement=module.DEFAULT_REPLACEMENT,
+    )
+
+    assert [command[1] for command in commands] == ["run", "run", "run", "run"]
+    assert any("--rewrite" in command for command in commands[1:3])
+    assert "--apply" in commands[2]
+    assert row == {
+        "iteration": 1,
+        "search_s": 0.11,
+        "plan_s": 0.22,
+        "apply_s": 0.33,
+        "verify_s": 0.14,
+        "initial_matches": 3,
+        "planned_edits": 3,
+        "applied_edits": 3,
+        "remaining_matches": 0,
+        "passed": True,
+    }
+
+
+def test_run_harness_loop_benchmark_should_emit_iteration_breakdown(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_harness_loop_benchmark_rows",
+        "benchmarks/run_harness_loop_benchmark.py",
+    )
+    output_path = tmp_path / "bench_harness_loop.json"
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_harness_loop_benchmark.py",
+            "--output",
+            str(output_path),
+            "--iterations",
+            "5",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_harness_loop_bench_dir", lambda: tmp_path / "bench_harness_loop")
+    monkeypatch.setattr(
+        module,
+        "ensure_harness_loop_bench_corpus",
+        lambda output_dir, *, file_count, total_loc, seed: {
+            "corpus_dir": output_dir,
+            "manifest_path": tmp_path / "bench_harness_loop.manifest.sha256",
+            "file_count": file_count,
+            "total_loc": total_loc,
+            "seed": seed,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_harness_loop_benchmark",
+        lambda **_kwargs: {
+            "iterations": 5,
+            "all_passed": True,
+            "rows": [
+                {
+                    "iteration": 1,
+                    "search_s": 0.1,
+                    "plan_s": 0.2,
+                    "apply_s": 0.3,
+                    "verify_s": 0.4,
+                    "initial_matches": 10,
+                    "planned_edits": 10,
+                    "applied_edits": 10,
+                    "remaining_matches": 0,
+                    "passed": True,
+                }
+            ],
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_harness_loop"
+    assert payload["suite"] == "run_harness_loop_benchmark"
+    assert payload["iterations"] == 5
+    assert payload["all_passed"] is True
+    assert payload["passed"] is True
+    assert payload["rows"][0]["verify_s"] == 0.4
+    assert payload["rows"][0]["remaining_matches"] == 0
+
+
 def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_ast_benchmarks_script_cmd", "benchmarks/run_ast_benchmarks.py"
