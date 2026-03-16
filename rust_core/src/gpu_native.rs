@@ -304,10 +304,17 @@ fn create_kernel_runtime(device_id: i32) -> Result<KernelRuntime> {
 }
 
 fn resolve_cuda_device(device_id: i32) -> Result<CudaDeviceInfo> {
-    enumerate_cuda_devices()?
-        .into_iter()
+    let devices = enumerate_cuda_devices()?;
+    devices
+        .iter()
         .find(|device| device.device_id == device_id)
-        .ok_or_else(|| anyhow!("invalid CUDA device id {device_id}"))
+        .cloned()
+        .ok_or_else(|| {
+            anyhow!(
+                "invalid CUDA device id {device_id}; available CUDA devices: {}",
+                format_available_devices(&devices)
+            )
+        })
 }
 
 fn collect_search_files(config: &GpuNativeSearchConfig) -> Result<Vec<PathBuf>> {

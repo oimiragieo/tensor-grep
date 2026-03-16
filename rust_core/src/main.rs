@@ -1571,6 +1571,24 @@ fn simulated_gpu_route_failure() -> Option<GpuRouteFailure> {
             message: format!("CUDA initialization failed: {}", sanitize_cuda_detail(reason)),
         });
     }
+    if let Some(reason) = trimmed.strip_prefix("nvrtc-failure:") {
+        return Some(GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: format!("CUDA kernel compilation failed: {}", reason.trim()),
+        });
+    }
+    if trimmed.eq_ignore_ascii_case("timeout") {
+        return Some(GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: "GPU operation timed out after 30s".to_string(),
+        });
+    }
+    if let Some(duration) = trimmed.strip_prefix("timeout:") {
+        return Some(GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: format!("GPU operation timed out after {}", duration.trim()),
+        });
+    }
     if trimmed.eq_ignore_ascii_case("device-in-use") {
         return Some(GpuRouteFailure {
             kind: GpuRouteFailureKind::Fatal,
@@ -1605,6 +1623,18 @@ fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
         };
     }
     if raw_message.starts_with("CUDA initialization failed:") {
+        return GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: raw_message.to_string(),
+        };
+    }
+    if raw_message.starts_with("CUDA kernel compilation failed:") {
+        return GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: raw_message.to_string(),
+        };
+    }
+    if raw_message.starts_with("GPU operation timed out") {
         return GpuRouteFailure {
             kind: GpuRouteFailureKind::Fatal,
             message: raw_message.to_string(),

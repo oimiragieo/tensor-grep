@@ -16,6 +16,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_ast_rewrite_benchmarks.py",
     "benchmarks/run_ast_workflow_benchmarks.py",
     "benchmarks/run_gpu_benchmarks.py",
+    "benchmarks/run_gpu_native_benchmarks.py",
     "benchmarks/run_harness_loop_benchmark.py",
     "benchmarks/run_ast_parity_check.py",
     "benchmarks/run_compat_checks.py",
@@ -1331,6 +1332,148 @@ def test_run_gpu_benchmarks_should_emit_scale_rows_and_correctness(monkeypatch, 
     assert len(payload["correctness_checks"]) == 3
     assert payload["gpu_auto_recommendation"]["should_add_flag"] is False
     assert payload["warnings"]
+
+
+def test_run_gpu_native_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script", "benchmarks/run_gpu_native_benchmarks.py"
+    )
+    monkeypatch.delenv("TENSOR_GREP_GPU_NATIVE_BENCH_DATA_DIR", raising=False)
+
+    path = module.resolve_gpu_native_bench_data_dir()
+
+    assert path.parts[-2:] == ("artifacts", "gpu_native_bench_data")
+
+
+def test_run_gpu_native_benchmarks_should_emit_rows_correctness_and_error_tests(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script_rows", "benchmarks/run_gpu_native_benchmarks.py"
+    )
+    output_path = tmp_path / "bench_gpu_native.json"
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_native_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--corpus-sizes",
+            "10MB,100MB,500MB,1GB",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "run_gpu_native_benchmarks",
+        lambda **_kwargs: {
+            "bench_dir": str(tmp_path / "gpu_native_bench_data"),
+            "corpus_sizes": [
+                {"label": "10MB", "bytes": 10 * 1024 * 1024},
+                {"label": "100MB", "bytes": 100 * 1024 * 1024},
+                {"label": "500MB", "bytes": 500 * 1024 * 1024},
+                {"label": "1GB", "bytes": 1024 * 1024 * 1024},
+            ],
+            "rows": [
+                {
+                    "size_label": "10MB",
+                    "size_bytes": 10 * 1024 * 1024,
+                    "actual_bytes": 10 * 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 0.05, "throughput_bytes_s": 209715200.0},
+                    "tg_cpu": {"status": "PASS", "median_s": 0.08, "throughput_bytes_s": 131072000.0},
+                    "tg_gpu": {
+                        "status": "PASS",
+                        "median_s": 0.12,
+                        "throughput_bytes_s": 87381333.33,
+                        "ratio_vs_rg": 2.4,
+                    },
+                },
+                {
+                    "size_label": "100MB",
+                    "size_bytes": 100 * 1024 * 1024,
+                    "actual_bytes": 100 * 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 0.6, "throughput_bytes_s": 174762666.67},
+                    "tg_cpu": {"status": "PASS", "median_s": 0.7, "throughput_bytes_s": 149796571.43},
+                    "tg_gpu": {
+                        "status": "PASS",
+                        "median_s": 0.55,
+                        "throughput_bytes_s": 190650181.82,
+                        "ratio_vs_rg": 0.9167,
+                    },
+                },
+                {
+                    "size_label": "500MB",
+                    "size_bytes": 500 * 1024 * 1024,
+                    "actual_bytes": 500 * 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 3.6, "throughput_bytes_s": 145635555.56},
+                    "tg_cpu": {"status": "PASS", "median_s": 3.1, "throughput_bytes_s": 169125161.29},
+                    "tg_gpu": {
+                        "status": "PASS",
+                        "median_s": 2.2,
+                        "throughput_bytes_s": 238312727.27,
+                        "ratio_vs_rg": 0.6111,
+                    },
+                },
+                {
+                    "size_label": "1GB",
+                    "size_bytes": 1024 * 1024 * 1024,
+                    "actual_bytes": 1024 * 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 7.4, "throughput_bytes_s": 145104516.76},
+                    "tg_cpu": {"status": "PASS", "median_s": 6.9, "throughput_bytes_s": 155588915.48},
+                    "tg_gpu": {
+                        "status": "PASS",
+                        "median_s": 4.9,
+                        "throughput_bytes_s": 219130326.53,
+                        "ratio_vs_rg": 0.6622,
+                    },
+                },
+            ],
+            "correctness_checks": [
+                {"size_label": "10MB", "matches_equal": True, "cpu_total_matches": 12, "gpu_total_matches": 12},
+                {"size_label": "100MB", "matches_equal": True, "cpu_total_matches": 120, "gpu_total_matches": 120},
+                {"size_label": "500MB", "matches_equal": True, "cpu_total_matches": 600, "gpu_total_matches": 600},
+                {"size_label": "1GB", "matches_equal": True, "cpu_total_matches": 1200, "gpu_total_matches": 1200},
+            ],
+            "error_tests": {
+                "invalid_device": {"status": "PASS", "exit_code": 2},
+                "nvrtc_failure": {"status": "PASS", "exit_code": 2},
+                "timeout": {"status": "PASS", "exit_code": 2, "simulated": True},
+                "malformed_inputs": {
+                    "status": "PASS",
+                    "exit_code": 0,
+                    "cpu_total_matches": 2,
+                    "gpu_total_matches": 2,
+                },
+            },
+            "crossover": {
+                "exists": True,
+                "first_gpu_faster_than_rg": "100MB",
+                "summary": "GPU first beats rg at 100MB.",
+            },
+            "warnings": ["Timeout coverage is currently simulation-backed via TG_TEST_CUDA_BEHAVIOR."],
+            "errors": [],
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["suite"] == "run_gpu_native_benchmarks"
+    assert payload["generated_at_epoch_s"] > 0
+    assert [entry["label"] for entry in payload["corpus_sizes"]] == ["10MB", "100MB", "500MB", "1GB"]
+    assert len(payload["rows"]) == 4
+    assert payload["rows"][0]["tg_gpu"]["ratio_vs_rg"] == 2.4
+    assert len(payload["correctness_checks"]) == 4
+    assert payload["error_tests"]["invalid_device"]["status"] == "PASS"
+    assert payload["error_tests"]["nvrtc_failure"]["status"] == "PASS"
+    assert payload["error_tests"]["timeout"]["simulated"] is True
+    assert payload["crossover"]["exists"] is True
+    assert payload["crossover"]["first_gpu_faster_than_rg"] == "100MB"
 
 
 def test_run_hot_query_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
