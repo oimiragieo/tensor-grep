@@ -76,6 +76,8 @@ struct RewritePlanExample {
 struct RewriteEditExample {
     id: String,
     file: PathBuf,
+    #[serde(default)]
+    planned_mtime_ns: Option<u64>,
     line: usize,
     byte_range: ByteRange,
     original_text: String,
@@ -237,6 +239,9 @@ fn assert_rewrite_plan_payload(path: &Path, plan: &RewritePlanExample) {
     for edit in &plan.edits {
         assert!(!edit.id.is_empty(), "{} edit missing id", path.display());
         assert!(edit.file.is_absolute(), "{} edit file should be absolute", path.display());
+        if let Some(planned_mtime_ns) = edit.planned_mtime_ns {
+            assert!(planned_mtime_ns > 0, "{} edit planned_mtime_ns must be positive", path.display());
+        }
         assert!(edit.line > 0, "{} edit line must be 1-based", path.display());
         assert!(edit.byte_range.end > edit.byte_range.start, "{} edit byte range invalid", path.display());
         assert!(!edit.original_text.is_empty(), "{} edit missing original_text", path.display());

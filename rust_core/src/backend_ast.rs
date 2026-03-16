@@ -5,6 +5,7 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write};
 use std::ops::Range;
@@ -39,6 +40,7 @@ impl AstMatch {
 pub struct RewriteEdit {
     pub id: String,
     pub file: PathBuf,
+    pub planned_mtime_ns: u64,
     pub line: usize,
     pub byte_range: Range<usize>,
     pub original_text: String,
@@ -363,6 +365,7 @@ impl AstBackend {
         }
 
         let files: Vec<(&Path, &Vec<&RewriteEdit>)> = edits_by_file.iter().map(|(k, v)| (*k, v)).collect();
+        ensure_files_not_stale(&files)?;
         let results: Vec<Result<()>> = files
             .par_iter()
             .map(|(file, file_edits)| apply_edits_to_file(file, file_edits))
@@ -408,6 +411,7 @@ impl AstBackend {
 
         let write_ops: Vec<(&Path, &Vec<&RewriteEdit>)> =
             edits_by_file.iter().map(|(k, v)| (*k, v)).collect();
+        ensure_files_not_stale(&write_ops)?;
         write_ops
             .par_iter()
             .try_for_each(|(file, file_edits)| apply_edits_to_file(file, file_edits))?;
@@ -433,6 +437,7 @@ impl AstBackend {
         lang: SupportLang,
         file: &Path,
     ) -> Result<Vec<RewriteEdit>> {
+        let planned_mtime_ns = file_mtime_ns(file)?;
         let bytes = std::fs::read(file)
             .with_context(|| format!("failed to read source file {}", file.display()))?;
         if bytes.is_empty() {
@@ -458,6 +463,7 @@ impl AstBackend {
             edits.push(RewriteEdit {
                 id: String::new(),
                 file: file_owned.clone(),
+                planned_mtime_ns,
                 line: line_number_for_byte(ls, byte_range.start),
                 byte_range,
                 original_text,
@@ -515,6 +521,8 @@ fn build_match<'tree>(
 }
 
 fn apply_edits_to_file(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
+    ensure_file_not_stale(file, edits)?;
+
     let original = std::fs::read_to_string(file)
         .with_context(|| format!("failed to read {}", file.display()))?;
     let mut result = String::with_capacity(original.len());
@@ -532,6 +540,78 @@ fn apply_edits_to_file(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
     }
     result.push_str(&original[cursor..]);
     atomic_write_file(file, result.as_bytes())
+}
+
+fn ensure_files_not_stale(files: &[(&Path, &Vec<&RewriteEdit>)]) -> Result<()> {
+    let results: Vec<Result<()>> = files
+        .par_iter()
+        .map(|(file, file_edits)| ensure_file_not_stale(file, file_edits))
+        .collect();
+
+    for result in results {
+        result?;
+    }
+
+    Ok(())
+}
+
+fn ensure_file_not_stale(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
+    let planned_mtime_ns = planned_mtime_ns_for_file(file, edits)?;
+    let current_mtime_ns = file_mtime_ns(file)?;
+
+    if current_mtime_ns != planned_mtime_ns {
+        anyhow::bail!(
+            "stale file modified since planning: {} (planned mtime ns {}, current mtime ns {})",
+            file.display(),
+            planned_mtime_ns,
+            current_mtime_ns
+        );
+    }
+
+    Ok(())
+}
+
+fn planned_mtime_ns_for_file(file: &Path, edits: &[&RewriteEdit]) -> Result<u64> {
+    let first = edits
+        .first()
+        .with_context(|| format!("no edits supplied for {}", file.display()))?;
+    let planned_mtime_ns = first.planned_mtime_ns;
+
+    if edits
+        .iter()
+        .any(|edit| edit.planned_mtime_ns != planned_mtime_ns)
+    {
+        anyhow::bail!(
+            "inconsistent planned mtime metadata for {}",
+            file.display()
+        );
+    }
+
+    Ok(planned_mtime_ns)
+}
+
+fn file_mtime_ns(file: &Path) -> Result<u64> {
+    let modified = std::fs::metadata(file)
+        .with_context(|| format!("failed to read metadata for {}", file.display()))?
+        .modified()
+        .with_context(|| format!("failed to read modified time for {}", file.display()))?;
+    system_time_to_unix_nanos(file, modified)
+}
+
+fn system_time_to_unix_nanos(file: &Path, timestamp: SystemTime) -> Result<u64> {
+    let duration = timestamp.duration_since(UNIX_EPOCH).with_context(|| {
+        format!(
+            "file modified time for {} predates the Unix epoch",
+            file.display()
+        )
+    })?;
+
+    u64::try_from(duration.as_nanos()).with_context(|| {
+        format!(
+            "file modified time for {} exceeds supported nanosecond range",
+            file.display()
+        )
+    })
 }
 
 fn atomic_write_file(file: &Path, contents: &[u8]) -> Result<()> {

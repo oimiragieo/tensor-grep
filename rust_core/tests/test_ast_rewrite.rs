@@ -3,6 +3,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::{Duration, UNIX_EPOCH};
 
 use serde_json::Value;
 use tempfile::{tempdir, TempDir};
@@ -13,6 +14,16 @@ fn write_source_file(extension: &str, content: &str) -> (TempDir, PathBuf) {
     let file_path = dir.path().join(format!("fixture.{extension}"));
     fs::write(&file_path, content).unwrap();
     (dir, file_path)
+}
+
+fn file_mtime_ns(path: &std::path::Path) -> u64 {
+    path.metadata()
+        .unwrap()
+        .modified()
+        .unwrap()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64
 }
 
 #[test]
@@ -186,6 +197,71 @@ fn test_rewrite_plan_serializes_to_json() {
 }
 
 #[test]
+fn test_rewrite_plan_captures_planned_file_mtime() {
+    let source = "def add(x, y): return x + y\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    let planned_mtime_ns = plan.edits[0].planned_mtime_ns;
+    assert!(planned_mtime_ns > 0);
+    assert_eq!(planned_mtime_ns, file_mtime_ns(&file_path));
+
+    let json = serde_json::to_value(&plan).unwrap();
+    assert_eq!(json["edits"][0]["planned_mtime_ns"].as_u64().unwrap(), planned_mtime_ns);
+}
+
+#[test]
+fn test_apply_rewrites_rejects_stale_file_without_writing_other_files() {
+    let dir = tempdir().unwrap();
+    let stale_file = dir.path().join("a.py");
+    let untouched_file = dir.path().join("b.py");
+    fs::write(&stale_file, "def add(x): return x\n").unwrap();
+    fs::write(&untouched_file, "def mul(y): return y\n").unwrap();
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            dir.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+    std::thread::sleep(Duration::from_millis(25));
+    let modified_content = "def add(x): return x + 1\n";
+    fs::write(&stale_file, modified_content).unwrap();
+    assert_ne!(plan.edits[0].planned_mtime_ns, file_mtime_ns(&stale_file));
+
+    let error = AstBackend::apply_rewrites(&plan).unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("stale") || message.contains("modified"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        message.contains(stale_file.to_str().unwrap()),
+        "error should include file path: {message}"
+    );
+
+    assert_eq!(fs::read_to_string(&stale_file).unwrap(), modified_content);
+    assert_eq!(
+        fs::read_to_string(&untouched_file).unwrap(),
+        "def mul(y): return y\n",
+        "other files should not be rewritten when any planned file is stale"
+    );
+}
+
+#[test]
 fn test_tg_run_rewrite_dry_run_emits_json_plan() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
 
@@ -299,6 +375,8 @@ fn test_rewrite_plan_json_contract_fields() {
     let id0 = e0["id"].as_str().unwrap();
     assert!(id0.starts_with("e0000:"), "edit ID should be deterministic: {id0}");
     assert!(id0.contains("fixture.py:"), "edit ID should contain filename: {id0}");
+    let planned_mtime_ns = e0["planned_mtime_ns"].as_u64().unwrap();
+    assert!(planned_mtime_ns > 0, "planned_mtime_ns should be present in rewrite plan JSON");
     assert!(e0["metavar_env"]["F"].is_string());
     assert!(e0["metavar_env"]["EXPR"].is_string());
     assert!(e0["metavar_env"]["ARGS"].is_string());
@@ -307,6 +385,7 @@ fn test_rewrite_plan_json_contract_fields() {
     let id1 = e1["id"].as_str().unwrap();
     assert!(id1.starts_with("e0001:"), "second edit should have sequential ID: {id1}");
     assert_ne!(id0, id1, "edit IDs must be unique");
+    assert_eq!(e1["planned_mtime_ns"].as_u64().unwrap(), planned_mtime_ns);
 }
 
 #[test]
