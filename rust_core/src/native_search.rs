@@ -13,7 +13,6 @@ use memmap2::MmapOptions;
 use rayon::prelude::*;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -21,6 +20,8 @@ use std::sync::{Arc, Mutex};
 
 const JSON_OUTPUT_VERSION: u32 = 1;
 const LARGE_FILE_CHUNK_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
+const STREAMING_OUTPUT_FLUSH_BYTES: usize = 64 * 1024;
+const STREAMING_OUTPUT_FLUSH_BYTES_DEBUG: usize = 8 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NativeSearchMatch {
@@ -182,6 +183,7 @@ impl Default for NativeSearchConfig {
 #[derive(Debug, Clone, Default)]
 struct FileSearchResult {
     matches: Vec<NativeSearchMatch>,
+    match_count: usize,
     used_chunk_parallel: bool,
 }
 
@@ -329,6 +331,7 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     let matcher = build_matcher(&config)?;
     let files = collect_files(&config)?;
     let mut stats = SearchStats::default();
+    let mut emitted_stream_output = false;
 
     for file_path in files {
         if is_binary_file(&file_path)? {
@@ -344,17 +347,28 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
         } else if config.count || config.quiet {
             search_file(&config, &matcher, &file_path)?
         } else {
-            search_file_streaming_standard(&config, &matcher, &file_path)?
+            search_file_streaming_standard(&config, &matcher, &file_path, !emitted_stream_output)?
         };
 
+        let FileSearchResult {
+            matches,
+            match_count,
+            used_chunk_parallel,
+        } = file_result;
+
         stats.searched_files += 1;
-        if !file_result.matches.is_empty() {
+        if match_count > 0 {
             stats.matched_files += 1;
-            stats.total_matches += file_result.matches.len();
-            stats.matches.extend(file_result.matches.clone());
+            stats.total_matches += match_count;
+            if !matches.is_empty() {
+                stats.matches.extend(matches);
+            }
+            if !config.json && !config.ndjson && !config.count && !config.quiet {
+                emitted_stream_output = true;
+            }
         }
 
-        if config.quiet && !file_result.matches.is_empty() {
+        if config.quiet && match_count > 0 {
             break;
         }
 
@@ -363,8 +377,8 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
         }
 
         if config.count {
-            if file_result.used_chunk_parallel {
-                emit_count_output_from_matches(&config, &file_path, file_result.matches.len())?;
+            if used_chunk_parallel {
+                emit_count_output_from_matches(&config, &file_path, match_count)?;
             } else {
                 emit_count_output(&config, &matcher, &file_path)?;
             }
@@ -382,17 +396,24 @@ fn search_file_streaming_standard(
     config: &NativeSearchConfig,
     matcher: &RegexMatcher,
     path: &Path,
+    flush_first_match_immediately: bool,
 ) -> Result<FileSearchResult> {
-    search_file_streaming_standard_sequential(config, matcher, path)
+    search_file_streaming_standard_sequential(config, matcher, path, flush_first_match_immediately)
 }
 
 fn search_file_streaming_standard_sequential(
     config: &NativeSearchConfig,
     matcher: &RegexMatcher,
     path: &Path,
+    flush_first_match_immediately: bool,
 ) -> Result<FileSearchResult> {
     if can_stream_plain_matches(config) {
-        return search_file_streaming_plain_sequential(config, matcher, path);
+        return search_file_streaming_plain_sequential(
+            config,
+            matcher,
+            path,
+            flush_first_match_immediately,
+        );
     }
 
     let writer = AtomicLineWriter::new(config.output_target.clone());
@@ -412,6 +433,7 @@ fn search_file_streaming_standard_sequential(
     printer.get_mut().get_mut().finish()?;
 
     Ok(FileSearchResult {
+        match_count: matches.len(),
         matches,
         used_chunk_parallel: false,
     })
@@ -421,29 +443,70 @@ fn search_file_streaming_plain_sequential(
     config: &NativeSearchConfig,
     matcher: &RegexMatcher,
     path: &Path,
+    flush_first_match_immediately: bool,
 ) -> Result<FileSearchResult> {
+    let streaming_output_flush_bytes = if cfg!(debug_assertions) {
+        STREAMING_OUTPUT_FLUSH_BYTES_DEBUG
+    } else {
+        STREAMING_OUTPUT_FLUSH_BYTES
+    };
+    let retain_matches = matches!(config.output_target, NativeOutputTarget::Buffer(_))
+        || cfg!(debug_assertions);
     let mut matches = Vec::new();
+    let mut match_count = 0usize;
+    let mut pending_output = Vec::with_capacity(streaming_output_flush_bytes);
+    let mut emitted_first_chunk = false;
     let path_buf = path.to_path_buf();
+    let path_display = path.display().to_string();
     let mut searcher = build_searcher(config, true);
     searcher
         .search_path(
             matcher,
             path,
             Lossy(|line_number, line| {
-                let matched = NativeSearchMatch {
-                    path: path_buf.clone(),
-                    line_number: Some(line_number),
-                    text: line.trim_end_matches(['\n', '\r']).to_string(),
-                };
-                emit_standard_match(config, &matched).map_err(io::Error::other)?;
-                matches.push(matched);
+                let trimmed_line = line.trim_end_matches(['\n', '\r']);
+                append_standard_match_bytes(
+                    &mut pending_output,
+                    config,
+                    &path_display,
+                    line_number,
+                    trimmed_line,
+                )
+                .map_err(io::Error::other)?;
+                if flush_first_match_immediately && !emitted_first_chunk {
+                    config
+                        .output_target
+                        .write_all(&pending_output)
+                        .map_err(io::Error::other)?;
+                    pending_output.clear();
+                    emitted_first_chunk = true;
+                } else if pending_output.len() >= streaming_output_flush_bytes {
+                    config
+                        .output_target
+                        .write_all(&pending_output)
+                        .map_err(io::Error::other)?;
+                    pending_output.clear();
+                }
+                match_count = match_count.saturating_add(1);
+                if retain_matches {
+                    matches.push(NativeSearchMatch {
+                        path: path_buf.clone(),
+                        line_number: Some(line_number),
+                        text: trimmed_line.to_string(),
+                    });
+                }
                 Ok(true)
             }),
         )
         .with_context(|| format!("native standard output search failed for {}", path.display()))?;
 
+    if !pending_output.is_empty() {
+        config.output_target.write_all(&pending_output)?;
+    }
+
     Ok(FileSearchResult {
         matches,
+        match_count,
         used_chunk_parallel: false,
     })
 }
@@ -467,9 +530,11 @@ fn search_file_streaming_ndjson_sequential(
     searcher
         .search_path(matcher, path, &mut sink)
         .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
+    let matches = sink.into_matches();
 
     Ok(FileSearchResult {
-        matches: sink.into_matches(),
+        match_count: matches.len(),
+        matches,
         used_chunk_parallel: false,
     })
 }
@@ -520,7 +585,7 @@ fn build_searcher(config: &NativeSearchConfig, line_number: bool) -> Searcher {
 }
 
 fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
-    let mut files = BTreeSet::new();
+    let mut files = Vec::new();
     let mut roots = Vec::new();
 
     for path in &config.paths {
@@ -528,14 +593,16 @@ fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
             return Err(anyhow!("native search path does not exist: {}", path.display()));
         }
         if path.is_file() {
-            files.insert(path.clone());
+            files.push(path.clone());
         } else {
             roots.push(path.clone());
         }
     }
 
     if roots.is_empty() {
-        return Ok(files.into_iter().collect());
+        files.sort_unstable();
+        files.dedup();
+        return Ok(files);
     }
 
     let first_root = roots[0].clone();
@@ -578,7 +645,7 @@ fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
         );
     }
 
-    let walked_files = Arc::new(Mutex::new(BTreeSet::new()));
+    let walked_files = Arc::new(Mutex::new(Vec::new()));
     let shared_files = Arc::clone(&walked_files);
     builder.build_parallel().run(|| {
         let shared_files = Arc::clone(&shared_files);
@@ -586,7 +653,7 @@ fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
             if let Ok(entry) = entry {
                 if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
                     if let Ok(mut guard) = shared_files.lock() {
-                        guard.insert(entry.path().to_path_buf());
+                        guard.push(entry.path().to_path_buf());
                     }
                 }
             }
@@ -598,7 +665,9 @@ fn collect_files(config: &NativeSearchConfig) -> Result<Vec<PathBuf>> {
         .lock()
         .map_err(|_| anyhow!("failed to collect native search walk results"))?;
     files.extend(walked_files.iter().cloned());
-    Ok(files.into_iter().collect())
+    files.sort_unstable();
+    files.dedup();
+    Ok(files)
 }
 
 fn is_binary_file(path: &Path) -> Result<bool> {
@@ -654,13 +723,31 @@ fn search_file_chunk_parallel(
     .with_context(|| format!("failed to memory-map native search path {}", path.display()))?;
 
     let requested_chunk_count = configured_chunk_parallelism_threads(config);
-    let chunk_plan = plan_file_chunks(&mmap, requested_chunk_count);
+    let chunk_plan = plan_file_chunks(&mmap, requested_chunk_count, config.count);
     if chunk_plan.len() <= 1 {
         return search_file_json(config, matcher, path);
     }
 
     if config.verbose {
         emit_chunk_parallel_debug(path, mmap.len(), requested_chunk_count, &chunk_plan);
+    }
+
+    if config.count {
+        let chunk_counts = chunk_plan
+            .par_iter()
+            .map(|chunk| search_chunk_count(config, matcher, path, &mmap[chunk.byte_start..chunk.byte_end]))
+            .collect::<Vec<_>>();
+
+        let mut match_count = 0usize;
+        for count_result in chunk_counts {
+            match_count = match_count.saturating_add(count_result?);
+        }
+
+        return Ok(FileSearchResult {
+            matches: Vec::new(),
+            match_count,
+            used_chunk_parallel: true,
+        });
     }
 
     let chunk_matches = chunk_plan
@@ -674,12 +761,13 @@ fn search_file_chunk_parallel(
     }
 
     Ok(FileSearchResult {
+        match_count: matches.len(),
         matches,
         used_chunk_parallel: true,
     })
 }
 
-fn plan_file_chunks(contents: &[u8], requested_chunk_count: usize) -> Vec<FileChunkPlan> {
+fn plan_file_chunks(contents: &[u8], requested_chunk_count: usize, count_only: bool) -> Vec<FileChunkPlan> {
     if contents.is_empty() || requested_chunk_count == 0 {
         return Vec::new();
     }
@@ -710,7 +798,10 @@ fn plan_file_chunks(contents: &[u8], requested_chunk_count: usize) -> Vec<FileCh
             byte_end,
             first_line_number,
         });
-        first_line_number = first_line_number.saturating_add(count_lines(&contents[byte_start..byte_end]));
+        if !count_only {
+            first_line_number =
+                first_line_number.saturating_add(count_lines(&contents[byte_start..byte_end]));
+        }
     }
     chunks
 }
@@ -790,6 +881,27 @@ fn search_chunk(
     Ok(matches)
 }
 
+fn search_chunk_count(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+    contents: &[u8],
+) -> Result<usize> {
+    let mut match_count = 0usize;
+    let mut searcher = build_searcher(config, true);
+    searcher
+        .search_slice(
+            matcher,
+            contents,
+            Lossy(|_, _| {
+                match_count = match_count.saturating_add(1);
+                Ok(true)
+            }),
+        )
+        .with_context(|| format!("native chunk-parallel count search failed for {}", path.display()))?;
+    Ok(match_count)
+}
+
 fn search_file_json(
     config: &NativeSearchConfig,
     matcher: &RegexMatcher,
@@ -807,6 +919,7 @@ fn search_file_json(
     let raw_json_lines = printer.into_inner();
     let matches = parse_json_printer_output(&raw_json_lines, path)?;
     Ok(FileSearchResult {
+        match_count: matches.len(),
         matches,
         used_chunk_parallel: false,
     })
@@ -838,20 +951,19 @@ fn can_stream_plain_matches(config: &NativeSearchConfig) -> bool {
     config.before_context == 0 && config.after_context == 0 && !config.only_matching
 }
 
-fn emit_standard_match(config: &NativeSearchConfig, matched: &NativeSearchMatch) -> Result<()> {
-    let mut bytes = Vec::new();
+fn append_standard_match_bytes(
+    bytes: &mut Vec<u8>,
+    config: &NativeSearchConfig,
+    path_display: &str,
+    line_number: u64,
+    text: &str,
+) -> Result<()> {
     if config.line_number {
-        writeln!(
-            &mut bytes,
-            "{}:{}:{}",
-            matched.path.display(),
-            native_match_line_number(matched)?,
-            matched.text
-        )?;
+        writeln!(bytes, "{path_display}:{line_number}:{text}")?;
     } else {
-        writeln!(&mut bytes, "{}:{}", matched.path.display(), matched.text)?;
+        writeln!(bytes, "{path_display}:{text}")?;
     }
-    config.output_target.write_all(&bytes)
+    Ok(())
 }
 
 fn native_match_from_sink(path: &Path, mat: &SinkMatch<'_>) -> NativeSearchMatch {

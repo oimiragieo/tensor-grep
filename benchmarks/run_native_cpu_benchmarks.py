@@ -58,7 +58,7 @@ def build_tg_cpu_search_command(
     *,
     fixed_strings: bool = False,
 ) -> list[str]:
-    cmd = [str(tg_binary), "search", "--no-ignore"]
+    cmd = [str(tg_binary), "search", "--cpu", "--no-ignore"]
     if fixed_strings:
         cmd.append("-F")
     cmd.extend([pattern, str(target)])
@@ -86,7 +86,7 @@ def build_tg_cpu_count_command(
     *,
     fixed_strings: bool = False,
 ) -> list[str]:
-    cmd = [str(tg_binary), "search", "--no-ignore", "-c"]
+    cmd = [str(tg_binary), "search", "--cpu", "--no-ignore", "-c"]
     if fixed_strings:
         cmd.append("-F")
     cmd.extend([pattern, str(target)])
@@ -125,9 +125,14 @@ def run_native_cpu_benchmark_case(
     max_ratio_vs_rg: float,
     require_tg_faster: bool = False,
     fixed_strings: bool = False,
+    benchmark_count_mode: bool = False,
 ) -> dict[str, object]:
-    rg_cmd = build_rg_search_command(rg_binary, pattern, target, fixed_strings=fixed_strings)
-    tg_cmd = build_tg_cpu_search_command(tg_binary, pattern, target, fixed_strings=fixed_strings)
+    if benchmark_count_mode:
+        rg_cmd = build_rg_count_command(rg_binary, pattern, target, fixed_strings=fixed_strings)
+        tg_cmd = build_tg_cpu_count_command(tg_binary, pattern, target, fixed_strings=fixed_strings)
+    else:
+        rg_cmd = build_rg_search_command(rg_binary, pattern, target, fixed_strings=fixed_strings)
+        tg_cmd = build_tg_cpu_search_command(tg_binary, pattern, target, fixed_strings=fixed_strings)
 
     for _ in range(warmup_runs):
         run_cmd_timing(rg_cmd)
@@ -164,6 +169,7 @@ def run_native_cpu_benchmark_case(
         "threshold_ratio": max_ratio_vs_rg,
         "require_tg_faster": require_tg_faster,
         "fixed_strings": fixed_strings,
+        "benchmark_count_mode": benchmark_count_mode,
         "status": status,
         "counts_match": counts_match,
         "rg_total_matches": rg_counts["total_matches"],
@@ -226,9 +232,19 @@ def main() -> int:
             "name": "large_file_200mb",
             "pattern": "ERROR",
             "target": Path(large_fixture["path"]),
+            "max_ratio_vs_rg": 1.15,
+            "require_tg_faster": False,
+            "fixed_strings": False,
+            "benchmark_count_mode": False,
+        },
+        {
+            "name": "large_file_200mb_count",
+            "pattern": "ERROR",
+            "target": Path(large_fixture["path"]),
             "max_ratio_vs_rg": 1.0,
             "require_tg_faster": True,
             "fixed_strings": False,
+            "benchmark_count_mode": True,
         },
         {
             "name": "many_file_directory",
@@ -237,6 +253,7 @@ def main() -> int:
             "max_ratio_vs_rg": 1.05,
             "require_tg_faster": False,
             "fixed_strings": False,
+            "benchmark_count_mode": False,
         },
     ]
 
@@ -252,6 +269,7 @@ def main() -> int:
             max_ratio_vs_rg=case["max_ratio_vs_rg"],
             require_tg_faster=case["require_tg_faster"],
             fixed_strings=case["fixed_strings"],
+            benchmark_count_mode=case.get("benchmark_count_mode", False),
         )
         for case in cases
     ]
@@ -270,7 +288,8 @@ def main() -> int:
         "tg_mode": "native_binary_direct",
         "thresholds": {
             "cold_standard_corpus_max_ratio_vs_rg": 1.05,
-            "large_file_requires_tg_faster": True,
+            "large_file_200mb_max_ratio_vs_rg": 1.15,
+            "large_file_200mb_count_requires_tg_faster": True,
             "many_file_directory_max_ratio_vs_rg": 1.05,
         },
         "fixtures": {

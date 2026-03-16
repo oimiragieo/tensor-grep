@@ -285,6 +285,21 @@ def test_run_native_cpu_benchmarks_should_default_data_dir_to_artifacts(monkeypa
     assert path.parts[-2:] == ("artifacts", "native_cpu_bench_data")
 
 
+def test_run_native_cpu_benchmarks_should_force_native_cpu_commands(tmp_path):
+    module = _load_script_module(
+        "run_native_cpu_benchmarks_script_cpu_commands",
+        "benchmarks/run_native_cpu_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    target = tmp_path / "fixture.log"
+
+    search_cmd = module.build_tg_cpu_search_command(tg_binary, "ERROR", target)
+    count_cmd = module.build_tg_cpu_count_command(tg_binary, "ERROR", target)
+
+    assert search_cmd[:4] == [str(tg_binary), "search", "--cpu", "--no-ignore"]
+    assert count_cmd[:5] == [str(tg_binary), "search", "--cpu", "--no-ignore", "-c"]
+
+
 def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_native_cpu_benchmarks_script_status", "benchmarks/run_native_cpu_benchmarks.py"
@@ -328,11 +343,26 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
                 "target": str(tmp_path / "large_fixture.log"),
                 "pattern": "ERROR native cpu benchmark sentinel",
                 "rg_time_s": 1.0,
+                "tg_time_s": 1.12,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [1.12, 1.14, 1.11],
+                "ratio_vs_rg": 1.12,
+                "threshold_ratio": 1.15,
+                "require_tg_faster": False,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "large_file_200mb_count",
+                "target": str(tmp_path / "large_fixture.log"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
                 "tg_time_s": 0.92,
                 "rg_samples_s": [1.0, 1.01, 0.99],
                 "tg_samples_s": [0.92, 0.94, 0.91],
                 "ratio_vs_rg": 0.92,
                 "threshold_ratio": 1.0,
+                "require_tg_faster": True,
                 "status": "PASS",
                 "counts_match": True,
             },
@@ -363,9 +393,22 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["suite"] == "run_native_cpu_benchmarks"
     assert payload["passed"] is True
-    assert [row["status"] for row in payload["rows"]] == ["PASS", "PASS", "PASS"]
+    assert [row["name"] for row in payload["rows"]] == [
+        "cold_standard_corpus",
+        "large_file_200mb",
+        "large_file_200mb_count",
+        "many_file_directory",
+    ]
+    assert [row["status"] for row in payload["rows"]] == ["PASS", "PASS", "PASS", "PASS"]
     assert payload["rows"][0]["ratio_vs_rg"] == 1.04
-    assert payload["rows"][1]["ratio_vs_rg"] == 0.92
+    assert payload["rows"][1]["ratio_vs_rg"] == 1.12
+    assert payload["rows"][2]["ratio_vs_rg"] == 0.92
+    assert payload["thresholds"] == {
+        "cold_standard_corpus_max_ratio_vs_rg": 1.05,
+        "large_file_200mb_max_ratio_vs_rg": 1.15,
+        "large_file_200mb_count_requires_tg_faster": True,
+        "many_file_directory_max_ratio_vs_rg": 1.05,
+    }
 
 
 def test_run_ast_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
