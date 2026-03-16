@@ -476,7 +476,7 @@ fn native_search_config_for_command(args: &SearchArgs, decision: RoutingDecision
 fn run_native_search_with_exit(config: NativeSearchConfig) -> anyhow::Result<()> {
     match run_native_search(config) {
         Ok(stats) => {
-            if stats.total_matches == 0 {
+            if stats.total_matches == 0 && stats.binary_match_files == 0 {
                 std::process::exit(1);
             }
             Ok(())

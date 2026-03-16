@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use grep_matcher::LineTerminator;
+use grep_matcher::{LineTerminator, Matcher};
 use grep_printer::StandardBuilder;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::Lossy;
@@ -12,7 +12,7 @@ use memchr::{memchr, memchr_iter};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
 use serde::Serialize;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +36,7 @@ pub struct SearchStats {
     pub matched_files: usize,
     pub total_matches: usize,
     pub skipped_binary_files: usize,
+    pub binary_match_files: usize,
     pub matches: Vec<NativeSearchMatch>,
 }
 
@@ -187,6 +188,7 @@ struct FileSearchResult {
     matches: Vec<NativeSearchMatch>,
     match_count: usize,
     binary_detected: bool,
+    binary_match_detected: bool,
     used_chunk_parallel: bool,
 }
 
@@ -301,12 +303,17 @@ impl ParallelWalkWorker {
             matches,
             match_count,
             binary_detected,
+            binary_match_detected,
             ..
         } = file_result;
 
         self.local_stats.searched_files += 1;
         if binary_detected {
             self.local_stats.skipped_binary_files += 1;
+            if binary_match_detected {
+                emit_binary_match_warning(path)?;
+                self.local_stats.binary_match_files += 1;
+            }
             self.output_buffer.clear();
             return Ok(());
         }
@@ -361,6 +368,7 @@ impl ParallelWalkWorker {
             .with_context(|| format!("native standard output search failed for {}", path.display()))?;
 
         let binary_detected = sink.saw_binary();
+        let binary_match_detected = binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if binary_detected {
             matches.clear();
             match_count = 0;
@@ -371,6 +379,7 @@ impl ParallelWalkWorker {
             matches,
             match_count,
             binary_detected,
+            binary_match_detected,
             used_chunk_parallel: false,
         })
     }
@@ -400,6 +409,7 @@ impl ParallelWalkWorker {
             .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
 
         let binary_detected = sink.saw_binary();
+        let binary_match_detected = binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if binary_detected {
             matches.clear();
             match_count = 0;
@@ -410,6 +420,7 @@ impl ParallelWalkWorker {
             matches,
             match_count,
             binary_detected,
+            binary_match_detected,
             used_chunk_parallel: false,
         })
     }
@@ -426,6 +437,7 @@ impl ParallelWalkWorker {
             .with_context(|| format!("native count output search failed for {}", path.display()))?;
 
         let binary_detected = sink.saw_binary();
+        let binary_match_detected = binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if !binary_detected {
             append_count_output_bytes(&mut self.output_buffer, &self.config, path, match_count)?;
         } else {
@@ -436,6 +448,7 @@ impl ParallelWalkWorker {
             matches: Vec::new(),
             match_count,
             binary_detected,
+            binary_match_detected,
             used_chunk_parallel: false,
         })
     }
@@ -618,12 +631,17 @@ fn run_native_search_files(
             matches,
             match_count,
             binary_detected,
+            binary_match_detected,
             used_chunk_parallel,
         } = file_result;
 
         stats.searched_files += 1;
         if binary_detected {
             stats.skipped_binary_files += 1;
+            if binary_match_detected {
+                emit_binary_match_warning(&file_path)?;
+                stats.binary_match_files += 1;
+            }
             continue;
         }
 
@@ -638,7 +656,7 @@ fn run_native_search_files(
             }
         }
 
-        if config.quiet && match_count > 0 {
+        if config.quiet && (match_count > 0 || binary_match_detected) {
             break;
         }
 
@@ -773,6 +791,7 @@ fn merge_search_stats(target: &mut SearchStats, source: SearchStats) {
     target.matched_files += source.matched_files;
     target.total_matches += source.total_matches;
     target.skipped_binary_files += source.skipped_binary_files;
+    target.binary_match_files += source.binary_match_files;
     target.matches.extend(source.matches);
 }
 
@@ -828,6 +847,7 @@ fn search_file_streaming_standard_sequential(
     };
     printer.get_mut().get_mut().finish()?;
 
+    let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
     let (matches, match_count) = if binary_detected {
         (Vec::new(), 0)
     } else {
@@ -839,6 +859,7 @@ fn search_file_streaming_standard_sequential(
         match_count,
         matches,
         binary_detected,
+        binary_match_detected,
         used_chunk_parallel: false,
     })
 }
@@ -902,6 +923,7 @@ fn search_file_streaming_plain_sequential(
         .with_context(|| format!("native standard output search failed for {}", path.display()))?;
 
     let binary_detected = sink.saw_binary();
+    let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
     if binary_detected {
         matches.clear();
         match_count = 0;
@@ -916,6 +938,7 @@ fn search_file_streaming_plain_sequential(
         matches,
         match_count,
         binary_detected,
+        binary_match_detected,
         used_chunk_parallel: false,
     })
 }
@@ -1121,6 +1144,7 @@ fn search_file_chunk_parallel(
             matches: Vec::new(),
             match_count,
             binary_detected: false,
+            binary_match_detected: false,
             used_chunk_parallel: true,
         });
     }
@@ -1139,6 +1163,7 @@ fn search_file_chunk_parallel(
         match_count: matches.len(),
         matches,
         binary_detected: false,
+        binary_match_detected: false,
         used_chunk_parallel: true,
     })
 }
@@ -1299,6 +1324,7 @@ fn search_file_collect_matches_with_searcher(
         .with_context(|| format!("native search failed for {}", path.display()))?;
 
     let binary_detected = sink.saw_binary();
+    let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
     if binary_detected {
         matches.clear();
     }
@@ -1307,6 +1333,7 @@ fn search_file_collect_matches_with_searcher(
         match_count: matches.len(),
         matches,
         binary_detected,
+        binary_match_detected,
         used_chunk_parallel: false,
     })
 }
@@ -1335,6 +1362,7 @@ fn search_file_ndjson_with_searcher(
         .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
 
     let binary_detected = sink.saw_binary();
+    let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
     if binary_detected {
         matches.clear();
     }
@@ -1343,8 +1371,33 @@ fn search_file_ndjson_with_searcher(
         match_count: matches.len(),
         matches,
         binary_detected,
+        binary_match_detected,
         used_chunk_parallel: false,
     })
+}
+
+fn binary_file_matches_pattern(
+    matcher: &RegexMatcher,
+    path: &Path,
+    binary_detected: bool,
+) -> Result<bool> {
+    if !binary_detected {
+        return Ok(false);
+    }
+
+    let contents = fs::read(path)
+        .with_context(|| format!("failed to read binary candidate {}", path.display()))?;
+    match matcher.is_match(&contents) {
+        Ok(matched) => Ok(matched),
+        Err(_) => unreachable!("grep_regex::RegexMatcher::is_match returned NoError"),
+    }
+}
+
+fn emit_binary_match_warning(path: &Path) -> Result<()> {
+    let mut stderr = io::stderr().lock();
+    writeln!(stderr, "Binary file {} matches", path.display())?;
+    stderr.flush()?;
+    Ok(())
 }
 
 fn count_matches_with_searcher(

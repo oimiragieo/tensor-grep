@@ -251,6 +251,64 @@ fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
     expected.sort();
 
     assert_eq!(actual, expected);
+
+}
+
+#[test]
+fn test_search_ndjson_keeps_stdout_json_when_binary_warning_is_emitted() {
+    let dir = tempdir().unwrap();
+    let text_path = dir.path().join("text.log");
+    let binary_path = dir.path().join("binary.bin");
+    fs::write(&text_path, "ERROR visible\n").unwrap();
+    fs::write(&binary_path, b"\0ERROR hidden\0").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("--ndjson")
+        .arg("ERROR")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    let payloads = assert_ndjson_routing(&output, "NativeCpuBackend", "force_cpu", false);
+    assert_eq!(payloads.len(), 1, "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert_eq!(payloads[0]["file"], text_path.display().to_string());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!("Binary file {} matches", binary_path.display())),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_search_single_binary_file_emits_stderr_warning_and_exit_zero() {
+    let dir = tempdir().unwrap();
+    let binary_path = dir.path().join("binary.bin");
+    fs::write(&binary_path, b"\0ERROR hidden\0").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("ERROR")
+        .arg(&binary_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.trim(), format!("Binary file {} matches", binary_path.display()));
 }
 
 #[test]
