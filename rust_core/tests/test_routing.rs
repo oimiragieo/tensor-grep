@@ -43,6 +43,30 @@ fn write_text_corpus(dir: &Path) {
     fs::write(dir.join("notes.md"), "hello from markdown\n").unwrap();
 }
 
+fn write_sized_routing_corpus(dir: &Path, target_bytes: usize) -> PathBuf {
+    let corpus = dir.join(format!("corpus-{target_bytes}"));
+    fs::create_dir(&corpus).unwrap();
+
+    let chunk = b"INFO steady state\nERROR gpu auto route\nWARN retry later\n";
+    let mut bytes = Vec::new();
+    while bytes.len() < target_bytes {
+        bytes.extend_from_slice(chunk);
+    }
+
+    let file_count = 4usize;
+    let chunk_size = bytes.len().div_ceil(file_count);
+    for index in 0..file_count {
+        let start = index * chunk_size;
+        if start >= bytes.len() {
+            break;
+        }
+        let end = ((index + 1) * chunk_size).min(bytes.len());
+        fs::write(corpus.join(format!("chunk-{index}.log")), &bytes[start..end]).unwrap();
+    }
+
+    corpus
+}
+
 fn write_python_source() -> (TempDir, PathBuf) {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("fixture.py");
@@ -113,21 +137,6 @@ fn assert_verbose_routing(stderr: &str, backend: &str, reason: &str, sidecar_use
     );
 }
 
-fn assert_rg_passthrough(output: &Output) {
-    assert!(
-        output.status.success(),
-        "status={:?}\nstdout={}\nstderr={}",
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
-    assert_eq!(stdout.trim(), RG_SENTINEL, "stdout={stdout}");
-}
-
 fn assert_json_routing(output: &Output, backend: &str, reason: &str, sidecar_used: bool) -> Value {
     assert!(
         output.status.success(),
@@ -177,21 +186,147 @@ fn assert_ndjson_routing(
 }
 
 #[test]
-fn test_routing_default_search_uses_ripgrep_passthrough() {
+fn test_routing_default_search_uses_native_cpu_auto_route() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
-        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
-    assert_rg_passthrough(&output);
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+}
+
+#[test]
+fn test_routing_small_corpus_stays_on_native_cpu() {
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 10 * 1024 * 1024);
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+}
+
+#[cfg(feature = "cuda")]
+#[test]
+fn test_routing_large_corpus_auto_routes_to_gpu_native() {
+    let devices = tensor_grep_rs::gpu_native::enumerate_cuda_devices();
+    if devices.as_ref().map_or(true, |devices| devices.is_empty()) {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 100 * 1024 * 1024);
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "gpu_native", "gpu-auto-size-threshold", false);
+}
+
+#[cfg(feature = "cuda")]
+#[test]
+fn test_routing_large_corpus_falls_back_to_cpu_when_cuda_is_unavailable() {
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 100 * 1024 * 1024);
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .env("TG_TEST_CUDA_BEHAVIOR", "no-devices")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "NativeCpuBackend");
+    assert_eq!(payload["routing_reason"], "gpu-auto-fallback-cpu");
+    assert_eq!(payload["sidecar_used"], false);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("warning:"), "stderr={stderr}");
+    assert!(stderr.contains("CUDA is unavailable"), "stderr={stderr}");
+    assert!(!stderr.contains("CUDA_ERROR"), "stderr={stderr}");
+}
+
+#[cfg(feature = "cuda")]
+#[test]
+fn test_routing_large_corpus_gpu_init_failure_is_user_facing() {
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 100 * 1024 * 1024);
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .env("TG_TEST_CUDA_BEHAVIOR", "init-failure:driver version is too old")
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "stdout={} stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("CUDA initialization failed"), "stderr={stderr}");
+    assert!(stderr.contains("driver version is too old"), "stderr={stderr}");
+    assert!(!stderr.contains("CUDA_ERROR"), "stderr={stderr}");
+    assert!(!stderr.contains("DriverError"), "stderr={stderr}");
+}
+
+#[test]
+fn test_routing_cpu_failure_falls_back_to_ripgrep_passthrough() {
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 10 * 1024 * 1024);
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .env("TG_TEST_NATIVE_SEARCH_FORCE_ERROR", "synthetic native CPU failure")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("native CPU search failed"), "stderr={stderr}");
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+    assert!(!String::from_utf8_lossy(&output.stdout).trim().is_empty(), "stdout={}", String::from_utf8_lossy(&output.stdout));
 }
 
 #[test]
@@ -444,7 +579,6 @@ fn test_routing_warm_index_is_bypassed_by_invert_match() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -453,11 +587,12 @@ fn test_routing_warm_index_is_bypassed_by_invert_match() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
-        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
-    assert_rg_passthrough(&output);
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
 }
 
 #[test]
@@ -465,7 +600,6 @@ fn test_routing_warm_index_is_bypassed_by_context_lines() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -475,11 +609,12 @@ fn test_routing_warm_index_is_bypassed_by_context_lines() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
-        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
-    assert_rg_passthrough(&output);
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
 }
 
 #[test]
@@ -565,7 +700,6 @@ fn test_routing_warm_index_is_bypassed_by_short_pattern() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -573,11 +707,12 @@ fn test_routing_warm_index_is_bypassed_by_short_pattern() {
         .arg("--verbose")
         .arg("he")
         .arg(dir.path())
-        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
-    assert_rg_passthrough(&output);
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
 }
 
 #[test]
@@ -585,7 +720,6 @@ fn test_routing_warm_index_is_bypassed_by_word_regexp() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -594,11 +728,12 @@ fn test_routing_warm_index_is_bypassed_by_word_regexp() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
-        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
-    assert_rg_passthrough(&output);
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
 }
 
 #[test]
@@ -606,7 +741,6 @@ fn test_routing_warm_index_is_bypassed_by_glob_filter() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -616,11 +750,12 @@ fn test_routing_warm_index_is_bypassed_by_glob_filter() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
-        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
-    assert_rg_passthrough(&output);
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
 }
 
 #[test]
@@ -628,7 +763,6 @@ fn test_routing_warm_index_is_bypassed_by_max_count() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -638,11 +772,12 @@ fn test_routing_warm_index_is_bypassed_by_max_count() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
-        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
-    assert_rg_passthrough(&output);
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
 }
 
 #[test]

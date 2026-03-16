@@ -615,9 +615,37 @@ fn run_native_search_files(
 ) -> Result<SearchStats> {
     let mut stats = SearchStats::default();
     let mut emitted_stream_output = false;
+    let buffer_standard_context_output = !config.json
+        && !config.ndjson
+        && !config.count
+        && !config.quiet
+        && (config.before_context > 0 || config.after_context > 0);
 
     for file_path in files {
-        let file_result = if config.json {
+        let file_result = if buffer_standard_context_output {
+            let buffer = Arc::new(Mutex::new(Vec::new()));
+            let mut buffered_config = config.clone();
+            buffered_config.output_target = NativeOutputTarget::Buffer(Arc::clone(&buffer));
+            let file_result = search_file_streaming_standard(
+                &buffered_config,
+                matcher,
+                &file_path,
+                !emitted_stream_output,
+            )?;
+            if file_result.match_count > 0 {
+                if emitted_stream_output {
+                    config.output_target.write_all(b"--\n")?;
+                }
+                let bytes = buffer
+                    .lock()
+                    .map_err(|_| anyhow!("failed to read buffered native context output"))?
+                    .clone();
+                if !bytes.is_empty() {
+                    config.output_target.write_all(&bytes)?;
+                }
+            }
+            file_result
+        } else if config.json {
             search_file(config, matcher, &file_path)?
         } else if config.ndjson {
             search_file_streaming_ndjson(config, matcher, &file_path)?
