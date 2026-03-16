@@ -1,0 +1,74 @@
+{
+  "milestone": "harness-api",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "lint": {
+      "passed": true,
+      "command": "uv run ruff check .",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "uv run mypy src/tensor_grep",
+      "exitCode": 0
+    },
+    "test": {
+      "passed": true,
+      "command": "uv run pytest -q",
+      "exitCode": 0
+    },
+    "rust_test": {
+      "passed": true,
+      "command": "cargo test --manifest-path rust_core/Cargo.toml",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 4,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Created .factory/library/harness-api-knowledge.md with discovered knowledge: bench_data ignore rules, TG_SIDECAR_SCRIPT mock workaround, JSON_OUTPUT_VERSION coupling risk, and example artifact regeneration notes.",
+      "sourceFeature": "harness-api-docs, unify-json-envelope"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Update the 'User Preferences' section to include sidecar_used in the unified JSON envelope field list. Current text says 'version, routing_backend, routing_reason' but the implementation and architecture docs include all four: version, routing_backend, routing_reason, sidecar_used.",
+      "evidence": "Features unify-json-envelope and schema-compat-test both noted the discrepancy. The implementation correctly includes all 4 fields, but AGENTS.md could mislead future workers into omitting sidecar_used. Two independent reviewers flagged this same gap.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a coding convention note: 'JSON_OUTPUT_VERSION constant lives in main.rs. Any code emitting version fields (including backend_ast.rs) must reference this constant, not hardcode the value.' This prevents version drift if the constant is ever bumped.",
+      "evidence": "Feature unify-json-envelope review found backend_ast.rs hardcodes version: 1 at two locations instead of using the JSON_OUTPUT_VERSION constant from main.rs. No compile-time safeguard exists.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "No SKILL.md file exists for rust-worker skill in .factory/skills/",
+      "reason": "Skills are built-in/personal droid configurations, not necessarily repo-level files. The rust-worker skill is defined at the personal droid level, not in the project .factory/skills/ directory."
+    },
+    {
+      "observation": "sidecar_used could be added to assert_common_envelope helper in test_schema_compat.rs",
+      "reason": "Non-blocking code quality suggestion. The field IS validated per-shape in each assert function, so coverage is complete. Centralizing it would be nice but is not a correctness issue."
+    },
+    {
+      "observation": "Example JSON regeneration is not reproducible from committed state (no generation script)",
+      "reason": "Acceptable for a documentation feature. Examples serve as shape references for the schema compat test, not as runnable CI fixtures. The docs include command templates for regeneration."
+    },
+    {
+      "observation": "Worker correctly followed TDD convention (positive observation)",
+      "reason": "No action needed — this is a positive observation confirming process compliance, not a gap."
+    }
+  ],
+  "previousRound": null
+}

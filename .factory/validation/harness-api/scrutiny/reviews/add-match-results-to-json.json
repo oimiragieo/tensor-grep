@@ -1,0 +1,39 @@
+{
+  "featureId": "add-match-results-to-json",
+  "reviewedAt": "2026-03-16T04:23:00.000Z",
+  "commitId": "791645bdb3eba7e6512edc25c75597a4fc159fc0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, well-structured implementation that adds a 'matches' array to all --json output paths (CPU search, AST run, and index search). The worker introduced a CpuMatch struct to carry file path information through the CPU backend, added a search_with_paths() method that returns Vec<CpuMatch>, preserved the existing search() API as a thin wrapper for backward compatibility, removed the old RoutingMetadata struct, unified all JSON paths through a single emit_json_search_results() helper using the existing SearchResultJson shape, and updated integration tests with match-array assertions. All expected behaviors from the feature spec are covered. The change is additive to the v1 JSON schema (no existing fields removed or changed), so no version increment is needed per AGENTS.md conventions.",
+    "issues": [
+      {
+        "file": "rust_core/src/backend_cpu.rs",
+        "line": 136,
+        "severity": "non_blocking",
+        "description": "path.clone() is called inside the inner loop of search_file_memmem for every matching line, allocating a new PathBuf per match. For very large result sets (verification showed 800,002 matches on bench_data), this could cause noticeable allocation overhead. Consider using Arc<PathBuf> or passing path ownership differently if this becomes a performance concern. Not blocking because the --json path already collects all results in memory, so this is a constant-factor overhead on an already O(n) collection."
+      },
+      {
+        "file": "rust_core/src/backend_cpu.rs",
+        "line": 184,
+        "severity": "non_blocking",
+        "description": "Same path.clone() pattern in search_file_regex inner loop. Same non-blocking concern as above."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "No SKILL.md file found for rust-worker skill anywhere in .factory/skills/. The worker referenced 'rust-worker' as its skillName but no corresponding skill definition file exists in the project. Unable to verify if the worker followed the skill's procedure since there is no procedure to compare against.",
+      "evidence": "Glob for .factory/skills/**/SKILL.md and .factory/skills/rust-worker/SKILL.md both returned no results. Feature's skillName is 'rust-worker'."
+    },
+    {
+      "area": "conventions",
+      "observation": "The worker correctly followed the 'start with failing test' convention from AGENTS.md. The transcript skeleton shows test assertions were added before implementation code, and the tests were verified to fail before the implementation was applied.",
+      "evidence": "Transcript skeleton shows ApplyPatch to test files first, then cargo test to verify failure, then ApplyPatch to src files, then cargo test to verify pass."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature passes review. The implementation correctly adds a 'matches' array with {file, line, text} objects to all --json output paths (CPU search, AST run, index search) using a unified emit_json_search_results() helper. Backward compatibility is preserved for the non-JSON search() API. Tests are comprehensive with assertions on match array structure and content. Two non-blocking observations about PathBuf cloning in inner loops noted for future performance consideration. All six expected behaviors from the feature spec are satisfied."
+}

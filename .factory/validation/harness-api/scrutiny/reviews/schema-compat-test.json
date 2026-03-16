@@ -1,0 +1,34 @@
+{
+  "featureId": "schema-compat-test",
+  "reviewedAt": "2026-03-16T04:23:00.000Z",
+  "commitId": "551db74",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid Rust integration test that fully covers the v1 JSON schema contract. Uses `#[serde(deny_unknown_fields)]` on all structs to catch schema drift, validates all 5 committed example files against typed structs, checks the shared envelope fields (version=1, routing_backend non-empty, routing_reason non-empty) via `assert_common_envelope`, and validates shape-specific invariants (non-empty matches, total_matches consistency, 1-based line numbers, absolute file paths in rewrites, byte-range validity, verification count consistency, GPU device IDs). The `parse_json_document<T>` generic function using `serde_json::from_str` implicitly enforces single-document parsing (no concatenated JSON, satisfying VAL-API-014) since serde_json rejects trailing characters. The explicit `EXPECTED_EXAMPLES` const catches file additions/removals. Worker verified corruption detection by temporarily breaking search.json and confirming test failure. All Rust and Python gates passed clean (cargo test, clippy, ruff, mypy, pytest).",
+    "issues": [
+      {
+        "file": "rust_core/tests/test_schema_compat.rs",
+        "line": 243,
+        "severity": "non_blocking",
+        "description": "The `assert_common_envelope` helper checks version, routing_backend, and routing_reason but not `sidecar_used`, which the mission AGENTS.md and rust-worker skill both define as part of the unified envelope. The field IS validated per-shape in each assert function (e.g., `assert!(!example.sidecar_used, ...)` or `assert!(example.sidecar_used, ...)`), so coverage is complete — it's just not in the shared helper. Including it as a parameter to `assert_common_envelope` would make the contract enforcement more explicit and centralized."
+      },
+      {
+        "file": "rust_core/tests/test_schema_compat.rs",
+        "line": 142,
+        "severity": "non_blocking",
+        "description": "The test has a single `#[test]` function that iterates over all files. If one example fails validation, subsequent examples are not tested (panic aborts). Splitting into per-file test functions (or using a test parameterization approach) would give more granular failure reporting. This is a minor ergonomic concern since assertion messages already identify which file failed."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The `sidecar_used` field is documented as part of the unified JSON envelope in both the mission AGENTS.md ('version, routing_backend, routing_reason') and the rust-worker skill ('version (u32), routing_backend (string), routing_reason (string), sidecar_used (bool)'). The skill includes sidecar_used but the mission AGENTS.md 'User Preferences' section only lists three fields. This inconsistency could cause future workers to omit sidecar_used from envelope checks.",
+      "evidence": "Mission AGENTS.md 'User Preferences' says 'version, routing_backend, routing_reason'. rust-worker SKILL.md step 4 says 'version (u32), routing_backend (string), routing_reason (string), sidecar_used (bool)'. The test's assert_common_envelope at line 243 only checks 3 of 4."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The schema-compat-test feature is well-implemented. It creates a comprehensive Rust integration test that loads all 5 docs/examples/*.json files, validates them against strict typed structs with deny_unknown_fields, checks the v1 envelope and shape-specific invariants, and implicitly guards against concatenated JSON. The worker followed the rust-worker skill procedure, ran all required gates (cargo test, clippy, ruff, mypy, pytest), and verified corruption detection. Two non-blocking observations: sidecar_used could be added to the shared envelope helper for clarity, and single-test-function design means early failure hides later issues. Overall: pass."
+}
