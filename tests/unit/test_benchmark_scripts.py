@@ -627,8 +627,10 @@ def test_run_index_scaling_benchmark_should_emit_scale_rows(monkeypatch, tmp_pat
                     "name": "index_scale_1000_files",
                     "file_count": 1000,
                     "build_time_s": 1.2,
+                    "build_within_threshold": True,
                     "index_size_bytes": 4096,
                     "query_median_s": 0.04,
+                    "query_correct": True,
                     "queries": [
                         {"pattern": "ERROR timeout", "median_s": 0.03, "matches": 1000},
                         {"pattern": "WARN retry budget", "median_s": 0.04, "matches": 1000},
@@ -639,8 +641,10 @@ def test_run_index_scaling_benchmark_should_emit_scale_rows(monkeypatch, tmp_pat
                     "name": "index_scale_5000_files",
                     "file_count": 5000,
                     "build_time_s": 4.8,
+                    "build_within_threshold": True,
                     "index_size_bytes": 16384,
                     "query_median_s": 0.07,
+                    "query_correct": True,
                     "queries": [
                         {"pattern": "ERROR timeout", "median_s": 0.06, "matches": 5000},
                         {"pattern": "WARN retry budget", "median_s": 0.07, "matches": 5000},
@@ -651,8 +655,10 @@ def test_run_index_scaling_benchmark_should_emit_scale_rows(monkeypatch, tmp_pat
                     "name": "index_scale_10000_files",
                     "file_count": 10000,
                     "build_time_s": 9.5,
+                    "build_within_threshold": True,
                     "index_size_bytes": 32768,
                     "query_median_s": 0.12,
+                    "query_correct": True,
                     "queries": [
                         {"pattern": "ERROR timeout", "median_s": 0.1, "matches": 10000},
                         {"pattern": "WARN retry budget", "median_s": 0.12, "matches": 10000},
@@ -677,6 +683,179 @@ def test_run_index_scaling_benchmark_should_emit_scale_rows(monkeypatch, tmp_pat
     assert all(row["index_size_bytes"] > 0 for row in payload["rows"])
     assert all(row["query_median_s"] > 0 for row in payload["rows"])
     assert all(len(row["queries"]) == 3 for row in payload["rows"])
+
+
+def test_benchmark_scale_should_record_plain_search_parity(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_index_scaling_benchmark_parity",
+        "benchmarks/run_index_scaling_benchmark.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    hyperfine_binary = tmp_path / "hyperfine.exe"
+    corpus_dir = tmp_path / "scale_10000"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    (corpus_dir / ".tg_index").write_text("index", encoding="utf-8")
+    tg_binary.write_text("binary", encoding="utf-8")
+    hyperfine_binary.write_text("binary", encoding="utf-8")
+
+    corpus_info = {
+        "corpus_dir": corpus_dir,
+        "manifest_path": tmp_path / "scale_10000.manifest.sha256",
+        "file_count": 10000,
+        "lines_per_file": 12,
+        "total_lines": 120000,
+    }
+
+    def _fake_run_hyperfine(_hyperfine_path, *, commands, runs, warmup, prepare=None):
+        assert runs == 3
+        assert warmup == 1
+        if len(commands) == 1:
+            assert prepare is not None
+            return {"results": [{"median": 1.25}]}
+        return {
+            "results": [
+                {"median": 0.031},
+                {"median": 0.041},
+                {"median": 0.051},
+            ]
+        }
+
+    def _fake_run_count(command):
+        rendered = " ".join(str(part) for part in command)
+        is_indexed = "--index" in command
+        if "ERROR timeout" in rendered:
+            return 30000
+        if "WARN retry budget" in rendered:
+            return 29999 if is_indexed else 30000
+        if "trace_id=" in rendered:
+            return 120000
+        raise AssertionError(f"unexpected command: {command}")
+
+    monkeypatch.setattr(module, "run_hyperfine_benchmark", _fake_run_hyperfine)
+    monkeypatch.setattr(module, "run_count_command", _fake_run_count)
+
+    row = module.benchmark_scale(
+        tg_binary=tg_binary,
+        hyperfine_binary=hyperfine_binary,
+        corpus_info=corpus_info,
+        query_patterns=("ERROR timeout", "WARN retry budget", "trace_id="),
+        runs=3,
+        warmup=1,
+    )
+
+    assert row["queries"][0]["plain_matches"] == 30000
+    assert row["queries"][0]["counts_match"] is True
+    assert row["queries"][1]["plain_matches"] == 30000
+    assert row["queries"][1]["counts_match"] is False
+    assert row["query_correct"] is False
+
+
+def test_run_index_scaling_benchmark_should_fail_when_10k_build_exceeds_threshold(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_index_scaling_benchmark_threshold",
+        "benchmarks/run_index_scaling_benchmark.py",
+    )
+
+    monkeypatch.setattr(
+        module,
+        "generate_index_scaling_corpus",
+        lambda output_dir, *, file_count, lines_per_file, seed: {
+            "corpus_dir": output_dir,
+            "manifest_path": output_dir.parent / f"{output_dir.name}.manifest.sha256",
+            "file_count": file_count,
+            "lines_per_file": lines_per_file,
+            "total_lines": file_count * lines_per_file,
+            "seed": seed,
+        },
+    )
+
+    rows = iter(
+        [
+            {
+                "name": "index_scale_1000_files",
+                "file_count": 1000,
+                "build_time_s": 1.0,
+                "index_size_bytes": 1024,
+                "query_median_s": 0.01,
+                "query_correct": True,
+                "build_within_threshold": True,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+            {
+                "name": "index_scale_5000_files",
+                "file_count": 5000,
+                "build_time_s": 5.0,
+                "index_size_bytes": 4096,
+                "query_median_s": 0.03,
+                "query_correct": True,
+                "build_within_threshold": True,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+            {
+                "name": "index_scale_10000_files",
+                "file_count": 10000,
+                "build_time_s": 61.0,
+                "index_size_bytes": 8192,
+                "query_median_s": 0.05,
+                "query_correct": True,
+                "build_within_threshold": False,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+        ]
+    )
+    monkeypatch.setattr(module, "benchmark_scale", lambda **_kwargs: next(rows))
+
+    result = module.run_index_scaling_benchmark(
+        tg_binary=tmp_path / "tg.exe",
+        hyperfine_binary=tmp_path / "hyperfine.exe",
+        bench_dir=tmp_path / "bench_index_scaling",
+        scales=(1000, 5000, 10000),
+        lines_per_file=12,
+        seed=42,
+        query_patterns=("ERROR timeout", "WARN retry budget", "trace_id="),
+        runs=3,
+        warmup=1,
+    )
+
+    assert result["rows"][-1]["build_within_threshold"] is False
+    assert result["passed"] is False
+
+
+def test_run_index_scaling_benchmark_should_require_at_least_one_10k_scale(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_index_scaling_benchmark_requires_10k",
+        "benchmarks/run_index_scaling_benchmark.py",
+    )
+    output_path = tmp_path / "bench_index_scaling.json"
+    tg_binary = tmp_path / "tg.exe"
+    hyperfine_binary = tmp_path / "hyperfine.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    hyperfine_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_index_scaling_benchmark.py",
+            "--output",
+            str(output_path),
+            "--scales",
+            "1000,5000,9000",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_hyperfine_binary", lambda: hyperfine_binary)
+    monkeypatch.setattr(
+        module,
+        "run_index_scaling_benchmark",
+        lambda **_kwargs: pytest.fail("benchmark should not run without a 10k+ scale"),
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 2
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["passed"] is False
+    assert "10000" in payload["error"]
 
 
 @pytest.mark.parametrize("rel_path", BENCHMARK_JSON_SCRIPTS)

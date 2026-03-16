@@ -34,6 +34,8 @@ DEFAULT_QUERY_PATTERNS = (
     "trace_id=",
 )
 DEFAULT_LINES_PER_FILE = 12
+BUILD_TIME_THRESHOLD_S = 60.0
+REQUIRED_MIN_SCALE_FILES = 10000
 
 
 def default_binary_path() -> Path:
@@ -138,6 +140,18 @@ def build_tg_index_search_cmd(*, tg_binary: Path, pattern: str, corpus_dir: Path
     ]
 
 
+def build_tg_plain_search_cmd(*, tg_binary: Path, pattern: str, corpus_dir: Path) -> list[str]:
+    return [
+        str(tg_binary),
+        "search",
+        "--fixed-strings",
+        "--no-ignore",
+        "--count",
+        pattern,
+        str(corpus_dir),
+    ]
+
+
 def build_remove_index_command(index_path: Path) -> str:
     script = (
         "from pathlib import Path; "
@@ -233,6 +247,10 @@ def benchmark_scale(
         build_tg_index_search_cmd(tg_binary=tg_binary, pattern=pattern, corpus_dir=corpus_dir)
         for pattern in query_patterns
     ]
+    plain_query_commands = [
+        build_tg_plain_search_cmd(tg_binary=tg_binary, pattern=pattern, corpus_dir=corpus_dir)
+        for pattern in query_patterns
+    ]
     query_command_strings = [build_command_string(command) for command in query_commands]
     query_hyperfine = run_hyperfine_benchmark(
         hyperfine_binary,
@@ -242,24 +260,33 @@ def benchmark_scale(
     )
 
     queries: list[dict[str, object]] = []
-    for pattern, command, result in zip(
+    for pattern, command, plain_command, result in zip(
         query_patterns,
         query_commands,
+        plain_query_commands,
         query_hyperfine["results"],
         strict=True,
     ):
         median_s = round(float(result["median"]), 6)
-        matches = run_count_command(command)
+        indexed_matches = run_count_command(command)
+        plain_matches = run_count_command(plain_command)
+        counts_match = indexed_matches == plain_matches
         queries.append(
             {
                 "pattern": pattern,
                 "median_s": median_s,
-                "matches": matches,
+                "matches": indexed_matches,
+                "indexed_matches": indexed_matches,
+                "plain_matches": plain_matches,
+                "counts_match": counts_match,
                 "command": build_command_string(command),
+                "plain_command": build_command_string(plain_command),
             }
         )
 
     query_median_s = round(statistics.median(query["median_s"] for query in queries), 6)
+    build_within_threshold = build_time_s <= BUILD_TIME_THRESHOLD_S
+    query_correct = all(bool(query["counts_match"]) for query in queries)
     return {
         "name": f"index_scale_{corpus_info['file_count']}_files",
         "file_count": corpus_info["file_count"],
@@ -271,8 +298,11 @@ def benchmark_scale(
         "build_pattern": query_patterns[0],
         "build_command": build_command_string_value,
         "build_time_s": build_time_s,
+        "build_time_threshold_s": BUILD_TIME_THRESHOLD_S,
+        "build_within_threshold": build_within_threshold,
         "index_size_bytes": index_path.stat().st_size,
         "query_median_s": query_median_s,
+        "query_correct": query_correct,
         "queries": queries,
         "build_hyperfine": build_hyperfine,
         "query_hyperfine": query_hyperfine,
@@ -312,12 +342,23 @@ def run_index_scaling_benchmark(
 
     return {
         "bench_dir": str(bench_dir),
+        "build_time_threshold_s": BUILD_TIME_THRESHOLD_S,
+        "required_min_scale_files": REQUIRED_MIN_SCALE_FILES,
+        "required_scale_validated": any(
+            row["file_count"] >= REQUIRED_MIN_SCALE_FILES and row["build_within_threshold"]
+            for row in rows
+        ),
         "rows": rows,
         "passed": all(
             row["build_time_s"] > 0
             and row["index_size_bytes"] > 0
             and row["query_median_s"] > 0
             and len(row["queries"]) >= 3
+            and row["query_correct"]
+            for row in rows
+        )
+        and any(
+            row["file_count"] >= REQUIRED_MIN_SCALE_FILES and row["build_within_threshold"]
             for row in rows
         ),
     }
@@ -336,6 +377,9 @@ def build_base_payload(args: argparse.Namespace) -> dict[str, object]:
         "scales": list(args.scales),
         "query_patterns": list(DEFAULT_QUERY_PATTERNS),
         "lines_per_file": args.lines_per_file,
+        "build_time_threshold_s": BUILD_TIME_THRESHOLD_S,
+        "required_min_scale_files": REQUIRED_MIN_SCALE_FILES,
+        "query_latency_gated": False,
         "runs": args.runs,
         "warmup": args.warmup,
         "seed": args.seed,
@@ -380,6 +424,8 @@ def main() -> int:
         errors.append("warmup must be >= 0")
     if len(args.scales) < 3:
         errors.append("at least three scales are required to measure index scaling")
+    if max(args.scales) < REQUIRED_MIN_SCALE_FILES:
+        errors.append(f"at least one scale must be >= {REQUIRED_MIN_SCALE_FILES} files")
     if not tg_binary.exists():
         errors.append(f"tg binary not found: {tg_binary}")
     if hyperfine_binary is None:
@@ -426,7 +472,8 @@ def main() -> int:
     for row in payload["rows"]:
         print(
             f"{row['file_count']} files: build={row['build_time_s']:.3f}s "
-            f"query_median={row['query_median_s']:.3f}s index_size={row['index_size_bytes']}B"
+            f"query_median={row['query_median_s']:.3f}s index_size={row['index_size_bytes']}B "
+            f"build_within_threshold={row['build_within_threshold']} query_correct={row['query_correct']}"
         )
     print(f"Results written to {output_path}")
     return 0 if payload["passed"] else 1
