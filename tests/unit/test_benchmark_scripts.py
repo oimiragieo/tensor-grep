@@ -840,6 +840,147 @@ def test_run_gpu_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
     assert path == override.resolve()
 
 
+def test_run_gpu_benchmarks_should_parse_corpus_sizes_with_units():
+    module = _load_script_module("run_gpu_benchmarks_script_sizes", "benchmarks/run_gpu_benchmarks.py")
+
+    sizes = module.parse_corpus_sizes("1MB, 10MB,100MB,1GB")
+
+    assert sizes == (1024 * 1024, 10 * 1024 * 1024, 100 * 1024 * 1024, 1024 * 1024 * 1024)
+
+
+def test_run_gpu_benchmarks_should_emit_scale_rows_and_correctness(monkeypatch, tmp_path):
+    module = _load_script_module("run_gpu_benchmarks_script_rows", "benchmarks/run_gpu_benchmarks.py")
+    output_path = tmp_path / "bench_gpu_scale.json"
+    tg_binary = tmp_path / "tg.exe"
+    sidecar_python = tmp_path / "python.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    sidecar_python.write_text("python", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--corpus-sizes",
+            "1MB,10MB,100MB,1GB",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_gpu_sidecar_python", lambda raw=None: sidecar_python)
+    monkeypatch.setattr(module, "resolve_gpu_bench_data_dir", lambda: tmp_path / "gpu_bench_data")
+    monkeypatch.setattr(
+        module,
+        "run_gpu_scale_benchmarks",
+        lambda **_kwargs: {
+            "bench_dir": str(tmp_path / "gpu_bench_data"),
+            "corpus_sizes": [
+                {"label": "1MB", "bytes": 1024 * 1024},
+                {"label": "10MB", "bytes": 10 * 1024 * 1024},
+                {"label": "100MB", "bytes": 100 * 1024 * 1024},
+                {"label": "1GB", "bytes": 1024 * 1024 * 1024},
+            ],
+            "devices": [
+                {"device_id": 0, "name": "NVIDIA GeForce RTX 4070", "operational": True},
+                {
+                    "device_id": 1,
+                    "name": "NVIDIA GeForce RTX 5070",
+                    "operational": False,
+                    "error": "no kernel image is available for execution on the device",
+                },
+            ],
+            "rows": [
+                {
+                    "size_label": "1MB",
+                    "size_bytes": 1024 * 1024,
+                    "actual_bytes": 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 0.01},
+                    "tg_cpu": {"status": "PASS", "median_s": 0.02},
+                    "gpu": [
+                        {"device_id": 0, "status": "PASS", "median_s": 0.5},
+                        {"device_id": 1, "status": "UNSUPPORTED", "median_s": None},
+                    ],
+                },
+                {
+                    "size_label": "10MB",
+                    "size_bytes": 10 * 1024 * 1024,
+                    "actual_bytes": 10 * 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 0.09},
+                    "tg_cpu": {"status": "PASS", "median_s": 0.11},
+                    "gpu": [
+                        {"device_id": 0, "status": "PASS", "median_s": 0.42},
+                        {"device_id": 1, "status": "UNSUPPORTED", "median_s": None},
+                    ],
+                },
+                {
+                    "size_label": "100MB",
+                    "size_bytes": 100 * 1024 * 1024,
+                    "actual_bytes": 100 * 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 0.8},
+                    "tg_cpu": {"status": "PASS", "median_s": 0.91},
+                    "gpu": [
+                        {"device_id": 0, "status": "PASS", "median_s": 1.2},
+                        {"device_id": 1, "status": "UNSUPPORTED", "median_s": None},
+                    ],
+                },
+                {
+                    "size_label": "1GB",
+                    "size_bytes": 1024 * 1024 * 1024,
+                    "actual_bytes": 1024 * 1024 * 1024,
+                    "rg": {"status": "PASS", "median_s": 8.2},
+                    "tg_cpu": {"status": "PASS", "median_s": 8.6},
+                    "gpu": [
+                        {"device_id": 0, "status": "PASS", "median_s": 8.0},
+                        {"device_id": 1, "status": "UNSUPPORTED", "median_s": None},
+                    ],
+                },
+            ],
+            "correctness_checks": [
+                {
+                    "device_id": 0,
+                    "pattern": "Database connection timeout",
+                    "matches_equal": True,
+                    "files_equal": True,
+                },
+                {
+                    "device_id": 0,
+                    "pattern": "WARN retry budget exhausted",
+                    "matches_equal": True,
+                    "files_equal": True,
+                },
+                {
+                    "device_id": 0,
+                    "pattern": "trace_id=",
+                    "matches_equal": True,
+                    "files_equal": True,
+                },
+            ],
+            "gpu_auto_recommendation": {
+                "should_add_flag": False,
+                "reason": "No device beat rg by 20% at any measured scale.",
+            },
+            "warnings": [
+                "RTX 5070 is present but unsupported by the current CUDA-enabled PyTorch build.",
+            ],
+            "errors": [],
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["suite"] == "run_gpu_benchmarks"
+    assert payload["generated_at_epoch_s"] > 0
+    assert [entry["label"] for entry in payload["corpus_sizes"]] == ["1MB", "10MB", "100MB", "1GB"]
+    assert len(payload["rows"]) == 4
+    assert all("gpu" in row for row in payload["rows"])
+    assert len(payload["correctness_checks"]) == 3
+    assert payload["gpu_auto_recommendation"]["should_add_flag"] is False
+    assert payload["warnings"]
+
+
 def test_run_hot_query_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module(
         "run_hot_query_benchmarks_script", "benchmarks/run_hot_query_benchmarks.py"
