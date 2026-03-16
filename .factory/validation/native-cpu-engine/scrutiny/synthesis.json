@@ -1,0 +1,46 @@
+{
+  "milestone": "native-cpu-engine",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": false,
+      "command": "uv run pytest -q",
+      "exitCode": -1,
+      "output": "Command timed out after 60 seconds."
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "uv run mypy src/tensor_grep",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "uv run ruff check .",
+      "exitCode": 0
+    },
+    "rust_test": {
+      "passed": false,
+      "command": "cargo test --manifest-path rust_core/Cargo.toml",
+      "exitCode": 1,
+      "output": "test_native_search_many_file_directory_streams_before_walk_completion FAILED"
+    }
+  },
+  "reviewsSummary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [
+    {
+      "featureId": "native-cpu-benchmarks",
+      "severity": "blocking",
+      "description": "Validator 'rust_test' failed: test_native_search_many_file_directory_streams_before_walk_completion. Expected streaming many-file-directory output to arrive before halfway point: ttfb=819.1939ms total=918.8896ms."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [],
+  "previousRound": null
+}
