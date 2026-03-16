@@ -1,11 +1,11 @@
 {
   "milestone": "native-cpu-engine",
-  "round": 2,
-  "status": "fail",
+  "round": 3,
+  "status": "pass",
   "assertionsSummary": {
     "total": 27,
-    "passed": 25,
-    "failed": 2,
+    "passed": 27,
+    "failed": 0,
     "blocked": 0
   },
   "passedAssertions": [
@@ -33,18 +33,11 @@
     "VAL-CPU-023",
     "VAL-CPU-024",
     "VAL-CPU-025",
-    "VAL-CPU-027"
+    "VAL-CPU-027",
+    "VAL-CPU-010",
+    "VAL-CPU-026"
   ],
-  "failedAssertions": [
-    {
-      "id": "VAL-CPU-010",
-      "reason": "Option --ndjson output has interspersed debug text (\"native NDJSON search failed for ...\") and lacks type keys, breaking JSON parsing."
-    },
-    {
-      "id": "VAL-CPU-026",
-      "reason": "Failed parity: Explicit warning or string matching did not align correctly with rg binary file skipping behavior."
-    }
-  ],
+  "failedAssertions": [],
   "blockedAssertions": [],
   "appliedUpdates": [],
   "previousRound": null
