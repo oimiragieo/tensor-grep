@@ -1,0 +1,44 @@
+{
+  "featureId": "encoding-safety",
+  "reviewedAt": "2026-03-16T07:06:00.000Z",
+  "commitId": "eaabe54f7c069ad5f102c987c1cfa27c078746ed",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid implementation covering all 5 encoding-safety behaviors. The new load_rewrite_source() function centralizes file loading with a sensible guard ordering: large-file (>100MB) skip first, then binary NUL-prefix scan (first 8192 bytes), then BOM detection and stripping. BOM handling correctly shifts planned byte ranges by bom_len so apply_edits_to_file preserves the BOM through its cursor-based string assembly. ensure_valid_utf8_range() validates byte boundaries both during planning (against BOM-stripped source) and during apply (against full file including BOM). CRLF preservation works because the rewrite engine copies unedited byte ranges verbatim. All 5 new tests are well-structured and cover the expected behaviors. The implementation is correct and follows existing code patterns.",
+    "issues": [
+      {
+        "file": "rust_core/src/backend_ast.rs",
+        "line": 548,
+        "severity": "non_blocking",
+        "description": "Minor inefficiency: load_rewrite_source() opens and reads the file prefix (8KB) for binary detection, then reads the entire file again with std::fs::read(). This is a double-read for non-binary files. An alternative would be to read the full file once and check the first 8192 bytes of the resulting buffer. However, the current approach has the advantage of avoiding a full memory allocation for binary files under 100MB, which is a reasonable trade-off."
+      },
+      {
+        "file": "rust_core/src/backend_ast.rs",
+        "line": 550,
+        "severity": "non_blocking",
+        "description": "The prefix buffer is initialized with zeros (vec![0; ...]) and then overwritten by read_exact. If the file length is 0 (empty file), the prefix will be empty and prefix.contains(&0) returns false, which is correct — the empty source check happens later. However, the vec![0; ...] initialization masks a subtle edge: if read_exact partially reads due to a concurrent truncation, the zeros in the buffer could trigger a false binary detection. In practice, read_exact returns an error for partial reads, so this is not a real bug."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Worker correctly added .factory/library/rewrite-encoding-safety.md documenting the guard ordering, BOM handling invariants, and ensure_valid_utf8_range() for reuse by future batch-rewrite work. This is good proactive knowledge capture.",
+      "evidence": ".factory/library/rewrite-encoding-safety.md documents: guard order (large-file before binary), BOM stripping + byte-range shifting, and the ensure_valid_utf8_range helper."
+    },
+    {
+      "area": "conventions",
+      "observation": "The search path (search_file_static) does not have encoding safety guards (no BOM handling, no binary detection, no large-file guard). This is correct per the feature scope which targets only the rewrite path, but it means search will still fail on binary files with a UTF-8 error and will include BOM bytes in matched text. Future features (if any) that need encoding safety on search should be aware of this gap.",
+      "evidence": "rust_core/src/backend_ast.rs search_file_static() at line ~487 still uses raw std::fs::read() + String::from_utf8() without load_rewrite_source()."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker followed the rust-worker skill procedure: used TDD (tests added alongside implementation), ran all local gates (cargo test, clippy, ruff, mypy, pytest), ran the rewrite benchmark. skillFeedback.followedProcedure is true with no deviations.",
+      "evidence": "Handoff verification shows all 8 commands run successfully: cargo test (108 passed), clippy (0 warnings), ruff (all passed), mypy (0 issues), pytest (537 passed), rewrite benchmark (completed)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The encoding-safety feature is correctly implemented with all 5 required behaviors: (1) BOM handling via stripping before AST parsing and byte-range shifting for apply/verify, (2) CRLF preservation via verbatim byte-range copying, (3) UTF-8 boundary validation via ensure_valid_utf8_range() in both plan and apply paths, (4) binary detection via NUL scan of first 8192 bytes with silent skip, (5) large file guard at >100MB with stderr warning. Code is well-structured around the new load_rewrite_source() centralizer. All 5 new Rust tests pass. Two non-blocking observations noted: minor double-read inefficiency and zero-initialized prefix buffer, neither of which affect correctness."
+}

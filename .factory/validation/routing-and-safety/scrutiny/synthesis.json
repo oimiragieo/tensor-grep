@@ -1,0 +1,91 @@
+{
+  "milestone": "routing-and-safety",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0, "detail": "538 passed, 14 skipped in 85.55s" },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0, "detail": "no issues found in 44 source files" },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0, "detail": "All checks passed" },
+    "rust_test": { "passed": true, "command": "cargo test --manifest-path rust_core/Cargo.toml", "exitCode": 0, "detail": "122 tests passed across 12 test files" }
+  },
+  "reviewsSummary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "featureId": "atomic-writes",
+      "severity": "non_blocking",
+      "description": "Unix file permissions not preserved through atomic rename. Temp file inherits default permissions instead of original file's. Unlikely to affect typical source files but could surprise users with non-default permissions (e.g., 0o755 executable scripts)."
+    },
+    {
+      "featureId": "stale-file-detection",
+      "severity": "non_blocking",
+      "description": "Redundant 'use std::convert::TryFrom' import (already in Rust 2021 prelude). Harmless but unnecessary."
+    },
+    {
+      "featureId": "stale-file-detection",
+      "severity": "non_blocking",
+      "description": "docs/examples/rewrite_plan.json not updated with new planned_mtime_ns field. Schema compat test handles this via Option<u64> + serde(default), so no breakage, but the reference example is incomplete."
+    },
+    {
+      "featureId": "stale-file-detection",
+      "severity": "non_blocking",
+      "description": "Inherent TOCTOU gap in parallel write pattern: batch staleness preflight passes, then parallel writes begin. If a file is modified in the narrow window between preflight and per-file check, other files may already have been written. Per-file defense-in-depth catches the stale file but cannot roll back already-written peers. Acceptable for lock-free design."
+    },
+    {
+      "featureId": "encoding-safety",
+      "severity": "non_blocking",
+      "description": "Minor double-read inefficiency: load_rewrite_source() reads 8KB prefix for binary detection, then reads full file again. Could be optimized to a single read, but current approach avoids full allocation for binary files."
+    },
+    {
+      "featureId": "routing-policy-docs",
+      "severity": "non_blocking",
+      "description": "docs/routing_policy.md step ordering and 'caveat' about warm-index preempting GPU are now stale after commit f8ef2f2 reordered GPU before warm-index. Doc and test assertion in test_routing_policy_docs.py need updating."
+    },
+    {
+      "featureId": "routing-regression-tests",
+      "severity": "non_blocking",
+      "description": "test_routing_stale_index_with_explicit_index_rebuilds uses 50ms sleep for mtime advancement. Safe on NTFS but potentially flaky on FAT32 or network filesystems."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Remove or mark as resolved the 'Known Pre-Existing Issues' bullet about warm index routing preceding GPU routing. This was fixed by commit f8ef2f2 in the routing-regression-tests feature.",
+      "evidence": "Mission AGENTS.md 'Known Pre-Existing Issues' says 'Warm index routing precedes GPU routing...The routing-regression-tests feature should fix this.' Commit f8ef2f2 moved explicit --gpu-device-ids check before warm-index auto-routing in main.rs handle_ripgrep_search.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add convention: when a documentation feature (like routing-policy-docs) lands concurrently with code features that modify the documented behavior, the doc should be re-validated against HEAD after the code feature lands. This prevents docs from going stale within the same milestone.",
+      "evidence": "routing-policy-docs (commit d55fef3) documented warm-index before GPU order. routing-regression-tests (commit f8ef2f2) reordered these. The doc was accurate at its commit time but immediately stale when the next commit landed.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add convention: the rewrite pipeline uses a two-layer staleness defense pattern (batch preflight in apply_rewrites/plan_and_apply + per-file check in apply_edits_to_file). Workers modifying the rewrite pipeline should preserve both layers.",
+      "evidence": "Features stale-file-detection and encoding-safety both modify backend_ast.rs rewrite paths. The defense-in-depth pattern was added by stale-file-detection and must be preserved by future modifications.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The rust-worker skill's example handoff mentions stale-file detection alongside atomic writes but these are separate features.",
+      "reason": "The skill example is illustrative, not normative. No change needed — the worker correctly followed the procedure regardless."
+    },
+    {
+      "observation": "The search path (search_file_static) does not have encoding safety guards (no BOM handling, binary detection, large-file guard).",
+      "reason": "This is correct per feature scope. Encoding safety targets only the rewrite path. The search path delegates to rg/ast-grep which have their own handling. No action needed for this milestone."
+    },
+    {
+      "observation": "architecture.md in .factory/library/ already documents stale-file detection under Rewrite Safety section.",
+      "reason": "Already documented — no duplicate update needed."
+    }
+  ],
+  "previousRound": null
+}

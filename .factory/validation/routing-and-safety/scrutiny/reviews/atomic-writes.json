@@ -1,0 +1,33 @@
+{
+  "featureId": "atomic-writes",
+  "reviewedAt": "2026-03-16T07:15:00.000Z",
+  "commitId": "50ac29bbf4d181906efe4c927bb1bf3937f4b7e3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, correct implementation of atomic file writes in apply_edits_to_file(). The change replaces std::fs::write with a write-to-temp (.tg_tmp_<pid>_<nonce>) + flush + sync_all + rename pattern. Temp file creation uses OpenOptions::create_new(true) with a retry loop (up to 64 attempts) for exclusive creation. The error path correctly removes the temp file via remove_file before propagating the error. The temp_file handle is explicitly dropped before rename, which is important on Windows. Three well-structured Rust tests cover: (1) successful atomic write with no leftover temps, (2) failure cleanup with original file preserved, (3) end-to-end verify() byte-level correctness after atomic apply. All expected behaviors from the feature spec are fulfilled.",
+    "issues": [
+      {
+        "file": "rust_core/src/backend_ast.rs",
+        "line": 710,
+        "severity": "non_blocking",
+        "description": "On Unix, std::fs::rename replaces the target file but the new file inherits the temp file's default permissions (typically 0o644), not the original file's permissions. The previous std::fs::write path preserved permissions by truncating and overwriting in-place. If a rewritten source file had non-default permissions (e.g., 0o755 for executable scripts), those would be silently lost. This is unlikely to matter for typical source files but could surprise users on Unix. Consider copying the original file's permissions to the temp file before rename, or documenting this as a known limitation."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The atomic write implementation does not preserve the original file's Unix permissions when renaming the temp file over the target. The previous std::fs::write (truncate in-place) preserved permissions. AGENTS.md doesn't document whether rewrite operations should preserve file permissions, and this may be worth noting as a convention for future rewrite-related work.",
+      "evidence": "rust_core/src/backend_ast.rs:710 — std::fs::rename(&temp_path, file) replaces file with temp file's default permissions. Compare to prior std::fs::write(file, &result) which truncated in-place, preserving existing permissions."
+    },
+    {
+      "area": "skills",
+      "observation": "The rust-worker skill's example handoff includes stale-file detection alongside atomic writes, but these are actually separate features in the mission. The example is slightly misleading but not harmful since it's just illustrative. Worker correctly followed the skill procedure: TDD first, all gates run, clean commit.",
+      "evidence": "SKILL.md example handoff mentions 'Added stale-file detection with mtime check' alongside atomic writes, but the actual features.json splits these into separate features (atomic-writes vs stale-file-detection)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The atomic write implementation is correct and complete. The change from std::fs::write to write-temp+rename in apply_edits_to_file() follows the standard atomic write pattern: create exclusive temp file (.tg_tmp_<pid>_<nonce>) in same directory, write + flush + sync_all, rename over target. Failure path removes temp file and preserves original. Three focused Rust unit tests cover success, failure cleanup, and verify() byte-level correctness. No std::fs::write calls remain for user-facing rewrites. All existing Rust tests (100) and Python tests (537) passed. One non-blocking issue: Unix file permissions are not preserved through the rename (temp file gets default permissions instead of original file's)."
+}
