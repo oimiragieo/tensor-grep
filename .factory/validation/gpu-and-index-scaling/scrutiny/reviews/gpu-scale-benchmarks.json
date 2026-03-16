@@ -1,0 +1,51 @@
+{
+  "featureId": "gpu-scale-benchmarks",
+  "reviewedAt": "2026-03-16T10:00:00.000Z",
+  "commitId": "7e36e14a8586d5a4e33e84030eb76483add831d8",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid implementation that reworks run_gpu_benchmarks.py into a scale-aware crossover harness. The script supports --corpus-sizes with 1MB/10MB/100MB/1GB defaults, generates synthetic sharded corpora, probes GPU devices via .venv_cuda sidecar, benchmarks rg/tg-CPU/tg-GPU at each scale, validates correctness for 3 patterns, and produces a structured JSON artifact. docs/gpu_crossover.md is thorough with per-size timing tables, transfer overhead analysis, per-GPU status, and a clear --gpu-auto non-addition rationale. The analyze_gpu_auto_recommendation() function correctly enforces the 20% threshold. Unit tests cover corpus-size parsing, main() orchestration with mocked benchmark function, and existing data-dir/cybert tests remain intact. All local gates (ruff, mypy, pytest) passed.",
+    "issues": [
+      {
+        "file": "benchmarks/run_gpu_benchmarks.py",
+        "line": 33,
+        "severity": "non_blocking",
+        "description": "DEFAULT_SEED = 42 is defined but never referenced anywhere in the module. This is dead code and should be removed in a future cleanup pass."
+      },
+      {
+        "file": "benchmarks/run_gpu_benchmarks.py",
+        "line": 317,
+        "severity": "non_blocking",
+        "description": "benchmark_search_command uses time.perf_counter() for timing, whereas the backend-worker skill recommends hyperfine or Measure-Command. perf_counter is a reasonable choice here since the script needs structured per-device JSON output that hyperfine cannot produce natively, but this deviation from the documented convention is worth noting."
+      },
+      {
+        "file": "tests/unit/test_benchmark_scripts.py",
+        "line": 1030,
+        "severity": "non_blocking",
+        "description": "test_run_gpu_benchmarks_should_emit_scale_rows_and_correctness mocks run_gpu_scale_benchmarks entirely, so it validates main() orchestration and JSON serialization but not the internal logic (corpus generation, command building, correctness checking, GPU auto-recommendation analysis). Consider adding targeted unit tests for generate_gpu_scale_corpus, analyze_gpu_auto_recommendation, and run_correctness_check in a future pass."
+      },
+      {
+        "file": "benchmarks/run_gpu_benchmarks.py",
+        "line": 244,
+        "severity": "non_blocking",
+        "description": "In generate_gpu_scale_corpus, the inner-loop guard 'if total_bytes + len(encoded) > target_bytes and total_bytes >= target_bytes: break' has a redundant second condition — if total_bytes >= target_bytes, the outer while loop would have already exited. Not harmful, but slightly confusing."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The backend-worker skill states 'Uses hyperfine or Measure-Command for timing (not Python time.time)' under step 4 for benchmark scripts. This GPU benchmark intentionally uses time.perf_counter() because it needs per-device structured JSON output that hyperfine cannot produce. The skill should be updated to acknowledge perf_counter as a valid alternative when structured per-invocation timing is needed.",
+      "evidence": "benchmarks/run_gpu_benchmarks.py:317 uses time.perf_counter(); .factory/skills/backend-worker/SKILL.md step 4 says 'Uses hyperfine or Measure-Command for timing (not Python time.time)'"
+    },
+    {
+      "area": "knowledge",
+      "observation": "Worker correctly created .factory/library/gpu-benchmark-env.md documenting the .venv_cuda environment, RTX 5070 incompatibility with torch 2.6.0+cu124, and sidecar Python resolution. This is well-placed and will help future workers avoid re-discovering the same environment constraints.",
+      "evidence": ".factory/library/gpu-benchmark-env.md created in this commit with full GPU device compatibility notes"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The gpu-scale-benchmarks feature is a pass. The implementation fully covers all requirements: benchmark script supports --corpus-sizes with 4 default sizes, JSON output contains per-size timing rows with rg/tg-CPU/GPU columns for both GPUs, docs/gpu_crossover.md documents measured numbers with no crossover found, correctness is verified for 3 patterns, and --gpu-auto was correctly not added since GPU never beat rg by 20%. All local gates passed. Minor non-blocking issues: one unused constant (DEFAULT_SEED), perf_counter used instead of hyperfine (justified), and unit test coverage could be deeper on internal functions."
+}

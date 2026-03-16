@@ -1,0 +1,34 @@
+{
+  "featureId": "index-compression",
+  "reviewedAt": "2026-03-16T10:01:00Z",
+  "commitId": "98f153fafb919f76aef36af8d935a6caca9de681",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, well-structured implementation of varint delta-encoded posting-list compression. FORMAT_VERSION bumped from 1 to 2, TGI\\x00 magic preserved, old-format indices trigger rebuild with warning (not crash). Varint encode/decode is correct LEB128-style with a 5-byte u32 limit. Delta encoding sorts postings by (file_id, line) via normalize_postings() before serialization, using checked_sub/checked_add for safety. The read helpers (read_exact, read_u8, read_u32_le, etc.) have proper bounds checking against truncated files. Test coverage includes: round-trip correctness with fixed-string and regex queries, >= 40% size reduction on a 1000-file corpus (test asserts compressed*100 <= legacy*60), old-format v1 index migration via a realistic legacy serializer, query result parity between indexed and plain search for multiple patterns. The main.rs change correctly removes the --verbose gate on the rebuild warning, making it always visible as required. All verification commands passed (cargo test, clippy, ruff, mypy, pytest).",
+    "issues": [
+      {
+        "file": ".factory/library/index-compression.md",
+        "line": 3,
+        "severity": "non_blocking",
+        "description": "Library note references 'format version 2' but subsequent features (incremental updates) bumped INDEX_FORMAT_VERSION to 3. The note is an accurate record of what this feature did, but could be mildly confusing for future readers. Consider adding a note that later features bumped the version further."
+      },
+      {
+        "file": "rust_core/src/index.rs",
+        "line": 160,
+        "severity": "non_blocking",
+        "description": "bincode_serialize iterates over index.postings (a HashMap) which has non-deterministic iteration order. This means two serializations of the same logical index may produce different byte sequences. Does not affect correctness (postings are keyed by trigram and each list is independently delta-encoded), but prevents byte-identical index files across runs. If deterministic output were ever needed (e.g., for content hashing), a BTreeMap or sorted iteration would be required."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The library note index-compression.md says 'format version 2' but the current codebase has INDEX_FORMAT_VERSION = 3 after the subsequent incremental-updates feature. The note accurately describes what this feature implemented but may confuse future readers looking for the current version.",
+      "evidence": ".factory/library/index-compression.md line 3 says 'format version 2'; rust_core/src/index.rs line 197 has INDEX_FORMAT_VERSION: u8 = 3"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The index-compression feature is well-implemented and fully meets all requirements: varint delta encoding of posting lists achieves >= 40% size reduction (73% measured on 1000-file corpus), TGI\\x00 magic preserved, FORMAT_VERSION bumped, old-format indices rebuilt with warning. Test coverage is thorough with round-trip, size reduction, migration, and query parity tests. No blocking issues found. Two non-blocking observations: HashMap iteration non-determinism in serialization and a minor library note version reference that became stale after a subsequent feature."
+}

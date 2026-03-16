@@ -1,0 +1,39 @@
+{
+  "featureId": "index-regex-improvements",
+  "reviewedAt": "2026-03-16T10:00:00.000Z",
+  "commitId": "a3ddadfc91c9f725914072db197823d134fd3833",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid implementation that replaces the old single-literal splitter with a conservative regex-HIR-based prefilter planner using `regex-syntax`. The architecture is correct: `select_regex_prefilter_literals()` tries prefix, suffix, and inner literal extraction, picks the best plan, and falls back to full-scan when no safe trigram literal set exists. Key improvements: (1) Alternation `(foo|bar)` correctly unions candidate sets from each branch. (2) Small character classes `[abc]def` expand to all trigram combinations via `Extractor::limit_class(10)`. (3) Unicode multi-byte literals are correctly handled for case-sensitive patterns. (4) Non-ASCII ignore-case patterns correctly fall back (can't safely lowercase non-ASCII bytes). (5) The critical correctness fix: previously, regex patterns that couldn't extract a literal returned empty candidates (false negatives); now they fall back to `FullScan` which scans all indexed files. The `SearchMatcher` enum cleanly abstracts fixed-string vs regex matching and is used in both `Indexed` and `FullScan` paths. `RegexLiteralPlan::from_raw` correctly rejects literals shorter than 3 bytes (trigram minimum) and enforces the 64-literal cap. Test coverage includes unit tests for literal extraction (positive and negative) plus integration CLI parity tests for 4 regex patterns.",
+    "issues": [
+      {
+        "file": "rust_core/src/index.rs",
+        "line": 1003,
+        "severity": "non_blocking",
+        "description": "The doc comment on `select_regex_prefilter_literals` correctly documents the safety model, but there is no corresponding library knowledge file documenting the regex prefiltering strategy for future workers. The index-compression.md and index-incremental-updates.md knowledge files exist for prior features but nothing captures the regex acceleration subset rules (which patterns are safe, which fall back, the MAX_REGEX_CLASS_LITERALS/MAX_REGEX_PREFILTER_LITERALS constants). Future workers touching this code would benefit from a library entry."
+      },
+      {
+        "file": "rust_core/src/index.rs",
+        "line": 696,
+        "severity": "non_blocking",
+        "description": "The `FullScan` path in `search_all_files` only scans files already in the index (those under 10MB that passed the ignore walker). If `--index` is used with a pattern that triggers FullScan, files >10MB or ignored files will be missed compared to the non-indexed rg passthrough path. This is a pre-existing limitation of the index subsystem, not introduced by this feature, but worth noting since the feature's expectedBehavior says 'No false negatives compared to non-indexed search'. In practice, the CLI parity tests pass because test corpora are small."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "No library knowledge file was created documenting the regex prefiltering strategy. The in-code doc comment on `select_regex_prefilter_literals` is good, but a `.factory/library/index-regex-prefilter.md` entry would help future workers understand which regex subsets are safe for index acceleration, the constants governing class/literal limits, and the fallback behavior.",
+      "evidence": "rust_core/src/index.rs lines 993-1003 contain the doc comment. Compare to existing .factory/library/index-compression.md and index-incremental-updates.md which document prior index features."
+    },
+    {
+      "area": "conventions",
+      "observation": "The index-compression.md library file still references 'format version 2' even though format version 3 was introduced by index-incremental-updates. The index-incremental-updates.md file correctly documents version 3. These knowledge files are slightly stale but not caused by this feature.",
+      "evidence": ".factory/library/index-compression.md says 'format version 2'; .factory/library/index-incremental-updates.md says 'format version 3'; actual INDEX_FORMAT_VERSION in index.rs is 3."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The implementation correctly addresses all three requirements (alternation, character classes, Unicode) using regex-syntax HIR-based literal extraction with conservative fallback to full scan. The critical correctness improvement is the FullScan fallback path that prevents false negatives for unsupported regex patterns. Code quality is high: clean abstractions (RegexLiteralPlan, SearchMatcher, RegexCandidateSelection), proper safety bounds (literal length and count limits), and thorough test coverage (3 unit tests + 1 integration CLI parity test covering 4 patterns). The worker followed the skill procedure, ran all required gates (cargo test, clippy, ruff, mypy, pytest), ran the hot-query benchmark with no regression, and performed direct CLI parity verification. No blocking issues found."
+}

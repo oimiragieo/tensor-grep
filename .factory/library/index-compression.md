@@ -1,6 +1,6 @@
 # Index Compression
 
-- `rust_core/src/index.rs` now writes trigram posting lists in **format version 2** while preserving the `TGI\x00` magic prefix.
+- `rust_core/src/index.rs` now writes trigram posting lists in compressed varint format while preserving the `TGI\x00` magic prefix. (Originally introduced as format version 2; subsequently bumped to version 3 by the incremental-updates feature.)
 - Posting entries are sorted by `(file_id, line)` and encoded as **u32 varint deltas**: first entry stores absolute `file_id`/`line`, later entries store `file_id` delta and either absolute `line` (new file) or same-file `line` delta.
 - The root path, file table, trigram count, trigram bytes, and per-trigram posting counts remain uncompressed fixed-width fields; only the posting pairs changed format.
 - `tg search --index` now prints a warning and rebuilds when loading an old/corrupt index fails. Warm auto-routing still silently ignores incompatible cached indices and falls back to the non-index path.

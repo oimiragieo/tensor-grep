@@ -1,0 +1,45 @@
+{
+  "featureId": "gpu-error-hardening",
+  "reviewedAt": "2026-03-16T10:00:00.000Z",
+  "commitId": "39b1e84efbbf271280ed004ec88408696edd1940",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation thoroughly covers all 4 required GPU sidecar error-handling cases: (1) invalid device IDs are caught in sidecar.py before backend selection with a clear user-facing message and no traceback; (2) CUDA unavailability via empty CUDA_VISIBLE_DEVICES is detected early and produces a structured error; (3) a 30s-default timeout with child kill/reap is added in python_sidecar.rs using a try_wait polling loop with TG_SIDECAR_TIMEOUT_MS override for testing; (4) malformed sidecar JSON is caught using typed Rust deserialization (GpuSidecarSearchPayload/GpuSidecarSearchMatch structs) instead of generic serde_json::Value, producing a clear 'malformed' error. Tests cover all 4 error cases in test_sidecar_ipc.rs. All local gates passed (cargo test, clippy, ruff, mypy, pytest). The code is clean and follows existing codebase conventions.",
+    "issues": [
+      {
+        "file": "src/tensor_grep/sidecar.py",
+        "line": 217,
+        "severity": "non_blocking",
+        "description": "Pipeline/get_backend creation is caught only by `except ConfigurationError`, narrowed from the previous `except Exception`. If Pipeline() or get_backend() raises a non-ConfigurationError (e.g., RuntimeError), it would bubble to the top-level handler in main() which outputs a traceback. The broader try/except around the search loop below catches ImportError and Exception for search execution, but not for pipeline creation. This is a minor regression in error surface coverage compared to the previous catch-all. Low risk since ConfigurationError is the expected failure mode for pipeline creation."
+      },
+      {
+        "file": "src/tensor_grep/sidecar.py",
+        "line": 122,
+        "severity": "non_blocking",
+        "description": "_detect_available_gpu_device_ids() uses hasattr checks for two method names (enumerate_device_ids, get_device_ids) with a fallback to empty list. If DeviceDetector's API changes, this would silently report 'Available device IDs: none' even when GPUs exist. Consider a more robust detection contract."
+      },
+      {
+        "file": "rust_core/src/python_sidecar.rs",
+        "line": 256,
+        "severity": "non_blocking",
+        "description": "terminate_sidecar_process ignores kill errors with ErrorKind::InvalidInput (process already dead). On non-Windows platforms, the error kind for killing an already-exited process may differ (e.g., ESRCH maps to Other or NotFound). Since this is a Windows-primary codebase, this is acceptable but may need attention if Unix support becomes critical."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Worker correctly documented the new TG_SIDECAR_TIMEOUT_MS env var and GPU device ID validation behavior in .factory/library/python-sidecar-ipc.md. This is good practice and no gap exists.",
+      "evidence": ".factory/library/python-sidecar-ipc.md diff shows two new lines: TG_SIDECAR_TIMEOUT_MS override documentation and GPU validation behavior note."
+    },
+    {
+      "area": "conventions",
+      "observation": "Worker narrowed the exception catch from `except Exception` to `except ConfigurationError` for Pipeline creation in sidecar.py. This is more defensive but creates a subtle difference from the previous behavior where all pipeline creation errors were caught gracefully. AGENTS.md doesn't specify error-handling granularity for sidecar Python code.",
+      "evidence": "sidecar.py line 219: `except ConfigurationError as exc:` vs previous `except Exception as exc:`. The change makes non-ConfigurationError exceptions during pipeline init surface as tracebacks via main()'s catch-all."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The gpu-error-hardening feature fully implements all 4 required error-handling improvements. Invalid device IDs produce clear errors without tracebacks, CUDA unavailability is detected early via CUDA_VISIBLE_DEVICES check, sidecar timeout with kill/reap enforces a 30s default, and malformed JSON is caught by typed Rust deserialization. All 4 new tests pass alongside the existing suite. Three non-blocking issues noted: narrowed exception handling for pipeline creation, fragile GPU device detection method dispatch, and platform-specific error kind check in terminate_sidecar_process. Overall: solid implementation that meets all requirements."
+}

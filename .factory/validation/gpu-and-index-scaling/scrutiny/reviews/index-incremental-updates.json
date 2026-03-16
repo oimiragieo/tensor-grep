@@ -1,0 +1,45 @@
+{
+  "featureId": "index-incremental-updates",
+  "reviewedAt": "2026-03-16T10:00:00.000Z",
+  "commitId": "8a004dbb87b791b787fc7bf3c04405858dce126e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid implementation of incremental index updates. The core rebuild_incremental_with_options() method correctly detects added, modified (via mtime/size comparison), and deleted files, then applies targeted posting-list mutations while preserving unchanged entries. Format version bumped to v3 with backward-incompatible change (added deleted flag to FileEntry serialization) that correctly triggers full rebuild on old indices. Verbose logging in main.rs properly distinguishes 'full rebuild' vs 'incremental update' with timing and stats. Four unit tests cover addition, removal, modification, and mixed changes; one CLI integration test verifies verbose output differentiation. The 5k-file benchmark showed incremental build-stage is ~3x faster than full rebuild. All existing tests pass. Worker followed TDD approach and ran full Rust + Python gate suites.",
+    "issues": [
+      {
+        "file": "rust_core/src/index.rs",
+        "line": 46,
+        "severity": "non_blocking",
+        "description": "file_trigrams field is reconstructed on every index load via rebuild_file_trigrams() (O(total_postings)) but never serialized. For large indices this adds significant load-time overhead. The handoff acknowledges this as a known limitation. Consider persisting file_trigrams in a future format version to avoid the reverse-map reconstruction."
+      },
+      {
+        "file": "rust_core/src/index.rs",
+        "line": 506,
+        "severity": "non_blocking",
+        "description": "Soft-delete design means deleted file entries and their file_ids are never reclaimed. Over many incremental cycles, the files vec grows monotonically and the file_id space (u32) could fragment. Not a practical concern for typical use (billions of deletes needed to exhaust u32), but a full compaction pass could be added if index size becomes an issue."
+      },
+      {
+        "file": "rust_core/src/index.rs",
+        "line": 812,
+        "severity": "non_blocking",
+        "description": "file_count() changed from O(1) self.files.len() to O(n) filtered count. Called only in verbose logging paths so not performance-critical, but worth noting for future callers."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The incremental update uses a soft-delete approach where deleted file entries remain in the files vec with deleted=true and file_ids are never reclaimed. This is a significant architectural pattern for the index subsystem that future workers should know about. AGENTS.md mentions 'TGI magic + version byte' but doesn't describe the soft-delete file_id management or the file_trigrams reverse-map design.",
+      "evidence": "rust_core/src/index.rs:506 — self.files[file_id].deleted = true; new files always appended at self.files.len(). The worker documented this in .factory/library/index-incremental-updates.md but it's not in AGENTS.md's key invariants section."
+    },
+    {
+      "area": "conventions",
+      "observation": "Index format version was bumped from 2 to 3. AGENTS.md key invariant #6 says 'Index binary format starts with TGI\\x00 magic + version byte' but doesn't track the current version number. Workers making index changes need to know the current version to avoid conflicts.",
+      "evidence": "rust_core/src/index.rs — INDEX_FORMAT_VERSION changed from 2 to 3 in this commit."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The incremental index update feature is well-implemented and passes review. All required behaviors are covered: file addition, removal, modification detection via mtime/size; stale entry removal; unchanged entry preservation; incremental-faster-than-full-rebuild at 5k+ files; verbose telemetry distinguishing rebuild modes. Four unit tests and one CLI integration test provide adequate coverage. Three non-blocking issues noted: file_trigrams not persisted (load-time overhead), soft-delete fragmentation over time, and file_count() becoming O(n). The worker followed the rust-worker skill procedure correctly (TDD, cargo test, clippy, full Python suite)."
+}
