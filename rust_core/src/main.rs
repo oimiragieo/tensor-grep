@@ -153,6 +153,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub diff: bool,
 
+    /// Verify rewrites after apply by re-searching for replacement pattern
+    #[arg(long)]
+    pub verify: bool,
+
     /// Emit machine-readable routing metadata as JSON
     #[arg(long)]
     pub json: bool,
@@ -398,6 +402,25 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     if args.index {
         return handle_index_search(&args);
+    }
+
+    if !args.index && !args.invert_match && args.context.is_none() && args.max_count.is_none()
+        && !args.word_regexp && args.globs.is_empty()
+    {
+        let index_path = resolve_index_path(&args.path);
+        if index_path.exists() {
+            if let Ok(loaded) = TrigramIndex::load(&index_path) {
+                if !loaded.is_stale() && args.pattern.len() >= 3 {
+                    if args.verbose {
+                        eprintln!(
+                            "[routing] warm index found ({} files), using index-accelerated path",
+                            loaded.file_count()
+                        );
+                    }
+                    return run_index_query(&args, &loaded);
+                }
+            }
+        }
     }
 
     if !args.gpu_device_ids.is_empty() {
@@ -680,6 +703,24 @@ fn handle_ast_rewrite_apply(
         "[rewrite] applied {} edit(s)",
         plan.edits.len(),
     );
+
+    if args.verify {
+        let verification = plan.verify(backend)?;
+        if verification.mismatches.is_empty() {
+            eprintln!(
+                "[verify] {}/{} edits verified",
+                verification.verified, verification.total_edits
+            );
+        } else {
+            eprintln!(
+                "[verify] {}/{} edits verified, {} mismatches",
+                verification.verified, verification.total_edits, verification.mismatches.len()
+            );
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&verification)?);
+            }
+        }
+    }
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&plan)?);

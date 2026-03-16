@@ -61,7 +61,54 @@ pub struct OverlapRejection {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VerifyResult {
+    pub total_edits: usize,
+    pub verified: usize,
+    pub mismatches: Vec<VerifyMismatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VerifyMismatch {
+    pub edit_id: String,
+    pub file: PathBuf,
+    pub line: usize,
+    pub expected: String,
+    pub actual: String,
+}
+
 impl RewritePlan {
+    pub fn verify(&self, backend: &AstBackend) -> Result<VerifyResult> {
+        let search_matches = backend.search(&self.replacement, &self.lang, &self.edits.first()
+            .map(|e| e.file.parent().unwrap_or(Path::new(".")).to_str().unwrap_or("."))
+            .unwrap_or("."))?;
+
+        let found_set: std::collections::HashSet<(String, usize)> = search_matches.iter()
+            .map(|m| (m.file.to_string_lossy().to_string(), m.line))
+            .collect();
+
+        let mut mismatches = Vec::new();
+        for edit in &self.edits {
+            let key = (edit.file.to_string_lossy().to_string(), edit.line);
+            if !found_set.contains(&key) {
+                mismatches.push(VerifyMismatch {
+                    edit_id: edit.id.clone(),
+                    file: edit.file.clone(),
+                    line: edit.line,
+                    expected: edit.replacement_text.clone(),
+                    actual: String::from("<not found>"),
+                });
+            }
+        }
+
+        let verified = self.edits.len() - mismatches.len();
+        Ok(VerifyResult {
+            total_edits: self.edits.len(),
+            verified,
+            mismatches,
+        })
+    }
+
     pub fn generate_diff(&self) -> Result<String> {
         let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
         for edit in &self.edits {

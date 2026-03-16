@@ -241,6 +241,44 @@ fn test_tg_search_index_handles_corrupt_index() {
 }
 
 #[test]
+fn test_tg_search_auto_routes_to_warm_index() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    // Build index explicitly first
+    tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert!(dir.path().join(".tg_index").exists());
+
+    // Now search WITHOUT --index but with --verbose to see routing
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--verbose")
+        .arg("--count")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("warm index found") || stderr.contains("TrigramIndex"),
+        "should auto-route to index: stderr={stderr}"
+    );
+    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    assert_eq!(count, 2);
+}
+
+#[test]
 fn test_tg_search_index_case_insensitive() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());

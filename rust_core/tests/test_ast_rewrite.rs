@@ -479,3 +479,88 @@ fn test_rewrite_newline_preservation() {
     let result = fs::read_to_string(&file_path).unwrap();
     assert!(result.contains("\r\n"), "should preserve CRLF line endings: {:?}", result.as_bytes());
 }
+
+#[test]
+fn test_verify_after_apply_succeeds() {
+    let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_and_apply(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    let verification = plan.verify(&backend).unwrap();
+    assert_eq!(verification.total_edits, 2);
+    assert_eq!(verification.verified, 2);
+    assert!(verification.mismatches.is_empty());
+}
+
+#[test]
+fn test_tg_run_rewrite_apply_verify_cli() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("applied"), "stderr={stderr}");
+    assert!(stderr.contains("verified"), "stderr={stderr}");
+
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(content, "lambda x, y: x + y\n");
+}
+
+#[test]
+fn test_end_to_end_search_plan_diff_apply_verify() {
+    let source = "def greet(name): return name\ndef farewell(who): return who\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+    let path_str = file_path.to_str().unwrap();
+
+    // Search
+    let matches = backend.search("def $F($$$ARGS): return $EXPR", "python", path_str).unwrap();
+    assert_eq!(matches.len(), 2);
+
+    // Plan
+    let plan = backend.plan_rewrites(
+        "def $F($$$ARGS): return $EXPR",
+        "lambda $$$ARGS: $EXPR",
+        "python",
+        path_str,
+    ).unwrap();
+    assert_eq!(plan.edits.len(), 2);
+    assert_eq!(plan.version, 1);
+    assert!(!plan.edits[0].id.is_empty());
+
+    // Diff
+    let diff = plan.generate_diff().unwrap();
+    assert!(diff.contains("-def greet(name): return name"));
+    assert!(diff.contains("+lambda name: name"));
+
+    // Apply
+    AstBackend::apply_rewrites(&plan).unwrap();
+    let after = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(after, "lambda name: name\nlambda who: who\n");
+
+    // Verify (re-search with replacement pattern)
+    let verification = plan.verify(&backend).unwrap();
+    assert_eq!(verification.verified, 2);
+    assert!(verification.mismatches.is_empty());
+}
