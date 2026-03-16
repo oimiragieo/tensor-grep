@@ -1,78 +1,48 @@
 {
   "milestone": "native-cpu-engine",
-  "round": 1,
+  "round": 2,
   "status": "fail",
   "assertionsSummary": {
     "total": 27,
-    "passed": 15,
-    "failed": 12,
+    "passed": 25,
+    "failed": 2,
     "blocked": 0
   },
   "passedAssertions": [
     "VAL-CPU-002",
     "VAL-CPU-003",
-    "VAL-CPU-011",
-    "VAL-CPU-012",
-    "VAL-CPU-013",
     "VAL-CPU-004",
     "VAL-CPU-007",
     "VAL-CPU-009",
-    "VAL-CPU-019",
-    "VAL-CPU-020",
+    "VAL-CPU-011",
+    "VAL-CPU-012",
+    "VAL-CPU-013",
     "VAL-CPU-014",
     "VAL-CPU-015",
     "VAL-CPU-016",
     "VAL-CPU-017",
-    "VAL-CPU-022"
+    "VAL-CPU-019",
+    "VAL-CPU-020",
+    "VAL-CPU-022",
+    "VAL-CPU-001",
+    "VAL-CPU-005",
+    "VAL-CPU-006",
+    "VAL-CPU-008",
+    "VAL-CPU-018",
+    "VAL-CPU-021",
+    "VAL-CPU-023",
+    "VAL-CPU-024",
+    "VAL-CPU-025",
+    "VAL-CPU-027"
   ],
   "failedAssertions": [
     {
-      "id": "VAL-CPU-001",
-      "reason": "tg does not replicate rg's implicit is_tty() formatting behavior for single files"
-    },
-    {
-      "id": "VAL-CPU-008",
-      "reason": "tg -c aggregated counts globally rather than per-file when searching a directory"
-    },
-    {
-      "id": "VAL-CPU-018",
-      "reason": "Python directory scanner passes everything to RustCoreBackend, bypassing ignore::WalkParallel"
-    },
-    {
-      "id": "VAL-CPU-021",
-      "reason": "No error message is printed"
-    },
-    {
-      "id": "VAL-CPU-025",
-      "reason": "Native engine ignores .gitignore because python scanner feeds explicit file list"
+      "id": "VAL-CPU-010",
+      "reason": "Option --ndjson output has interspersed debug text (\"native NDJSON search failed for ...\") and lacks type keys, breaking JSON parsing."
     },
     {
       "id": "VAL-CPU-026",
-      "reason": "Does not skip binary files"
-    },
-    {
-      "id": "VAL-CPU-027",
-      "reason": "Returns 1 instead of 2 for invalid regex"
-    },
-    {
-      "id": "VAL-CPU-005",
-      "reason": "Matches differ between tg and rg"
-    },
-    {
-      "id": "VAL-CPU-006",
-      "reason": "File match counts differ between tg and rg"
-    },
-    {
-      "id": "VAL-CPU-010",
-      "reason": "Option --ndjson does not exist (Did you mean --json?)"
-    },
-    {
-      "id": "VAL-CPU-023",
-      "reason": "Ruff check failed because of untracked files `stream_test.py` and `test_group2.py` generated during testing which violate lint rules."
-    },
-    {
-      "id": "VAL-CPU-024",
-      "reason": "Regression check failed: tg_time_s regressed by 8.80% for File Glob Filtering."
+      "reason": "Failed parity: Explicit warning or string matching did not align correctly with rg binary file skipping behavior."
     }
   ],
   "blockedAssertions": [],

@@ -1,0 +1,140 @@
+{
+  "groupId": "cli-parity",
+  "testedAt": "2026-03-16T21:06:12.409848Z",
+  "isolation": {
+    "context": "cli-parity workspace direct test"
+  },
+  "toolsUsed": [
+    "python test script",
+    "powershell"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CPU-001",
+      "title": "Cold literal search on single file",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Search for ERROR",
+          "expected": "Match rg exactly",
+          "observed": "Matched"
+        }
+      ],
+      "evidence": {
+        "diff": "native-cpu-engine/cli-parity/VAL-CPU-001-diff.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-005",
+      "title": "Single-file chunk parallelism activates",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Search large file",
+          "expected": "Counts match",
+          "observed": "Matched"
+        }
+      ],
+      "evidence": {
+        "output": "native-cpu-engine/cli-parity/VAL-CPU-005-diff.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-006",
+      "title": "Many-file directory search",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Search 1000+ files",
+          "expected": "Counts match rg",
+          "observed": "Matched"
+        }
+      ],
+      "evidence": {
+        "output": "native-cpu-engine/cli-parity/VAL-CPU-006-diff.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-008",
+      "title": "--count flag returns per-file match counts",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run with -c",
+          "expected": "Output identical to rg -c",
+          "observed": "Matched"
+        }
+      ],
+      "evidence": {
+        "output": "native-cpu-engine/cli-parity/VAL-CPU-008-diff.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-010",
+      "title": "--ndjson output with native engine",
+      "status": "fail",
+      "steps": [],
+      "evidence": {
+        "output": "native-cpu-engine/cli-parity/VAL-CPU-010-ndjson.txt"
+      },
+      "issues": "Missing type in ndjson"
+    },
+    {
+      "id": "VAL-CPU-018",
+      "title": "Comprehensive text parity with rg",
+      "status": "pass",
+      "steps": [],
+      "evidence": {
+        "failures": "native-cpu-engine/cli-parity/VAL-CPU-018-patterns.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-021",
+      "title": "Non-existent path produces clear error",
+      "status": "pass",
+      "steps": [],
+      "evidence": {
+        "stderr": "native-cpu-engine/cli-parity/VAL-CPU-021-stderr.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-025",
+      "title": ".gitignore rules respected",
+      "status": "pass",
+      "steps": [],
+      "evidence": {
+        "output": "native-cpu-engine/cli-parity/VAL-CPU-025-ignore.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-026",
+      "title": "Binary file detection matches rg behavior",
+      "status": "fail",
+      "steps": [],
+      "evidence": {
+        "output": "native-cpu-engine/cli-parity/VAL-CPU-026-binary.txt"
+      },
+      "issues": "Binary file detection failed. TG: '', RG: ''"
+    },
+    {
+      "id": "VAL-CPU-027",
+      "title": "Exit code contract",
+      "status": "pass",
+      "steps": [],
+      "evidence": {
+        "output": "native-cpu-engine/cli-parity/VAL-CPU-027-codes.txt"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 10 assertions: 8 passed, 2 failed."
+}
