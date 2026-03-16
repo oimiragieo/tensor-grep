@@ -1,0 +1,122 @@
+{
+  "groupId": "cli-match-routing",
+  "testedAt": "2026-03-16T00:36:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "binary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "benchData": "C:\\dev\\projects\\tensor-grep\\bench_data",
+    "astData": "C:\\dev\\projects\\tensor-grep\\benchmarks\\bench_ast_data"
+  },
+  "toolsUsed": ["Execute (PowerShell)", "python (JSON validation)"],
+  "assertions": [
+    {
+      "id": "VAL-API-007",
+      "title": "CPU/AST search --json includes match results",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run tg.exe search ERROR bench_data/sample_test.log --json",
+          "expected": "JSON output with matches array containing objects with file, line, text fields",
+          "observed": "JSON with total_matches=1, matches array of length 1, each object has file, line, text fields. routing_backend=CpuBackend, routing_reason=cpu-native."
+        },
+        {
+          "action": "Validate matches count equals total_matches (CPU search)",
+          "expected": "matches.length == total_matches",
+          "observed": "matches.length=1 == total_matches=1. Pass."
+        },
+        {
+          "action": "Run tg.exe run \"def $F($$$): $$$\" benchmarks/bench_ast_data --json",
+          "expected": "JSON output with matches array for AST search",
+          "observed": "JSON with total_matches=15000, matches array of length 15000, each object has file, line, text fields. routing_backend=AstBackend, routing_reason=ast-native."
+        },
+        {
+          "action": "Validate matches count equals total_matches (AST search)",
+          "expected": "matches.length == total_matches",
+          "observed": "matches.length=15000 == total_matches=15000. Pass."
+        }
+      ],
+      "evidence": {
+        "terminalCaptures": [
+          "harness-api/cli-match-routing/VAL-API-007-search-json-small.txt",
+          "harness-api/cli-match-routing/VAL-API-007-ast-json-raw.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "N/A (CLI tool)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-008",
+      "title": "Rewrite plan JSON includes routing fields",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run tg.exe run --rewrite \"replacement\" \"def $F($$$): $$$\" benchmarks/bench_ast_data",
+          "expected": "JSON output with routing_backend and routing_reason at top level",
+          "observed": "JSON with routing_backend=\"AstBackend\", routing_reason=\"ast-native\", version=1, total_edits=15000. Both routing fields present and non-empty."
+        },
+        {
+          "action": "Assert routing_backend == \"AstBackend\"",
+          "expected": "routing_backend is \"AstBackend\"",
+          "observed": "routing_backend=\"AstBackend\". Pass."
+        },
+        {
+          "action": "Assert routing_reason is non-empty",
+          "expected": "routing_reason is a non-empty string",
+          "observed": "routing_reason=\"ast-native\". Pass."
+        }
+      ],
+      "evidence": {
+        "terminalCaptures": [
+          "harness-api/cli-match-routing/VAL-API-008-rewrite-plan-raw.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "N/A (CLI tool)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-009",
+      "title": "Apply+verify JSON includes routing fields",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create temp directory with test Python file containing two function definitions",
+          "expected": "Temp file created with def hello(x) and def goodbye(y)",
+          "observed": "File created at C:\\Users\\oimir\\AppData\\Local\\Temp\\tg-test-val009-1308040905\\test_apply.py"
+        },
+        {
+          "action": "Run tg.exe run --rewrite \"def replaced(z): return z\" --apply --verify --json \"def $F($$$): $$$\" <temp-dir>",
+          "expected": "JSON output with routing_backend and routing_reason fields present and non-null",
+          "observed": "JSON with routing_backend=\"AstBackend\", routing_reason=\"ast-native\", version=1. Contains plan and verification sub-objects. verification.verified=2, verification.mismatches=[]."
+        },
+        {
+          "action": "Assert routing fields are present and non-null at top level",
+          "expected": "routing_backend and routing_reason non-null",
+          "observed": "routing_backend=\"AstBackend\" (non-null), routing_reason=\"ast-native\" (non-null, non-empty). Pass."
+        },
+        {
+          "action": "Verify file was actually modified by --apply",
+          "expected": "File content shows replaced functions",
+          "observed": "File now contains two \"def replaced(z): return z\" entries. Apply worked correctly."
+        },
+        {
+          "action": "Clean up temp directory",
+          "expected": "Temp directory removed",
+          "observed": "Temp directory removed successfully."
+        }
+      ],
+      "evidence": {
+        "terminalCaptures": [
+          "harness-api/cli-match-routing/VAL-API-009-apply-verify-stdout.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "N/A (CLI tool)"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: 3 passed, 0 failed. VAL-API-007 confirmed CPU search (matches=1/1) and AST search (matches=15000/15000) both include full match details in --json output. VAL-API-008 confirmed rewrite plan JSON includes routing_backend=\"AstBackend\" and routing_reason=\"ast-native\". VAL-API-009 confirmed apply+verify JSON includes routing fields at top level with non-null values, and verified file modifications were correctly applied."
+}
