@@ -66,11 +66,13 @@ impl TrigramIndex {
     }
 }
 
-const INDEX_MAGIC: &[u8; 4] = b"TGI1";
+const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
+const INDEX_FORMAT_VERSION: u8 = 1;
 
 fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.extend_from_slice(INDEX_MAGIC);
+    buf.push(INDEX_FORMAT_VERSION);
 
     let files_count = index.files.len() as u32;
     buf.extend_from_slice(&files_count.to_le_bytes());
@@ -99,10 +101,20 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
 fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     let mut pos = 0;
 
-    if data.len() < 4 || &data[0..4] != INDEX_MAGIC {
+    if data.len() < 5 || &data[0..4] != INDEX_MAGIC {
         anyhow::bail!("invalid index file magic");
     }
     pos += 4;
+
+    let version = data[pos];
+    if version != INDEX_FORMAT_VERSION {
+        anyhow::bail!(
+            "unsupported index format version {} (expected {})",
+            version,
+            INDEX_FORMAT_VERSION
+        );
+    }
+    pos += 1;
 
     let files_count = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
     pos += 4;
@@ -164,9 +176,13 @@ pub struct IndexQueryResult {
 
 impl TrigramIndex {
     pub fn build(root: &Path) -> Result<Self> {
+        Self::build_with_options(root, false)
+    }
+
+    pub fn build_with_options(root: &Path, no_ignore: bool) -> Result<Self> {
         let walker = ignore::WalkBuilder::new(root)
             .hidden(true)
-            .git_ignore(true)
+            .git_ignore(!no_ignore)
             .build();
 
         let paths: Vec<PathBuf> = walker
@@ -319,22 +335,59 @@ impl TrigramIndex {
     }
 
     pub fn is_stale(&self) -> bool {
+        self.staleness_reason().is_some()
+    }
+
+    pub fn staleness_reason(&self) -> Option<String> {
+        let indexed_paths: std::collections::HashSet<&Path> =
+            self.files.iter().map(|e| e.path.as_path()).collect();
+
         for entry in &self.files {
-            if let Ok(meta) = entry.path.metadata() {
-                let current_mtime = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0);
-                if current_mtime != entry.mtime_ns || meta.len() != entry.size {
-                    return true;
+            match entry.path.metadata() {
+                Ok(meta) => {
+                    let current_mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0);
+                    if current_mtime != entry.mtime_ns {
+                        return Some(format!("file modified: {}", entry.path.display()));
+                    }
+                    if meta.len() != entry.size {
+                        return Some(format!("file size changed: {}", entry.path.display()));
+                    }
                 }
-            } else {
-                return true;
+                Err(_) => {
+                    return Some(format!("file deleted: {}", entry.path.display()));
+                }
             }
         }
-        false
+
+        if let Some(first) = self.files.first() {
+            let root = first
+                .path
+                .parent()
+                .unwrap_or(Path::new("."));
+            if root.is_dir() {
+                let current_files: Vec<PathBuf> = ignore::WalkBuilder::new(root)
+                    .hidden(true)
+                    .git_ignore(true)
+                    .build()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+                    .map(|e| e.into_path())
+                    .collect();
+
+                for file in &current_files {
+                    if !indexed_paths.contains(file.as_path()) {
+                        return Some(format!("new file: {}", file.display()));
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -596,5 +649,128 @@ mod tests {
         let index = TrigramIndex::build(dir.path()).unwrap();
         let candidates = index.query_candidates("ab", false);
         assert!(candidates.is_empty(), "patterns shorter than 3 bytes cannot use trigram index");
+    }
+
+    #[test]
+    fn test_staleness_detects_content_change() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        assert!(index.staleness_reason().is_none());
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_test_file(dir.path(), "a.txt", "changed content\n");
+
+        let reason = index.staleness_reason().unwrap();
+        assert!(reason.contains("a.txt"), "reason={reason}");
+    }
+
+    #[test]
+    fn test_staleness_detects_file_deletion() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello\n");
+        write_test_file(dir.path(), "b.txt", "world\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+
+        fs::remove_file(dir.path().join("b.txt")).unwrap();
+        let reason = index.staleness_reason().unwrap();
+        assert!(reason.contains("deleted"), "reason={reason}");
+        assert!(reason.contains("b.txt"), "reason={reason}");
+    }
+
+    #[test]
+    fn test_staleness_detects_new_file() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        assert!(index.staleness_reason().is_none());
+
+        write_test_file(dir.path(), "b.txt", "new file\n");
+        let reason = index.staleness_reason().unwrap();
+        assert!(reason.contains("new file"), "reason={reason}");
+    }
+
+    #[test]
+    fn test_staleness_detects_size_change_same_mtime() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "short\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_test_file(dir.path(), "a.txt", "much longer content here to change size\n");
+        let reason = index.staleness_reason();
+        assert!(reason.is_some(), "should detect change");
+    }
+
+    #[test]
+    fn test_format_version_in_binary() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let index_path = dir.path().join(".tg_index");
+        index.save(&index_path).unwrap();
+
+        let data = fs::read(&index_path).unwrap();
+        assert_eq!(&data[0..4], b"TGI\x00", "magic bytes");
+        assert_eq!(data[4], 1, "format version should be 1");
+    }
+
+    #[test]
+    fn test_load_rejects_bad_magic() {
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join(".tg_index");
+        fs::write(&index_path, b"BADMAGIC").unwrap();
+
+        let result = TrigramIndex::load(&index_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("magic"), "err={err}");
+    }
+
+    #[test]
+    fn test_load_rejects_future_version() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello\n");
+        let index = TrigramIndex::build(dir.path()).unwrap();
+        let index_path = dir.path().join(".tg_index");
+        index.save(&index_path).unwrap();
+
+        let mut data = fs::read(&index_path).unwrap();
+        data[4] = 99;
+        fs::write(&index_path, &data).unwrap();
+
+        let result = TrigramIndex::load(&index_path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("version"), "err={err}");
+    }
+
+    #[test]
+    fn test_load_rejects_truncated_file() {
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join(".tg_index");
+        fs::write(&index_path, b"TGI").unwrap();
+
+        let result = TrigramIndex::load(&index_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rebuild_after_staleness_produces_correct_results() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "hello world\n");
+        let index1 = TrigramIndex::build(dir.path()).unwrap();
+        let r1 = index1.search("hello", false, true).unwrap();
+        assert_eq!(r1.len(), 1);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_test_file(dir.path(), "a.txt", "goodbye world\n");
+        assert!(index1.is_stale());
+
+        let index2 = TrigramIndex::build(dir.path()).unwrap();
+        let r2_hello = index2.search("hello", false, true).unwrap();
+        assert!(r2_hello.is_empty(), "old content should not match after rebuild");
+        let r2_goodbye = index2.search("goodbye", false, true).unwrap();
+        assert_eq!(r2_goodbye.len(), 1);
     }
 }

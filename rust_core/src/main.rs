@@ -472,12 +472,22 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
     let index_path = resolve_index_path(&args.path);
 
     let index = if index_path.exists() {
-        let loaded = TrigramIndex::load(&index_path)?;
-        if loaded.is_stale() {
-            if args.verbose {
-                eprintln!("[index] stale index detected, rebuilding...");
+        let loaded = match TrigramIndex::load(&index_path) {
+            Ok(idx) => idx,
+            Err(e) => {
+                if args.verbose {
+                    eprintln!("[index] failed to load index: {e}, rebuilding...");
+                }
+                let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
+                fresh.save(&index_path)?;
+                return run_index_query(args, &fresh);
             }
-            let fresh = TrigramIndex::build(Path::new(&args.path))?;
+        };
+        if let Some(reason) = loaded.staleness_reason() {
+            if args.verbose {
+                eprintln!("[index] stale: {reason}, rebuilding...");
+            }
+            let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
             fresh.save(&index_path)?;
             fresh
         } else {
@@ -494,7 +504,7 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
         if args.verbose {
             eprintln!("[index] building index for {}...", args.path);
         }
-        let fresh = TrigramIndex::build(Path::new(&args.path))?;
+        let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
         fresh.save(&index_path)?;
         if args.verbose {
             eprintln!(
@@ -507,6 +517,10 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
         fresh
     };
 
+    run_index_query(args, &index)
+}
+
+fn run_index_query(args: &SearchArgs, index: &TrigramIndex) -> anyhow::Result<()> {
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::INDEX);
     }
@@ -514,12 +528,24 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
     let results = index.search(&args.pattern, args.ignore_case, args.fixed_strings)?;
 
     if args.json {
-        return emit_json_metadata(
-            RoutingDecision::INDEX,
-            &args.pattern,
-            &args.path,
-            results.len(),
-        );
+        let payload = SearchResultJson {
+            version: 1,
+            routing_backend: RoutingDecision::INDEX.backend,
+            routing_reason: RoutingDecision::INDEX.reason,
+            query: &args.pattern,
+            path: &args.path,
+            total_matches: results.len(),
+            matches: results
+                .iter()
+                .map(|r| SearchMatchJson {
+                    file: r.file.to_string_lossy().into_owned(),
+                    line: r.line,
+                    text: r.text.clone(),
+                })
+                .collect(),
+        };
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
     }
 
     if args.count {
@@ -532,6 +558,24 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[derive(Serialize)]
+struct SearchResultJson<'a> {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    query: &'a str,
+    path: &'a str,
+    total_matches: usize,
+    matches: Vec<SearchMatchJson>,
+}
+
+#[derive(Serialize)]
+struct SearchMatchJson {
+    file: String,
+    line: usize,
+    text: String,
 }
 
 fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
