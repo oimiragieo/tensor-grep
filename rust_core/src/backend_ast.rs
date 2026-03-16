@@ -31,6 +31,7 @@ impl AstMatch {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RewriteEdit {
+    pub id: String,
     pub file: PathBuf,
     pub line: usize,
     pub byte_range: Range<usize>,
@@ -41,9 +42,12 @@ pub struct RewriteEdit {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RewritePlan {
+    pub version: u32,
     pub pattern: String,
     pub replacement: String,
     pub lang: String,
+    pub total_files_scanned: usize,
+    pub total_edits: usize,
     pub edits: Vec<RewriteEdit>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rejected_overlaps: Vec<OverlapRejection>,
@@ -243,6 +247,7 @@ impl AstBackend {
             anyhow::bail!("Invalid pattern: parse error");
         }
         let files = collect_source_files(Path::new(path), language)?;
+        let total_files_scanned = files.len();
 
         let file_results: Vec<Result<Vec<RewriteEdit>>> = files
             .par_iter()
@@ -255,51 +260,143 @@ impl AstBackend {
         }
 
         edits.sort_by(|a, b| a.file.cmp(&b.file).then(a.byte_range.start.cmp(&b.byte_range.start)));
-
+        assign_edit_ids(&mut edits);
         let (valid_edits, rejected_overlaps) = validate_no_overlaps(edits);
 
         Ok(RewritePlan {
+            version: 1,
             pattern: pattern.to_string(),
             replacement: replacement.to_string(),
             lang: lang.to_string(),
+            total_files_scanned,
+            total_edits: valid_edits.len(),
             edits: valid_edits,
             rejected_overlaps,
         })
     }
 
     pub fn apply_rewrites(plan: &RewritePlan) -> Result<usize> {
-        let mut files_written = 0;
         let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
         for edit in &plan.edits {
             edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
         }
 
-        for (file, file_edits) in &edits_by_file {
-            let original = std::fs::read_to_string(file)
-                .with_context(|| format!("failed to read {}", file.display()))?;
+        let files: Vec<(&Path, &Vec<&RewriteEdit>)> = edits_by_file.iter().map(|(k, v)| (*k, v)).collect();
+        let results: Vec<Result<()>> = files
+            .par_iter()
+            .map(|(file, file_edits)| apply_edits_to_file(file, file_edits))
+            .collect();
 
-            let mut result = String::with_capacity(original.len());
-            let mut cursor = 0usize;
-
-            for edit in file_edits {
-                if edit.byte_range.start < cursor {
-                    anyhow::bail!(
-                        "overlapping edit in {}: byte {} < cursor {}",
-                        file.display(), edit.byte_range.start, cursor
-                    );
-                }
-                result.push_str(&original[cursor..edit.byte_range.start]);
-                result.push_str(&edit.replacement_text);
-                cursor = edit.byte_range.end;
-            }
-            result.push_str(&original[cursor..]);
-
-            std::fs::write(file, &result)
-                .with_context(|| format!("failed to write {}", file.display()))?;
+        let mut files_written = 0;
+        for result in results {
+            result?;
             files_written += 1;
         }
 
         Ok(files_written)
+    }
+
+    pub fn plan_and_apply(&self, pattern: &str, replacement: &str, lang: &str, path: &str) -> Result<RewritePlan> {
+        let language = resolve_language(lang)?;
+        let compiled_pattern = Pattern::try_new(pattern, language)
+            .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
+        if compiled_pattern.has_error() {
+            anyhow::bail!("Invalid pattern: parse error");
+        }
+        let files = collect_source_files(Path::new(path), language)?;
+        let total_files_scanned = files.len();
+
+        let file_results: Vec<Result<(Vec<RewriteEdit>, Option<(PathBuf, String)>)>> = files
+            .par_iter()
+            .map(|file| Self::plan_and_rewrite_file(&compiled_pattern, replacement, language, file))
+            .collect();
+
+        let mut all_edits = Vec::new();
+        let mut pending_writes: Vec<(PathBuf, String)> = Vec::new();
+        for result in file_results {
+            let (edits, write_op) = result?;
+            all_edits.extend(edits);
+            if let Some(w) = write_op {
+                pending_writes.push(w);
+            }
+        }
+
+        all_edits.sort_by(|a, b| a.file.cmp(&b.file).then(a.byte_range.start.cmp(&b.byte_range.start)));
+        assign_edit_ids(&mut all_edits);
+        let (valid_edits, rejected_overlaps) = validate_no_overlaps(all_edits);
+
+        pending_writes
+            .par_iter()
+            .try_for_each(|(file, content)| -> Result<()> {
+                std::fs::write(file, content)
+                    .with_context(|| format!("failed to write {}", file.display()))
+            })?;
+
+        Ok(RewritePlan {
+            version: 1,
+            pattern: pattern.to_string(),
+            replacement: replacement.to_string(),
+            lang: lang.to_string(),
+            total_files_scanned,
+            total_edits: valid_edits.len(),
+            edits: valid_edits,
+            rejected_overlaps,
+        })
+    }
+
+    fn plan_and_rewrite_file(
+        pattern: &Pattern,
+        replacement: &str,
+        lang: SupportLang,
+        file: &Path,
+    ) -> Result<(Vec<RewriteEdit>, Option<(PathBuf, String)>)> {
+        let bytes = std::fs::read(file)
+            .with_context(|| format!("failed to read source file {}", file.display()))?;
+        if bytes.is_empty() {
+            return Ok((Vec::new(), None));
+        }
+        let source = String::from_utf8(bytes)
+            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
+        let ast = lang.ast_grep(&source);
+        let file_owned = file.to_path_buf();
+        let mut line_starts: Option<Vec<usize>> = None;
+        let mut edits = Vec::new();
+
+        for matched in ast.root().find_all(pattern.clone()) {
+            let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+            let byte_range = matched.range();
+            let original_text = matched.text().to_string();
+            let metavar_env = extract_metavar_env(&source, matched.get_env());
+            let edit = matched.replace_by(replacement);
+            let inserted_bytes = edit.inserted_text;
+            let replacement_text = String::from_utf8(inserted_bytes)
+                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
+
+            edits.push(RewriteEdit {
+                id: String::new(),
+                file: file_owned.clone(),
+                line: line_number_for_byte(ls, byte_range.start),
+                byte_range,
+                original_text,
+                replacement_text,
+                metavar_env,
+            });
+        }
+
+        if edits.is_empty() {
+            return Ok((edits, None));
+        }
+
+        let mut rewritten = String::with_capacity(source.len());
+        let mut cursor = 0usize;
+        for edit in &edits {
+            rewritten.push_str(&source[cursor..edit.byte_range.start]);
+            rewritten.push_str(&edit.replacement_text);
+            cursor = edit.byte_range.end;
+        }
+        rewritten.push_str(&source[cursor..]);
+
+        Ok((edits, Some((file_owned, rewritten))))
     }
 
     fn plan_file_rewrites(
@@ -331,6 +428,7 @@ impl AstBackend {
                 .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
 
             edits.push(RewriteEdit {
+                id: String::new(),
                 file: file_owned.clone(),
                 line: line_number_for_byte(ls, byte_range.start),
                 byte_range,
@@ -385,6 +483,36 @@ fn build_match<'tree>(
         line: line_number_for_byte(line_starts, byte_range.start),
         matched_text,
         candidate,
+    }
+}
+
+fn apply_edits_to_file(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
+    let original = std::fs::read_to_string(file)
+        .with_context(|| format!("failed to read {}", file.display()))?;
+    let mut result = String::with_capacity(original.len());
+    let mut cursor = 0usize;
+    for edit in edits {
+        if edit.byte_range.start < cursor {
+            anyhow::bail!(
+                "overlapping edit in {}: byte {} < cursor {}",
+                file.display(), edit.byte_range.start, cursor
+            );
+        }
+        result.push_str(&original[cursor..edit.byte_range.start]);
+        result.push_str(&edit.replacement_text);
+        cursor = edit.byte_range.end;
+    }
+    result.push_str(&original[cursor..]);
+    std::fs::write(file, &result)
+        .with_context(|| format!("failed to write {}", file.display()))
+}
+
+fn assign_edit_ids(edits: &mut [RewriteEdit]) {
+    for (i, edit) in edits.iter_mut().enumerate() {
+        let stem = edit.file.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        edit.id = format!("e{i:04}:{stem}:{}-{}", edit.byte_range.start, edit.byte_range.end);
     }
 }
 

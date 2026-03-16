@@ -46,6 +46,11 @@ def copy_corpus(src: Path) -> Path:
     return tmp / "corpus"
 
 
+def median(values: list[float]) -> float:
+    s = sorted(values)
+    return s[len(s) // 2]
+
+
 def run_rewrite_benchmark(
     tg_binary: Path,
     corpus_dir: Path,
@@ -75,10 +80,28 @@ def run_rewrite_benchmark(
         finally:
             shutil.rmtree(work.parent, ignore_errors=True)
 
-    results["tg_plan_median_s"] = sorted(tg_plan_times)[len(tg_plan_times) // 2]
+    results["tg_plan_median_s"] = median(tg_plan_times)
     results["tg_plan_times"] = tg_plan_times
 
-    # --- tg apply ---
+    # --- tg diff (plan + diff generation) ---
+    tg_diff_times = []
+    for _ in range(runs):
+        work = copy_corpus(corpus_dir)
+        try:
+            start = time.perf_counter()
+            subprocess.run(
+                [str(tg_binary), "run", "--lang", "python", "--rewrite", replacement, "--diff", pattern, str(work)],
+                capture_output=True,
+                check=True,
+            )
+            tg_diff_times.append(time.perf_counter() - start)
+        finally:
+            shutil.rmtree(work.parent, ignore_errors=True)
+
+    results["tg_diff_median_s"] = median(tg_diff_times)
+    results["tg_diff_times"] = tg_diff_times
+
+    # --- tg apply (single-pass plan+write) ---
     tg_apply_times = []
     for _ in range(runs):
         work = copy_corpus(corpus_dir)
@@ -93,7 +116,7 @@ def run_rewrite_benchmark(
         finally:
             shutil.rmtree(work.parent, ignore_errors=True)
 
-    results["tg_apply_median_s"] = sorted(tg_apply_times)[len(tg_apply_times) // 2]
+    results["tg_apply_median_s"] = median(tg_apply_times)
     results["tg_apply_times"] = tg_apply_times
 
     # --- sg rewrite (--update-all for non-interactive) ---
@@ -113,7 +136,7 @@ def run_rewrite_benchmark(
             finally:
                 shutil.rmtree(work.parent, ignore_errors=True)
 
-        results["sg_apply_median_s"] = sorted(sg_times)[len(sg_times) // 2]
+        results["sg_apply_median_s"] = median(sg_times)
         results["sg_apply_times"] = sg_times
 
         tg_med = results["tg_apply_median_s"]
@@ -145,6 +168,7 @@ def main() -> None:
     args.output.write_text(json.dumps(results, indent=2))
 
     print(f"tg plan  median: {results['tg_plan_median_s']:.3f}s")
+    print(f"tg diff  median: {results['tg_diff_median_s']:.3f}s")
     print(f"tg apply median: {results['tg_apply_median_s']:.3f}s")
     if results.get("sg_apply_median_s"):
         print(f"sg apply median: {results['sg_apply_median_s']:.3f}s")

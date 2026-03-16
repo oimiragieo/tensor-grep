@@ -445,6 +445,9 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     let backend = AstBackend::new();
 
     if let Some(replacement) = &args.rewrite {
+        if args.apply && !args.diff {
+            return handle_ast_rewrite_apply(&backend, &args, replacement);
+        }
         return handle_ast_rewrite(&backend, &args, replacement);
     }
 
@@ -498,7 +501,7 @@ fn handle_ast_rewrite(
         return Ok(());
     }
 
-    if args.json || !args.apply {
+    if !args.apply {
         println!("{}", serde_json::to_string_pretty(&plan)?);
         return Ok(());
     }
@@ -509,6 +512,41 @@ fn handle_ast_rewrite(
         plan.edits.len(),
         files_written
     );
+
+    Ok(())
+}
+
+fn handle_ast_rewrite_apply(
+    backend: &AstBackend,
+    args: &RunArgs,
+    replacement: &str,
+) -> anyhow::Result<()> {
+    if args.verbose {
+        emit_verbose_metadata(RoutingDecision::AST);
+    }
+
+    let plan = backend.plan_and_apply(&args.pattern, replacement, &args.lang, &args.path)?;
+
+    if !plan.rejected_overlaps.is_empty() {
+        eprintln!(
+            "[rewrite] {} overlapping edit(s) rejected",
+            plan.rejected_overlaps.len()
+        );
+    }
+
+    if plan.edits.is_empty() {
+        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        return Ok(());
+    }
+
+    eprintln!(
+        "[rewrite] applied {} edit(s)",
+        plan.edits.len(),
+    );
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+    }
 
     Ok(())
 }

@@ -264,6 +264,74 @@ fn test_tg_run_rewrite_no_matches_reports_nothing() {
 }
 
 #[test]
+fn test_rewrite_plan_json_contract_fields() {
+    let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(plan["version"], 1);
+    assert_eq!(plan["total_files_scanned"], 1);
+    assert_eq!(plan["total_edits"], 2);
+    assert_eq!(plan["pattern"], "def $F($$$ARGS): return $EXPR");
+    assert_eq!(plan["replacement"], "lambda $$$ARGS: $EXPR");
+    assert_eq!(plan["lang"], "python");
+
+    let edits = plan["edits"].as_array().unwrap();
+    assert_eq!(edits.len(), 2);
+
+    let e0 = &edits[0];
+    let id0 = e0["id"].as_str().unwrap();
+    assert!(id0.starts_with("e0000:"), "edit ID should be deterministic: {id0}");
+    assert!(id0.contains("fixture.py:"), "edit ID should contain filename: {id0}");
+    assert!(e0["metavar_env"]["F"].is_string());
+    assert!(e0["metavar_env"]["EXPR"].is_string());
+    assert!(e0["metavar_env"]["ARGS"].is_string());
+
+    let e1 = &edits[1];
+    let id1 = e1["id"].as_str().unwrap();
+    assert!(id1.starts_with("e0001:"), "second edit should have sequential ID: {id1}");
+    assert_ne!(id0, id1, "edit IDs must be unique");
+}
+
+#[test]
+fn test_plan_and_apply_single_pass_produces_correct_plan() {
+    let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_and_apply(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.version, 1);
+    assert_eq!(plan.total_files_scanned, 1);
+    assert_eq!(plan.total_edits, 2);
+    assert_eq!(plan.edits.len(), 2);
+    assert!(!plan.edits[0].id.is_empty());
+
+    let content = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(content, "lambda x, y: x + y\nlambda a, b: a * b\n");
+}
+
+#[test]
 fn test_tg_run_rewrite_diff_shows_unified_diff() {
     let source = "x = 1\ndef add(x, y): return x + y\nz = 3\n";
     let (_dir, file_path) = write_source_file("py", source);
