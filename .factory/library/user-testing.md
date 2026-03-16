@@ -1,6 +1,6 @@
-## Validation Surface (v2: Rust-first control plane)
+## Validation Surface (v3: Continuation Plan — all 7 priorities)
 
-**Mission v2 note:** The primary testing surface is now the Rust-compiled `tg.exe` binary and `cargo test`. Python pytest suite is a secondary regression gate. Validation runs on Windows native (no CI runner — local machine is the test host).
+**Mission v3 note:** The primary testing surface is the Rust-compiled `tg.exe` binary (`cargo test` + CLI invocation) and Python pytest suite. Validation runs on Windows native (no CI runner — local machine is the test host). This mission covers all 7 continuation plan priorities: JSON contract unification, benchmark expansion, routing hardening, GPU crossover, editor safety, index scaling, and harness workflow integration.
 
 The primary validation surfaces for tensor-grep are the `tg` CLI (now Rust-native), its Python API bindings (sidecar protocol), and its `pytest` integration test suite.
 

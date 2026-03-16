@@ -10,104 +10,84 @@ NOTE: Startup and cleanup are handled by `worker-base`. This skill defines the W
 ## When to Use This Skill
 
 Use this worker for:
-- Rust control plane changes (`rust_core/src/main.rs`, `backend_gpu.rs`, PyO3 configuration)
-- ast-grep-core embedding and AST backend implementation (`backend_ast.rs`)
-- Bigram index subsystem implementation
-- Rewrite pipeline and patch output
-- Benchmark gates (cargo hyperfine, cold-start measurement)
-
-## Dirty Primary Checkout Strategy
-
-If `C:\dev\projects\tensor-grep` has unrelated uncommitted changes on files you need to modify, **do NOT work there**. Create a clean isolated git worktree:
-
-```powershell
-git -C "C:\dev\projects\tensor-grep" worktree add "C:\dev\projects\tensor-grep-<feature-id>" HEAD
-```
-
-Work there, commit, then merge back:
-
-```powershell
-git -C "C:\dev\projects\tensor-grep" merge <branch> --no-edit
-```
-
-If merge fails due to conflicts, stash first:
-
-```powershell
-git -C "C:\dev\projects\tensor-grep" stash
-git -C "C:\dev\projects\tensor-grep" merge <branch> --no-edit
-git -C "C:\dev\projects\tensor-grep" stash pop
-```
+- Rust control plane changes (`rust_core/src/main.rs`, routing, JSON output)
+- ast-grep-core embedding and AST backend (`backend_ast.rs`)
+- Index subsystem (compression, incremental, regex) in `index.rs`
+- Rewrite pipeline safety (atomic writes, stale-file detection, encoding)
+- GPU sidecar error handling (`python_sidecar.rs`, `main.rs`)
+- NDJSON streaming output, batch rewrite API
+- Routing regression tests (`test_routing.rs`)
+- Schema compatibility tests
 
 ## Windows-Specific Notes
 
-- **Shell**: PowerShell is the default shell. Use `$env:PYTHONPATH = '...\src'` syntax.
+- **Shell**: PowerShell is the default. Use `$env:PYTHONPATH = '...\src'` syntax.
 - **Cargo path**: `C:\Users\oimir\.cargo\bin\cargo.exe` (may not be on PATH).
 - **init.sh not executable**: Run `uv pip install -e ".[dev,ast,nlp]"` instead.
-- **Fresh worktree venv**: In a fresh worktree, `uv pip install -e` may fail if no venv exists. Run `uv venv` first, or use `$env:PYTHONPATH = '<worktree>\src'; uv run pytest -q` as the standard worktree test invocation.
-- **Runtime-path tests need rg.exe**: Tests in `test_rg_passthrough.rs` or similar expect `rg.exe` discoverable at runtime. Temporarily add `benchmarks/rg.zip`'s extracted `rg.exe` to PATH before running cargo test: extract rg.zip to a temp dir and prepend that dir to `$env:PATH`.
-- **PYTHONPATH in fresh worktrees**: `$env:PYTHONPATH = '<worktree>\src'; uv run pytest -q`.
-- **Cargo for cyBERT/NLP changes**: Use `python benchmarks/run_gpu_benchmarks.py` (requires Triton; may skip if not running).
+- **rg.exe**: Available via `benchmarks/rg.zip` auto-extract or `benchmarks/ripgrep-14.1.0-x86_64-pc-windows-msvc/rg.exe`.
 
 ## Work Procedure
 
-1. **Test-Driven Development FIRST**: Write a failing Rust test (in `rust_core/tests/` or inline `#[cfg(test)]`) or a failing Python integration test that asserts the new behavior. Run it and verify it fails. Only then implement.
+1. **Read feature description and preconditions** carefully. Understand what assertions this feature fulfills.
 
-2. Implement the Rust logic to make the test pass. Follow these rules:
+2. **Test-Driven Development FIRST**: Write a failing Rust test (in `rust_core/tests/` or inline `#[cfg(test)]`) that asserts the new behavior. Run it and verify it fails. Only then implement.
+
+3. Implement the Rust logic to make the test pass. Follow these rules:
    - MSRV Rust 1.79 — no newer features.
-   - `pyo3 auto-initialize` is REMOVED (Milestone 1+). Never add it back.
+   - `pyo3 auto-initialize` is REMOVED. Never add it back.
    - Tree-sitter parsers are NOT `Sync` — use `thread_local!` or per-task allocation.
    - ast-grep-core API: `AstGrep::new(source, lang)`, `Pattern::new(pattern, lang)`, `root.find_all(pattern)`.
-   - Index data structures: `Vec<u64>` for bit vectors, `HashMap<[u8;2], usize>` for bigram→bit mapping.
+   - Preserve all 8 key invariants listed in AGENTS.md.
 
-3. Run local Rust gates:
+4. **For JSON output changes**: Ensure all JSON outputs include the unified envelope: `version` (u32), `routing_backend` (string), `routing_reason` (string), `sidecar_used` (bool). Test by parsing output with serde_json.
+
+5. **For rewrite safety changes**: Test with edge cases: BOM files, CRLF files, binary files (NUL bytes), large files (>100MB), non-ASCII content (CJK, emoji). Verify atomic write via temp+rename pattern.
+
+6. **For index changes**: Preserve `TGI\x00` magic + version byte. If format changes, bump FORMAT_VERSION and handle old-format migration (rebuild with warning, not crash). Verify query result parity with uncompressed index.
+
+7. Run local Rust gates:
    ```powershell
    Set-Location "C:\dev\projects\tensor-grep\rust_core"
    & "C:\Users\oimir\.cargo\bin\cargo.exe" test
    & "C:\Users\oimir\.cargo\bin\cargo.exe" clippy -- -D warnings
    ```
 
-4. Run local Python gates (backward compatibility check):
+8. Run local Python gates:
    ```powershell
-   $env:PYTHONPATH = 'src'
-   uv run pytest -q
    uv run ruff check .
    uv run mypy src/tensor_grep
+   uv run pytest -q
    ```
 
-5. If touching a performance-sensitive path, run the relevant benchmark and confirm no regression:
-   - **IMPORTANT:** `benchmarks/run_benchmarks.py` measures `python -m tensor_grep.cli.bootstrap` (the Python entrypoint), NOT `rust_core/target/release/tg.exe`. For Rust-only control-plane changes, use hyperfine directly on the Rust binary as the authoritative measurement: `hyperfine --runs 30 'rust_core\target\release\tg.exe ERROR bench_data'`. The Python bootstrap benchmark is supplemental context only.
-   - Text search changes: `python benchmarks/run_benchmarks.py --output artifacts/bench.json` then `python benchmarks/check_regression.py --baseline auto --current artifacts/bench.json`
-   - AST changes: `python benchmarks/run_ast_benchmarks.py`
-   - Hot-query changes: `python benchmarks/run_hot_query_benchmarks.py`
-   - Rewrite changes: measure throughput on synthetic 5000-file corpus
-
-## Final Step: Merge to Main
-
-After all local gates pass and work is committed, merge back to the primary checkout's `main`:
-
-```powershell
-git -C "C:\dev\projects\tensor-grep" merge <feature-branch> --no-edit
-```
-
-This is required so validation workers test against `main`.
+9. If touching a performance-sensitive path, run the relevant benchmark and confirm no regression.
 
 ## Example Handoff
 
 ```json
 {
-  "salientSummary": "Removed pyo3 auto-initialize from Cargo.toml. CpuBackend search/count/replace paths now complete without Python init. Added failing test asserting no Python DLL load (measured via cold-start improvement proxy), then implemented lazy pyo3 init guard in backend_gpu.rs. cargo test passes (3+N tests). uv run pytest -q: 488 passed.",
-  "whatWasImplemented": "Changed pyo3 features from [anyhow, auto-initialize, abi3-py311] to [anyhow, abi3-py311]. Added a lazy Python init guard in backend_gpu.rs around execute_gpu_pipeline and execute_python_module_fallback. Added cold-start benchmark test asserting tg.exe completes in <400ms for simple search.",
+  "salientSummary": "Implemented atomic writes in apply_edits_to_file: write-to-temp (.tg_tmp_<random>) + flush + rename. Added stale-file detection with mtime check before apply. Added 5 new tests: atomic_write_success, atomic_write_cleanup_on_failure, stale_file_rejected, no_temp_files_after_success, verify_still_works_with_atomic. cargo test: 100 passed. uv run pytest -q: 510 passed.",
+  "whatWasImplemented": "Changed apply_edits_to_file from std::fs::write to write-temp+rename. Added file_mtime_ns field to RewriteEdit for staleness tracking. Mtime captured during plan_file_rewrites, checked in apply_edits_to_file. On mtime mismatch: returns Err with 'file modified since plan' message. Temp files cleaned up in both success and error paths.",
   "whatWasLeftUndone": "",
   "verification": {
     "commandsRun": [
-      { "command": "cargo test", "exitCode": 0, "observation": "5 passed in 0.02s" },
-      { "command": "uv run pytest -q", "exitCode": 0, "observation": "488 passed, 14 skipped" },
-      { "command": "hyperfine --runs 10 '.\\target\\release\\tg.exe ERROR bench_data'", "exitCode": 0, "observation": "Mean: 0.312s (vs baseline 0.682s -- 370ms improvement)" }
+      { "command": "cargo test", "exitCode": 0, "observation": "100 passed in 0.4s" },
+      { "command": "cargo clippy -- -D warnings", "exitCode": 0, "observation": "no warnings" },
+      { "command": "uv run pytest -q", "exitCode": 0, "observation": "510 passed, 14 skipped" }
+    ],
+    "interactiveChecks": [
+      { "action": "Built release binary, ran tg run --rewrite 'lambda $$$ARGS: $EXPR' 'def $F($$$ARGS): return $EXPR' bench_data", "observed": "Plan JSON includes routing_backend=AstBackend, routing_reason=ast-native" }
     ]
   },
   "tests": {
-    "added": [{ "file": "rust_core/tests/test_cold_start.rs", "cases": [{ "name": "test_simple_search_no_python_init", "verifies": "Cold-start under 400ms proxy for Python-free path" }] }],
-    "updated": ["rust_core/Cargo.toml"]
+    "added": [
+      { "file": "rust_core/tests/test_ast_rewrite.rs", "cases": [
+        { "name": "test_atomic_write_success", "verifies": "Write-to-temp + rename produces correct file" },
+        { "name": "test_atomic_write_cleanup_on_failure", "verifies": "No temp files left on write failure" },
+        { "name": "test_stale_file_rejected", "verifies": "Modified file between plan and apply is rejected" },
+        { "name": "test_no_temp_files_after_success", "verifies": "No .tg_tmp_* files remain after successful apply" },
+        { "name": "test_verify_with_atomic_write", "verifies": "Byte-level verify still works with new write path" }
+      ]}
+    ]
   },
   "discoveredIssues": []
 }
@@ -115,7 +95,9 @@ This is required so validation workers test against `main`.
 
 ## When to Return to Orchestrator
 
-- Benchmark degrades and you cannot isolate the regression without abandoning the feature.
-- ast-grep-core API surface changed in a way that breaks the planned integration.
-- Merge to main fails with conflicts you cannot resolve without potentially breaking unrelated features.
-- Rust memory safety issue (UB risk) cannot be resolved within safe Rust bounds.
+- Benchmark degrades and you cannot isolate the regression
+- ast-grep-core API changed in a breaking way
+- Merge to main fails with conflicts you cannot resolve
+- Rust memory safety issue cannot be resolved within safe Rust bounds
+- Feature depends on Python-side changes not yet implemented
+- Index format migration breaks in a way that cannot be handled with auto-rebuild
