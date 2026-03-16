@@ -14,8 +14,17 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+BENCHMARKS_DIR = Path(__file__).resolve().parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
+if str(BENCHMARKS_DIR) not in sys.path:
+    sys.path.insert(0, str(BENCHMARKS_DIR))
+
+from native_cpu_benchmark_utils import (  # noqa: E402
+    ensure_large_file_fixture,
+    ensure_many_file_fixture,
+    resolve_native_cpu_bench_data_dir,
+)
 
 # Scenarios to test
 SCENARIOS = [
@@ -97,6 +106,21 @@ WINDOWS_RG_DIRNAME = "ripgrep-14.1.0-x86_64-pc-windows-msvc"
 TIMING_SAMPLES_PER_SCENARIO = 3
 
 
+def _extra_native_cpu_scenarios(large_file_path: Path, many_file_dir: Path) -> list[dict[str, str]]:
+    return [
+        {
+            "name": "11. Native Large File Search",
+            "pattern": "ERROR",
+            "target": str(large_file_path),
+        },
+        {
+            "name": "12. Native Many-File Search",
+            "pattern": "ERROR",
+            "target": str(many_file_dir),
+        },
+    ]
+
+
 def default_binary_path() -> Path:
     binary_name = "tg.exe" if os.name == "nt" else "tg"
     return ROOT_DIR / "rust_core" / "target" / "release" / binary_name
@@ -104,6 +128,15 @@ def default_binary_path() -> Path:
 
 def resolve_tg_binary(binary: str | None = None) -> Path:
     return Path(binary).expanduser().resolve() if binary else default_binary_path()
+
+
+def resolve_tg_cli_launcher(binary: str | None = None) -> list[str]:
+    if binary:
+        return [str(Path(binary).expanduser().resolve())]
+    tg_path = shutil.which("tg") or shutil.which("tg.exe")
+    if tg_path:
+        return [tg_path]
+    return [sys.executable, "-m", "tensor_grep"]
 
 
 def resolve_bench_data_dir() -> Path:
@@ -207,8 +240,62 @@ def scenario_timing_should_capture_stdout(scenario_name: str) -> bool:
     return "Max Count Limit" in scenario_name
 
 
-def build_tg_benchmark_cmd(tg_args: list[str], binary: Path | None = None) -> list[str]:
-    return [str(binary or resolve_tg_binary()), "search", "--no-ignore", *tg_args]
+def build_tg_benchmark_cmd(
+    tg_args: list[str],
+    binary: Path | None = None,
+    *,
+    force_cpu: bool = False,
+) -> list[str]:
+    cmd = [str(binary or resolve_tg_binary()), "search"]
+    if force_cpu:
+        launcher = [str(binary)] if binary is not None else resolve_tg_cli_launcher()
+        cmd = [*launcher, "search"]
+        cmd.append("--cpu")
+    cmd.append("--no-ignore")
+    cmd.extend(tg_args)
+    return cmd
+
+
+def build_benchmark_scenarios(
+    *,
+    bench_dir: Path,
+    large_file_path: Path | None = None,
+    many_file_dir: Path | None = None,
+    force_cpu: bool = False,
+    binary: Path | None = None,
+    rg_binary: str | None = None,
+) -> list[dict[str, object]]:
+    resolved_rg_binary = rg_binary or resolve_rg_binary()
+    scenarios: list[dict[str, object]] = []
+
+    for scenario in SCENARIOS:
+        rg_args = [str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]]
+        tg_args = [str(bench_dir) if arg == "bench_data" else arg for arg in scenario["tg_args"][2:]]
+        scenarios.append(
+            {
+                "name": scenario["name"],
+                "rg_cmd": [resolved_rg_binary, "--no-ignore", *rg_args],
+                "tg_cmd": build_tg_benchmark_cmd(tg_args, binary=binary, force_cpu=False),
+            }
+        )
+
+    if force_cpu and large_file_path is not None and many_file_dir is not None:
+        for extra in _extra_native_cpu_scenarios(large_file_path, many_file_dir):
+            extra_tg_args = [extra["pattern"], extra["target"]]
+            extra_rg_cmd = [resolved_rg_binary, "--no-ignore", extra["pattern"], extra["target"]]
+            scenarios.append(
+                {
+                    "name": extra["name"],
+                    "rg_cmd": extra_rg_cmd,
+                    "tg_cmd": build_tg_benchmark_cmd(
+                        extra_tg_args,
+                        binary=binary,
+                        force_cpu=False,
+                    ),
+                }
+            )
+
+    return scenarios
 
 
 def extract_windows_rg_bundle(benchmarks_dir: Path) -> Path | None:
@@ -310,6 +397,11 @@ def main() -> int:
         default=None,
         help="Optional milestone label recorded in the benchmark artifact (for example: m1, m2).",
     )
+    parser.add_argument(
+        "--native",
+        action="store_true",
+        help="Force tg benchmark runs to use the native CPU engine via --cpu and include native large-file and many-file scenarios.",
+    )
     args = parser.parse_args()
     tg_binary = resolve_tg_binary(args.binary)
 
@@ -319,6 +411,37 @@ def main() -> int:
     )  # ~240MB total, triggers 50MB GPU chunking bypass
 
     rg_bin = resolve_rg_binary()
+    native_fixture_payload: dict[str, object] | None = None
+    large_file_path: Path | None = None
+    many_file_dir: Path | None = None
+    if args.native:
+        native_data_dir = resolve_native_cpu_bench_data_dir()
+        large_fixture = ensure_large_file_fixture(native_data_dir)
+        many_fixture = ensure_many_file_fixture(native_data_dir)
+        large_file_path = Path(large_fixture["path"])
+        many_file_dir = Path(many_fixture["path"])
+        native_fixture_payload = {
+            "large_file": {
+                "path": str(large_file_path),
+                "actual_bytes": large_fixture.get("actual_bytes"),
+                "cache_hit": large_fixture.get("cache_hit"),
+            },
+            "many_file": {
+                "path": str(many_file_dir),
+                "actual_bytes": many_fixture.get("actual_bytes"),
+                "file_count": many_fixture.get("file_count"),
+                "cache_hit": many_fixture.get("cache_hit"),
+            },
+        }
+
+    benchmark_scenarios = build_benchmark_scenarios(
+        bench_dir=bench_dir,
+        large_file_path=large_file_path,
+        many_file_dir=many_file_dir,
+        force_cpu=args.native,
+        binary=tg_binary,
+        rg_binary=rg_bin,
+    )
 
     print("\nStarting Benchmarks: ripgrep vs tensor-grep")
     print("-" * 75)
@@ -328,21 +451,13 @@ def main() -> int:
     parity_failures = 0
     parity_jobs: list[tuple[str, list[str], list[str], dict[str, object]]] = []
 
-    for scenario in SCENARIOS:
-        rg_args = [
-            str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]
-        ]
-        tg_args = [
-            str(bench_dir) if arg == "bench_data" else arg for arg in scenario["tg_args"][2:]
-        ]
-
-        rg_cmd = [rg_bin, "--no-ignore", *rg_args]
-
-        actual_tg_cmd = build_tg_benchmark_cmd(tg_args, binary=tg_binary)
-        capture_stdout_for_timing = scenario_timing_should_capture_stdout(scenario["name"])
+    for scenario in benchmark_scenarios:
+        rg_cmd = scenario["rg_cmd"]
+        actual_tg_cmd = scenario["tg_cmd"]
+        capture_stdout_for_timing = scenario_timing_should_capture_stdout(str(scenario["name"]))
 
         # Warmup to reduce first-run jitter (regex compilation/import effects).
-        for _ in range(scenario_timing_warmup_runs(scenario["name"])):
+        for _ in range(scenario_timing_warmup_runs(str(scenario["name"]))):
             run_cmd_timing(rg_cmd, capture_stdout=capture_stdout_for_timing)
             run_cmd_timing(actual_tg_cmd, capture_stdout=capture_stdout_for_timing)
 
@@ -366,7 +481,7 @@ def main() -> int:
             "parity": "PENDING",
         }
         rows.append(row)
-        parity_jobs.append((scenario["name"], rg_cmd, actual_tg_cmd, row))
+        parity_jobs.append((str(scenario["name"]), rg_cmd, actual_tg_cmd, row))
 
     for scenario_name, rg_cmd, actual_tg_cmd, row in parity_jobs:
         _, rg_out = run_cmd_capture(rg_cmd)
@@ -390,6 +505,8 @@ def main() -> int:
         "suite": "run_benchmarks",
         "generated_at_epoch_s": time.time(),
         "timing_samples_per_scenario": TIMING_SAMPLES_PER_SCENARIO,
+        "native_cpu_forced": args.native,
+        "native_cpu_mode": "direct_binary" if args.native else "default_binary",
         "environment": {
             "platform": platform.system().lower(),
             "machine": platform.machine().lower(),
@@ -398,6 +515,8 @@ def main() -> int:
         "rows": rows,
         "parity_failures": parity_failures,
     }
+    if native_fixture_payload is not None:
+        payload["native_cpu_fixtures"] = native_fixture_payload
     if args.milestone:
         payload["milestone"] = args.milestone
     write_json(

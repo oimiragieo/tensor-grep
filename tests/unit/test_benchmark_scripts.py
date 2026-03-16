@@ -9,6 +9,7 @@ import pytest
 
 BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_benchmarks.py",
+    "benchmarks/run_native_cpu_benchmarks.py",
     "benchmarks/run_hot_query_benchmarks.py",
     "benchmarks/run_ast_benchmarks.py",
     "benchmarks/run_ast_multilang_benchmarks.py",
@@ -62,6 +63,41 @@ def test_run_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
 
     assert cmd[0] == str(tg_binary)
     assert cmd[1:] == ["search", "--no-ignore", "ERROR", "bench_data"]
+
+
+def test_run_benchmarks_should_force_cpu_when_native_flag_is_enabled(monkeypatch, tmp_path):
+    module = _load_script_module("run_benchmarks_script_native_cmd", "benchmarks/run_benchmarks.py")
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_cli_launcher", lambda *_args, **_kwargs: [str(tg_binary)])
+
+    cmd = module.build_tg_benchmark_cmd(["ERROR", "bench_data"], force_cpu=True)
+
+    assert cmd[0] == str(tg_binary)
+    assert cmd[1:] == ["search", "--cpu", "--no-ignore", "ERROR", "bench_data"]
+
+
+def test_run_benchmarks_should_include_large_file_and_many_file_scenarios():
+    module = _load_script_module("run_benchmarks_script_native_scenarios", "benchmarks/run_benchmarks.py")
+    module.resolve_tg_binary = lambda *_args, **_kwargs: Path("native-tg.exe")
+
+    scenarios = module.build_benchmark_scenarios(
+        bench_dir=Path("bench_data"),
+        large_file_path=Path("large_fixture.log"),
+        many_file_dir=Path("many_files"),
+        force_cpu=True,
+    )
+
+    names = [scenario["name"] for scenario in scenarios]
+    assert "11. Native Large File Search" in names
+    assert "12. Native Many-File Search" in names
+
+    large_scenario = next(s for s in scenarios if s["name"] == "11. Native Large File Search")
+    many_scenario = next(s for s in scenarios if s["name"] == "12. Native Many-File Search")
+    assert large_scenario["tg_cmd"][:3] == ["native-tg.exe", "search", "--no-ignore"]
+    assert large_scenario["tg_cmd"][-1] == "large_fixture.log"
+    assert many_scenario["tg_cmd"][:3] == ["native-tg.exe", "search", "--no-ignore"]
+    assert many_scenario["tg_cmd"][-1] == "many_files"
 
 
 def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatch, tmp_path):
@@ -236,6 +272,100 @@ def test_run_hot_query_benchmarks_should_report_regression_status(monkeypatch, t
     assert payload["no_regressions"] is True
     assert payload["rows"][0]["status"] == "PASS"
     assert payload["rows"][1]["status"] == "PASS"
+
+
+def test_run_native_cpu_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
+    module = _load_script_module(
+        "run_native_cpu_benchmarks_script", "benchmarks/run_native_cpu_benchmarks.py"
+    )
+    monkeypatch.delenv("TENSOR_GREP_NATIVE_CPU_BENCH_DATA_DIR", raising=False)
+
+    path = module.resolve_native_cpu_bench_data_dir()
+
+    assert path.parts[-2:] == ("artifacts", "native_cpu_bench_data")
+
+
+def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_native_cpu_benchmarks_script_status", "benchmarks/run_native_cpu_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    output_path = tmp_path / "bench_native_cpu.json"
+
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "ensure_large_file_fixture",
+        lambda *_args, **_kwargs: {"path": tmp_path / "large_fixture.log", "actual_bytes": 200 * 1024 * 1024},
+    )
+    monkeypatch.setattr(
+        module,
+        "ensure_many_file_fixture",
+        lambda *_args, **_kwargs: {"path": tmp_path / "many_files", "file_count": 1200},
+    )
+
+    benchmark_rows = iter(
+        [
+            {
+                "name": "cold_standard_corpus",
+                "target": str(tmp_path / "bench_data"),
+                "pattern": "ERROR",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.04,
+                "rg_samples_s": [1.0, 0.98, 1.04],
+                "tg_samples_s": [1.04, 1.01, 1.06],
+                "ratio_vs_rg": 1.04,
+                "threshold_ratio": 1.05,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "large_file_200mb",
+                "target": str(tmp_path / "large_fixture.log"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 0.92,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [0.92, 0.94, 0.91],
+                "ratio_vs_rg": 0.92,
+                "threshold_ratio": 1.0,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "many_file_directory",
+                "target": str(tmp_path / "many_files"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.03,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [1.03, 1.02, 1.04],
+                "ratio_vs_rg": 1.03,
+                "threshold_ratio": 1.05,
+                "status": "PASS",
+                "counts_match": True,
+            },
+        ]
+    )
+    monkeypatch.setattr(module, "run_native_cpu_benchmark_case", lambda **_kwargs: next(benchmark_rows))
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_native_cpu_benchmarks.py", "--output", str(output_path)],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["suite"] == "run_native_cpu_benchmarks"
+    assert payload["passed"] is True
+    assert [row["status"] for row in payload["rows"]] == ["PASS", "PASS", "PASS"]
+    assert payload["rows"][0]["ratio_vs_rg"] == 1.04
+    assert payload["rows"][1]["ratio_vs_rg"] == 0.92
 
 
 def test_run_ast_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):

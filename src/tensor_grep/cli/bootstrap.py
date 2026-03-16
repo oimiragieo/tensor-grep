@@ -20,6 +20,7 @@ _KNOWN_COMMANDS = {
 
 _TG_ONLY_SEARCH_FLAGS = {
     "--ast",
+    "--cpu",
     "--debug",
     "--files",
     "--files-with-matches",
