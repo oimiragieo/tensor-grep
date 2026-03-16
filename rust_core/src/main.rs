@@ -407,25 +407,6 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         return handle_index_search(&args);
     }
 
-    if !args.index && !args.invert_match && args.context.is_none() && args.max_count.is_none()
-        && !args.word_regexp && args.globs.is_empty()
-    {
-        let index_path = resolve_index_path(&args.path);
-        if index_path.exists() {
-            if let Ok(loaded) = TrigramIndex::load(&index_path) {
-                if !loaded.is_stale() && args.pattern.len() >= 3 {
-                    if args.verbose {
-                        eprintln!(
-                            "[routing] warm index found ({} files), using index-accelerated path",
-                            loaded.file_count()
-                        );
-                    }
-                    return run_index_query(&args, &loaded);
-                }
-            }
-        }
-    }
-
     if !args.gpu_device_ids.is_empty() {
         return handle_gpu_sidecar_search(GpuSearchParams {
             pattern: &args.pattern,
@@ -443,6 +424,25 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             json: args.json,
             verbose: args.verbose,
         });
+    }
+
+    if !args.index && !args.invert_match && args.context.is_none() && args.max_count.is_none()
+        && !args.word_regexp && args.globs.is_empty()
+    {
+        let index_path = resolve_index_path(&args.path);
+        if index_path.exists() {
+            if let Ok(loaded) = TrigramIndex::load(&index_path) {
+                if !loaded.is_stale() && args.pattern.len() >= 3 {
+                    if args.verbose {
+                        eprintln!(
+                            "[routing] warm index found ({} files), using index-accelerated path",
+                            loaded.file_count()
+                        );
+                    }
+                    return run_index_query(&args, &loaded);
+                }
+            }
+        }
     }
 
     if args.json {
