@@ -16,6 +16,18 @@ fn write_source_file(extension: &str, content: &str) -> (TempDir, PathBuf) {
     (dir, file_path)
 }
 
+fn write_source_bytes_file(extension: &str, content: &[u8]) -> (TempDir, PathBuf) {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join(format!("fixture.{extension}"));
+    fs::write(&file_path, content).unwrap();
+    (dir, file_path)
+}
+
+fn create_sparse_file(path: &std::path::Path, len: u64) {
+    let file = std::fs::File::create(path).unwrap();
+    file.set_len(len).unwrap();
+}
+
 fn file_mtime_ns(path: &std::path::Path) -> u64 {
     path.metadata()
         .unwrap()
@@ -560,6 +572,144 @@ fn test_rewrite_newline_preservation() {
     AstBackend::apply_rewrites(&plan).unwrap();
     let result = fs::read_to_string(&file_path).unwrap();
     assert!(result.contains("\r\n"), "should preserve CRLF line endings: {:?}", result.as_bytes());
+}
+
+#[test]
+fn test_rewrite_preserves_utf8_bom_and_adjusts_byte_offsets() {
+    const UTF8_BOM: &[u8; 3] = b"\xEF\xBB\xBF";
+
+    let mut source = UTF8_BOM.to_vec();
+    source.extend_from_slice(b"def add(x): return x\n");
+    let (_dir, file_path) = write_source_bytes_file("py", &source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.edits.len(), 1);
+    assert_eq!(plan.edits[0].byte_range.start, UTF8_BOM.len());
+
+    AstBackend::apply_rewrites(&plan).unwrap();
+
+    let rewritten = fs::read(&file_path).unwrap();
+    assert!(rewritten.starts_with(UTF8_BOM));
+    assert_eq!(rewritten.windows(UTF8_BOM.len()).filter(|window| *window == UTF8_BOM).count(), 1);
+    assert_eq!(&rewritten[UTF8_BOM.len()..], b"lambda x: x\n");
+}
+
+#[test]
+fn test_rewrite_preserves_crlf_outside_edited_ranges() {
+    let source = "import os\r\ndef add(x): return x\r\nvalue = add(1)\r\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.edits.len(), 1);
+    AstBackend::apply_rewrites(&plan).unwrap();
+
+    let result = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(result, "import os\r\nlambda x: x\r\nvalue = add(1)\r\n");
+}
+
+#[test]
+fn test_rewrite_handles_non_ascii_without_corruption() {
+    let source = "print(\"こんにちは😀\")\n";
+    let (_dir, file_path) = write_source_file("py", source);
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "print($MSG)",
+            "log($MSG)",
+            "python",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.edits.len(), 1);
+    let original = fs::read_to_string(&file_path).unwrap();
+    assert!(original.is_char_boundary(plan.edits[0].byte_range.start));
+    assert!(original.is_char_boundary(plan.edits[0].byte_range.end));
+
+    AstBackend::apply_rewrites(&plan).unwrap();
+
+    let result = fs::read_to_string(&file_path).unwrap();
+    assert_eq!(result, "log(\"こんにちは😀\")\n");
+}
+
+#[test]
+fn test_rewrite_planning_skips_binary_files_without_error() {
+    let dir = tempdir().unwrap();
+    let binary_path = dir.path().join("binary.py");
+    let text_path = dir.path().join("text.py");
+    fs::write(&binary_path, b"def add(x): return x\0garbage\n").unwrap();
+    fs::write(&text_path, "def mul(y): return y\n").unwrap();
+    let backend = AstBackend::new();
+
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            dir.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(plan.total_files_scanned, 2);
+    assert_eq!(plan.edits.len(), 1);
+    assert_eq!(plan.edits[0].file, text_path);
+    assert_eq!(fs::read(&binary_path).unwrap(), b"def add(x): return x\0garbage\n");
+}
+
+#[test]
+fn test_tg_run_rewrite_skips_large_files_with_warning_and_processes_other_files() {
+    let dir = tempdir().unwrap();
+    let small_path = dir.path().join("small.py");
+    let large_path = dir.path().join("large.py");
+    fs::write(&small_path, "def add(x): return x\n").unwrap();
+    create_sparse_file(&large_path, 100_u64 * 1024 * 1024 + 1);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("warning"), "stderr={stderr}");
+    assert!(stderr.contains("large.py"), "stderr={stderr}");
+    assert!(stderr.contains("100 MB") || stderr.contains("100MB"), "stderr={stderr}");
+
+    let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(plan["total_edits"], 1);
+    assert_eq!(plan["edits"].as_array().unwrap().len(), 1);
+    assert!(
+        plan["edits"][0]["file"]
+            .as_str()
+            .unwrap()
+            .ends_with("small.py")
+    );
 }
 
 #[test]

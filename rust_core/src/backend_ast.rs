@@ -6,14 +6,23 @@ use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+const UTF8_BOM: &[u8; 3] = b"\xEF\xBB\xBF";
+const BINARY_SCAN_BYTES: usize = 8192;
+const MAX_REWRITE_FILE_BYTES: u64 = 100 * 1024 * 1024;
+
+struct RewriteSource {
+    bom_len: usize,
+    source: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditCandidate {
@@ -438,13 +447,14 @@ impl AstBackend {
         file: &Path,
     ) -> Result<Vec<RewriteEdit>> {
         let planned_mtime_ns = file_mtime_ns(file)?;
-        let bytes = std::fs::read(file)
-            .with_context(|| format!("failed to read source file {}", file.display()))?;
-        if bytes.is_empty() {
+        let Some(rewrite_source) = load_rewrite_source(file)? else {
+            return Ok(Vec::new());
+        };
+        let RewriteSource { bom_len, source } = rewrite_source;
+        if source.is_empty() {
             return Ok(Vec::new());
         }
-        let source = String::from_utf8(bytes)
-            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
+
         let ast = lang.ast_grep(&source);
         let file_owned = file.to_path_buf();
         let mut line_starts: Option<Vec<usize>> = None;
@@ -453,6 +463,7 @@ impl AstBackend {
         for matched in ast.root().find_all(pattern.clone()) {
             let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
             let byte_range = matched.range();
+            ensure_valid_utf8_range(&source, file, &byte_range)?;
             let original_text = matched.text().to_string();
             let metavar_env = extract_metavar_env(&source, matched.get_env());
             let edit = matched.replace_by(replacement);
@@ -465,7 +476,7 @@ impl AstBackend {
                 file: file_owned.clone(),
                 planned_mtime_ns,
                 line: line_number_for_byte(ls, byte_range.start),
-                byte_range,
+                byte_range: (byte_range.start + bom_len)..(byte_range.end + bom_len),
                 original_text,
                 replacement_text,
                 metavar_env,
@@ -520,6 +531,62 @@ fn build_match<'tree>(
     }
 }
 
+fn load_rewrite_source(file: &Path) -> Result<Option<RewriteSource>> {
+    let metadata = std::fs::metadata(file)
+        .with_context(|| format!("failed to read metadata for {}", file.display()))?;
+    let file_len = metadata.len();
+
+    if file_len > MAX_REWRITE_FILE_BYTES {
+        eprintln!(
+            "warning: skipping large file {} ({} bytes exceeds 100 MB rewrite limit)",
+            file.display(),
+            file_len
+        );
+        return Ok(None);
+    }
+
+    let mut prefix_reader = File::open(file)
+        .with_context(|| format!("failed to open source file {}", file.display()))?;
+    let mut prefix = vec![0; BINARY_SCAN_BYTES.min(file_len as usize)];
+    if !prefix.is_empty() {
+        prefix_reader
+            .read_exact(&mut prefix)
+            .with_context(|| format!("failed to read source file prefix {}", file.display()))?;
+    }
+    if prefix.contains(&0) {
+        return Ok(None);
+    }
+
+    let bytes = std::fs::read(file)
+        .with_context(|| format!("failed to read source file {}", file.display()))?;
+    let bom_len = usize::from(bytes.starts_with(UTF8_BOM)) * UTF8_BOM.len();
+    let source = String::from_utf8(bytes[bom_len..].to_vec())
+        .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
+
+    Ok(Some(RewriteSource { bom_len, source }))
+}
+
+fn ensure_valid_utf8_range(source: &str, file: &Path, byte_range: &Range<usize>) -> Result<()> {
+    if byte_range.start > byte_range.end || byte_range.end > source.len() {
+        anyhow::bail!(
+            "rewrite byte range {:?} is out of bounds for {} (len {})",
+            byte_range,
+            file.display(),
+            source.len()
+        );
+    }
+
+    if !source.is_char_boundary(byte_range.start) || !source.is_char_boundary(byte_range.end) {
+        anyhow::bail!(
+            "rewrite byte range {:?} does not align to UTF-8 boundaries in {}",
+            byte_range,
+            file.display()
+        );
+    }
+
+    Ok(())
+}
+
 fn apply_edits_to_file(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
     ensure_file_not_stale(file, edits)?;
 
@@ -528,6 +595,7 @@ fn apply_edits_to_file(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
     let mut result = String::with_capacity(original.len());
     let mut cursor = 0usize;
     for edit in edits {
+        ensure_valid_utf8_range(&original, file, &edit.byte_range)?;
         if edit.byte_range.start < cursor {
             anyhow::bail!(
                 "overlapping edit in {}: byte {} < cursor {}",
