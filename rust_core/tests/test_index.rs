@@ -18,12 +18,30 @@ fn write_corpus(dir: &std::path::Path) {
         "hello world\nfoo bar baz\ngoodbye world\n",
     )
     .unwrap();
+    fs::write(dir.join("b.txt"), "nothing here\nhello again friend\nend\n").unwrap();
     fs::write(
-        dir.join("b.txt"),
-        "nothing here\nhello again friend\nend\n",
+        dir.join("c.log"),
+        "error: something failed\nok\nerror: again\n",
     )
     .unwrap();
-    fs::write(dir.join("c.log"), "error: something failed\nok\nerror: again\n").unwrap();
+}
+
+fn write_regex_prefilter_corpus(dir: &std::path::Path) {
+    fs::write(
+        dir.join("alternation.txt"),
+        "foo branch\nbar branch\nbaz branch\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("classes.txt"),
+        "adef branch\nbdef branch\ncdef branch\ndeaf branch\ndebf branch\ndecf branch\nzzzdef noise\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("unicode.txt"),
+        "東京 terminal\n大阪 station\n京都 garden\n",
+    )
+    .unwrap();
 }
 
 fn decode_hex_trigram(key: &str) -> [u8; 3] {
@@ -104,11 +122,18 @@ fn test_tg_search_index_builds_and_returns_results() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("hello world"), "stdout={stdout}");
     assert!(stdout.contains("hello again"), "stdout={stdout}");
-    assert!(dir.path().join(".tg_index").exists(), "index file should be created");
+    assert!(
+        dir.path().join(".tg_index").exists(),
+        "index file should be created"
+    );
 }
 
 #[test]
@@ -127,7 +152,10 @@ fn test_tg_search_index_count_mode() {
         .unwrap();
 
     assert!(output.status.success());
-    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    let count: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count, 2);
 }
 
@@ -215,7 +243,10 @@ fn test_tg_search_index_verbose_shows_routing() {
 
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("routing_backend=TrigramIndex"), "stderr={stderr}");
+    assert!(
+        stderr.contains("routing_backend=TrigramIndex"),
+        "stderr={stderr}"
+    );
 }
 
 #[test]
@@ -252,7 +283,10 @@ fn test_tg_search_index_warm_cache_reuses_index() {
     assert!(out2.status.success());
 
     let mtime_2 = index_path.metadata().unwrap().modified().unwrap();
-    assert_eq!(mtime_1, mtime_2, "index should not be rebuilt when corpus is unchanged");
+    assert_eq!(
+        mtime_1, mtime_2,
+        "index should not be rebuilt when corpus is unchanged"
+    );
 }
 
 #[test]
@@ -271,7 +305,10 @@ fn test_tg_search_index_no_match_returns_zero() {
         .unwrap();
 
     assert!(output.status.success());
-    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    let count: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count, 0);
 }
 
@@ -291,7 +328,10 @@ fn test_tg_search_index_rebuilds_on_stale() {
         .output()
         .unwrap();
     assert!(out1.status.success());
-    let count1: usize = String::from_utf8_lossy(&out1.stdout).trim().parse().unwrap();
+    let count1: usize = String::from_utf8_lossy(&out1.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count1, 2);
 
     // Modify corpus
@@ -310,10 +350,16 @@ fn test_tg_search_index_rebuilds_on_stale() {
         .output()
         .unwrap();
     assert!(out2.status.success());
-    let count2: usize = String::from_utf8_lossy(&out2.stdout).trim().parse().unwrap();
+    let count2: usize = String::from_utf8_lossy(&out2.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count2, 3, "should find hello in the new file too");
     let stderr = String::from_utf8_lossy(&out2.stderr);
-    assert!(stderr.contains("stale") || stderr.contains("rebuilding"), "stderr={stderr}");
+    assert!(
+        stderr.contains("stale") || stderr.contains("rebuilding"),
+        "stderr={stderr}"
+    );
 }
 
 #[test]
@@ -336,7 +382,10 @@ fn test_tg_search_index_handles_corrupt_index() {
         .unwrap();
 
     assert!(output.status.success(), "should recover from corrupt index");
-    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    let count: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count, 2);
 }
 
@@ -346,8 +395,7 @@ fn test_tg_search_auto_routes_to_warm_index() {
     write_corpus(dir.path());
 
     // Build index explicitly first
-    tg()
-        .arg("search")
+    tg().arg("search")
         .arg("--index")
         .arg("--fixed-strings")
         .arg("--count")
@@ -374,7 +422,10 @@ fn test_tg_search_auto_routes_to_warm_index() {
         stderr.contains("warm index found") || stderr.contains("TrigramIndex"),
         "should auto-route to index: stderr={stderr}"
     );
-    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    let count: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count, 2);
 }
 
@@ -384,8 +435,7 @@ fn test_tg_search_auto_route_falls_through_for_short_pattern() {
     write_corpus(dir.path());
 
     // Build index
-    tg()
-        .arg("search")
+    tg().arg("search")
         .arg("--index")
         .arg("--fixed-strings")
         .arg("--count")
@@ -417,8 +467,7 @@ fn test_tg_search_auto_route_falls_through_for_invert() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());
 
-    tg()
-        .arg("search")
+    tg().arg("search")
         .arg("--index")
         .arg("--fixed-strings")
         .arg("--count")
@@ -451,18 +500,23 @@ fn test_tg_search_index_query_result_parity_for_multiple_patterns() {
     let dir = tempdir().unwrap();
     write_corpus(dir.path());
 
-    for (pattern, fixed_strings) in [
-        ("hello", true),
-        ("error", true),
-        (r"error:.*failed", false),
-    ] {
+    for (pattern, fixed_strings) in [("hello", true), ("error", true), (r"error:.*failed", false)] {
         let mut plain = tg();
         plain.arg("search");
         if fixed_strings {
             plain.arg("--fixed-strings");
         }
-        let plain_output = plain.arg("--json").arg(pattern).arg(dir.path()).output().unwrap();
-        assert!(plain_output.status.success(), "stderr={}", String::from_utf8_lossy(&plain_output.stderr));
+        let plain_output = plain
+            .arg("--json")
+            .arg(pattern)
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            plain_output.status.success(),
+            "stderr={}",
+            String::from_utf8_lossy(&plain_output.stderr)
+        );
         let plain_json: Value = serde_json::from_slice(&plain_output.stdout).unwrap();
 
         let mut indexed = tg();
@@ -470,12 +524,75 @@ fn test_tg_search_index_query_result_parity_for_multiple_patterns() {
         if fixed_strings {
             indexed.arg("--fixed-strings");
         }
-        let indexed_output = indexed.arg("--json").arg(pattern).arg(dir.path()).output().unwrap();
-        assert!(indexed_output.status.success(), "stderr={}", String::from_utf8_lossy(&indexed_output.stderr));
+        let indexed_output = indexed
+            .arg("--json")
+            .arg(pattern)
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            indexed_output.status.success(),
+            "stderr={}",
+            String::from_utf8_lossy(&indexed_output.stderr)
+        );
         let indexed_json: Value = serde_json::from_slice(&indexed_output.stdout).unwrap();
 
-        assert_eq!(indexed_json["total_matches"], plain_json["total_matches"], "pattern={pattern}");
-        assert_eq!(match_tuples(&indexed_json), match_tuples(&plain_json), "pattern={pattern}");
+        assert_eq!(
+            indexed_json["total_matches"], plain_json["total_matches"],
+            "pattern={pattern}"
+        );
+        assert_eq!(
+            match_tuples(&indexed_json),
+            match_tuples(&plain_json),
+            "pattern={pattern}"
+        );
+    }
+}
+
+#[test]
+fn test_tg_search_index_query_result_parity_for_regex_alternation_classes_and_unicode() {
+    let dir = tempdir().unwrap();
+    write_regex_prefilter_corpus(dir.path());
+
+    for pattern in [r"(foo|bar)", r"[abc]def", r"de[ab]f", r"(東京|大阪)"] {
+        let plain_output = tg()
+            .arg("search")
+            .arg("--json")
+            .arg(pattern)
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            plain_output.status.success(),
+            "plain stderr={} pattern={pattern}",
+            String::from_utf8_lossy(&plain_output.stderr)
+        );
+        let plain_json: Value = serde_json::from_slice(&plain_output.stdout).unwrap();
+
+        let indexed_output = tg()
+            .arg("search")
+            .arg("--index")
+            .arg("--json")
+            .arg(pattern)
+            .arg(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            indexed_output.status.success(),
+            "indexed stderr={} pattern={pattern}",
+            String::from_utf8_lossy(&indexed_output.stderr)
+        );
+        let indexed_json: Value = serde_json::from_slice(&indexed_output.stdout).unwrap();
+
+        assert_eq!(
+            indexed_json["total_matches"], plain_json["total_matches"],
+            "pattern={pattern}"
+        );
+        assert_eq!(
+            match_tuples(&indexed_json),
+            match_tuples(&plain_json),
+            "pattern={pattern}"
+        );
     }
 }
 
@@ -497,16 +614,24 @@ fn test_tg_search_index_old_format_triggers_rebuild() {
         .unwrap();
 
     assert!(output.status.success(), "should recover from old format");
-    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    let count: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count, 2);
 
     let rebuilt = fs::read(dir.path().join(".tg_index")).unwrap();
     assert_eq!(&rebuilt[0..4], b"TGI\x00");
-    assert_eq!(rebuilt[4], 3, "expected rebuilt index to use the new format");
+    assert_eq!(
+        rebuilt[4], 3,
+        "expected rebuilt index to use the new format"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("warning") || stderr.contains("failed to load") || stderr.contains("rebuilding"),
+        stderr.contains("warning")
+            || stderr.contains("failed to load")
+            || stderr.contains("rebuilding"),
         "stderr={stderr}"
     );
 }
@@ -528,7 +653,10 @@ fn test_tg_search_index_case_insensitive() {
         .unwrap();
 
     assert!(output.status.success());
-    let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
+    let count: usize = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     assert_eq!(count, 2);
 }
 
@@ -548,7 +676,11 @@ fn test_tg_search_index_verbose_distinguishes_full_and_incremental_rebuilds() {
         .output()
         .unwrap();
 
-    assert!(initial.status.success(), "stderr={}", String::from_utf8_lossy(&initial.stderr));
+    assert!(
+        initial.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&initial.stderr)
+    );
     let initial_stderr = String::from_utf8_lossy(&initial.stderr);
     assert!(
         initial_stderr.contains("full rebuild"),

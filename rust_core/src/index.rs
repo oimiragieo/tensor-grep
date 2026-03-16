@@ -1,6 +1,13 @@
 use anyhow::{Context, Result};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
+use regex_syntax::{
+    hir::{
+        literal::{ExtractKind, Extractor},
+        Hir, HirKind,
+    },
+    parse as parse_regex_hir,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
@@ -8,6 +15,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const TRIGRAM_LEN: usize = 3;
+const MAX_REGEX_CLASS_LITERALS: usize = 10;
+const MAX_REGEX_PREFILTER_LITERALS: usize = 64;
 
 type FileTrigramHits = Vec<([u8; 3], u32)>;
 
@@ -23,6 +32,88 @@ pub struct IncrementalUpdateStats {
 pub struct IncrementalUpdateResult {
     pub index: TrigramIndex,
     pub stats: IncrementalUpdateStats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegexLiteralPlan {
+    literals: Vec<Vec<u8>>,
+}
+
+impl RegexLiteralPlan {
+    fn from_raw(literals: Vec<Vec<u8>>, ignore_case: bool) -> Option<Self> {
+        if literals.is_empty() || literals.len() > MAX_REGEX_PREFILTER_LITERALS {
+            return None;
+        }
+
+        let mut normalized = Vec::with_capacity(literals.len());
+        for literal in literals {
+            let literal = normalize_prefilter_literal(&literal, ignore_case)?;
+            if literal.len() < TRIGRAM_LEN {
+                return None;
+            }
+            normalized.push(literal);
+        }
+
+        normalized.sort();
+        normalized.dedup();
+        (!normalized.is_empty()).then_some(Self {
+            literals: normalized,
+        })
+    }
+
+    fn min_len(&self) -> usize {
+        self.literals.iter().map(Vec::len).min().unwrap_or(0)
+    }
+
+    fn total_len(&self) -> usize {
+        self.literals.iter().map(Vec::len).sum()
+    }
+}
+
+enum RegexCandidateSelection {
+    Indexed(Vec<(PathBuf, usize)>),
+    FullScan,
+}
+
+enum SearchMatcher {
+    Fixed {
+        needle: String,
+        lower_needle: Option<String>,
+    },
+    Regex(regex::Regex),
+}
+
+impl SearchMatcher {
+    fn new(pattern: &str, ignore_case: bool, fixed_strings: bool) -> Option<Self> {
+        if fixed_strings {
+            return Some(Self::Fixed {
+                needle: pattern.to_string(),
+                lower_needle: ignore_case.then(|| pattern.to_lowercase()),
+            });
+        }
+
+        regex::RegexBuilder::new(pattern)
+            .case_insensitive(ignore_case)
+            .build()
+            .ok()
+            .map(Self::Regex)
+    }
+
+    fn is_match(&self, line: &str) -> bool {
+        match self {
+            Self::Fixed {
+                needle,
+                lower_needle,
+            } => {
+                if let Some(lower_needle) = lower_needle {
+                    line.to_lowercase().contains(lower_needle)
+                } else {
+                    line.contains(needle)
+                }
+            }
+            Self::Regex(re) => re.is_match(line),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,13 +425,10 @@ impl TrigramIndex {
         let mut postings: HashMap<[u8; 3], Vec<PostingEntry>> = HashMap::new();
         for (file_id, hits) in per_file {
             for (trigram, line) in &hits {
-                postings
-                    .entry(*trigram)
-                    .or_default()
-                    .push(PostingEntry {
-                        file_id,
-                        line: *line,
-                    });
+                postings.entry(*trigram).or_default().push(PostingEntry {
+                    file_id,
+                    line: *line,
+                });
             }
             file_trigrams[file_id as usize] = hits;
         }
@@ -466,13 +554,14 @@ impl TrigramIndex {
         normalize_affected_postings(&mut self.postings, &affected_trigrams);
         self.root = root.to_path_buf();
 
-        Ok(IncrementalUpdateResult {
-            index: self,
-            stats,
-        })
+        Ok(IncrementalUpdateResult { index: self, stats })
     }
 
-    pub fn query_candidates_fixed(&self, pattern: &str, ignore_case: bool) -> Vec<(PathBuf, usize)> {
+    pub fn query_candidates_fixed(
+        &self,
+        pattern: &str,
+        ignore_case: bool,
+    ) -> Vec<(PathBuf, usize)> {
         let pat = if ignore_case {
             pattern.to_lowercase()
         } else {
@@ -482,16 +571,10 @@ impl TrigramIndex {
     }
 
     pub fn query_candidates(&self, pattern: &str, ignore_case: bool) -> Vec<(PathBuf, usize)> {
-        let literal = extract_longest_literal(pattern);
-        let pat = if ignore_case {
-            literal.to_lowercase()
-        } else {
-            literal
-        };
-        if pat.len() < TRIGRAM_LEN {
-            return Vec::new();
+        match self.regex_candidate_selection(pattern, ignore_case) {
+            RegexCandidateSelection::Indexed(candidates) => candidates,
+            RegexCandidateSelection::FullScan => Vec::new(),
         }
-        self.query_with_trigrams(&extract_trigrams(pat.as_bytes()))
     }
 
     fn query_with_trigrams(&self, trigrams: &[[u8; 3]]) -> Vec<(PathBuf, usize)> {
@@ -539,37 +622,93 @@ impl TrigramIndex {
         ignore_case: bool,
         fixed_strings: bool,
     ) -> Result<Vec<IndexQueryResult>> {
-        let candidates = if fixed_strings {
-            self.query_candidates_fixed(pattern, ignore_case)
+        let candidate_selection = if fixed_strings {
+            RegexCandidateSelection::Indexed(self.query_candidates_fixed(pattern, ignore_case))
         } else {
-            self.query_candidates(pattern, ignore_case)
+            self.regex_candidate_selection(pattern, ignore_case)
         };
-        if candidates.is_empty() {
-            return Ok(Vec::new());
-        }
 
-        let mut by_file: HashMap<&Path, Vec<usize>> = HashMap::new();
-        for (file, line) in &candidates {
-            by_file.entry(file.as_path()).or_default().push(*line);
-        }
+        let mut all_results = match candidate_selection {
+            RegexCandidateSelection::Indexed(candidates) => {
+                if candidates.is_empty() {
+                    return Ok(Vec::new());
+                }
 
-        let file_entries: Vec<(&Path, Vec<usize>)> =
-            by_file.into_iter().collect();
+                let matcher = match SearchMatcher::new(pattern, ignore_case, fixed_strings) {
+                    Some(matcher) => matcher,
+                    None => return Ok(Vec::new()),
+                };
 
-        let results: Vec<Result<Vec<IndexQueryResult>>> = file_entries
-            .par_iter()
-            .map(|(file, candidate_lines)| {
-                verify_candidates(file, candidate_lines, pattern, ignore_case, fixed_strings)
-            })
-            .collect();
+                let mut by_file: HashMap<&Path, Vec<usize>> = HashMap::new();
+                for (file, line) in &candidates {
+                    by_file.entry(file.as_path()).or_default().push(*line);
+                }
 
-        let mut all_results = Vec::new();
-        for result in results {
-            all_results.extend(result?);
-        }
+                let file_entries: Vec<(&Path, Vec<usize>)> = by_file.into_iter().collect();
+                let results: Vec<Result<Vec<IndexQueryResult>>> = file_entries
+                    .par_iter()
+                    .map(|(file, candidate_lines)| {
+                        collect_matches(file, Some(candidate_lines), &matcher)
+                    })
+                    .collect();
+
+                let mut matches = Vec::new();
+                for result in results {
+                    matches.extend(result?);
+                }
+                matches
+            }
+            RegexCandidateSelection::FullScan => {
+                self.search_all_files(pattern, ignore_case, fixed_strings)?
+            }
+        };
 
         all_results.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
         Ok(all_results)
+    }
+
+    fn regex_candidate_selection(
+        &self,
+        pattern: &str,
+        ignore_case: bool,
+    ) -> RegexCandidateSelection {
+        let Some(plan) = select_regex_prefilter_literals(pattern, ignore_case) else {
+            return RegexCandidateSelection::FullScan;
+        };
+
+        let mut candidates = Vec::new();
+        for literal in &plan.literals {
+            candidates.extend(self.query_with_trigrams(&extract_trigrams(literal)));
+        }
+
+        candidates.sort();
+        candidates.dedup();
+        RegexCandidateSelection::Indexed(candidates)
+    }
+
+    fn search_all_files(
+        &self,
+        pattern: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+    ) -> Result<Vec<IndexQueryResult>> {
+        let matcher = match SearchMatcher::new(pattern, ignore_case, fixed_strings) {
+            Some(matcher) => matcher,
+            None => return Ok(Vec::new()),
+        };
+
+        let results: Vec<Result<Vec<IndexQueryResult>>> = self
+            .files
+            .par_iter()
+            .filter(|entry| !entry.deleted)
+            .map(|entry| collect_matches(&entry.path, None, &matcher))
+            .collect();
+
+        let mut matches = Vec::new();
+        for result in results {
+            matches.extend(result?);
+        }
+        Ok(matches)
     }
 
     pub fn is_stale(&self) -> bool {
@@ -577,8 +716,12 @@ impl TrigramIndex {
     }
 
     pub fn staleness_reason(&self) -> Option<String> {
-        let indexed_paths: std::collections::HashSet<&Path> =
-            self.files.iter().filter(|entry| !entry.deleted).map(|e| e.path.as_path()).collect();
+        let indexed_paths: std::collections::HashSet<&Path> = self
+            .files
+            .iter()
+            .filter(|entry| !entry.deleted)
+            .map(|e| e.path.as_path())
+            .collect();
 
         for entry in self.files.iter().filter(|entry| !entry.deleted) {
             match entry.path.metadata() {
@@ -642,8 +785,8 @@ impl TrigramIndex {
     }
 
     pub fn save_json(&self, path: &Path) -> Result<()> {
-        let data = serde_json::to_vec(&self.to_serializable())
-            .context("failed to serialize index")?;
+        let data =
+            serde_json::to_vec(&self.to_serializable()).context("failed to serialize index")?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -678,7 +821,11 @@ fn collect_file_entries(root: &Path, no_ignore: bool) -> Vec<FileEntry> {
         .git_ignore(!no_ignore)
         .build()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_some_and(|file_type| file_type.is_file()))
+        .filter(|entry| {
+            entry
+                .file_type()
+                .is_some_and(|file_type| file_type.is_file())
+        })
         .filter_map(|entry| {
             let path = entry.into_path();
             let meta = path.metadata().ok()?;
@@ -727,13 +874,10 @@ fn add_file_postings(
     affected_trigrams: &mut std::collections::HashSet<[u8; 3]>,
 ) {
     for (trigram, line) in hits {
-        postings
-            .entry(*trigram)
-            .or_default()
-            .push(PostingEntry {
-                file_id,
-                line: *line,
-            });
+        postings.entry(*trigram).or_default().push(PostingEntry {
+            file_id,
+            line: *line,
+        });
         affected_trigrams.insert(*trigram);
     }
 }
@@ -757,9 +901,8 @@ fn remove_file_postings(
 
         lines.sort_unstable();
         lines.dedup();
-        entries.retain(|entry| {
-            entry.file_id != file_id || lines.binary_search(&entry.line).is_err()
-        });
+        entries
+            .retain(|entry| entry.file_id != file_id || lines.binary_search(&entry.line).is_err());
     }
 }
 
@@ -816,25 +959,98 @@ fn extract_file_trigrams(path: &Path) -> Result<Vec<([u8; 3], u32)>> {
     Ok(trigrams)
 }
 
-fn extract_longest_literal(pattern: &str) -> String {
-    let meta_chars = ['.', '*', '+', '?', '[', ']', '(', ')', '{', '}', '|', '^', '$', '\\'];
-    let mut longest = String::new();
-    let mut current = String::new();
+/// Safe regex acceleration is intentionally conservative.
+///
+/// We only use the trigram index when the regex parser can prove a finite set
+/// of literals that every match must contain. This covers literal alternations
+/// like `(foo|bar)`, small character-class expansions such as `de[ab]f` or
+/// `[abc]def`, and case-sensitive UTF-8 literals. Patterns with large or
+/// unbounded classes that do not leave behind another provable literal,
+/// empty/optional branches, or non-ASCII ignore-case literals fall back to a
+/// full scan so the index never introduces false negatives.
+fn select_regex_prefilter_literals(pattern: &str, ignore_case: bool) -> Option<RegexLiteralPlan> {
+    let hir = parse_regex_hir(pattern).ok()?;
 
-    for ch in pattern.chars() {
-        if meta_chars.contains(&ch) {
-            if current.len() > longest.len() {
-                longest = current.clone();
+    [
+        extract_edge_literal_plan(&hir, ExtractKind::Prefix, ignore_case),
+        extract_edge_literal_plan(&hir, ExtractKind::Suffix, ignore_case),
+        extract_inner_literal_plan(&hir, ignore_case),
+    ]
+    .into_iter()
+    .flatten()
+    .max_by(compare_regex_literal_plans)
+}
+
+fn extract_edge_literal_plan(
+    hir: &Hir,
+    kind: ExtractKind,
+    ignore_case: bool,
+) -> Option<RegexLiteralPlan> {
+    let mut extractor = Extractor::new();
+    extractor
+        .kind(kind)
+        .limit_class(MAX_REGEX_CLASS_LITERALS)
+        .limit_total(MAX_REGEX_PREFILTER_LITERALS);
+
+    let literals = extractor
+        .extract(hir)
+        .literals()?
+        .iter()
+        .map(|literal| literal.as_bytes().to_vec())
+        .collect();
+
+    RegexLiteralPlan::from_raw(literals, ignore_case)
+}
+
+fn extract_inner_literal_plan(hir: &Hir, ignore_case: bool) -> Option<RegexLiteralPlan> {
+    match hir.kind() {
+        HirKind::Empty | HirKind::Class(_) | HirKind::Look(_) => None,
+        HirKind::Literal(literal) => {
+            RegexLiteralPlan::from_raw(vec![literal.0.to_vec()], ignore_case)
+        }
+        HirKind::Capture(capture) => extract_inner_literal_plan(&capture.sub, ignore_case),
+        HirKind::Repetition(repetition) => (repetition.min > 0)
+            .then(|| extract_inner_literal_plan(&repetition.sub, ignore_case))
+            .flatten(),
+        HirKind::Concat(parts) => parts
+            .iter()
+            .filter_map(|part| extract_inner_literal_plan(part, ignore_case))
+            .max_by(compare_regex_literal_plans),
+        HirKind::Alternation(parts) => {
+            let mut combined = Vec::new();
+            for part in parts {
+                let plan = extract_inner_literal_plan(part, ignore_case)?;
+                combined.extend(plan.literals);
+                if combined.len() > MAX_REGEX_PREFILTER_LITERALS {
+                    return None;
+                }
             }
-            current.clear();
-        } else {
-            current.push(ch);
+            RegexLiteralPlan::from_raw(combined, false)
         }
     }
-    if current.len() > longest.len() {
-        longest = current;
+}
+
+fn normalize_prefilter_literal(literal: &[u8], ignore_case: bool) -> Option<Vec<u8>> {
+    if ignore_case {
+        if !literal.is_ascii() {
+            return None;
+        }
+        Some(
+            literal
+                .iter()
+                .map(|byte| byte.to_ascii_lowercase())
+                .collect(),
+        )
+    } else {
+        Some(literal.to_vec())
     }
-    longest
+}
+
+fn compare_regex_literal_plans(a: &RegexLiteralPlan, b: &RegexLiteralPlan) -> std::cmp::Ordering {
+    a.min_len()
+        .cmp(&b.min_len())
+        .then_with(|| a.total_len().cmp(&b.total_len()))
+        .then_with(|| b.literals.len().cmp(&a.literals.len()))
 }
 
 fn extract_trigrams(pattern: &[u8]) -> Vec<[u8; 3]> {
@@ -853,12 +1069,10 @@ fn extract_trigrams(pattern: &[u8]) -> Vec<[u8; 3]> {
     trigrams
 }
 
-fn verify_candidates(
+fn collect_matches(
     file: &Path,
-    candidate_lines: &[usize],
-    pattern: &str,
-    ignore_case: bool,
-    fixed_strings: bool,
+    candidate_lines: Option<&[usize]>,
+    matcher: &SearchMatcher,
 ) -> Result<Vec<IndexQueryResult>> {
     let content = std::fs::read_to_string(file)
         .with_context(|| format!("failed to read {}", file.display()))?;
@@ -866,33 +1080,32 @@ fn verify_candidates(
     let lines: Vec<&str> = content.lines().collect();
     let mut results = Vec::new();
 
-    for &line_num in candidate_lines {
-        if line_num == 0 || line_num > lines.len() {
-            continue;
+    match candidate_lines {
+        Some(candidate_lines) => {
+            for &line_num in candidate_lines {
+                if line_num == 0 || line_num > lines.len() {
+                    continue;
+                }
+                let line = lines[line_num - 1];
+                if matcher.is_match(line) {
+                    results.push(IndexQueryResult {
+                        file: file.to_path_buf(),
+                        line: line_num,
+                        text: line.to_string(),
+                    });
+                }
+            }
         }
-        let line = lines[line_num - 1];
-        let matches = if fixed_strings {
-            if ignore_case {
-                line.to_lowercase().contains(&pattern.to_lowercase())
-            } else {
-                line.contains(pattern)
+        None => {
+            for (line_index, line) in lines.iter().enumerate() {
+                if matcher.is_match(line) {
+                    results.push(IndexQueryResult {
+                        file: file.to_path_buf(),
+                        line: line_index + 1,
+                        text: (*line).to_string(),
+                    });
+                }
             }
-        } else {
-            let re = regex::RegexBuilder::new(pattern)
-                .case_insensitive(ignore_case)
-                .build();
-            match re {
-                Ok(re) => re.is_match(line),
-                Err(_) => false,
-            }
-        };
-
-        if matches {
-            results.push(IndexQueryResult {
-                file: file.to_path_buf(),
-                line: line_num,
-                text: line.to_string(),
-            });
         }
     }
 
@@ -902,8 +1115,8 @@ fn verify_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::fmt::Write as _;
+    use std::fs;
     use tempfile::tempdir;
 
     fn write_test_file(dir: &Path, name: &str, content: &str) {
@@ -1038,16 +1251,28 @@ mod tests {
         let fixed_loaded = loaded.search("alpha beta", false, true).unwrap();
         assert_eq!(fixed_loaded.len(), fixed_original.len());
         assert_eq!(
-            fixed_loaded.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>(),
-            fixed_original.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>()
+            fixed_loaded
+                .iter()
+                .map(|r| (&r.file, r.line, &r.text))
+                .collect::<Vec<_>>(),
+            fixed_original
+                .iter()
+                .map(|r| (&r.file, r.line, &r.text))
+                .collect::<Vec<_>>()
         );
 
         let regex_original = index.search(r"regex-target-\d+", false, false).unwrap();
         let regex_loaded = loaded.search(r"regex-target-\d+", false, false).unwrap();
         assert_eq!(regex_loaded.len(), regex_original.len());
         assert_eq!(
-            regex_loaded.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>(),
-            regex_original.iter().map(|r| (&r.file, r.line, &r.text)).collect::<Vec<_>>()
+            regex_loaded
+                .iter()
+                .map(|r| (&r.file, r.line, &r.text))
+                .collect::<Vec<_>>(),
+            regex_original
+                .iter()
+                .map(|r| (&r.file, r.line, &r.text))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1067,7 +1292,11 @@ mod tests {
     #[test]
     fn test_index_regex_search() {
         let dir = tempdir().unwrap();
-        write_test_file(dir.path(), "a.txt", "error: something failed\nwarning: ok\nerror: again\n");
+        write_test_file(
+            dir.path(),
+            "a.txt",
+            "error: something failed\nwarning: ok\nerror: again\n",
+        );
 
         let index = TrigramIndex::build(dir.path()).unwrap();
         let results = index.search("error.*failed", false, false).unwrap();
@@ -1082,7 +1311,35 @@ mod tests {
 
         let index = TrigramIndex::build(dir.path()).unwrap();
         let candidates = index.query_candidates("ab", false);
-        assert!(candidates.is_empty(), "patterns shorter than 3 bytes cannot use trigram index");
+        assert!(
+            candidates.is_empty(),
+            "patterns shorter than 3 bytes cannot use trigram index"
+        );
+    }
+
+    #[test]
+    fn test_regex_prefilter_literals_cover_alternation_classes_and_unicode() {
+        let alternation = select_regex_prefilter_literals(r"(foo|bar)", false).unwrap();
+        assert_eq!(alternation.literals, vec![b"bar".to_vec(), b"foo".to_vec()]);
+
+        let char_class = select_regex_prefilter_literals(r"de[ab]f", false).unwrap();
+        assert_eq!(
+            char_class.literals,
+            vec![b"deaf".to_vec(), b"debf".to_vec()]
+        );
+
+        let unicode = select_regex_prefilter_literals(r"(東京|大阪)", false).unwrap();
+        assert_eq!(
+            unicode.literals,
+            vec!["大阪".as_bytes().to_vec(), "東京".as_bytes().to_vec()]
+        );
+    }
+
+    #[test]
+    fn test_regex_prefilter_literals_fallback_for_unsafe_patterns() {
+        assert!(select_regex_prefilter_literals(r"(foo|ab)", false).is_none());
+        assert!(select_regex_prefilter_literals(r"[a-z]{3}", false).is_none());
+        assert!(select_regex_prefilter_literals("東京", true).is_none());
     }
 
     #[test]
@@ -1131,7 +1388,11 @@ mod tests {
         let index = TrigramIndex::build(dir.path()).unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(50));
-        write_test_file(dir.path(), "a.txt", "much longer content here to change size\n");
+        write_test_file(
+            dir.path(),
+            "a.txt",
+            "much longer content here to change size\n",
+        );
         let reason = index.staleness_reason();
         assert!(reason.is_some(), "should detect change");
     }
@@ -1220,7 +1481,10 @@ mod tests {
 
         let index2 = TrigramIndex::build(dir.path()).unwrap();
         let r2_hello = index2.search("hello", false, true).unwrap();
-        assert!(r2_hello.is_empty(), "old content should not match after rebuild");
+        assert!(
+            r2_hello.is_empty(),
+            "old content should not match after rebuild"
+        );
         let r2_goodbye = index2.search("goodbye", false, true).unwrap();
         assert_eq!(r2_goodbye.len(), 1);
     }
@@ -1272,8 +1536,14 @@ mod tests {
         assert_eq!(update.stats.deleted_files, 1);
         assert_eq!(update.stats.reused_files, 1);
 
-        let removed = update.index.search("remove only needle", false, true).unwrap();
-        assert!(removed.is_empty(), "removed file content should disappear from the index");
+        let removed = update
+            .index
+            .search("remove only needle", false, true)
+            .unwrap();
+        assert!(
+            removed.is_empty(),
+            "removed file content should disappear from the index"
+        );
 
         let preserved = update.index.search("alpha keep", false, true).unwrap();
         assert_eq!(preserved.len(), 1);
@@ -1300,13 +1570,19 @@ mod tests {
         assert_eq!(update.stats.reused_files, 1);
 
         let old_results = update.index.search("old needle", false, true).unwrap();
-        assert!(old_results.is_empty(), "stale postings for modified files should be removed");
+        assert!(
+            old_results.is_empty(),
+            "stale postings for modified files should be removed"
+        );
 
         let new_results = update.index.search("new needle", false, true).unwrap();
         assert_eq!(new_results.len(), 1);
         assert!(new_results[0].file.ends_with("a.txt"));
 
-        let preserved = update.index.search("preserved needle", false, true).unwrap();
+        let preserved = update
+            .index
+            .search("preserved needle", false, true)
+            .unwrap();
         assert_eq!(preserved.len(), 1);
         assert!(preserved[0].file.ends_with("b.txt"));
     }
@@ -1333,7 +1609,11 @@ mod tests {
         assert_eq!(update.stats.deleted_files, 1);
         assert_eq!(update.stats.reused_files, 1);
 
-        assert!(update.index.search("beta remove", false, true).unwrap().is_empty());
+        assert!(update
+            .index
+            .search("beta remove", false, true)
+            .unwrap()
+            .is_empty());
 
         let updated = update.index.search("alpha updated", false, true).unwrap();
         assert_eq!(updated.len(), 1);
