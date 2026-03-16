@@ -144,6 +144,38 @@ fn assert_json_routing(output: &Output, backend: &str, reason: &str, sidecar_use
     payload
 }
 
+fn assert_ndjson_routing(
+    output: &Output,
+    backend: &str,
+    reason: &str,
+    sidecar_used: bool,
+) -> Vec<Value> {
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let payloads = stdout
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+
+    assert!(!payloads.is_empty(), "stdout={stdout}");
+
+    for payload in &payloads {
+        assert_eq!(payload["routing_backend"], backend);
+        assert_eq!(payload["routing_reason"], reason);
+        assert_eq!(payload["sidecar_used"], sidecar_used);
+    }
+
+    payloads
+}
+
 #[test]
 fn test_routing_default_search_uses_ripgrep_passthrough() {
     let dir = tempdir().unwrap();
@@ -160,6 +192,86 @@ fn test_routing_default_search_uses_ripgrep_passthrough() {
         .unwrap();
 
     assert_rg_passthrough(&output);
+}
+
+#[test]
+fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--ndjson")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    let payloads = assert_ndjson_routing(&output, "CpuBackend", "cpu-native", false);
+    assert_eq!(payloads.len(), 3);
+
+    let mut actual = payloads
+        .iter()
+        .map(|payload| {
+            let object = payload.as_object().unwrap();
+            assert!(object.contains_key("query"));
+            assert!(object.contains_key("path"));
+            assert!(object.contains_key("file"));
+            assert!(object.contains_key("line"));
+            assert!(object.contains_key("text"));
+            assert!(!object.contains_key("matches"));
+            assert!(!object.contains_key("total_matches"));
+            (
+                payload["file"].as_str().unwrap().to_owned(),
+                payload["line"].as_u64().unwrap(),
+                payload["text"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    actual.sort();
+
+    let mut expected = vec![
+        (
+            dir.path().join("a.txt").display().to_string(),
+            1,
+            "hello world".to_string(),
+        ),
+        (
+            dir.path().join("b.txt").display().to_string(),
+            2,
+            "hello again friend".to_string(),
+        ),
+        (
+            dir.path().join("notes.md").display().to_string(),
+            1,
+            "hello from markdown".to_string(),
+        ),
+    ];
+    expected.sort();
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn test_search_json_and_ndjson_are_mutually_exclusive() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--json")
+        .arg("--ndjson")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--json"), "stderr={stderr}");
+    assert!(stderr.contains("--ndjson"), "stderr={stderr}");
 }
 
 #[test]
@@ -285,6 +397,34 @@ fn test_routing_tg_run_uses_ast_backend() {
 
     let payload = assert_json_routing(&output, "AstBackend", "ast-native", false);
     assert_eq!(payload["total_matches"], 1);
+}
+
+#[test]
+fn test_tg_run_rewrite_rejects_ndjson_without_python() {
+    let bogus_python_home = tempdir().unwrap();
+    let (_dir, file_path) = write_python_source();
+
+    let output = tg()
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--ndjson")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .env("PYTHONHOME", bogus_python_home.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--ndjson"), "stderr={stderr}");
+    assert!(
+        stderr.contains("unexpected") || stderr.contains("unknown") || stderr.contains("found argument"),
+        "stderr={stderr}"
+    );
 }
 
 #[test]

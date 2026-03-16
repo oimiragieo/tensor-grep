@@ -67,8 +67,12 @@ pub struct PositionalCli {
     pub gpu_device_ids: Vec<i32>,
 
     /// Emit machine-readable routing metadata as JSON
-    #[arg(long)]
+    #[arg(long, conflicts_with = "ndjson")]
     pub json: bool,
+
+    /// Emit one JSON object per matching line (newline-delimited)
+    #[arg(long, conflicts_with = "json")]
+    pub ndjson: bool,
 
     /// Emit routing metadata on stderr before executing the search
     #[arg(long)]
@@ -122,8 +126,12 @@ pub struct SearchArgs {
     pub gpu_device_ids: Vec<i32>,
 
     /// Emit machine-readable routing metadata as JSON
-    #[arg(long)]
+    #[arg(long, conflicts_with = "ndjson")]
     pub json: bool,
+
+    /// Emit one JSON object per matching line (newline-delimited)
+    #[arg(long, conflicts_with = "json")]
+    pub ndjson: bool,
 
     /// Emit routing metadata on stderr before executing the search
     #[arg(long)]
@@ -287,6 +295,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             no_ignore: true,
             gpu_device_ids: &cli.gpu_device_ids,
             json: cli.json,
+            ndjson: cli.ndjson,
             verbose: cli.verbose,
         });
     }
@@ -301,6 +310,30 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             cli.invert_match,
         )?;
         return emit_json_search_results(
+            RoutingDecision::CPU,
+            &pattern,
+            &path,
+            matches
+                .into_iter()
+                .map(|matched| SearchMatchJson {
+                    file: matched.file.to_string_lossy().into_owned(),
+                    line: matched.line,
+                    text: matched.text,
+                })
+                .collect(),
+        );
+    }
+
+    if cli.ndjson {
+        let backend = CpuBackend::new();
+        let matches = backend.search_with_paths(
+            &pattern,
+            &path,
+            cli.ignore_case,
+            cli.fixed_strings,
+            cli.invert_match,
+        )?;
+        return emit_ndjson_search_results(
             RoutingDecision::CPU,
             &pattern,
             &path,
@@ -423,6 +456,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             no_ignore: args.no_ignore,
             gpu_device_ids: &args.gpu_device_ids,
             json: args.json,
+            ndjson: args.ndjson,
             verbose: args.verbose,
         });
     }
@@ -456,6 +490,30 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             args.invert_match,
         )?;
         return emit_json_search_results(
+            RoutingDecision::CPU,
+            &args.pattern,
+            &args.path,
+            matches
+                .into_iter()
+                .map(|matched| SearchMatchJson {
+                    file: matched.file.to_string_lossy().into_owned(),
+                    line: matched.line,
+                    text: matched.text,
+                })
+                .collect(),
+        );
+    }
+
+    if args.ndjson {
+        let backend = CpuBackend::new();
+        let matches = backend.search_with_paths(
+            &args.pattern,
+            &args.path,
+            args.ignore_case,
+            args.fixed_strings,
+            args.invert_match,
+        )?;
+        return emit_ndjson_search_results(
             RoutingDecision::CPU,
             &args.pattern,
             &args.path,
@@ -607,6 +665,22 @@ fn run_index_query(args: &SearchArgs, index: &TrigramIndex) -> anyhow::Result<()
         );
     }
 
+    if args.ndjson {
+        return emit_ndjson_search_results(
+            RoutingDecision::INDEX,
+            &args.pattern,
+            &args.path,
+            results
+                .into_iter()
+                .map(|result| SearchMatchJson {
+                    file: result.file.to_string_lossy().into_owned(),
+                    line: result.line,
+                    text: result.text,
+                })
+                .collect(),
+        );
+    }
+
     if args.count {
         println!("{}", results.len());
         return Ok(());
@@ -646,6 +720,19 @@ struct SearchMatchJson {
     file: String,
     line: usize,
     text: String,
+}
+
+#[derive(Serialize)]
+struct SearchMatchNdjson<'a> {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    query: &'a str,
+    path: &'a str,
+    file: &'a str,
+    line: usize,
+    text: &'a str,
 }
 
 #[derive(Deserialize)]
@@ -821,6 +908,7 @@ struct GpuSearchParams<'a> {
     no_ignore: bool,
     gpu_device_ids: &'a [i32],
     json: bool,
+    ndjson: bool,
     verbose: bool,
 }
 
@@ -842,13 +930,29 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
         "globs": params.globs,
         "no_ignore": params.no_ignore,
         "gpu_device_ids": params.gpu_device_ids,
-        "json": params.json,
+        "json": params.json || params.ndjson,
     });
 
     match execute_sidecar_command("gpu_search", vec![], Some(payload)) {
         Ok(result) => {
             if !result.stdout.is_empty() {
-                if params.json {
+                if params.ndjson {
+                    let matches = parse_gpu_sidecar_search_payload(&result.stdout)?
+                        .matches
+                        .into_iter()
+                        .map(|entry| SearchMatchJson {
+                            file: entry.file,
+                            line: entry.line_number,
+                            text: entry.text,
+                        })
+                        .collect();
+                    emit_ndjson_search_results(
+                        RoutingDecision::GPU_SIDECAR,
+                        params.pattern,
+                        params.path,
+                        matches,
+                    )?;
+                } else if params.json {
                     let normalized = normalize_gpu_sidecar_json(&result.stdout)?;
                     println!("{}", serde_json::to_string_pretty(&normalized)?);
                 } else {
@@ -927,12 +1031,40 @@ fn emit_json_search_results(
     Ok(())
 }
 
-fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value> {
-    let payload: GpuSidecarSearchPayload = serde_json::from_str(stdout).map_err(|err| {
+fn emit_ndjson_search_results(
+    decision: RoutingDecision,
+    pattern: &str,
+    path: &str,
+    matches: Vec<SearchMatchJson>,
+) -> anyhow::Result<()> {
+    for matched in matches {
+        let payload = SearchMatchNdjson {
+            version: JSON_OUTPUT_VERSION,
+            routing_backend: decision.backend,
+            routing_reason: decision.reason,
+            sidecar_used: decision.sidecar_used,
+            query: pattern,
+            path,
+            file: &matched.file,
+            line: matched.line,
+            text: &matched.text,
+        };
+        println!("{}", serde_json::to_string(&payload)?);
+    }
+
+    Ok(())
+}
+
+fn parse_gpu_sidecar_search_payload(stdout: &str) -> anyhow::Result<GpuSidecarSearchPayload> {
+    serde_json::from_str(stdout).map_err(|err| {
         anyhow::anyhow!(
             "GPU sidecar returned malformed search JSON payload: expected {{total_matches, total_files, matches[]}} with string file/text fields and integer line_number values ({err})"
         )
-    })?;
+    })
+}
+
+fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value> {
+    let payload = parse_gpu_sidecar_search_payload(stdout)?;
 
     let normalized_matches = payload
         .matches
