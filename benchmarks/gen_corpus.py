@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 AST_PARITY_CASES: list[dict[str, str]] = [
@@ -290,6 +291,8 @@ AST_PARITY_CASES: list[dict[str, str]] = [
     },
 ]
 
+AST_BENCH_LANGUAGES = ("python", "javascript", "typescript", "rust")
+
 
 def _recreate_dir(output_dir: Path) -> None:
     if output_dir.exists():
@@ -343,6 +346,173 @@ def generate_python_ast_bench_corpus(
     }
 
 
+def _generate_javascript_ast_bench_line(file_index: int, line_index: int, *, rng: random.Random) -> str:
+    salt = rng.randint(1000, 9999)
+    if line_index % 3 == 0:
+        return (
+            f"function generated_{file_index}_{line_index}_{salt}(value_{line_index}) "
+            f"{{ return value_{line_index} + {line_index}; }}\n"
+        )
+    if line_index % 3 == 1:
+        return (
+            f"class Generated_{file_index}_{line_index}_{salt} "
+            f"{{ constructor(value_{line_index}) {{ this.value = value_{line_index}; }} }}\n"
+        )
+    return f"const result_{file_index}_{line_index}_{salt} = {line_index};\n"
+
+
+def _generate_typescript_ast_bench_line(file_index: int, line_index: int, *, rng: random.Random) -> str:
+    salt = rng.randint(1000, 9999)
+    if line_index % 3 == 0:
+        return (
+            f"function generated_{file_index}_{line_index}_{salt}(value_{line_index}: number): number "
+            f"{{ return value_{line_index} + {line_index}; }}\n"
+        )
+    if line_index % 3 == 1:
+        return (
+            f"class Generated_{file_index}_{line_index}_{salt} "
+            f"{{ value: number; constructor(value_{line_index}: number) {{ this.value = value_{line_index}; }} }}\n"
+        )
+    return f"const result_{file_index}_{line_index}_{salt}: number = {line_index};\n"
+
+
+def _generate_rust_ast_bench_line(file_index: int, line_index: int, *, rng: random.Random) -> str:
+    salt = rng.randint(1000, 9999)
+    if line_index % 3 == 0:
+        return (
+            f"fn generated_{file_index}_{line_index}_{salt}(value_{line_index}: i32) -> i32 "
+            f"{{ value_{line_index} + {line_index} }}\n"
+        )
+    if line_index % 3 == 1:
+        return f"struct Generated_{file_index}_{line_index}_{salt} {{ value: i32 }}\n"
+    return f"fn use_generated_{file_index}_{line_index}_{salt}() {{ let result_{file_index}_{line_index}_{salt} = {line_index}; }}\n"
+
+
+def _generate_structured_ast_bench_corpus(
+    output_dir: Path,
+    *,
+    file_count: int,
+    total_loc: int,
+    seed: int,
+    extension: str,
+    line_factory: Callable[..., str],
+) -> dict[str, object]:
+    _recreate_dir(output_dir)
+    rng = random.Random(seed)
+    lines_per_file, extra_lines = divmod(total_loc, file_count)
+    generated_loc = 0
+
+    for file_index in range(file_count):
+        current_lines = lines_per_file + (1 if file_index < extra_lines else 0)
+        file_path = output_dir / f"module_{file_index:04d}{extension}"
+        lines = [line_factory(file_index, line_index, rng=rng) for line_index in range(current_lines)]
+        generated_loc += len(lines)
+        file_path.write_text("".join(lines), encoding="utf-8")
+
+    manifest_path = write_manifest(output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256")
+    return {
+        "corpus_dir": output_dir,
+        "manifest_path": manifest_path,
+        "file_count": file_count,
+        "total_loc": generated_loc,
+        "seed": seed,
+    }
+
+
+def generate_javascript_ast_bench_corpus(
+    output_dir: Path,
+    *,
+    file_count: int = 1000,
+    total_loc: int = 50000,
+    seed: int = 42,
+) -> dict[str, object]:
+    return _generate_structured_ast_bench_corpus(
+        output_dir,
+        file_count=file_count,
+        total_loc=total_loc,
+        seed=seed,
+        extension=".js",
+        line_factory=_generate_javascript_ast_bench_line,
+    )
+
+
+def generate_typescript_ast_bench_corpus(
+    output_dir: Path,
+    *,
+    file_count: int = 1000,
+    total_loc: int = 50000,
+    seed: int = 42,
+) -> dict[str, object]:
+    return _generate_structured_ast_bench_corpus(
+        output_dir,
+        file_count=file_count,
+        total_loc=total_loc,
+        seed=seed,
+        extension=".ts",
+        line_factory=_generate_typescript_ast_bench_line,
+    )
+
+
+def generate_rust_ast_bench_corpus(
+    output_dir: Path,
+    *,
+    file_count: int = 1000,
+    total_loc: int = 50000,
+    seed: int = 42,
+) -> dict[str, object]:
+    return _generate_structured_ast_bench_corpus(
+        output_dir,
+        file_count=file_count,
+        total_loc=total_loc,
+        seed=seed,
+        extension=".rs",
+        line_factory=_generate_rust_ast_bench_line,
+    )
+
+
+def generate_ast_bench_corpus(
+    output_dir: Path,
+    *,
+    lang: str = "python",
+    file_count: int = 1000,
+    total_loc: int = 50000,
+    seed: int = 42,
+) -> dict[str, object]:
+    if lang == "python":
+        payload = generate_python_ast_bench_corpus(
+            output_dir,
+            file_count=file_count,
+            total_loc=total_loc,
+            seed=seed,
+        )
+    elif lang == "javascript":
+        payload = generate_javascript_ast_bench_corpus(
+            output_dir,
+            file_count=file_count,
+            total_loc=total_loc,
+            seed=seed,
+        )
+    elif lang == "typescript":
+        payload = generate_typescript_ast_bench_corpus(
+            output_dir,
+            file_count=file_count,
+            total_loc=total_loc,
+            seed=seed,
+        )
+    elif lang == "rust":
+        payload = generate_rust_ast_bench_corpus(
+            output_dir,
+            file_count=file_count,
+            total_loc=total_loc,
+            seed=seed,
+        )
+    else:
+        raise ValueError(f"Unsupported ast-bench language: {lang}")
+
+    payload["lang"] = lang
+    return payload
+
+
 def generate_ast_parity_corpus(output_dir: Path) -> dict[str, object]:
     _recreate_dir(output_dir)
     for case in AST_PARITY_CASES:
@@ -371,6 +541,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--files", type=int, default=1000, help="File count for ast-bench corpus.")
     parser.add_argument("--loc", type=int, default=50000, help="Total LOC for ast-bench corpus.")
     parser.add_argument("--seed", type=int, default=42, help="Deterministic seed for ast-bench corpus.")
+    parser.add_argument(
+        "--lang",
+        choices=AST_BENCH_LANGUAGES,
+        default="python",
+        help="Language for ast-bench corpus generation.",
+    )
     return parser.parse_args()
 
 
@@ -379,8 +555,9 @@ def main() -> int:
     output_dir = Path(args.out).expanduser().resolve()
 
     if args.kind == "ast-bench":
-        payload = generate_python_ast_bench_corpus(
+        payload = generate_ast_bench_corpus(
             output_dir,
+            lang=args.lang,
             file_count=args.files,
             total_loc=args.loc,
             seed=args.seed,
