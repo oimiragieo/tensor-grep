@@ -1,0 +1,44 @@
+{
+  "featureId": "multi-lang-ast-benchmark",
+  "reviewedAt": "2026-03-16T06:00:00.000Z",
+  "commitId": "4fde376",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Well-structured multi-language AST benchmark script that correctly reuses existing helpers from run_ast_benchmarks.py and gen_corpus.py. The script measures tg run vs sg run across Python/JS/TS/Rust using hyperfine, produces proper JSON artifacts with per-language rows containing all required fields (language, tg_median_s, sg_median_s, ratio, file_count), gates Python ratio at <= 3.0, and includes suite/generated_at_epoch_s metadata. Error handling for missing binaries is comprehensive. Unit tests cover the default data directory resolution, successful 4-language artifact generation with mocked hyperfine, and graceful fallback when ast-grep is missing. The existing run_ast_benchmarks.py remains unchanged and functional.",
+    "issues": [
+      {
+        "file": "tests/unit/test_benchmark_scripts.py",
+        "line": 269,
+        "severity": "non_blocking",
+        "description": "No test for the Python ratio gate FAILURE path — when the Python ratio exceeds the 3.0 threshold, the script should exit with code 1 and set passed=False. The existing test only exercises the happy path (ratio 2.25 < 3.0). A test with tg_median > 3*sg_median would improve coverage of the gate logic."
+      },
+      {
+        "file": "benchmarks/run_ast_multilang_benchmarks.py",
+        "line": 174,
+        "severity": "non_blocking",
+        "description": "The overall 'passed' field is determined solely by the Python row. If JS/TS/Rust ratios regress severely, the script still reports passed=True. This matches the feature spec ('Python ratio gated at <= 3.0') but could be a design gap for future regression detection across other languages."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "services.yaml already includes benchmark_ast_multilang command entry, which is correct and was likely added by a prior feature or the same worker session.",
+      "evidence": "services.yaml contains: benchmark_ast_multilang: python benchmarks/run_ast_multilang_benchmarks.py --output artifacts/bench_ast_multilang.json"
+    },
+    {
+      "area": "conventions",
+      "observation": "The benchmark-conventions.md library file does not mention the new multi-language AST benchmark, but the existing content is general enough that no specific update is required. The script follows all documented conventions (JSON output with suite/generated_at_epoch_s, hyperfine-based measurement, regression gating).",
+      "evidence": ".factory/library/benchmark-conventions.md covers baseline naming, timing variance, regression thresholds, and worktree gotchas — all generic. The new script follows these patterns."
+    },
+    {
+      "area": "conventions",
+      "observation": "AGENTS.md benchmarks section does not list the new run_ast_multilang_benchmarks.py script, but the mission-level AGENTS.md is comprehensive and the project-root AGENTS.md benchmark section references scripts by category rather than individual listing.",
+      "evidence": "AGENTS.md lists run_ast_benchmarks.py under 'AST single-query benchmark' but has no entry for the multi-language variant."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The multi-language AST benchmark implementation is correct, well-structured, and fulfills both VAL-BENCH-004 (multi-language benchmark with per-language rows and Python ratio gate) and VAL-BENCH-010 (existing AST benchmark confirmed non-regressed at ratio 1.21). Code reuses existing helpers cleanly, tests cover key scenarios, and the JSON artifact format matches all requirements. Two non-blocking issues noted: no test for the ratio gate failure path, and the overall pass/fail only depends on Python (by design per spec). No blocking issues found."
+}

@@ -1,0 +1,57 @@
+{
+  "milestone": "benchmark-expansion",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add run_index_scaling_benchmark.py to the Benchmark Rules section under a new 'Index scaling' heading, so workers know which script to use for index build/query performance at varying corpus sizes. Also mention run_ast_multilang_benchmarks.py under 'AST multi-language benchmark'.",
+      "evidence": "Index-scaling-benchmark reviewer noted that AGENTS.md only lists run_hot_query_benchmarks.py for index work. Multi-lang-ast-benchmark reviewer noted AGENTS.md has no entry for the multi-language AST benchmark. Both scripts are new additions in this milestone.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Rust corpus generator wraps let-bindings in function bodies due to Rust syntax constraints",
+      "reason": "Standard Rust language knowledge — not a codebase-specific discovery requiring library documentation"
+    },
+    {
+      "observation": "services.yaml missing a benchmark_rewrite_5k command for large-scale runs",
+      "reason": "The existing benchmark_rewrite command already supports --files/--loc parameters via CLI args. Adding a separate command is unnecessary — workers can pass custom args to the existing command"
+    },
+    {
+      "observation": "benchmark-conventions.md doesn't mention hyperfine as a prerequisite",
+      "reason": "Hyperfine is already handled transparently by the benchmark scripts (auto-resolved via HYPERFINE_BINARY env var or cargo install). Not a gotcha that has caused worker issues"
+    },
+    {
+      "observation": "Worker correctly followed TDD (multi-lang-corpus)",
+      "reason": "This is a positive process observation, not actionable shared state"
+    },
+    {
+      "observation": "services.yaml already includes all new benchmark commands",
+      "reason": "Already correct — no action needed"
+    },
+    {
+      "observation": "Could not find .factory/skills/backend-worker/SKILL.md",
+      "reason": "Skills are located via the droid system, not filesystem — this is expected and not an issue"
+    },
+    {
+      "observation": "Cross-module import pattern (benchmark scripts importing from run_ast_benchmarks.py) not documented",
+      "reason": "This is a natural code sharing pattern visible from imports — not a gotcha that needs explicit documentation. Workers can discover it by reading the code"
+    }
+  ],
+  "previousRound": null
+}

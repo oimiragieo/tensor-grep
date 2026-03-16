@@ -1,0 +1,45 @@
+{
+  "featureId": "multi-lang-corpus",
+  "reviewedAt": "2026-03-16T05:56:00.000Z",
+  "commitId": "341cf5d7a552f78baf665f032e6ff79e210a19f4",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, well-structured implementation that extends gen_corpus.py with JavaScript, TypeScript, and Rust AST benchmark corpus generators. The code follows a good DRY pattern with a shared _generate_structured_ast_bench_corpus helper that handles file creation, LOC distribution, seeding, and manifest writing. Each language generator produces syntactically valid code with three pattern types (functions, classes/structs, assignments) rotated by line_index % 3. The existing generate_python_ast_bench_corpus function is completely unchanged, ensuring backward compatibility. The dispatch function generate_ast_bench_corpus correctly routes to the right generator based on --lang, defaulting to python. CLI changes are minimal and backward-compatible. Test coverage is adequate with parametrized tests for all three new languages plus a byte-for-byte Python backward compatibility test. Worker verified all four language corpora parse and match via native tg run.",
+    "issues": [
+      {
+        "file": "benchmarks/gen_corpus.py",
+        "line": 405,
+        "severity": "non_blocking",
+        "description": "The line_factory parameter uses Callable[..., str] which is a very loose type hint. A more precise Protocol or Callable[[int, int, random.Random], str] would improve type safety and make the expected signature self-documenting. Non-blocking since mypy passes and the code works correctly."
+      },
+      {
+        "file": "benchmarks/gen_corpus.py",
+        "line": 389,
+        "severity": "non_blocking",
+        "description": "The Rust assignment generator wraps let bindings inside a function body (fn use_generated_...() { let ... = ...; }) to produce valid Rust module-level items. This is correct but produces slightly unusual patterns. The function name embeds file/line/salt indices making very long identifiers. Not a bug, just a style note."
+      },
+      {
+        "file": "tests/unit/test_gen_corpus.py",
+        "line": 7,
+        "severity": "non_blocking",
+        "description": "The _load_script_module helper uses importlib.util to load benchmarks/gen_corpus.py as a module. This works but means each parametrized test case re-loads the module. Consider using a session-scoped fixture or module-level import. Non-blocking since tests pass and run quickly."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The worker correctly followed TDD: wrote failing test first (test_gen_corpus.py), then implemented the generators. Skill procedure was followed as confirmed by skillFeedback.followedProcedure=true.",
+      "evidence": "Transcript skeleton shows ApplyPatch for test file before the implementation patch. Handoff skillFeedback confirms procedure followed."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The Rust corpus generator wraps let-bindings inside function bodies because bare let statements are not valid at Rust module level. This is a Rust syntax constraint that future workers extending the Rust corpus should be aware of, but it's standard Rust knowledge and doesn't warrant a library entry.",
+      "evidence": "benchmarks/gen_corpus.py:389 - _generate_rust_ast_bench_line wraps let in fn body"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The multi-lang-corpus feature is correctly implemented with clean code, adequate test coverage, and verified backward compatibility. All four validation assertions (VAL-BENCH-001 through -003 and -011) are satisfied: JavaScript produces .js files with valid functions/classes/consts, TypeScript produces .ts files with typed constructs, Rust produces .rs files with fn/struct/let patterns, and the default Python path is byte-for-byte identical to the original generator. The worker ran all local gates (ruff, mypy, pytest) clean, verified corpus generation for all four languages, and confirmed AST pattern matching via native tg run. No blocking issues found; three minor non-blocking observations noted."
+}

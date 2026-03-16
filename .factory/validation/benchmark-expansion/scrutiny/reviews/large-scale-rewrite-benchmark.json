@@ -1,0 +1,39 @@
+{
+  "featureId": "large-scale-rewrite-benchmark",
+  "reviewedAt": "2026-03-16T06:10:00.000Z",
+  "commitId": "375e19e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, well-modularized refactoring of run_ast_rewrite_benchmarks.py that adds --files, --loc, and --seed CLI parameters for scalable benchmark runs. The implementation correctly enforces >= 5 matchable patterns per file via a MIN_MATCHABLE_PATTERNS_PER_FILE guard, decomposes benchmark phases into modular functions (build_tg_rewrite_cmd, run_timed_command, benchmark_tg_phase, benchmark_sg_apply_phase), uses standard metadata fields (artifact, suite, generated_at_epoch_s, environment) consistent with other benchmark scripts, and leverages perf_guard.write_json for output. Error handling is robust with structured JSON error output on failure. Backward compatibility preserved with defaults matching original hardcoded values (1000 files, 50000 LOC, seed 42). Two unit tests added: one validates the minimum-patterns guard and another validates the JSON artifact structure with monkeypatched functions. The 5000-file / 250000-LOC benchmark was verified end-to-end producing positive phase medians (plan 2.316s, diff 3.353s, apply 7.594s) with total_rewrites=250000.",
+    "issues": [
+      {
+        "file": "benchmarks/run_ast_rewrite_benchmarks.py",
+        "line": 120,
+        "severity": "non_blocking",
+        "description": "extract_rewrite_plan_metadata reads only the first 65536 bytes to find total_edits and total_files_scanned via regex. For very large corpora with edits array serialized before metadata fields, these values might not appear in the first 64KB. This works in practice for 5000-file runs (verified by worker), but is fragile if tg's JSON output ordering changes. Consider reading the full file or using a streaming JSON parser for robustness."
+      },
+      {
+        "file": "benchmarks/run_ast_rewrite_benchmarks.py",
+        "line": 100,
+        "severity": "non_blocking",
+        "description": "run_timed_command sends stdout to DEVNULL for plan and diff phases. This is correct for timing purposes (plan output captured separately via collect_rewrite_plan_metadata), but means plan/diff errors with useful stdout context would be lost. The stderr capture partially mitigates this."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The benchmark script imports resolve_tg_binary and resolve_ast_grep_binary from run_ast_benchmarks.py, establishing a cross-module dependency pattern where benchmark scripts share utility functions. This pattern is used consistently (run_ast_multilang_benchmarks also imports from run_ast_benchmarks) but isn't documented in AGENTS.md or benchmark-conventions.md.",
+      "evidence": "benchmarks/run_ast_rewrite_benchmarks.py:23 — 'from run_ast_benchmarks import resolve_ast_grep_binary, resolve_tg_binary'. Same pattern in run_ast_multilang_benchmarks.py."
+    },
+    {
+      "area": "services",
+      "observation": "services.yaml benchmark_rewrite command uses default args only ('python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite.json'). The new --files and --loc parameters for large-scale runs are not represented. A separate command like 'benchmark_rewrite_5k' could be useful for reproducing the full validation run.",
+      "evidence": "services.yaml benchmark_rewrite line vs. feature's verification command 'python benchmarks/run_ast_rewrite_benchmarks.py --files 5000 --loc 250000 --output artifacts/bench_rewrite_5k.json'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature 'large-scale-rewrite-benchmark' passes review. The implementation correctly extends run_ast_rewrite_benchmarks.py with --files, --loc, and --seed parameters, enforces >= 5 matchable patterns per file, measures all three phases (plan/diff/apply) with per-phase timing data, and produces a JSON artifact with file_count, phase_timings_s, and total_rewrites. VAL-BENCH-005 is fully satisfied: the 5000-file benchmark completes all phases with positive timing values, file_count >= 5000, and total_rewrites reported. Two non-blocking issues noted: fragile 64KB prefix scan for plan metadata and stdout-to-DEVNULL for timing runs. Code quality is high with clean modularization, proper error handling, and backward-compatible defaults."
+}
