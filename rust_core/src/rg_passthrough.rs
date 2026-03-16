@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 const WINDOWS_RG_DIRNAME: &str = "ripgrep-14.1.0-x86_64-pc-windows-msvc";
 const TG_RG_PATH_ENV: &str = "TG_RG_PATH";
 const LEGACY_TG_RG_BINARY_ENV: &str = "TG_RG_BINARY";
+const TG_DISABLE_RG_ENV: &str = "TG_DISABLE_RG";
 
 #[derive(Debug, Clone)]
 pub struct RipgrepSearchArgs {
@@ -80,6 +81,10 @@ pub fn ripgrep_is_available() -> bool {
 }
 
 fn resolve_ripgrep_binary() -> Option<PathBuf> {
+    if env_flag_enabled(TG_DISABLE_RG_ENV) {
+        return None;
+    }
+
     if let Some(candidate) = resolve_explicit_file_override(TG_RG_PATH_ENV) {
         return Some(candidate);
     }
@@ -106,6 +111,12 @@ fn resolve_ripgrep_binary() -> Option<PathBuf> {
     rg_path_candidates()
         .into_iter()
         .find(|candidate| candidate.is_file())
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
 }
 
 fn rg_path_candidates() -> Vec<PathBuf> {

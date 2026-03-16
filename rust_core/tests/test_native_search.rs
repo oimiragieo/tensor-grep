@@ -143,6 +143,12 @@ fn test_native_search_json_output_is_valid() {
     let payload: Value = serde_json::from_str(&read_buffer(&buffer)).unwrap();
 
     assert_eq!(stats.total_matches, 2);
+    assert_eq!(payload["version"], 1);
+    assert_eq!(payload["routing_backend"], "NativeCpuBackend");
+    assert_eq!(payload["routing_reason"], "native_search");
+    assert_eq!(payload["sidecar_used"], false);
+    assert_eq!(payload["query"], "ERROR");
+    assert_eq!(payload["path"], file_path.display().to_string());
     assert_eq!(payload["total_matches"], 2);
     assert_eq!(payload["matches"].as_array().unwrap().len(), 2);
 }
@@ -168,7 +174,19 @@ fn test_native_search_ndjson_output_is_valid() {
 
     assert_eq!(stats.total_matches, 2);
     assert!(!payloads.is_empty());
-    assert!(payloads.iter().any(|payload| payload["type"] == "match"));
+    assert_eq!(payloads.len(), 2);
+    for payload in &payloads {
+        assert_eq!(payload["version"], 1);
+        assert_eq!(payload["routing_backend"], "NativeCpuBackend");
+        assert_eq!(payload["routing_reason"], "native_search");
+        assert_eq!(payload["sidecar_used"], false);
+        assert_eq!(payload["query"], "ERROR");
+        assert_eq!(payload["path"], file_path.display().to_string());
+        assert!(payload["file"].is_string());
+        assert!(payload["line"].is_number());
+        assert!(payload["text"].is_string());
+        assert!(payload.get("type").is_none());
+    }
 }
 
 #[test]
@@ -208,6 +226,27 @@ fn test_native_search_respects_gitignore_rules() {
     assert_eq!(stats.total_matches, 1);
     assert_eq!(stats.matched_files, 1);
     assert_eq!(stats.matches[0].path, visible_path);
+}
+
+#[test]
+fn test_native_search_no_ignore_includes_ignored_files_without_searching_dotfiles() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".gitignore"), "ignored.log\n").unwrap();
+    let visible_path = dir.path().join("visible.log");
+    let ignored_path = dir.path().join("ignored.log");
+    fs::write(&visible_path, "visible marker\n").unwrap();
+    fs::write(&ignored_path, "ignored marker\n").unwrap();
+
+    let (target, _buffer) = buffer_target();
+    let mut config = base_config("ignored", dir.path(), target);
+    config.fixed_strings = true;
+    config.no_ignore = true;
+
+    let stats = run_native_search(config).unwrap();
+    let matched_paths = stats.matches.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>();
+
+    assert_eq!(stats.total_matches, 1);
+    assert_eq!(matched_paths, vec![ignored_path]);
 }
 
 #[test]

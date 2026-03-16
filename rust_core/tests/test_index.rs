@@ -210,8 +210,8 @@ fn test_tg_search_json_contract_includes_unified_envelope() {
     assert!(output.status.success());
     let result: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["version"], 1);
-    assert_eq!(result["routing_backend"], "CpuBackend");
-    assert_eq!(result["routing_reason"], "cpu-native");
+    assert_eq!(result["routing_backend"], "NativeCpuBackend");
+    assert_eq!(result["routing_reason"], "json_output");
     assert_eq!(result["sidecar_used"], false);
     assert_eq!(result["total_matches"], 2);
     assert!(result["query"].is_string());

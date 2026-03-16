@@ -7,6 +7,7 @@ use std::time::Instant;
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::index::TrigramIndex;
+use tensor_grep_rs::native_search::{run_native_search, NativeSearchConfig};
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_sidecar_command, SidecarError,
 };
@@ -59,8 +60,8 @@ pub struct PositionalCli {
     #[arg(long)]
     pub replace: Option<String>,
 
-    /// Force CPU fallback
-    #[arg(long)]
+    /// Force the native CPU engine
+    #[arg(long = "cpu", alias = "force-cpu")]
     pub force_cpu: bool,
 
     /// Route search to GPU backends via Python sidecar (comma-separated device IDs)
@@ -121,6 +122,10 @@ pub struct SearchArgs {
     /// Use trigram index for accelerated repeated queries
     #[arg(long)]
     pub index: bool,
+
+    /// Force the native CPU engine
+    #[arg(long = "cpu", alias = "force-cpu")]
+    pub force_cpu: bool,
 
     /// Route search to GPU backends via Python sidecar (comma-separated device IDs)
     #[arg(long = "gpu-device-ids", value_delimiter = ',')]
@@ -215,9 +220,27 @@ struct RoutingDecision {
 }
 
 impl RoutingDecision {
-    const CPU: Self = Self {
-        backend: "CpuBackend",
-        reason: "cpu-native",
+    const NATIVE_CPU_FORCE: Self = Self {
+        backend: "NativeCpuBackend",
+        reason: "force_cpu",
+        sidecar_used: false,
+    };
+
+    const NATIVE_CPU_JSON: Self = Self {
+        backend: "NativeCpuBackend",
+        reason: "json_output",
+        sidecar_used: false,
+    };
+
+    const NATIVE_CPU_RG_UNAVAILABLE: Self = Self {
+        backend: "NativeCpuBackend",
+        reason: "rg_unavailable",
+        sidecar_used: false,
+    };
+
+    const RIPGREP: Self = Self {
+        backend: "RipgrepBackend",
+        reason: "rg_passthrough",
         sidecar_used: false,
     };
 
@@ -281,8 +304,8 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let pattern = cli.pattern.unwrap();
-    let path = cli.path.unwrap();
+    let pattern = cli.pattern.clone().unwrap();
+    let path = cli.path.clone().unwrap();
 
     if !cli.gpu_device_ids.is_empty() {
         return handle_gpu_sidecar_search(GpuSearchParams {
@@ -304,59 +327,38 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
         });
     }
 
-    if cli.json {
+    if let Some(replacement) = cli.replace {
         let backend = CpuBackend::new();
-        let matches = backend.search_with_paths(
+        backend.replace_in_place(
             &pattern,
+            &replacement,
             &path,
             cli.ignore_case,
             cli.fixed_strings,
-            cli.invert_match,
         )?;
-        return emit_json_search_results(
-            RoutingDecision::CPU,
-            &pattern,
-            &path,
-            matches
-                .into_iter()
-                .map(|matched| SearchMatchJson {
-                    file: matched.file.to_string_lossy().into_owned(),
-                    line: matched.line,
-                    text: matched.text,
-                })
-                .collect(),
-        );
+        println!("Replaced matches with '{}'", replacement);
+        return Ok(());
     }
 
-    if cli.ndjson {
-        let backend = CpuBackend::new();
-        let matches = backend.search_with_paths(
+    let rg_available = ripgrep_is_available();
+    if let Some(decision) = select_native_search_routing(cli.force_cpu, cli.json, cli.ndjson, rg_available)
+    {
+        if cli.verbose {
+            emit_verbose_metadata(decision);
+        }
+        return run_native_search_with_exit(native_search_config_for_positional(
+            &cli,
             &pattern,
             &path,
-            cli.ignore_case,
-            cli.fixed_strings,
-            cli.invert_match,
-        )?;
-        return emit_ndjson_search_results(
-            RoutingDecision::CPU,
-            &pattern,
-            &path,
-            matches
-                .into_iter()
-                .map(|matched| SearchMatchJson {
-                    file: matched.file.to_string_lossy().into_owned(),
-                    line: matched.line,
-                    text: matched.text,
-                })
-                .collect(),
-        );
+            decision,
+        ));
     }
 
     if cli.verbose {
-        emit_verbose_metadata(RoutingDecision::CPU);
+        emit_verbose_metadata(RoutingDecision::RIPGREP);
     }
 
-    if !cli.force_cpu && cli.replace.is_none() && ripgrep_is_available() {
+    if rg_available {
         let exit_code = execute_ripgrep_search(&RipgrepSearchArgs {
             ignore_case: cli.ignore_case,
             fixed_strings: cli.fixed_strings,
@@ -379,48 +381,12 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Keep the plain text hot path in pure Rust. Python is initialized only for
-    // explicit Python-backed subcommands until the GPU sidecar routing lands.
-    let backend = CpuBackend::new();
-
-    if let Some(replacement) = cli.replace {
-        backend.replace_in_place(
-            &pattern,
-            &replacement,
-            &path,
-            cli.ignore_case,
-            cli.fixed_strings,
-        )?;
-        println!("Replaced matches with '{}'", replacement);
-        return Ok(());
-    }
-
-    if cli.count {
-        // The inner CpuBackend supports counting extremely fast via memmap
-        let count = backend.count_matches(
-            &pattern,
-            &path,
-            cli.ignore_case,
-            cli.fixed_strings,
-            cli.invert_match,
-        )?;
-        println!("{}", count);
-        return Ok(());
-    }
-
-    let results = backend.search(
+    run_native_search_with_exit(native_search_config_for_positional(
+        &cli,
         &pattern,
         &path,
-        cli.ignore_case,
-        cli.fixed_strings,
-        cli.invert_match,
-    )?;
-
-    for (line_num, text) in results {
-        println!("{}:{}", line_num, text);
-    }
-
-    Ok(())
+        RoutingDecision::NATIVE_CPU_RG_UNAVAILABLE,
+    ))
 }
 
 fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
@@ -438,6 +404,86 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
     }
 
     false
+}
+
+fn select_native_search_routing(
+    force_cpu: bool,
+    json: bool,
+    ndjson: bool,
+    rg_available: bool,
+) -> Option<RoutingDecision> {
+    if force_cpu {
+        Some(RoutingDecision::NATIVE_CPU_FORCE)
+    } else if json || ndjson {
+        Some(RoutingDecision::NATIVE_CPU_JSON)
+    } else if !rg_available {
+        Some(RoutingDecision::NATIVE_CPU_RG_UNAVAILABLE)
+    } else {
+        None
+    }
+}
+
+fn native_search_config_for_positional(
+    cli: &PositionalCli,
+    pattern: &str,
+    path: &str,
+    decision: RoutingDecision,
+) -> NativeSearchConfig {
+    NativeSearchConfig {
+        pattern: pattern.to_string(),
+        paths: vec![PathBuf::from(path)],
+        routing_backend: decision.backend,
+        routing_reason: decision.reason,
+        sidecar_used: decision.sidecar_used,
+        ignore_case: cli.ignore_case,
+        fixed_strings: cli.fixed_strings,
+        invert_match: cli.invert_match,
+        count: cli.count,
+        no_ignore: true,
+        json: cli.json,
+        ndjson: cli.ndjson,
+        line_number: true,
+        ..NativeSearchConfig::default()
+    }
+}
+
+fn native_search_config_for_command(args: &SearchArgs, decision: RoutingDecision) -> NativeSearchConfig {
+    NativeSearchConfig {
+        pattern: args.pattern.clone(),
+        paths: vec![PathBuf::from(&args.path)],
+        routing_backend: decision.backend,
+        routing_reason: decision.reason,
+        sidecar_used: decision.sidecar_used,
+        ignore_case: args.ignore_case,
+        fixed_strings: args.fixed_strings,
+        word_boundary: args.word_regexp,
+        invert_match: args.invert_match,
+        before_context: args.context.unwrap_or(0),
+        after_context: args.context.unwrap_or(0),
+        max_count: args.max_count.map(|value| value as u64),
+        glob: args.globs.clone(),
+        count: args.count,
+        no_ignore: args.no_ignore,
+        json: args.json,
+        ndjson: args.ndjson,
+        line_number: false,
+        ..NativeSearchConfig::default()
+    }
+}
+
+fn run_native_search_with_exit(config: NativeSearchConfig) -> anyhow::Result<()> {
+    match run_native_search(config) {
+        Ok(stats) => {
+            if stats.total_matches == 0 {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    }
 }
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
@@ -465,7 +511,13 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         });
     }
 
-    if !args.index && !args.invert_match && args.context.is_none() && args.max_count.is_none()
+    if !args.force_cpu
+        && !args.json
+        && !args.ndjson
+        && !args.index
+        && !args.invert_match
+        && args.context.is_none()
+        && args.max_count.is_none()
         && !args.word_regexp && args.globs.is_empty()
     {
         let index_path = resolve_index_path(&args.path);
@@ -484,56 +536,21 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         }
     }
 
-    if args.json {
-        let backend = CpuBackend::new();
-        let matches = backend.search_with_paths(
-            &args.pattern,
-            &args.path,
-            args.ignore_case,
-            args.fixed_strings,
-            args.invert_match,
-        )?;
-        return emit_json_search_results(
-            RoutingDecision::CPU,
-            &args.pattern,
-            &args.path,
-            matches
-                .into_iter()
-                .map(|matched| SearchMatchJson {
-                    file: matched.file.to_string_lossy().into_owned(),
-                    line: matched.line,
-                    text: matched.text,
-                })
-                .collect(),
-        );
-    }
-
-    if args.ndjson {
-        let backend = CpuBackend::new();
-        let matches = backend.search_with_paths(
-            &args.pattern,
-            &args.path,
-            args.ignore_case,
-            args.fixed_strings,
-            args.invert_match,
-        )?;
-        return emit_ndjson_search_results(
-            RoutingDecision::CPU,
-            &args.pattern,
-            &args.path,
-            matches
-                .into_iter()
-                .map(|matched| SearchMatchJson {
-                    file: matched.file.to_string_lossy().into_owned(),
-                    line: matched.line,
-                    text: matched.text,
-                })
-                .collect(),
-        );
+    let rg_available = ripgrep_is_available();
+    if let Some(decision) = select_native_search_routing(
+        args.force_cpu,
+        args.json,
+        args.ndjson,
+        rg_available,
+    ) {
+        if args.verbose {
+            emit_verbose_metadata(decision);
+        }
+        return run_native_search_with_exit(native_search_config_for_command(&args, decision));
     }
 
     if args.verbose {
-        emit_verbose_metadata(RoutingDecision::CPU);
+        emit_verbose_metadata(RoutingDecision::RIPGREP);
     }
 
     let exit_code = execute_ripgrep_search(&RipgrepSearchArgs {

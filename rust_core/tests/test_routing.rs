@@ -124,7 +124,7 @@ fn assert_rg_passthrough(output: &Output) {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "CpuBackend", "cpu-native", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
     assert_eq!(stdout.trim(), RG_SENTINEL, "stdout={stdout}");
 }
 
@@ -208,7 +208,7 @@ fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
         .output()
         .unwrap();
 
-    let payloads = assert_ndjson_routing(&output, "CpuBackend", "cpu-native", false);
+    let payloads = assert_ndjson_routing(&output, "NativeCpuBackend", "json_output", false);
     assert_eq!(payloads.len(), 3);
 
     let mut actual = payloads
@@ -254,6 +254,75 @@ fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
 }
 
 #[test]
+fn test_routing_force_cpu_routes_to_native_search_even_when_rg_is_available() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    let payload = assert_json_routing(&output, "NativeCpuBackend", "force_cpu", false);
+    assert_eq!(payload["total_matches"], 3);
+    assert_ne!(String::from_utf8_lossy(&output.stdout).trim(), RG_SENTINEL);
+}
+
+#[test]
+fn test_routing_force_cpu_alias_is_accepted() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--force-cpu")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    let payload = assert_json_routing(&output, "NativeCpuBackend", "force_cpu", false);
+    assert_eq!(payload["total_matches"], 3);
+}
+
+#[test]
+fn test_routing_falls_back_to_native_when_ripgrep_is_unavailable() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--verbose")
+        .arg("hello")
+        .arg(dir.path())
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "status={:?}\nstdout={}\nstderr={}", output.status.code(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
+    assert!(stdout.contains("hello world"), "stdout={stdout}");
+    assert!(stdout.contains("hello again friend"), "stdout={stdout}");
+    assert!(!stdout.contains(RG_SENTINEL), "stdout={stdout}");
+}
+
+#[test]
 fn test_search_json_and_ndjson_are_mutually_exclusive() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
@@ -294,7 +363,7 @@ fn test_routing_explicit_index_uses_trigram_index_json() {
 }
 
 #[test]
-fn test_routing_warm_index_auto_routes_when_query_is_compatible() {
+fn test_routing_json_prefers_native_engine_even_when_warm_index_is_available() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
@@ -308,7 +377,7 @@ fn test_routing_warm_index_auto_routes_when_query_is_compatible() {
         .output()
         .unwrap();
 
-    let payload = assert_json_routing(&output, "TrigramIndex", "index-accelerated", false);
+    let payload = assert_json_routing(&output, "NativeCpuBackend", "json_output", false);
     assert_eq!(payload["total_matches"], 3);
 }
 
