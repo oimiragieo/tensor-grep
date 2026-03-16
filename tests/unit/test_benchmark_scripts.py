@@ -7,6 +7,20 @@ from pathlib import Path
 
 import pytest
 
+BENCHMARK_JSON_SCRIPTS = [
+    "benchmarks/run_benchmarks.py",
+    "benchmarks/run_hot_query_benchmarks.py",
+    "benchmarks/run_ast_benchmarks.py",
+    "benchmarks/run_ast_multilang_benchmarks.py",
+    "benchmarks/run_ast_rewrite_benchmarks.py",
+    "benchmarks/run_ast_workflow_benchmarks.py",
+    "benchmarks/run_gpu_benchmarks.py",
+    "benchmarks/run_harness_loop_benchmark.py",
+    "benchmarks/run_ast_parity_check.py",
+    "benchmarks/run_compat_checks.py",
+    "benchmarks/run_index_scaling_benchmark.py",
+]
+
 
 def _load_script_module(name: str, rel_path: str):
     root = Path(__file__).resolve().parents[2]
@@ -217,6 +231,8 @@ def test_run_hot_query_benchmarks_should_report_regression_status(monkeypatch, t
 
     assert exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["suite"] == "run_hot_query_benchmarks"
+    assert payload["generated_at_epoch_s"] > 0
     assert payload["no_regressions"] is True
     assert payload["rows"][0]["status"] == "PASS"
     assert payload["rows"][1]["status"] == "PASS"
@@ -565,6 +581,111 @@ def test_run_harness_loop_benchmark_should_emit_iteration_breakdown(monkeypatch,
     assert payload["passed"] is True
     assert payload["rows"][0]["verify_s"] == 0.4
     assert payload["rows"][0]["remaining_matches"] == 0
+
+
+def test_run_index_scaling_benchmark_should_default_data_dir_to_artifacts(monkeypatch):
+    module = _load_script_module(
+        "run_index_scaling_benchmark_script",
+        "benchmarks/run_index_scaling_benchmark.py",
+    )
+    monkeypatch.delenv("TENSOR_GREP_INDEX_SCALING_BENCH_DIR", raising=False)
+
+    path = module.resolve_index_scaling_bench_dir()
+
+    assert path.parts[-2:] == ("artifacts", "bench_index_scaling")
+
+
+def test_run_index_scaling_benchmark_should_emit_scale_rows(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_index_scaling_benchmark_rows",
+        "benchmarks/run_index_scaling_benchmark.py",
+    )
+    output_path = tmp_path / "bench_index_scaling.json"
+    tg_binary = tmp_path / "tg.exe"
+    hyperfine_binary = tmp_path / "hyperfine.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    hyperfine_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_index_scaling_benchmark.py",
+            "--output",
+            str(output_path),
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_hyperfine_binary", lambda: hyperfine_binary)
+    monkeypatch.setattr(module, "resolve_index_scaling_bench_dir", lambda: tmp_path / "bench_index_scaling")
+    monkeypatch.setattr(
+        module,
+        "run_index_scaling_benchmark",
+        lambda **_kwargs: {
+            "bench_dir": str(tmp_path / "bench_index_scaling"),
+            "rows": [
+                {
+                    "name": "index_scale_1000_files",
+                    "file_count": 1000,
+                    "build_time_s": 1.2,
+                    "index_size_bytes": 4096,
+                    "query_median_s": 0.04,
+                    "queries": [
+                        {"pattern": "ERROR timeout", "median_s": 0.03, "matches": 1000},
+                        {"pattern": "WARN retry budget", "median_s": 0.04, "matches": 1000},
+                        {"pattern": "trace_id=", "median_s": 0.05, "matches": 1000},
+                    ],
+                },
+                {
+                    "name": "index_scale_5000_files",
+                    "file_count": 5000,
+                    "build_time_s": 4.8,
+                    "index_size_bytes": 16384,
+                    "query_median_s": 0.07,
+                    "queries": [
+                        {"pattern": "ERROR timeout", "median_s": 0.06, "matches": 5000},
+                        {"pattern": "WARN retry budget", "median_s": 0.07, "matches": 5000},
+                        {"pattern": "trace_id=", "median_s": 0.08, "matches": 5000},
+                    ],
+                },
+                {
+                    "name": "index_scale_10000_files",
+                    "file_count": 10000,
+                    "build_time_s": 9.5,
+                    "index_size_bytes": 32768,
+                    "query_median_s": 0.12,
+                    "queries": [
+                        {"pattern": "ERROR timeout", "median_s": 0.1, "matches": 10000},
+                        {"pattern": "WARN retry budget", "median_s": 0.12, "matches": 10000},
+                        {"pattern": "trace_id=", "median_s": 0.14, "matches": 10000},
+                    ],
+                },
+            ],
+            "passed": True,
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_index_scaling"
+    assert payload["suite"] == "run_index_scaling_benchmark"
+    assert payload["generated_at_epoch_s"] > 0
+    assert payload["passed"] is True
+    assert [row["file_count"] for row in payload["rows"]] == [1000, 5000, 10000]
+    assert all(row["build_time_s"] > 0 for row in payload["rows"])
+    assert all(row["index_size_bytes"] > 0 for row in payload["rows"])
+    assert all(row["query_median_s"] > 0 for row in payload["rows"])
+    assert all(len(row["queries"]) == 3 for row in payload["rows"])
+
+
+@pytest.mark.parametrize("rel_path", BENCHMARK_JSON_SCRIPTS)
+def test_benchmark_scripts_should_declare_suite_and_generated_at_epoch_s(rel_path: str):
+    root = Path(__file__).resolve().parents[2]
+    source = (root / rel_path).read_text(encoding="utf-8")
+
+    assert '"suite"' in source
+    assert '"generated_at_epoch_s"' in source
 
 
 def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):

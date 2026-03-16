@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -147,6 +148,8 @@ def evaluate_hot_query_row(row: dict[str, object], max_regression_pct: float) ->
 
 
 def main() -> int:
+    from tensor_grep.perf_guard import write_json
+
     parser = argparse.ArgumentParser(description="Benchmark hot repeated-query cache paths.")
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
@@ -170,10 +173,13 @@ def main() -> int:
     no_regressions = all(row.get("status") != "FAIL" for row in evaluated_rows)
 
     payload = {
+        "artifact": "bench_hot_query_benchmarks",
         "suite": "run_hot_query_benchmarks",
+        "generated_at_epoch_s": time.time(),
         "environment": {
-            "platform": sys.platform,
-            "python": sys.version.split()[0],
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
         },
         "max_regression_pct": args.max_regression_pct,
         "no_regressions": no_regressions,
@@ -181,8 +187,7 @@ def main() -> int:
     }
 
     output_path = args.output or (Path.cwd() / "artifacts" / "bench_hot_query_benchmarks.json")
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_json(output_path, payload)
 
     print("\nStarting Benchmarks: Hot repeated-query paths")
     print("-" * 75)
