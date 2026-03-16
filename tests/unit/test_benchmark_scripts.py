@@ -5,6 +5,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+import pytest
+
 
 def _load_script_module(name: str, rel_path: str):
     root = Path(__file__).resolve().parents[2]
@@ -362,6 +364,88 @@ def test_run_ast_multilang_benchmarks_should_emit_json_artifact_when_ast_grep_is
     assert payload["artifact"] == "bench_ast_multilang"
     assert payload["passed"] is False
     assert "ast-grep binary not found" in payload["error"]
+
+
+def test_run_ast_rewrite_benchmarks_should_require_at_least_five_rewrites_per_file(tmp_path):
+    module = _load_script_module(
+        "run_ast_rewrite_benchmarks_validation",
+        "benchmarks/run_ast_rewrite_benchmarks.py",
+    )
+
+    with pytest.raises(ValueError, match="at least 5 matchable patterns per file"):
+        module.ensure_rewrite_bench_corpus(tmp_path / "bench_ast_rewrite", file_count=100, total_loc=499, seed=42)
+
+
+def test_run_ast_rewrite_benchmarks_should_emit_phase_timings_and_total_rewrites(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_ast_rewrite_benchmarks_rows",
+        "benchmarks/run_ast_rewrite_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_ast_rewrite.json"
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_ast_rewrite_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--files",
+            "5000",
+            "--loc",
+            "250000",
+            "--runs",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_ast_rewrite_bench_dir", lambda: tmp_path / "bench_ast_rewrite")
+    monkeypatch.setattr(
+        module,
+        "ensure_rewrite_bench_corpus",
+        lambda output_dir, *, file_count, total_loc, seed: {
+            "corpus_dir": output_dir,
+            "manifest_path": tmp_path / "bench_ast_rewrite.manifest.sha256",
+            "file_count": file_count,
+            "total_loc": total_loc,
+            "seed": seed,
+            "min_rewrites_per_file": total_loc // file_count,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_rewrite_benchmark",
+        lambda **_kwargs: {
+            "pattern": module.DEFAULT_PATTERN,
+            "replacement": module.DEFAULT_REPLACEMENT,
+            "runs": 2,
+            "total_rewrites": 250000,
+            "phase_timings_s": {
+                "plan": {"median": 0.75, "samples": [0.8, 0.75]},
+                "diff": {"median": 1.2, "samples": [1.25, 1.2]},
+                "apply": {"median": 0.95, "samples": [1.0, 0.95]},
+            },
+            "sg_apply": {"median": 1.05, "samples": [1.1, 1.05]},
+            "ratio_tg_vs_sg": 0.905,
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_ast_rewrite"
+    assert payload["suite"] == "run_ast_rewrite_benchmarks"
+    assert payload["file_count"] == 5000
+    assert payload["total_loc"] == 250000
+    assert payload["total_rewrites"] == 250000
+    assert payload["min_rewrites_per_file"] >= 5
+    assert payload["phase_timings_s"]["plan"]["median"] == 0.75
+    assert payload["phase_timings_s"]["diff"]["median"] == 1.2
+    assert payload["phase_timings_s"]["apply"]["median"] == 0.95
 
 
 def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
