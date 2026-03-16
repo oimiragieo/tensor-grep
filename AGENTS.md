@@ -33,6 +33,8 @@ uv run mypy src/tensor_grep
 uv run pytest -q
 ```
 
+`uv run pytest -q` takes about 70-90 seconds on this Windows machine, so use a timeout of at least 120 seconds when running it through automation.
+
 For focused changes, run the relevant narrow suite first, then the full suite if the change is intended to land:
 
 ```powershell

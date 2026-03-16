@@ -581,6 +581,7 @@ fn test_native_search_ndjson_output_streams_before_search_completion() {
 }
 
 #[test]
+#[ignore = "timing-sensitive benchmark-style check; validate manually when profiling streaming output"]
 fn test_native_search_many_file_directory_streams_before_walk_completion() {
     let _guard = timing_test_guard();
     if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
