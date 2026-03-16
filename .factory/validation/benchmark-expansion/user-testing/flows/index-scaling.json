@@ -1,0 +1,93 @@
+{
+  "groupId": "index-scaling",
+  "testedAt": "2026-03-16T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "artifact": "C:\\dev\\projects\\tensor-grep\\artifacts\\bench_index_scaling.json",
+    "benchmarkScript": "C:\\dev\\projects\\tensor-grep\\benchmarks\\run_index_scaling_benchmark.py",
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "python": "python 3.14.0"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-BENCH-007",
+      "title": "Index scaling benchmark measures at multiple scales",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read bench_index_scaling.json artifact",
+          "expected": "Valid JSON with rows array",
+          "observed": "JSON parsed successfully with 3 rows"
+        },
+        {
+          "action": "Check rows array has >= 3 entries",
+          "expected": ">= 3 rows",
+          "observed": "3 rows found"
+        },
+        {
+          "action": "Verify each row has file_count, build_time_s, index_size_bytes",
+          "expected": "All fields present with valid values",
+          "observed": "Row 0: fc=1000, bt=0.164399, isb=6746927; Row 1: fc=5000, bt=0.763789, isb=33820659; Row 2: fc=10000, bt=1.668244, isb=67663910"
+        },
+        {
+          "action": "Verify scales include 1000, 5000, and >= 10000",
+          "expected": "Scales [1000, 5000, 10000+]",
+          "observed": "Scales [1000, 5000, 10000]"
+        },
+        {
+          "action": "Verify all timing values are positive floats",
+          "expected": "All build_time_s > 0",
+          "observed": "All positive: 0.164399, 0.763789, 1.668244"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "validationOutput": "benchmark-expansion/index-scaling/VAL-BENCH-007-validation-output.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-008",
+      "title": "Index scaling benchmark records query performance",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read bench_index_scaling.json artifact",
+          "expected": "Valid JSON with rows containing queries",
+          "observed": "JSON parsed successfully, each row has queries array"
+        },
+        {
+          "action": "Check each row has queries array with >= 3 entries",
+          "expected": ">= 3 queries per row",
+          "observed": "3 queries per row at all 3 scales"
+        },
+        {
+          "action": "Verify each query has pattern (string) and median_s (positive float)",
+          "expected": "Valid pattern strings and positive median_s values",
+          "observed": "All 9 query entries valid: patterns=['ERROR timeout', 'WARN retry budget', 'trace_id='], all median_s > 0"
+        },
+        {
+          "action": "Verify per-scale query_median_s values present",
+          "expected": "Each row has query_median_s as positive float",
+          "observed": "Row 0: 0.142312, Row 1: 0.57223, Row 2: 1.245171 — all positive"
+        },
+        {
+          "action": "Verify >= 3 distinct patterns across all scales",
+          "expected": ">= 3 unique patterns",
+          "observed": "3 patterns: 'ERROR timeout', 'WARN retry budget', 'trace_id='"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "validationOutput": "benchmark-expansion/index-scaling/VAL-BENCH-008-validation-output.txt"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 2 assertions: 2 passed, 0 failed. Both VAL-BENCH-007 and VAL-BENCH-008 confirmed that bench_index_scaling.json contains rows for 3 scales (1k, 5k, 10k files) with valid build_time_s, index_size_bytes, and per-query median_s for 3 patterns at each scale."
+}

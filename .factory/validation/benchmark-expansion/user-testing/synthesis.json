@@ -1,0 +1,51 @@
+{
+  "milestone": "benchmark-expansion",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 11,
+    "passed": 11,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-BENCH-001",
+    "VAL-BENCH-002",
+    "VAL-BENCH-003",
+    "VAL-BENCH-004",
+    "VAL-BENCH-005",
+    "VAL-BENCH-006",
+    "VAL-BENCH-007",
+    "VAL-BENCH-008",
+    "VAL-BENCH-009",
+    "VAL-BENCH-010",
+    "VAL-BENCH-011"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Created initial user-testing.md with CLI flow validator guidance, tool paths, and concurrency settings",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null,
+  "details": {
+    "corpus-generators": {
+      "assertions": ["VAL-BENCH-001", "VAL-BENCH-002", "VAL-BENCH-003", "VAL-BENCH-011"],
+      "allPassed": true,
+      "summary": "JS/TS/Rust corpus generators produce syntactically valid files parseable by ast-grep. Python default flavor remains backward-compatible."
+    },
+    "benchmark-scripts": {
+      "assertions": ["VAL-BENCH-004", "VAL-BENCH-005", "VAL-BENCH-006", "VAL-BENCH-009", "VAL-BENCH-010"],
+      "allPassed": true,
+      "summary": "Multi-lang AST benchmark has 4 languages with Python ratio 1.12. Rewrite benchmark handles 5000 files. Harness loop runs 5 iterations all passing. All artifacts have valid JSON with suite/epoch. AST baseline ratio 2.69 within threshold."
+    },
+    "index-scaling": {
+      "assertions": ["VAL-BENCH-007", "VAL-BENCH-008"],
+      "allPassed": true,
+      "summary": "Index scaling benchmark measures 3 scales (1k/5k/10k) with valid build times, file sizes, and per-query median latencies for 3 patterns."
+    }
+  }
+}
