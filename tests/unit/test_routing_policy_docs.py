@@ -35,6 +35,12 @@ def test_routing_policy_doc_covers_current_routing_tree() -> None:
     assert "handle_ast_rewrite" in doc
     assert "handle_ast_rewrite_apply" in doc
     assert (
-        "warm index auto-routing is evaluated before the explicit `--gpu-device-ids` branch"
+        "explicit `--index` -> explicit `--gpu-device-ids` -> warm index auto-routing -> "
+        "`--json` CPU search -> cold rg passthrough"
         in doc
+    )
+    assert "Current code-order caveat" not in doc
+    assert (
+        "warm index auto-routing is evaluated before the explicit `--gpu-device-ids` branch"
+        not in doc
     )

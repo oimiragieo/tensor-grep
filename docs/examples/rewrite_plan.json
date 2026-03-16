@@ -11,7 +11,8 @@
   "edits": [
     {
       "id": "e0000:rewrite_fixture.py:0-27",
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
+      "planned_mtime_ns": 1773645510154610400,
       "line": 1,
       "byte_range": {
         "start": 0,
@@ -20,14 +21,15 @@
       "original_text": "def add(x, y): return x + y",
       "replacement_text": "lambda x, y: x + y",
       "metavar_env": {
+        "F": "add",
         "EXPR": "x + y",
-        "ARGS": "x, y",
-        "F": "add"
+        "ARGS": "x, y"
       }
     },
     {
       "id": "e0001:rewrite_fixture.py:28-55",
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\rewrite\\rewrite_fixture.py",
+      "planned_mtime_ns": 1773645510154610400,
       "line": 2,
       "byte_range": {
         "start": 28,
@@ -36,8 +38,8 @@
       "original_text": "def mul(a, b): return a * b",
       "replacement_text": "lambda a, b: a * b",
       "metavar_env": {
-        "ARGS": "a, b",
         "F": "mul",
+        "ARGS": "a, b",
         "EXPR": "a * b"
       }
     }

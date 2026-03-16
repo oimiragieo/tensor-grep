@@ -17,13 +17,21 @@ This document describes the routing decision tree that is currently implemented 
 
 `handle_ripgrep_search` is the main routing function for `tg search`.
 
+The effective priority order is: explicit `--index` -> explicit `--gpu-device-ids` -> warm index auto-routing -> `--json` CPU search -> cold rg passthrough.
+
 1. **Explicit `--index` wins first.**
    - If `args.index` is set, `handle_ripgrep_search` immediately calls `handle_index_search`.
    - `handle_index_search` builds, reloads, or rebuilds `.tg_index` as needed, then finishes in `run_index_query`.
 
-2. **Warm index auto-routing is the next branch.**
+2. **Explicit GPU routing is checked next.**
+   - `GpuSidecar` is selected from `handle_ripgrep_search` when the user passes `--gpu-device-ids` and `--index` was not already chosen.
+   - There is no implicit GPU auto-routing in `main.rs`.
+   - This explicit GPU branch now takes priority over warm-index auto-routing.
+
+3. **Warm index auto-routing is checked after explicit GPU routing.**
    - Auto-routing only runs when all of these conditions are true:
      - `--index` was **not** passed.
+     - `--gpu-device-ids` was **not** passed.
      - `-v/--invert-match` is absent.
      - `-C/--context` is absent.
      - `--max-count` / `-m` is absent.
@@ -35,11 +43,6 @@ This document describes the routing decision tree that is currently implemented 
      - `pattern >= 3 bytes`.
    - When those checks pass, the request is routed to `run_index_query` with `routing_backend = "TrigramIndex"` and `routing_reason = "index-accelerated"`.
    - Compatible flags such as `-i`, `-F`, `-c`, `--json`, and `--no-ignore` do **not** block this branch in the current code.
-
-3. **Explicit GPU routing is checked after warm-index auto-routing.**
-   - `GpuSidecar` is only selected from `handle_ripgrep_search` when the user passes `--gpu-device-ids`.
-   - There is no implicit GPU auto-routing in `main.rs`.
-   - **Current code-order caveat:** warm index auto-routing is evaluated before the explicit `--gpu-device-ids` branch, so a compatible warm index can preempt a GPU request.
 
 4. **JSON text search uses native CPU search.**
    - If `--json` is set and the request did not already route to index or GPU, `handle_ripgrep_search` uses `CpuBackend::search_with_paths(...)` and emits `routing_backend = "CpuBackend"` / `routing_reason = "cpu-native"`.
