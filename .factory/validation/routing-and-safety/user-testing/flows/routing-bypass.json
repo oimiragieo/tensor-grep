@@ -1,0 +1,112 @@
+{
+  "groupId": "routing-bypass",
+  "testedAt": "2026-03-16T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "tempDir": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-routing-bypass\\",
+    "rustCore": "C:\\dev\\projects\\tensor-grep\\rust_core"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-ROUTE-009",
+      "title": "Short pattern bypasses warm index",
+      "status": "pass",
+      "steps": [
+        { "action": "Created 4-file test corpus in artifacts\\val-routing-bypass\\corpus", "expected": "Corpus files created", "observed": "4 files created (app.py, utils.py, server.txt, readme.md)" },
+        { "action": "Built warm index with tg search --index \"hello\" corpus", "expected": "Index built (.tg_index created)", "observed": ".tg_index created (8483 bytes)" },
+        { "action": "Verified baseline: tg search --verbose \"hello\" corpus", "expected": "TrigramIndex routing", "observed": "routing_backend=TrigramIndex routing_reason=index-accelerated" },
+        { "action": "Ran tg search --verbose \"ab\" corpus (pattern < 3 chars)", "expected": "CpuBackend routing (index bypassed)", "observed": "routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false" }
+      ],
+      "evidence": {
+        "terminalOutput": "routing-and-safety/routing-bypass/VAL-ROUTE-009-output.txt",
+        "consoleErrors": "none",
+        "network": "N/A (CLI tool)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-010",
+      "title": "Routing regression test suite exists and passes",
+      "status": "pass",
+      "steps": [
+        { "action": "Verified rust_core/tests/test_routing.rs exists", "expected": "File exists", "observed": "File exists (True)" },
+        { "action": "Ran cargo test --test test_routing in rust_core/", "expected": "Exit 0, >= 10 tests pass", "observed": "Exit 0, 14 tests passed (0 failed, 0 ignored)" }
+      ],
+      "evidence": {
+        "terminalOutput": "routing-and-safety/routing-bypass/VAL-ROUTE-010-cargo-test.txt",
+        "testCount": 14,
+        "testNames": [
+          "test_routing_tg_run_uses_ast_backend",
+          "test_routing_explicit_index_uses_trigram_index_json",
+          "test_routing_explicit_index_rebuilds_corrupt_index",
+          "test_routing_default_search_uses_ripgrep_passthrough",
+          "test_routing_warm_index_auto_routes_when_query_is_compatible",
+          "test_routing_warm_index_is_bypassed_by_word_regexp",
+          "test_routing_stale_index_with_explicit_index_rebuilds",
+          "test_routing_explicit_gpu_device_ids_use_gpu_sidecar",
+          "test_routing_warm_index_is_bypassed_by_invert_match",
+          "test_routing_warm_index_is_bypassed_by_glob_filter",
+          "test_routing_warm_index_is_bypassed_by_context_lines",
+          "test_routing_warm_index_is_bypassed_by_short_pattern",
+          "test_routing_warm_index_is_bypassed_by_max_count",
+          "test_routing_explicit_gpu_device_ids_override_warm_index"
+        ],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-011",
+      "title": "Word-regexp bypasses warm index",
+      "status": "pass",
+      "steps": [
+        { "action": "Confirmed warm index present on test corpus", "expected": ".tg_index exists", "observed": ".tg_index present (8483 bytes)" },
+        { "action": "Ran tg search -w --verbose \"hello\" corpus", "expected": "CpuBackend routing (index bypassed)", "observed": "routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false" },
+        { "action": "Verified search results returned", "expected": "Matches found via rg passthrough", "observed": "4 matches across app.py, readme.md, utils.py" }
+      ],
+      "evidence": {
+        "terminalOutput": "routing-and-safety/routing-bypass/VAL-ROUTE-011-output.txt",
+        "consoleErrors": "none",
+        "network": "N/A (CLI tool)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-012",
+      "title": "Glob filter bypasses warm index",
+      "status": "pass",
+      "steps": [
+        { "action": "Confirmed warm index present on test corpus", "expected": ".tg_index exists", "observed": ".tg_index present (8483 bytes)" },
+        { "action": "Ran tg search -g \"*.py\" --verbose \"hello\" corpus", "expected": "CpuBackend routing (index bypassed)", "observed": "routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false" },
+        { "action": "Verified results filtered to .py files only", "expected": "Only .py files in results", "observed": "5 matches across app.py and utils.py only" }
+      ],
+      "evidence": {
+        "terminalOutput": "routing-and-safety/routing-bypass/VAL-ROUTE-012-output.txt",
+        "consoleErrors": "none",
+        "network": "N/A (CLI tool)"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-013",
+      "title": "Max-count bypasses warm index",
+      "status": "pass",
+      "steps": [
+        { "action": "Confirmed warm index present on test corpus", "expected": ".tg_index exists", "observed": ".tg_index present (8483 bytes)" },
+        { "action": "Ran tg search --max-count 5 --verbose \"hello\" corpus", "expected": "CpuBackend routing (index bypassed)", "observed": "routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false" },
+        { "action": "Verified search results returned", "expected": "Matches found via rg passthrough", "observed": "6 matches across utils.py, app.py, readme.md" }
+      ],
+      "evidence": {
+        "terminalOutput": "routing-and-safety/routing-bypass/VAL-ROUTE-013-output.txt",
+        "consoleErrors": "none",
+        "network": "N/A (CLI tool)"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 5 assertions: 5 passed, 0 failed. All routing bypass flags (short pattern, word-regexp, glob filter, max-count) correctly route to CpuBackend instead of TrigramIndex when warm index is present. Routing regression test suite has 14 tests (>= 10 required), all passing."
+}

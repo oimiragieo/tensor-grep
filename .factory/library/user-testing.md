@@ -56,3 +56,34 @@ CLI tool (`tg.exe` binary at `rust_core/target/release/tg.exe`). All validation 
 - Each validator can create temp dirs under `C:\dev\projects\tensor-grep\artifacts\` with a unique prefix
 - Clean up temp dirs after validation
 - Do NOT run full benchmark suites (expensive) — validate existing artifacts and smoke-test as needed
+
+## Flow Validator Guidance: routing-and-safety
+
+### Routing Assertions (VAL-ROUTE-*)
+- Use `tg.exe` at `C:\dev\projects\tensor-grep\rust_core\target\release\tg.exe`
+- For `--verbose` routing checks, routing info goes to stderr
+- For `--json` routing checks, check `routing_backend` and `routing_reason` in JSON stdout
+- `bench_data` directory at `C:\dev\projects\tensor-grep\bench_data` has 4 files including 2 large server logs (~112MB each)
+- For index tests: build index with `tg.exe search --index "ERROR" bench_data`, then subsequent searches should auto-route to TrigramIndex
+- Index file is `.tg_index` in the search directory (e.g., `bench_data\.tg_index`)
+- GPU sidecar may not be available — GPU tests may need to be marked "blocked" if Python GPU backends are not set up
+- The `docs/routing_policy.md` file documents all routing decisions
+- For routing test suite (VAL-ROUTE-010): use `cargo test --test test_routing` in `rust_core/`
+
+### Safety Assertions (VAL-SAFE-*)
+- Safety tests require creating temporary test files with specific content
+- Use `artifacts\val-safety\` as the working directory for safety test files
+- For BOM tests: create files starting with `\xEF\xBB\xBF` (UTF-8 BOM bytes)
+- For CRLF tests: create files with `\r\n` line endings
+- For binary tests: create files with NUL bytes in first 8192 bytes
+- For large file tests: create a file > 100MB (e.g., 101MB)
+- For stale-file tests: run plan, modify file, then try apply
+- For atomic write tests: check no `.tg_tmp_*` files remain after operations
+- For non-ASCII tests: use CJK characters (e.g., こんにちは)
+- `tg run --rewrite REPLACEMENT PATTERN PATH` does dry-run (no file modification)
+- `tg run --rewrite REPLACEMENT --apply PATTERN PATH` applies edits
+- `tg run --rewrite REPLACEMENT --apply --verify PATTERN PATH` applies and verifies
+- The Rust code for rewrite is in `rust_core/src/backend_ast.rs`
+
+### Cross-Area Assertions
+- VAL-CROSS-013: verify() uses byte-level exact matching — verify by running apply+verify where replacement doesn't match original pattern
