@@ -70,3 +70,9 @@ extern "C" __global__ void text_search(
 - Multi-GPU: split files across devices via rayon threads
 - Warp-parallel: 32 threads cooperate on long lines
 - CUDA graphs: capture+replay for reduced launch overhead
+
+## Native explicit GPU routing integration notes (2026-03-16)
+- `--gpu-device-ids` now routes to native Rust CUDA search when `rust_core` is built with `--features cuda`; non-CUDA builds still use the Python sidecar path.
+- The current native path batches all discovered files into one contiguous host buffer with `\0` file separators, does one host-to-device transfer, runs one kernel launch, then maps byte offsets back to `(file, line_number, line_text)` matches on the host.
+- Current native GPU routing intentionally falls back to the Python sidecar for unsupported search modes (`--ignore-case`, regex syntax, context lines, `--max-count`, `-w`, invert-match). This keeps the explicit GPU flag working while advanced GPU features are still pending.
+- On this Windows host, `CUDA_VISIBLE_DEVICES=""` did not reliably hide devices from the native cudarc path during tests. Future fallback work should not depend on that env var alone for negative-path coverage.

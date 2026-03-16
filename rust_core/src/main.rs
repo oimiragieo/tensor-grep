@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
 use tensor_grep_rs::backend_cpu::CpuBackend;
+#[cfg(feature = "cuda")]
+use tensor_grep_rs::gpu_native::{gpu_native_search_paths, GpuNativeSearchConfig, GpuNativeSearchStats};
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{run_native_search, NativeSearchConfig};
 use tensor_grep_rs::python_sidecar::{
@@ -256,6 +258,13 @@ impl RoutingDecision {
         sidecar_used: true,
     };
 
+    #[cfg(feature = "cuda")]
+    const GPU_NATIVE: Self = Self {
+        backend: "gpu_native",
+        reason: "gpu-device-ids-explicit-native",
+        sidecar_used: false,
+    };
+
     const INDEX: Self = Self {
         backend: "TrigramIndex",
         reason: "index-accelerated",
@@ -308,7 +317,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     let path = cli.path.clone().unwrap();
 
     if !cli.gpu_device_ids.is_empty() {
-        return handle_gpu_sidecar_search(GpuSearchParams {
+        return handle_gpu_search(GpuSearchParams {
             pattern: &pattern,
             path: &path,
             ignore_case: cli.ignore_case,
@@ -494,7 +503,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     }
 
     if !args.gpu_device_ids.is_empty() {
-        return handle_gpu_sidecar_search(GpuSearchParams {
+        return handle_gpu_search(GpuSearchParams {
             pattern: &args.pattern,
             path: &args.path,
             ignore_case: args.ignore_case,
@@ -725,6 +734,21 @@ struct SearchResultJson<'a> {
     query: &'a str,
     path: &'a str,
     total_matches: usize,
+    matches: Vec<SearchMatchJson>,
+}
+
+#[cfg(feature = "cuda")]
+#[derive(Serialize)]
+struct GpuNativeSearchResultJson<'a> {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    query: &'a str,
+    path: &'a str,
+    total_matches: usize,
+    total_files: usize,
+    routing_gpu_device_ids: Vec<i32>,
     matches: Vec<SearchMatchJson>,
 }
 
@@ -1182,6 +1206,117 @@ struct GpuSearchParams<'a> {
     verbose: bool,
 }
 
+#[cfg(feature = "cuda")]
+fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
+    if let Some(reason) = gpu_native_fallback_reason(&params) {
+        if params.verbose {
+            eprintln!("[gpu-native] falling back to Python sidecar: {reason}");
+        }
+        return handle_gpu_sidecar_search(params);
+    }
+
+    handle_gpu_native_search(params)
+}
+
+#[cfg(not(feature = "cuda"))]
+fn handle_gpu_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
+    handle_gpu_sidecar_search(params)
+}
+
+#[cfg(feature = "cuda")]
+fn gpu_native_fallback_reason(params: &GpuSearchParams<'_>) -> Option<&'static str> {
+    if params.ignore_case {
+        Some("ignore-case searches are not yet supported by native GPU routing")
+    } else if params.invert_match {
+        Some("invert-match searches are not yet supported by native GPU routing")
+    } else if params.context.is_some() {
+        Some("context line searches are not yet supported by native GPU routing")
+    } else if params.max_count.is_some() {
+        Some("max-count searches are not yet supported by native GPU routing")
+    } else if params.word_regexp {
+        Some("word-boundary searches are not yet supported by native GPU routing")
+    } else if !params.fixed_strings && pattern_requires_regex_engine(params.pattern) {
+        Some("regex patterns still require the Python GPU sidecar")
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn pattern_requires_regex_engine(pattern: &str) -> bool {
+    let mut escaped = false;
+    for ch in pattern.chars() {
+        if escaped {
+            return true;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    escaped
+}
+
+#[cfg(feature = "cuda")]
+fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
+    let Some(&device_id) = params.gpu_device_ids.first() else {
+        return handle_gpu_sidecar_search(params);
+    };
+
+    if params.verbose {
+        emit_verbose_metadata(RoutingDecision::GPU_NATIVE);
+        if params.gpu_device_ids.len() > 1 {
+            eprintln!(
+                "[gpu-native] multi-GPU routing is not implemented yet; using device {} from {:?}",
+                device_id, params.gpu_device_ids
+            );
+        }
+    }
+
+    let config = GpuNativeSearchConfig {
+        pattern: params.pattern.to_string(),
+        paths: vec![PathBuf::from(params.path)],
+        no_ignore: params.no_ignore,
+        glob: params.globs.clone(),
+    };
+
+    match gpu_native_search_paths(&config, device_id) {
+        Ok(stats) => {
+            if params.verbose {
+                emit_gpu_native_verbose(&stats);
+            }
+
+            if params.json {
+                emit_gpu_native_json_results(&params, &stats)?;
+            } else if params.ndjson {
+                emit_ndjson_search_results(
+                    RoutingDecision::GPU_NATIVE,
+                    params.pattern,
+                    params.path,
+                    gpu_native_match_json_entries(&stats),
+                )?;
+            } else if params.count {
+                emit_gpu_native_count_results(&params, &stats);
+            } else {
+                emit_gpu_native_plain_results(&params, &stats);
+            }
+
+            if stats.total_matches == 0 {
+                std::process::exit(1);
+            }
+
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
     if params.verbose {
         emit_verbose_metadata(RoutingDecision::GPU_SIDECAR);
@@ -1299,6 +1434,88 @@ fn emit_json_search_results(
 
     println!("{}", serde_json::to_string(&payload)?);
     Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatchJson> {
+    stats
+        .matches
+        .iter()
+        .map(|matched| SearchMatchJson {
+            file: matched.path.to_string_lossy().into_owned(),
+            line: matched.line_number,
+            text: matched.text.clone(),
+        })
+        .collect()
+}
+
+#[cfg(feature = "cuda")]
+fn emit_gpu_native_json_results(
+    params: &GpuSearchParams<'_>,
+    stats: &GpuNativeSearchStats,
+) -> anyhow::Result<()> {
+    let payload = GpuNativeSearchResultJson {
+        version: JSON_OUTPUT_VERSION,
+        routing_backend: RoutingDecision::GPU_NATIVE.backend,
+        routing_reason: RoutingDecision::GPU_NATIVE.reason,
+        sidecar_used: RoutingDecision::GPU_NATIVE.sidecar_used,
+        query: params.pattern,
+        path: params.path,
+        total_matches: stats.total_matches,
+        total_files: stats.matched_files,
+        routing_gpu_device_ids: vec![stats.selected_device.device_id],
+        matches: gpu_native_match_json_entries(stats),
+    };
+
+    println!("{}", serde_json::to_string_pretty(&payload)?);
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn emit_gpu_native_plain_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
+    let with_filename = stats.searched_files > 1 || Path::new(params.path).is_dir();
+    for matched in &stats.matches {
+        if with_filename {
+            println!(
+                "{}:{}:{}",
+                matched.path.display(),
+                matched.line_number,
+                matched.text
+            );
+        } else {
+            println!("{}:{}", matched.line_number, matched.text);
+        }
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn emit_gpu_native_count_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
+    let with_filename = stats.searched_files > 1 || Path::new(params.path).is_dir();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for matched in &stats.matches {
+        *counts
+            .entry(matched.path.to_string_lossy().into_owned())
+            .or_default() += 1;
+    }
+
+    if with_filename {
+        for (file, count) in counts {
+            println!("{file}:{count}");
+        }
+    } else {
+        println!("{}", stats.total_matches);
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
+    eprintln!(
+        "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={}",
+        stats.selected_device.device_id,
+        stats.selected_device.name,
+        stats.searched_files,
+        stats.transfer_bytes
+    );
 }
 
 fn emit_ndjson_search_results(

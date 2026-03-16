@@ -3,6 +3,8 @@ use cudarc::driver::{
     CudaContext, CudaFunction, CudaModule, CudaStream, LaunchConfig, PushKernelArg,
 };
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
+use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
+use memchr::memchr_iter;
 use std::env;
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -53,6 +55,38 @@ static CUDA_LIBRARY_PATH_INIT: Once = Once::new();
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MatchPosition {
     pub byte_offset: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GpuNativeSearchConfig {
+    pub pattern: String,
+    pub paths: Vec<PathBuf>,
+    pub no_ignore: bool,
+    pub glob: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuNativeSearchMatch {
+    pub path: PathBuf,
+    pub line_number: usize,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GpuNativeSearchStats {
+    pub searched_files: usize,
+    pub matched_files: usize,
+    pub total_matches: usize,
+    pub transfer_bytes: usize,
+    pub selected_device: CudaDeviceInfo,
+    pub matches: Vec<GpuNativeSearchMatch>,
+}
+
+#[derive(Debug, Clone)]
+struct BatchedFile {
+    path: PathBuf,
+    start: usize,
+    end: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,6 +141,51 @@ pub fn detect_compute_capability(device_id: i32) -> Result<(i32, i32)> {
 
 pub fn compile_search_kernel(device_id: i32) -> Result<()> {
     create_kernel_runtime(device_id).map(|_| ())
+}
+
+pub fn gpu_native_search_paths(
+    config: &GpuNativeSearchConfig,
+    device_id: i32,
+) -> Result<GpuNativeSearchStats> {
+    if config.pattern.is_empty() {
+        return Err(anyhow!("GPU native search requires a non-empty pattern"));
+    }
+    if config.paths.is_empty() {
+        return Err(anyhow!("GPU native search requires at least one search path"));
+    }
+
+    let selected_device = resolve_cuda_device(device_id)?;
+    let files = collect_search_files(config)?;
+    let (buffer, batch) = build_batched_file_buffer(&files)?;
+    if buffer.is_empty() {
+        return Ok(GpuNativeSearchStats {
+            searched_files: batch.len(),
+            matched_files: 0,
+            total_matches: 0,
+            transfer_bytes: 0,
+            selected_device,
+            matches: Vec::new(),
+        });
+    }
+
+    let mut positions = gpu_native_search(&config.pattern, &buffer, device_id)?;
+    positions.sort_unstable_by_key(|matched| matched.byte_offset);
+
+    let matches = convert_offsets_to_line_matches(&config.pattern, &buffer, &batch, &positions)?;
+    let matched_files = matches
+        .iter()
+        .map(|matched| matched.path.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+
+    Ok(GpuNativeSearchStats {
+        searched_files: batch.len(),
+        matched_files,
+        total_matches: matches.len(),
+        transfer_bytes: buffer.len(),
+        selected_device,
+        matches,
+    })
 }
 
 pub fn gpu_native_search(pattern: &str, data: &[u8], device_id: i32) -> Result<Vec<MatchPosition>> {
@@ -222,6 +301,207 @@ fn create_kernel_runtime(device_id: i32) -> Result<KernelRuntime> {
         _module: module,
         function,
     })
+}
+
+fn resolve_cuda_device(device_id: i32) -> Result<CudaDeviceInfo> {
+    enumerate_cuda_devices()?
+        .into_iter()
+        .find(|device| device.device_id == device_id)
+        .ok_or_else(|| anyhow!("invalid CUDA device id {device_id}"))
+}
+
+fn collect_search_files(config: &GpuNativeSearchConfig) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut roots = Vec::new();
+
+    for path in &config.paths {
+        if !path.exists() {
+            return Err(anyhow!("GPU native search path does not exist: {}", path.display()));
+        }
+        if path.is_file() {
+            files.push(path.clone());
+        } else {
+            roots.push(path.clone());
+        }
+    }
+
+    if !roots.is_empty() {
+        files.extend(collect_walked_files(config, &roots)?);
+    }
+
+    files.sort_unstable();
+    files.dedup();
+    Ok(files)
+}
+
+fn collect_walked_files(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let builder = build_walk_builder(config, roots)?;
+    let walked_files = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let shared_files = Arc::clone(&walked_files);
+
+    builder.build_parallel().run(|| {
+        let shared_files = Arc::clone(&shared_files);
+        Box::new(move |entry| {
+            if let Ok(entry) = entry {
+                if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+                    if let Ok(mut guard) = shared_files.lock() {
+                        guard.push(entry.path().to_path_buf());
+                    }
+                }
+            }
+            WalkState::Continue
+        })
+    });
+
+    let files = walked_files
+        .lock()
+        .map_err(|_| anyhow!("failed to collect GPU native search walk results"))?
+        .clone();
+    Ok(files)
+}
+
+fn build_walk_builder(config: &GpuNativeSearchConfig, roots: &[PathBuf]) -> Result<WalkBuilder> {
+    let first_root = roots[0].clone();
+    let mut builder = WalkBuilder::new(&first_root);
+    for root in roots.iter().skip(1) {
+        builder.add(root);
+    }
+    builder.threads(0);
+
+    if config.no_ignore {
+        builder.ignore(false);
+        builder.git_ignore(false);
+        builder.git_global(false);
+        builder.git_exclude(false);
+        builder.parents(false);
+    } else {
+        for root in roots {
+            for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
+                let ignore_path = root.join(ignore_name);
+                if ignore_path.is_file() {
+                    builder.add_ignore(ignore_path);
+                }
+            }
+        }
+    }
+
+    if !config.glob.is_empty() {
+        let mut overrides = OverrideBuilder::new(&first_root);
+        for glob in &config.glob {
+            overrides
+                .add(glob)
+                .with_context(|| format!("failed to add GPU native glob override '{glob}'"))?;
+        }
+        builder.overrides(
+            overrides
+                .build()
+                .context("failed to build GPU native ignore override matcher")?,
+        );
+    }
+
+    Ok(builder)
+}
+
+fn build_batched_file_buffer(files: &[PathBuf]) -> Result<(Vec<u8>, Vec<BatchedFile>)> {
+    let mut buffer = Vec::new();
+    let mut batch = Vec::new();
+
+    for path in files {
+        let bytes = fs::read(path)
+            .with_context(|| format!("failed to read GPU native search file {}", path.display()))?;
+        if bytes.contains(&b'\0') {
+            continue;
+        }
+        if !buffer.is_empty() {
+            buffer.push(0);
+        }
+        let start = buffer.len();
+        buffer.extend_from_slice(&bytes);
+        let end = buffer.len();
+        batch.push(BatchedFile {
+            path: path.clone(),
+            start,
+            end,
+        });
+    }
+
+    Ok((buffer, batch))
+}
+
+fn convert_offsets_to_line_matches(
+    pattern: &str,
+    buffer: &[u8],
+    batch: &[BatchedFile],
+    offsets: &[MatchPosition],
+) -> Result<Vec<GpuNativeSearchMatch>> {
+    let pattern_len = pattern.len();
+    let mut grouped_offsets = vec![Vec::new(); batch.len()];
+    let mut batch_index = 0usize;
+
+    for matched in offsets {
+        while batch_index < batch.len() && matched.byte_offset >= batch[batch_index].end {
+            batch_index += 1;
+        }
+        if batch_index >= batch.len() {
+            break;
+        }
+
+        let file = &batch[batch_index];
+        let end_offset = matched
+            .byte_offset
+            .checked_add(pattern_len)
+            .ok_or_else(|| anyhow!("GPU native match offset overflowed usize"))?;
+        if matched.byte_offset < file.start || end_offset > file.end {
+            continue;
+        }
+
+        grouped_offsets[batch_index].push(matched.byte_offset - file.start);
+    }
+
+    let mut matches = Vec::new();
+    for (file, file_offsets) in batch.iter().zip(grouped_offsets.into_iter()) {
+        if file_offsets.is_empty() {
+            continue;
+        }
+        let file_bytes = &buffer[file.start..file.end];
+        matches.extend(line_matches_for_file(&file.path, file_bytes, &file_offsets));
+    }
+
+    Ok(matches)
+}
+
+fn line_matches_for_file(path: &Path, file_bytes: &[u8], offsets: &[usize]) -> Vec<GpuNativeSearchMatch> {
+    let newline_positions = memchr_iter(b'\n', file_bytes).collect::<Vec<_>>();
+    let mut matches = Vec::new();
+    let mut last_line_start = None;
+
+    for &offset in offsets {
+        let newline_index = newline_positions.partition_point(|position| *position < offset);
+        let line_start = newline_index
+            .checked_sub(1)
+            .and_then(|index| newline_positions.get(index).copied())
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        if last_line_start == Some(line_start) {
+            continue;
+        }
+        last_line_start = Some(line_start);
+        let line_end = newline_positions
+            .get(newline_index)
+            .copied()
+            .unwrap_or(file_bytes.len());
+        let line_bytes = &file_bytes[line_start..line_end];
+        let text = String::from_utf8_lossy(line_bytes)
+            .trim_end_matches('\r')
+            .to_string();
+        matches.push(GpuNativeSearchMatch {
+            path: path.to_path_buf(),
+            line_number: newline_index + 1,
+            text,
+        });
+    }
+
+    matches
 }
 
 fn compile_kernel_module(context: &Arc<CudaContext>, device_id: i32) -> Result<Arc<CudaModule>> {

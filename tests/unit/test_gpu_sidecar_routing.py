@@ -14,7 +14,7 @@ def _default_tg_binary() -> Path:
 
 
 class TestGpuSidecarRouting:
-    """Contract tests for --gpu-device-ids routing through the sidecar protocol."""
+    """Contract tests for explicit --gpu-device-ids routing metadata."""
 
     def test_tg_search_accepts_gpu_device_ids_flag(self):
         binary = _default_tg_binary()
@@ -43,7 +43,7 @@ class TestGpuSidecarRouting:
         )
         assert result.returncode == 0
 
-    def test_tg_gpu_device_ids_routes_through_sidecar_with_verbose(self):
+    def test_tg_gpu_device_ids_emits_explicit_routing_metadata_with_verbose(self):
         binary = _default_tg_binary()
         if not binary.exists():
             pytest.skip(f"tg binary not found: {binary}")
@@ -54,9 +54,13 @@ class TestGpuSidecarRouting:
             text=True,
             check=False,
         )
-        assert "GpuSidecar" in result.stderr
-        assert "gpu-device-ids-explicit" in result.stderr
-        assert "sidecar_used=true" in result.stderr
+        if "routing_backend=gpu_native" in result.stderr:
+            assert "gpu-device-ids-explicit-native" in result.stderr
+            assert "sidecar_used=false" in result.stderr
+        else:
+            assert "GpuSidecar" in result.stderr
+            assert "gpu-device-ids-explicit" in result.stderr
+            assert "sidecar_used=true" in result.stderr
 
 
 class TestSidecarGpuSearchDispatch:

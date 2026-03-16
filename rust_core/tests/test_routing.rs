@@ -503,9 +503,15 @@ fn test_routing_explicit_gpu_device_ids_use_gpu_sidecar() {
         .output()
         .unwrap();
 
-    let payload = assert_json_routing(&output, "GpuSidecar", "gpu-device-ids-explicit", true);
-    assert_eq!(payload["total_matches"], 1);
-    assert!(marker.exists(), "expected mock GPU sidecar invocation");
+    if cfg!(feature = "cuda") {
+        let payload = assert_json_routing(&output, "gpu_native", "gpu-device-ids-explicit-native", false);
+        assert_eq!(payload["total_matches"], 4);
+        assert!(!marker.exists(), "native GPU routing should not invoke the Python sidecar");
+    } else {
+        let payload = assert_json_routing(&output, "GpuSidecar", "gpu-device-ids-explicit", true);
+        assert_eq!(payload["total_matches"], 1);
+        assert!(marker.exists(), "expected mock GPU sidecar invocation");
+    }
 }
 
 #[test]
@@ -725,7 +731,13 @@ fn test_routing_explicit_gpu_device_ids_override_warm_index() {
         .output()
         .unwrap();
 
-    let payload = assert_json_routing(&output, "GpuSidecar", "gpu-device-ids-explicit", true);
-    assert_eq!(payload["total_matches"], 1);
-    assert!(marker.exists(), "expected mock GPU sidecar invocation");
+    if cfg!(feature = "cuda") {
+        let payload = assert_json_routing(&output, "gpu_native", "gpu-device-ids-explicit-native", false);
+        assert_eq!(payload["total_matches"], 3);
+        assert!(!marker.exists(), "native GPU routing should bypass the Python sidecar");
+    } else {
+        let payload = assert_json_routing(&output, "GpuSidecar", "gpu-device-ids-explicit", true);
+        assert_eq!(payload["total_matches"], 1);
+        assert!(marker.exists(), "expected mock GPU sidecar invocation");
+    }
 }

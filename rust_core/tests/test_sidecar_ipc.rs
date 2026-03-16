@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+#[cfg(not(feature = "cuda"))]
+use std::time::Instant;
 
 use serde_json::json;
 use tempfile::tempdir;
@@ -96,6 +99,7 @@ fn configure_classify_env(command: &mut Command) {
         .env("TRANSFORMERS_OFFLINE", "1");
 }
 
+#[cfg(not(feature = "cuda"))]
 fn is_pid_running(pid: u32) -> bool {
     if cfg!(windows) {
         let output = Command::new("tasklist")
@@ -114,6 +118,7 @@ fn is_pid_running(pid: u32) -> bool {
     }
 }
 
+#[cfg(not(feature = "cuda"))]
 fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -254,9 +259,16 @@ fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
 
     let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(payload["version"], 1);
-    assert_eq!(payload["routing_backend"], "GpuSidecar");
-    assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit");
-    assert_eq!(payload["sidecar_used"], true);
+    if cfg!(feature = "cuda") {
+        assert_eq!(payload["routing_backend"], "gpu_native");
+        assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit-native");
+        assert_eq!(payload["sidecar_used"], false);
+        assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([0]));
+    } else {
+        assert_eq!(payload["routing_backend"], "GpuSidecar");
+        assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit");
+        assert_eq!(payload["sidecar_used"], true);
+    }
     assert_eq!(payload["total_matches"], 1);
 }
 
@@ -280,12 +292,17 @@ fn test_gpu_search_invalid_device_id_reports_clear_error_without_traceback() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Requested GPU device ID"), "stderr={stderr}");
     assert!(stderr.contains("99"), "stderr={stderr}");
-    assert!(stderr.contains("Available device IDs"), "stderr={stderr}");
+    if cfg!(feature = "cuda") {
+        assert!(stderr.contains("invalid CUDA device id"), "stderr={stderr}");
+    } else {
+        assert!(stderr.contains("Requested GPU device ID"), "stderr={stderr}");
+        assert!(stderr.contains("Available device IDs"), "stderr={stderr}");
+    }
     assert!(!stderr.contains("Traceback"), "stderr={stderr}");
 }
 
+#[cfg(not(feature = "cuda"))]
 #[test]
 fn test_gpu_search_cuda_visible_devices_empty_reports_clear_error_without_traceback() {
     let dir = tempdir().unwrap();
@@ -312,6 +329,7 @@ fn test_gpu_search_cuda_visible_devices_empty_reports_clear_error_without_traceb
     assert!(!stderr.contains("Traceback"), "stderr={stderr}");
 }
 
+#[cfg(not(feature = "cuda"))]
 #[test]
 fn test_sidecar_timeout_kills_child_and_reports_error() {
     let dir = tempdir().unwrap();
@@ -354,6 +372,7 @@ fn test_sidecar_timeout_kills_child_and_reports_error() {
     );
 }
 
+#[cfg(not(feature = "cuda"))]
 #[test]
 fn test_gpu_search_schema_invalid_json_reports_clear_error() {
     let dir = tempdir().unwrap();
