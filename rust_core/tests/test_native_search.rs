@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -17,6 +17,16 @@ const LARGE_FILE_LINE_COUNT: usize = 102_400;
 const LARGE_FILE_CHUNK_COUNT: usize = 4;
 const LARGE_FILE_THRESHOLD_BYTES: usize = 50 * 1024 * 1024;
 const LARGE_FILE_PATTERN: &str = "NEEDLE-BOUNDARY";
+const STREAMING_PATTERN: &str = "STREAM-NEEDLE";
+const STREAMING_MATCH_INTERVAL: usize = 24;
+
+struct StreamCapture {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    ttfb: Duration,
+    total: Duration,
+}
 
 fn tg() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg"))
@@ -78,10 +88,95 @@ fn write_large_chunk_boundary_fixture(dir: &Path) -> (PathBuf, Vec<u64>) {
     (file_path, expected_lines)
 }
 
+fn write_large_streaming_fixture(dir: &Path) -> (PathBuf, usize) {
+    let file_path = dir.join("streaming-large.log");
+    let file = fs::File::create(&file_path).unwrap();
+    let mut writer = BufWriter::new(file);
+    let mut expected_matches = 0usize;
+
+    for line_number in 1..=LARGE_FILE_LINE_COUNT {
+        let mut line = if line_number % STREAMING_MATCH_INTERVAL == 0 {
+            expected_matches += 1;
+            format!("INFO {STREAMING_PATTERN} streaming-line-{line_number}")
+        } else {
+            format!("INFO filler-line-{line_number}")
+        };
+        assert!(line.len() < LARGE_FILE_LINE_BYTES);
+        line.push_str(&"x".repeat(LARGE_FILE_LINE_BYTES - line.len() - 1));
+        line.push('\n');
+        writer.write_all(line.as_bytes()).unwrap();
+    }
+    writer.flush().unwrap();
+
+    assert_eq!(
+        fs::metadata(&file_path).unwrap().len(),
+        (LARGE_FILE_LINE_BYTES * LARGE_FILE_LINE_COUNT) as u64
+    );
+
+    (file_path, expected_matches)
+}
+
+fn capture_streaming_output(command: &mut Command) -> StreamCapture {
+    let started = Instant::now();
+    let mut child = command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let stderr_reader = std::thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+
+    let mut first_byte = [0u8; 1];
+    stdout.read_exact(&mut first_byte).unwrap();
+    let ttfb = started.elapsed();
+
+    let mut stdout_bytes = vec![first_byte[0]];
+    stdout.read_to_end(&mut stdout_bytes).unwrap();
+
+    let status = child.wait().unwrap();
+    let total = started.elapsed();
+    let stderr = stderr_reader.join().unwrap();
+
+    StreamCapture {
+        status,
+        stdout: stdout_bytes,
+        stderr,
+        ttfb,
+        total,
+    }
+}
+
 fn median_duration(samples: &[Duration]) -> Duration {
     let mut sorted = samples.to_vec();
     sorted.sort_unstable();
     sorted[sorted.len() / 2]
+}
+
+fn assert_streaming_ratio(capture: &StreamCapture, mode: &str) {
+    assert!(
+        capture.status.success(),
+        "mode={mode} status={:?}\nstdout={}\nstderr={}",
+        capture.status.code(),
+        String::from_utf8_lossy(&capture.stdout),
+        String::from_utf8_lossy(&capture.stderr)
+    );
+
+    let ttfb = capture.ttfb.as_secs_f64();
+    let total = capture.total.as_secs_f64();
+    assert!(total > 0.0, "mode={mode} total must be positive");
+    assert!(
+        ttfb < total * 0.5,
+        "expected streaming {mode} output to arrive before halfway point: ttfb={:?} total={:?}",
+        capture.ttfb,
+        capture.total
+    );
 }
 
 #[test]
@@ -399,6 +494,147 @@ fn test_native_search_large_file_verbose_logs_chunk_boundaries() {
     assert!(stderr.contains("chunk_count="), "stderr={stderr}");
     assert!(stderr.contains("chunk[0]"), "stderr={stderr}");
     assert!(stderr.contains("byte_start="), "stderr={stderr}");
+}
+
+#[test]
+fn test_native_search_default_output_streams_before_search_completion() {
+    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let (file_path, expected_matches) = write_large_streaming_fixture(dir.path());
+
+    let mut command = tg();
+    command
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg(STREAMING_PATTERN)
+        .arg(&file_path);
+    let capture = capture_streaming_output(&mut command);
+    let stdout = String::from_utf8(capture.stdout.clone()).unwrap();
+
+    assert_streaming_ratio(&capture, "default");
+    assert_eq!(stdout.lines().count(), expected_matches, "stdout={stdout}");
+}
+
+#[test]
+fn test_native_search_ndjson_output_streams_before_search_completion() {
+    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let (file_path, expected_matches) = write_large_streaming_fixture(dir.path());
+
+    let mut command = tg();
+    command
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("--ndjson")
+        .arg(STREAMING_PATTERN)
+        .arg(&file_path);
+    let capture = capture_streaming_output(&mut command);
+    let payloads = String::from_utf8(capture.stdout.clone())
+        .unwrap()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+
+    assert_streaming_ratio(&capture, "ndjson");
+    assert_eq!(payloads.len(), expected_matches);
+}
+
+#[test]
+fn test_native_search_default_output_lines_are_not_interleaved() {
+    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let (file_path, expected_matches) = write_large_streaming_fixture(dir.path());
+    let file_prefix = file_path.display().to_string();
+
+    for run in 0..10 {
+        let output = tg()
+            .arg("--cpu")
+            .arg("--fixed-strings")
+            .arg(STREAMING_PATTERN)
+            .arg(&file_path)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "run={run} status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), expected_matches, "run={run} stdout={stdout}");
+
+        for line in lines {
+            assert!(
+                line.starts_with(&file_prefix),
+                "run={run} line missing file prefix: {line}"
+            );
+            let suffix = &line[file_prefix.len()..];
+            assert!(suffix.starts_with(':'), "run={run} malformed suffix: {line}");
+            let mut parts = suffix[1..].splitn(2, ':');
+            let line_number = parts.next().unwrap();
+            let text = parts.next().unwrap_or_default();
+            assert!(
+                !line_number.is_empty() && line_number.chars().all(|ch| ch.is_ascii_digit()),
+                "run={run} invalid line number: {line}"
+            );
+            assert!(
+                text.contains(STREAMING_PATTERN),
+                "run={run} missing pattern in line: {line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_native_search_json_output_remains_single_document_for_large_file() {
+    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let (file_path, expected_matches) = write_large_streaming_fixture(dir.path());
+
+    let output = tg()
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("--json")
+        .arg(STREAMING_PATTERN)
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout.lines().filter(|line| !line.trim().is_empty()).count(),
+        1,
+        "stdout={stdout}"
+    );
+
+    let payload: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["total_matches"], expected_matches as u64);
+    assert_eq!(payload["matches"].as_array().unwrap().len(), expected_matches);
 }
 
 #[test]

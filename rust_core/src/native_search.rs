@@ -3,7 +3,10 @@ use grep_matcher::LineTerminator;
 use grep_printer::{JSONBuilder, StandardBuilder, SummaryBuilder, SummaryKind};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::Lossy;
-use grep_searcher::{BinaryDetection, MmapChoice, Searcher, SearcherBuilder};
+use grep_searcher::{
+    BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkContext, SinkFinish,
+    SinkMatch,
+};
 use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
 use memchr::{memchr, memchr_iter};
 use memmap2::MmapOptions;
@@ -12,7 +15,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -58,6 +61,50 @@ impl NativeOutputTarget {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AtomicLineWriter {
+    target: NativeOutputTarget,
+    pending: Vec<u8>,
+}
+
+impl AtomicLineWriter {
+    fn new(target: NativeOutputTarget) -> Self {
+        Self {
+            target,
+            pending: Vec::new(),
+        }
+    }
+
+    fn flush_complete_lines(&mut self) -> io::Result<()> {
+        while let Some(newline_index) = memchr(b'\n', &self.pending) {
+            let line = self.pending.drain(..=newline_index).collect::<Vec<_>>();
+            self.target.write_all(&line).map_err(io::Error::other)?;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        self.flush_complete_lines()?;
+        if !self.pending.is_empty() {
+            self.target.write_all(&self.pending).map_err(io::Error::other)?;
+            self.pending.clear();
+        }
+        Ok(())
+    }
+}
+
+impl Write for AtomicLineWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.pending.extend_from_slice(buf);
+        self.flush_complete_lines()?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_complete_lines()
     }
 }
 
@@ -138,6 +185,98 @@ struct FileSearchResult {
     used_chunk_parallel: bool,
 }
 
+#[derive(Debug)]
+struct CollectingSink<S> {
+    inner: S,
+    path: PathBuf,
+    matches: Vec<NativeSearchMatch>,
+}
+
+impl<S> CollectingSink<S> {
+    fn new(inner: S, path: PathBuf) -> Self {
+        Self {
+            inner,
+            path,
+            matches: Vec::new(),
+        }
+    }
+
+    fn into_matches(self) -> Vec<NativeSearchMatch> {
+        self.matches
+    }
+}
+
+impl<S> Sink for CollectingSink<S>
+where
+    S: Sink<Error = io::Error>,
+{
+    type Error = io::Error;
+
+    fn matched(&mut self, searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        let keep_going = self.inner.matched(searcher, mat)?;
+        self.matches.push(native_match_from_sink(&self.path, mat));
+        Ok(keep_going)
+    }
+
+    fn context(&mut self, searcher: &Searcher, context: &SinkContext<'_>) -> Result<bool, Self::Error> {
+        self.inner.context(searcher, context)
+    }
+
+    fn context_break(&mut self, searcher: &Searcher) -> Result<bool, Self::Error> {
+        self.inner.context_break(searcher)
+    }
+
+    fn binary_data(
+        &mut self,
+        searcher: &Searcher,
+        binary_byte_offset: u64,
+    ) -> Result<bool, Self::Error> {
+        self.inner.binary_data(searcher, binary_byte_offset)
+    }
+
+    fn begin(&mut self, searcher: &Searcher) -> Result<bool, Self::Error> {
+        self.inner.begin(searcher)
+    }
+
+    fn finish(&mut self, searcher: &Searcher, finish: &SinkFinish) -> Result<(), Self::Error> {
+        self.inner.finish(searcher, finish)
+    }
+}
+
+#[derive(Debug)]
+struct StreamingNdjsonSink<'a> {
+    config: &'a NativeSearchConfig,
+    path: PathBuf,
+    search_path: String,
+    matches: Vec<NativeSearchMatch>,
+}
+
+impl<'a> StreamingNdjsonSink<'a> {
+    fn new(config: &'a NativeSearchConfig, path: PathBuf) -> Self {
+        Self {
+            config,
+            path,
+            search_path: display_search_path(&config.paths),
+            matches: Vec::new(),
+        }
+    }
+
+    fn into_matches(self) -> Vec<NativeSearchMatch> {
+        self.matches
+    }
+}
+
+impl Sink for StreamingNdjsonSink<'_> {
+    type Error = io::Error;
+
+    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
+        let matched = native_match_from_sink(&self.path, mat);
+        emit_ndjson_match(self.config, &self.search_path, &matched).map_err(io::Error::other)?;
+        self.matches.push(matched);
+        Ok(true)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct FileChunkPlan {
     byte_start: usize,
@@ -198,7 +337,15 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
             continue;
         }
 
-        let file_result = search_file(&config, &matcher, &file_path)?;
+        let file_result = if config.json {
+            search_file(&config, &matcher, &file_path)?
+        } else if config.ndjson {
+            search_file_streaming_ndjson(&config, &matcher, &file_path)?
+        } else if config.count || config.quiet {
+            search_file(&config, &matcher, &file_path)?
+        } else {
+            search_file_streaming_standard(&config, &matcher, &file_path)?
+        };
 
         stats.searched_files += 1;
         if !file_result.matches.is_empty() {
@@ -211,24 +358,15 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
             break;
         }
 
-        if config.json {
+        if config.json || config.ndjson || (!config.count && !config.quiet) {
             continue;
         }
-        if config.ndjson {
-            emit_ndjson_matches(&config, &file_result.matches)?;
-            continue;
-        }
+
         if config.count {
             if file_result.used_chunk_parallel {
                 emit_count_output_from_matches(&config, &file_path, file_result.matches.len())?;
             } else {
                 emit_count_output(&config, &matcher, &file_path)?;
-            }
-        } else if !config.quiet {
-            if file_result.used_chunk_parallel {
-                emit_standard_matches(&config, &file_result.matches)?;
-            } else {
-                emit_standard_output(&config, &matcher, &file_path)?;
             }
         }
     }
@@ -238,6 +376,102 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
     }
 
     Ok(stats)
+}
+
+fn search_file_streaming_standard(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
+    search_file_streaming_standard_sequential(config, matcher, path)
+}
+
+fn search_file_streaming_standard_sequential(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
+    if can_stream_plain_matches(config) {
+        return search_file_streaming_plain_sequential(config, matcher, path);
+    }
+
+    let writer = AtomicLineWriter::new(config.output_target.clone());
+    let mut builder = StandardBuilder::new();
+    builder.path(true);
+    builder.only_matching(config.only_matching);
+
+    let mut printer = builder.build_no_color(writer);
+    let mut searcher = build_searcher(config, config.line_number);
+    let matches = {
+        let mut sink = CollectingSink::new(printer.sink_with_path(matcher, path), path.to_path_buf());
+        searcher
+            .search_path(matcher, path, &mut sink)
+            .with_context(|| format!("native standard output search failed for {}", path.display()))?;
+        sink.into_matches()
+    };
+    printer.get_mut().get_mut().finish()?;
+
+    Ok(FileSearchResult {
+        matches,
+        used_chunk_parallel: false,
+    })
+}
+
+fn search_file_streaming_plain_sequential(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
+    let mut matches = Vec::new();
+    let path_buf = path.to_path_buf();
+    let mut searcher = build_searcher(config, true);
+    searcher
+        .search_path(
+            matcher,
+            path,
+            Lossy(|line_number, line| {
+                let matched = NativeSearchMatch {
+                    path: path_buf.clone(),
+                    line_number: Some(line_number),
+                    text: line.trim_end_matches(['\n', '\r']).to_string(),
+                };
+                emit_standard_match(config, &matched).map_err(io::Error::other)?;
+                matches.push(matched);
+                Ok(true)
+            }),
+        )
+        .with_context(|| format!("native standard output search failed for {}", path.display()))?;
+
+    Ok(FileSearchResult {
+        matches,
+        used_chunk_parallel: false,
+    })
+}
+
+fn search_file_streaming_ndjson(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
+    search_file_streaming_ndjson_sequential(config, matcher, path)
+}
+
+fn search_file_streaming_ndjson_sequential(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
+
+    let mut sink = StreamingNdjsonSink::new(config, path.to_path_buf());
+    let mut searcher = build_searcher(config, true);
+    searcher
+        .search_path(matcher, path, &mut sink)
+        .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
+
+    Ok(FileSearchResult {
+        matches: sink.into_matches(),
+        used_chunk_parallel: false,
+    })
 }
 
 fn search_file(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<FileSearchResult> {
@@ -381,6 +615,8 @@ fn should_use_chunk_parallel_search(config: &NativeSearchConfig, path: &Path) ->
     if !config.parallel_large_files
         || !config.mmap
         || config.null_data
+        || config.ndjson
+        || (!config.json && !config.count && !config.quiet)
         || config.only_matching
         || config.before_context > 0
         || config.after_context > 0
@@ -576,21 +812,6 @@ fn search_file_json(
     })
 }
 
-fn emit_standard_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<()> {
-    let mut builder = StandardBuilder::new();
-    builder.path(true);
-    builder.only_matching(config.only_matching);
-
-    let mut printer = builder.build_no_color(Vec::new());
-    let mut searcher = build_searcher(config, config.line_number);
-    searcher
-        .search_path(matcher, path, printer.sink_with_path(matcher, path))
-        .with_context(|| format!("native standard output search failed for {}", path.display()))?;
-
-    let bytes = printer.into_inner().into_inner();
-    config.output_target.write_all(&bytes)
-}
-
 fn emit_count_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<()> {
     let mut builder = SummaryBuilder::new();
     builder.kind(SummaryKind::Count);
@@ -613,22 +834,34 @@ fn emit_count_output_from_matches(config: &NativeSearchConfig, path: &Path, coun
     config.output_target.write_all(&bytes)
 }
 
-fn emit_standard_matches(config: &NativeSearchConfig, matches: &[NativeSearchMatch]) -> Result<()> {
+fn can_stream_plain_matches(config: &NativeSearchConfig) -> bool {
+    config.before_context == 0 && config.after_context == 0 && !config.only_matching
+}
+
+fn emit_standard_match(config: &NativeSearchConfig, matched: &NativeSearchMatch) -> Result<()> {
     let mut bytes = Vec::new();
-    for matched in matches {
-        if config.line_number {
-            writeln!(
-                &mut bytes,
-                "{}:{}:{}",
-                matched.path.display(),
-                native_match_line_number(matched)?,
-                matched.text
-            )?;
-        } else {
-            writeln!(&mut bytes, "{}:{}", matched.path.display(), matched.text)?;
-        }
+    if config.line_number {
+        writeln!(
+            &mut bytes,
+            "{}:{}:{}",
+            matched.path.display(),
+            native_match_line_number(matched)?,
+            matched.text
+        )?;
+    } else {
+        writeln!(&mut bytes, "{}:{}", matched.path.display(), matched.text)?;
     }
     config.output_target.write_all(&bytes)
+}
+
+fn native_match_from_sink(path: &Path, mat: &SinkMatch<'_>) -> NativeSearchMatch {
+    NativeSearchMatch {
+        path: path.to_path_buf(),
+        line_number: mat.line_number(),
+        text: String::from_utf8_lossy(mat.bytes())
+            .trim_end_matches(['\n', '\r'])
+            .to_string(),
+    }
 }
 
 fn parse_json_printer_output(raw_json_lines: &[u8], default_path: &Path) -> Result<Vec<NativeSearchMatch>> {
@@ -700,30 +933,28 @@ fn emit_json_matches(config: &NativeSearchConfig, stats: &SearchStats) -> Result
     config.output_target.write_all(&bytes)
 }
 
-fn emit_ndjson_matches(config: &NativeSearchConfig, matches: &[NativeSearchMatch]) -> Result<()> {
-    let search_path = display_search_path(&config.paths);
+fn emit_ndjson_match(
+    config: &NativeSearchConfig,
+    search_path: &str,
+    matched: &NativeSearchMatch,
+) -> Result<()> {
+    let line = native_match_line_number(matched)?;
+    let file = matched.path.to_string_lossy().into_owned();
+    let payload = NativeNdjsonMatch {
+        version: JSON_OUTPUT_VERSION,
+        routing_backend: config.routing_backend,
+        routing_reason: config.routing_reason,
+        sidecar_used: config.sidecar_used,
+        query: &config.pattern,
+        path: search_path,
+        file: &file,
+        line,
+        text: &matched.text,
+    };
 
-    for matched in matches {
-        let line = native_match_line_number(matched)?;
-        let file = matched.path.to_string_lossy().into_owned();
-        let payload = NativeNdjsonMatch {
-            version: JSON_OUTPUT_VERSION,
-            routing_backend: config.routing_backend,
-            routing_reason: config.routing_reason,
-            sidecar_used: config.sidecar_used,
-            query: &config.pattern,
-            path: &search_path,
-            file: &file,
-            line,
-            text: &matched.text,
-        };
-
-        let mut bytes = serde_json::to_vec(&payload)?;
-        bytes.push(b'\n');
-        config.output_target.write_all(&bytes)?;
-    }
-
-    Ok(())
+    let mut bytes = serde_json::to_vec(&payload)?;
+    bytes.push(b'\n');
+    config.output_target.write_all(&bytes)
 }
 
 fn native_match_to_json(matched: &NativeSearchMatch) -> Result<NativeJsonMatch> {
