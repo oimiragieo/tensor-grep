@@ -5,8 +5,14 @@ use ignore::WalkBuilder;
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditCandidate {
@@ -525,8 +531,86 @@ fn apply_edits_to_file(file: &Path, edits: &[&RewriteEdit]) -> Result<()> {
         cursor = edit.byte_range.end;
     }
     result.push_str(&original[cursor..]);
-    std::fs::write(file, &result)
-        .with_context(|| format!("failed to write {}", file.display()))
+    atomic_write_file(file, result.as_bytes())
+}
+
+fn atomic_write_file(file: &Path, contents: &[u8]) -> Result<()> {
+    atomic_write_file_with_hook(file, contents, |_| Ok(()))
+}
+
+fn atomic_write_file_with_hook<F>(file: &Path, contents: &[u8], before_rename: F) -> Result<()>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
+    let (temp_path, mut temp_file) = create_temp_file(file)?;
+
+    let write_result: Result<()> = (|| {
+        temp_file
+            .write_all(contents)
+            .with_context(|| format!("failed to write temp file {}", temp_path.display()))?;
+        temp_file
+            .flush()
+            .with_context(|| format!("failed to flush temp file {}", temp_path.display()))?;
+        temp_file
+            .sync_all()
+            .with_context(|| format!("failed to sync temp file {}", temp_path.display()))?;
+        drop(temp_file);
+
+        before_rename(&temp_path)?;
+
+        std::fs::rename(&temp_path, file).with_context(|| {
+            format!(
+                "failed to rename temp file {} to {}",
+                temp_path.display(),
+                file.display()
+            )
+        })
+    })();
+
+    if let Err(err) = write_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(err);
+    }
+
+    Ok(())
+}
+
+fn create_temp_file(file: &Path) -> Result<(PathBuf, std::fs::File)> {
+    let directory = file
+        .parent()
+        .with_context(|| format!("{} has no parent directory", file.display()))?;
+
+    for _ in 0..64 {
+        let temp_path = directory.join(format!(
+            ".tg_tmp_{:x}_{:x}",
+            std::process::id(),
+            next_temp_nonce()
+        ));
+
+        match OpenOptions::new().write(true).create_new(true).open(&temp_path) {
+            Ok(temp_file) => return Ok((temp_path, temp_file)),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("failed to create temp file alongside {}", file.display())
+                });
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "failed to allocate unique temp file alongside {} after 64 attempts",
+        file.display()
+    )
+}
+
+fn next_temp_nonce() -> u128 {
+    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed) as u128;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(counter);
+    nanos ^ counter
 }
 
 fn assign_edit_ids(edits: &mut [RewriteEdit]) {
@@ -653,4 +737,81 @@ fn extract_metavar_env(
     }
 
     extracted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn temp_entries(dir: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn atomic_write_replaces_target_and_cleans_temp_files() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("fixture.py");
+        fs::write(&file_path, "before\n").unwrap();
+
+        atomic_write_file(&file_path, b"after\n").unwrap();
+
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "after\n");
+        assert!(
+            temp_entries(dir.path())
+                .into_iter()
+                .all(|entry| !entry.starts_with(".tg_tmp_")),
+            "temporary files should be removed after success"
+        );
+    }
+
+    #[test]
+    fn atomic_write_cleans_temp_files_after_failure() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("fixture.py");
+        fs::write(&file_path, "before\n").unwrap();
+
+        let error = atomic_write_file_with_hook(&file_path, b"after\n", |_| {
+            anyhow::bail!("injected rename failure")
+        })
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("injected rename failure"),
+            "unexpected error: {error:#}"
+        );
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "before\n");
+        assert!(
+            temp_entries(dir.path())
+                .into_iter()
+                .all(|entry| !entry.starts_with(".tg_tmp_")),
+            "temporary files should be removed after failure"
+        );
+    }
+
+    #[test]
+    fn verify_uses_byte_offsets_after_atomic_apply() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("fixture.py");
+        fs::write(&file_path, "def f(x): return x\ndef g(a, b, c): return a + b + c\n").unwrap();
+
+        let backend = AstBackend::new();
+        let plan = backend
+            .plan_and_apply(
+                "def $F($$$ARGS): return $EXPR",
+                "lambda $$$ARGS: $EXPR",
+                "python",
+                file_path.to_str().unwrap(),
+            )
+            .unwrap();
+
+        let verification = plan.verify(&backend).unwrap();
+        assert_eq!(verification.total_edits, 2);
+        assert_eq!(verification.verified, 2);
+        assert!(verification.mismatches.is_empty());
+    }
 }
