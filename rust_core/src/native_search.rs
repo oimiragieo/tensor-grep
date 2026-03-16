@@ -133,6 +133,7 @@ pub struct NativeSearchConfig {
     pub crlf: bool,
     pub no_ignore: bool,
     pub line_number: bool,
+    pub with_filename: bool,
     pub mmap: bool,
     pub json: bool,
     pub ndjson: bool,
@@ -168,6 +169,7 @@ impl Default for NativeSearchConfig {
             crlf: false,
             no_ignore: false,
             line_number: true,
+            with_filename: false,
             mmap: true,
             json: false,
             ndjson: false,
@@ -425,7 +427,7 @@ impl ParallelWalkWorker {
 
         let binary_detected = sink.saw_binary();
         if !binary_detected {
-            append_count_output_bytes(&mut self.output_buffer, path, match_count)?;
+            append_count_output_bytes(&mut self.output_buffer, &self.config, path, match_count)?;
         } else {
             match_count = 0;
         }
@@ -563,29 +565,31 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
         return Err(anyhow!("native search requires a non-empty pattern"));
     }
 
-    let matcher = build_matcher(&config)?;
     let inputs = split_search_inputs(&config)?;
+    let mut effective_config = config;
+    effective_config.with_filename = should_print_with_filename(&effective_config, &inputs);
+    let matcher = build_matcher(&effective_config)?;
     let mut stats = SearchStats::default();
 
     if !inputs.files.is_empty() {
-        let file_stats = run_native_search_files(&config, &matcher, inputs.files)?;
+        let file_stats = run_native_search_files(&effective_config, &matcher, inputs.files)?;
         merge_search_stats(&mut stats, file_stats);
     }
 
     if !inputs.roots.is_empty() {
-        let root_stats = if should_use_parallel_walk_search(&config) {
-            search_walk_roots_parallel(&config, &inputs.roots)?
+        let root_stats = if should_use_parallel_walk_search(&effective_config) {
+            search_walk_roots_parallel(&effective_config, &inputs.roots)?
         } else {
-            let files = collect_walked_files(&config, &inputs.roots)?;
-            run_native_search_files(&config, &matcher, files)?
+            let files = collect_walked_files(&effective_config, &inputs.roots)?;
+            run_native_search_files(&effective_config, &matcher, files)?
         };
         merge_search_stats(&mut stats, root_stats);
     }
 
     sort_search_matches(&mut stats.matches);
 
-    if config.json {
-        emit_json_matches(&config, &stats)?;
+    if effective_config.json {
+        emit_json_matches(&effective_config, &stats)?;
     }
 
     Ok(stats)
@@ -652,6 +656,10 @@ fn run_native_search_files(
     }
 
     Ok(stats)
+}
+
+fn should_print_with_filename(config: &NativeSearchConfig, inputs: &SearchInputs) -> bool {
+    config.with_filename || !inputs.roots.is_empty() || inputs.files.len() > 1
 }
 
 fn split_search_inputs(config: &NativeSearchConfig) -> Result<SearchInputs> {
@@ -803,7 +811,7 @@ fn search_file_streaming_standard_sequential(
 
     let writer = AtomicLineWriter::new(config.output_target.clone());
     let mut builder = StandardBuilder::new();
-    builder.path(true);
+    builder.path(config.with_filename);
     builder.only_matching(config.only_matching);
 
     let mut printer = builder.build_no_color(writer);
@@ -1373,18 +1381,27 @@ fn emit_count_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: 
     let mut searcher = build_searcher(config, true);
     let count = count_matches_with_searcher(matcher, path, &mut searcher)?;
     let mut bytes = Vec::new();
-    append_count_output_bytes(&mut bytes, path, count)?;
+    append_count_output_bytes(&mut bytes, config, path, count)?;
     config.output_target.write_all(&bytes)
 }
 
 fn emit_count_output_from_matches(config: &NativeSearchConfig, path: &Path, count: usize) -> Result<()> {
     let mut bytes = Vec::new();
-    append_count_output_bytes(&mut bytes, path, count)?;
+    append_count_output_bytes(&mut bytes, config, path, count)?;
     config.output_target.write_all(&bytes)
 }
 
-fn append_count_output_bytes(bytes: &mut Vec<u8>, path: &Path, count: usize) -> Result<()> {
-    writeln!(bytes, "{}:{count}", path.display())?;
+fn append_count_output_bytes(
+    bytes: &mut Vec<u8>,
+    config: &NativeSearchConfig,
+    path: &Path,
+    count: usize,
+) -> Result<()> {
+    if config.with_filename {
+        writeln!(bytes, "{}:{count}", path.display())?;
+    } else {
+        writeln!(bytes, "{count}")?;
+    }
     Ok(())
 }
 
@@ -1399,10 +1416,14 @@ fn append_standard_match_bytes(
     line_number: u64,
     text: &str,
 ) -> Result<()> {
-    if config.line_number {
+    if config.with_filename && config.line_number {
         writeln!(bytes, "{path_display}:{line_number}:{text}")?;
-    } else {
+    } else if config.with_filename {
         writeln!(bytes, "{path_display}:{text}")?;
+    } else if config.line_number {
+        writeln!(bytes, "{line_number}:{text}")?;
+    } else {
+        writeln!(bytes, "{text}")?;
     }
     Ok(())
 }

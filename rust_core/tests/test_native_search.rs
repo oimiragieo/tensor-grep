@@ -310,7 +310,63 @@ fn test_native_search_count_mode_outputs_per_file_counts() {
     let output = read_buffer(&buffer);
 
     assert_eq!(stats.total_matches, 2);
-    assert!(output.contains(&format!("{}:2", file_path.display())), "output={output}");
+    assert_eq!(output, "2\n");
+}
+
+#[test]
+fn test_search_command_single_file_output_omits_filename_in_non_tty_mode() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("single.log");
+    fs::write(&file_path, "INFO ready\nERROR failed\nERROR timeout\n").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("ERROR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "ERROR failed\nERROR timeout\n"
+    );
+}
+
+#[test]
+fn test_search_command_single_file_count_output_omits_filename_in_non_tty_mode() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("single-count.log");
+    fs::write(&file_path, "INFO ready\nERROR failed\nERROR timeout\n").unwrap();
+
+    let output = tg()
+        .arg("search")
+        .arg("--cpu")
+        .arg("--fixed-strings")
+        .arg("-c")
+        .arg("ERROR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "2\n");
 }
 
 #[test]
@@ -613,8 +669,6 @@ fn test_native_search_default_output_lines_are_not_interleaved() {
 
     let dir = tempdir().unwrap();
     let (file_path, expected_matches) = write_large_streaming_fixture(dir.path());
-    let file_prefix = file_path.display().to_string();
-
     for run in 0..10 {
         let output = tg()
             .arg("--cpu")
@@ -637,13 +691,7 @@ fn test_native_search_default_output_lines_are_not_interleaved() {
         assert_eq!(lines.len(), expected_matches, "run={run} stdout={stdout}");
 
         for line in lines {
-            assert!(
-                line.starts_with(&file_prefix),
-                "run={run} line missing file prefix: {line}"
-            );
-            let suffix = &line[file_prefix.len()..];
-            assert!(suffix.starts_with(':'), "run={run} malformed suffix: {line}");
-            let mut parts = suffix[1..].splitn(2, ':');
+            let mut parts = line.splitn(2, ':');
             let line_number = parts.next().unwrap();
             let text = parts.next().unwrap_or_default();
             assert!(

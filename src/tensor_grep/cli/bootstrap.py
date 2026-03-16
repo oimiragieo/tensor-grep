@@ -28,6 +28,7 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--format",
     "--gpu-device-ids",
     "--json",
+    "--ndjson",
     "--lang",
     "--ltl",
     "--only-matching",

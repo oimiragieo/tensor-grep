@@ -175,6 +175,66 @@ def test_cli_should_fail_fast_on_invalid_gpu_device_ids(monkeypatch):
     assert "Invalid GPU device id 'foo'" in result.output
 
 
+def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        seen["check"] = check
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["search", "ERROR", ".", "--cpu", "-F", "-c", "-g", "*.log", "--no-ignore"],
+    )
+
+    assert result.exit_code == 0
+    assert seen["cmd"] == [
+        "tg.exe",
+        "search",
+        "--cpu",
+        "-F",
+        "-c",
+        "-g",
+        "*.log",
+        "--no-ignore",
+        "ERROR",
+        ".",
+    ]
+    assert seen["check"] is False
+
+
+def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_code(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--ndjson"])
+
+    assert result.exit_code == 2
+    assert seen["cmd"] == ["tg.exe", "search", "--cpu", "--ndjson", "ERROR", "."]
+
+
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.py", "b.py"]}

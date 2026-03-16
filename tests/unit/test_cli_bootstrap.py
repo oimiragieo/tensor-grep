@@ -82,6 +82,23 @@ def test_main_entry_should_fallback_to_full_cli_for_cpu_flag(monkeypatch):
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_fallback_to_full_cli_for_ndjson_flag(monkeypatch):
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--ndjson"])
+    monkeypatch.setattr(bootstrap, "_resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, search_args: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_fallback_to_full_cli_when_rg_is_unavailable(monkeypatch):
     called = {"full_cli": False}
 

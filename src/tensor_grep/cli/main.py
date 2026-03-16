@@ -1,8 +1,11 @@
+import os
 import re
+import subprocess
 import sys
 import time
 from contextlib import nullcontext
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
@@ -47,6 +50,202 @@ def _read_project_version_fallback() -> str:
     return "0.0.0"
 
 
+_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
+    "regexp",
+    "file_patterns",
+    "pre",
+    "pre_glob",
+    "search_zip",
+    "crlf",
+    "dfa_size_limit",
+    "encoding",
+    "engine",
+    "line_regexp",
+    "mmap",
+    "multiline",
+    "multiline_dotall",
+    "no_unicode",
+    "null_data",
+    "pcre2",
+    "regex_size_limit",
+    "smart_case",
+    "stop_on_nonmatch",
+    "text",
+    "threads",
+    "binary",
+    "follow",
+    "glob_case_insensitive",
+    "hidden",
+    "iglob",
+    "ignore_file",
+    "ignore_file_case_insensitive",
+    "max_depth",
+    "max_filesize",
+    "no_ignore_dot",
+    "no_ignore_exclude",
+    "no_ignore_files",
+    "no_ignore_global",
+    "no_ignore_parent",
+    "no_ignore_vcs",
+    "no_require_git",
+    "one_file_system",
+    "file_type",
+    "type_not",
+    "type_add",
+    "type_clear",
+    "unrestricted",
+    "after_context",
+    "before_context",
+    "block_buffered",
+    "byte_offset",
+    "color",
+    "colors",
+    "column",
+    "context_separator",
+    "field_context_separator",
+    "field_match_separator",
+    "heading",
+    "hostname_bin",
+    "hyperlink_format",
+    "include_zero",
+    "line_buffered",
+    "max_columns",
+    "max_columns_preview",
+    "null",
+    "only_matching",
+    "path_separator",
+    "passthru",
+    "pretty",
+    "quiet",
+    "replace_str",
+    "sort_by",
+    "sort_by_reverse",
+    "trim",
+    "vimgrep",
+    "with_filename",
+    "no_filename",
+    "count_matches",
+    "debug",
+    "no_ignore_messages",
+    "no_messages",
+    "stats",
+    "trace",
+    "list_files",
+    "generate",
+    "no_config",
+    "pcre2_version",
+    "type_list",
+    "format_type",
+    "ast",
+    "lang",
+    "ltl",
+    "gpu_device_ids",
+)
+
+
+@lru_cache(maxsize=1)
+def _resolve_native_tg_binary() -> Path | None:
+    repo_root = Path(__file__).resolve().parents[3]
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    env_override = os.environ.get("TG_NATIVE_TG_BINARY")
+
+    candidates = []
+    if env_override:
+        candidates.append(Path(env_override).expanduser())
+    candidates.extend(
+        [
+            repo_root / "rust_core" / "target" / "release" / binary_name,
+            repo_root / "rust_core" / "target" / "debug" / binary_name,
+            repo_root / "benchmarks" / binary_name,
+            repo_root / "benchmarks" / "tg_rust.exe",
+        ]
+    )
+
+    existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
+    if not existing:
+        return None
+
+    return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
+
+
+def _can_delegate_to_native_tg_search(
+    config: "SearchConfig",
+    *,
+    ndjson: bool,
+    files_mode: bool,
+    files_with_matches: bool,
+    files_without_match: bool,
+    format_type: str,
+) -> bool:
+    from tensor_grep.core.config import SearchConfig
+
+    if files_mode or files_with_matches or files_without_match or format_type != "rg":
+        return False
+
+    defaults = SearchConfig()
+    for field_name in _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS:
+        if getattr(config, field_name) != getattr(defaults, field_name):
+            return False
+
+    return config.force_cpu or ndjson
+
+
+def _build_native_tg_search_command(
+    native_binary: Path,
+    *,
+    pattern: str,
+    paths: list[str],
+    config: "SearchConfig",
+    ndjson: bool,
+) -> list[str]:
+    command = [str(native_binary), "search", "--cpu"]
+
+    if config.ignore_case:
+        command.append("-i")
+    if config.fixed_strings:
+        command.append("-F")
+    if config.invert_match:
+        command.append("-v")
+    if config.count:
+        command.append("-c")
+    if config.context is not None:
+        command.extend(["-C", str(config.context)])
+    if config.max_count is not None:
+        command.extend(["-m", str(config.max_count)])
+    if config.word_regexp:
+        command.append("-w")
+    for current_glob in config.glob or []:
+        command.extend(["-g", current_glob])
+    if config.no_ignore:
+        command.append("--no-ignore")
+    if config.json_mode:
+        command.append("--json")
+    if ndjson:
+        command.append("--ndjson")
+
+    command.extend([pattern, *paths])
+    return command
+
+
+def _delegate_to_native_tg_search(
+    native_binary: Path,
+    *,
+    pattern: str,
+    paths: list[str],
+    config: "SearchConfig",
+    ndjson: bool,
+) -> int:
+    command = _build_native_tg_search_command(
+        native_binary,
+        pattern=pattern,
+        paths=paths,
+        config=config,
+        ndjson=ndjson,
+    )
+    completed = subprocess.run(command, check=False)
+    return int(completed.returncode)
+
+
 def _collect_candidate_files(
     scanner: "DirectoryScanner", paths: list[str]
 ) -> tuple[list[str], set[str]]:
@@ -75,6 +274,7 @@ def _can_passthrough_rg(
     *,
     format_type: str,
     json_mode: bool,
+    ndjson_mode: bool,
     files_mode: bool,
     files_with_matches: bool,
     files_without_match: bool,
@@ -90,6 +290,7 @@ def _can_passthrough_rg(
         and config.replace_str is None
         and format_type == "rg"
         and not json_mode
+        and not ndjson_mode
         and not files_mode
         and not files_with_matches
         and not files_without_match
@@ -733,6 +934,7 @@ def search_command(
         False, "--files-without-match", help="Print paths containing zero matches."
     ),
     json: bool = typer.Option(False, "--json", help="Print results in JSON Lines format."),
+    ndjson: bool = typer.Option(False, "--ndjson", help="Print results in newline-delimited JSON."),
     # LOGGING OPTIONS
     debug: bool = typer.Option(False, "--debug", help="Show debug messages."),
     no_ignore_messages: bool = typer.Option(
@@ -907,6 +1109,31 @@ def search_command(
         gpu_device_ids=parsed_gpu_device_ids,
     )
 
+    native_tg_binary = _resolve_native_tg_binary()
+    if native_tg_binary is not None and _can_delegate_to_native_tg_search(
+        config,
+        ndjson=ndjson,
+        files_mode=files,
+        files_with_matches=files_with_matches,
+        files_without_match=files_without_match,
+        format_type=format_type,
+    ):
+        sys.exit(
+            _delegate_to_native_tg_search(
+                native_tg_binary,
+                pattern=pattern,
+                paths=paths_to_search,
+                config=config,
+                ndjson=ndjson,
+            )
+        )
+    if ndjson:
+        typer.echo(
+            "Error: --ndjson requires the native tg binary with a compatible native-search flag set.",
+            err=True,
+        )
+        sys.exit(2)
+
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -915,6 +1142,7 @@ def search_command(
         config,
         format_type=format_type,
         json_mode=json,
+        ndjson_mode=ndjson,
         files_mode=files,
         files_with_matches=files_with_matches,
         files_without_match=files_without_match,

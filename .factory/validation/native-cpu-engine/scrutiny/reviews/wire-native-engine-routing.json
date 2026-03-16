@@ -1,0 +1,28 @@
+{
+  "featureId": "wire-native-engine-routing",
+  "reviewedAt": "2026-03-16T17:20:00Z",
+  "commitId": "03bc00fdb39e8de769d95ad0e7c4a052bbc975aa",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation successfully routes --cpu, --json/--ndjson, and fallback requests to the native search engine while preserving standard passthrough. The routing metadata and JSON envelopes are correctly formatted.",
+    "issues": [
+      {
+        "file": "rust_core/src/main.rs",
+        "line": 463,
+        "severity": "non_blocking",
+        "description": "In `native_search_config_for_command`, `line_number` is hardcoded to `false`. This means that if native search is invoked via command flags (e.g., fallback when rg is unavailable) and outputs standard text, line numbers will be missing, unlike the positional CLI path which hardcodes `line_number: true`. This may result in inconsistent output compared to ripgrep."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Worker added a hidden TG_DISABLE_RG environment variable to test ripgrep fallback behavior. This is useful but currently undocumented in the codebase conventions or library.",
+      "evidence": "rust_core/src/rg_passthrough.rs:12 - `const TG_DISABLE_RG_ENV: &str = \"TG_DISABLE_RG\";`"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review passed. The worker correctly wired the native CPU engine routing and successfully emitted the unified v1 JSON envelope. One minor edge case with line numbers in command fallback was noted."
+}

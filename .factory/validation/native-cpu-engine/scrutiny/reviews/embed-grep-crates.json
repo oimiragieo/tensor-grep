@@ -1,0 +1,28 @@
+{
+  "featureId": "embed-grep-crates",
+  "reviewedAt": "2026-03-16T16:38:00Z",
+  "commitId": "5d9c929",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation successfully adds the required ripgrep ecosystem crates and exposes a `native_search` module wrapped behind `run_native_search()`. All requested output modes and configuration parameters are supported. The worker also added comprehensive tests that pass. A minor architectural issue (collecting files in parallel but searching sequentially) was introduced, but is acceptable at this scaffold stage and is addressed in a later feature.",
+    "issues": [
+      {
+        "file": "rust_core/src/native_search.rs",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "The worker used `WalkParallel` to discover files concurrently, but collected them into a `BTreeSet` and searched them sequentially, limiting performance for many-file queries. This is acceptable for the initial scaffold and is already identified for fixing in the subsequent `native-cpu-benchmarks` feature."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Worker discovered that `ignore::WalkBuilder` requires explicit `add_ignore` calls for `.gitignore` files to be respected when testing with temporary directories outside the main repository root. The worker proactively documented this in `.factory/library/native-cpu-engine.md`.",
+      "evidence": "Commit diff shows additions to `.factory/library/native-cpu-engine.md` noting the explicit `add_ignore` calls needed for `ignore::WalkBuilder`."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review passed. The worker properly embedded the grep ecosystem crates, implemented all requested native search capabilities (JSON/NDJSON/count, binary detection), and added a robust test suite covering all cases."
+}
