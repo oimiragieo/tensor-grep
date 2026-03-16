@@ -2,6 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tensor_grep_rs::backend_ast::AstBackend;
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::index::TrigramIndex;
@@ -514,18 +515,43 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
             Ok(idx) => idx,
             Err(e) => {
                 eprintln!("[index] warning: failed to load index: {e}, rebuilding...");
+                let started = Instant::now();
                 let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
                 fresh.save(&index_path)?;
+                if args.verbose {
+                    eprintln!(
+                        "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",
+                        started.elapsed(),
+                        fresh.file_count(),
+                        fresh.trigram_count(),
+                        fresh.total_postings()
+                    );
+                }
                 return run_index_query(args, &fresh);
             }
         };
         if let Some(reason) = loaded.staleness_reason() {
             if args.verbose {
-                eprintln!("[index] stale: {reason}, rebuilding...");
+                eprintln!("[index] stale: {reason}");
             }
-            let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
-            fresh.save(&index_path)?;
-            fresh
+            let started = Instant::now();
+            let update =
+                loaded.rebuild_incremental_with_options(Path::new(&args.path), args.no_ignore)?;
+            update.index.save(&index_path)?;
+            if args.verbose {
+                eprintln!(
+                    "[index] incremental update complete in {:?}: reused {} unchanged files, added {}, modified {}, deleted {}; {} files, {} trigrams, {} postings",
+                    started.elapsed(),
+                    update.stats.reused_files,
+                    update.stats.added_files,
+                    update.stats.modified_files,
+                    update.stats.deleted_files,
+                    update.index.file_count(),
+                    update.index.trigram_count(),
+                    update.index.total_postings()
+                );
+            }
+            update.index
         } else {
             if args.verbose {
                 eprintln!(
@@ -538,13 +564,15 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
         }
     } else {
         if args.verbose {
-            eprintln!("[index] building index for {}...", args.path);
+            eprintln!("[index] full rebuild: building index for {}...", args.path);
         }
+        let started = Instant::now();
         let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
         fresh.save(&index_path)?;
         if args.verbose {
             eprintln!(
-                "[index] built index: {} files, {} trigrams, {} postings",
+                "[index] full rebuild complete in {:?}: {} files, {} trigrams, {} postings",
+                started.elapsed(),
                 fresh.file_count(),
                 fresh.trigram_count(),
                 fresh.total_postings()

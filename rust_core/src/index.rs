@@ -11,11 +11,27 @@ const TRIGRAM_LEN: usize = 3;
 
 type FileTrigramHits = Vec<([u8; 3], u32)>;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IncrementalUpdateStats {
+    pub added_files: usize,
+    pub modified_files: usize,
+    pub deleted_files: usize,
+    pub reused_files: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct IncrementalUpdateResult {
+    pub index: TrigramIndex,
+    pub stats: IncrementalUpdateStats,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FileEntry {
     path: PathBuf,
     mtime_ns: u128,
     size: u64,
+    #[serde(default)]
+    deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +44,7 @@ struct PostingEntry {
 pub struct TrigramIndex {
     root: PathBuf,
     files: Vec<FileEntry>,
+    file_trigrams: Vec<FileTrigramHits>,
     postings: HashMap<[u8; 3], Vec<PostingEntry>>,
 }
 
@@ -63,16 +80,18 @@ impl TrigramIndex {
             postings.insert(bytes, value);
         }
         normalize_postings(&mut postings);
+        let file_trigrams = rebuild_file_trigrams(s.files.len(), &postings)?;
         Ok(Self {
             root: PathBuf::new(),
             files: s.files,
+            file_trigrams,
             postings,
         })
     }
 }
 
 const INDEX_MAGIC: &[u8; 4] = b"TGI\x00";
-const INDEX_FORMAT_VERSION: u8 = 2;
+const INDEX_FORMAT_VERSION: u8 = 3;
 
 fn normalize_postings(postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>) {
     for entries in postings.values_mut() {
@@ -153,6 +172,7 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
         buf.extend_from_slice(&path_bytes);
         buf.extend_from_slice(&entry.mtime_ns.to_le_bytes());
         buf.extend_from_slice(&entry.size.to_le_bytes());
+        buf.push(u8::from(entry.deleted));
     }
 
     let trigram_count = index.postings.len() as u32;
@@ -224,10 +244,12 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
         let path_str = String::from_utf8_lossy(read_exact(data, &mut pos, path_len)?).to_string();
         let mtime_ns = read_u128_le(data, &mut pos)?;
         let size = read_u64_le(data, &mut pos)?;
+        let deleted = read_u8(data, &mut pos)? != 0;
         files.push(FileEntry {
             path: PathBuf::from(path_str),
             mtime_ns,
             size,
+            deleted,
         });
     }
 
@@ -266,7 +288,14 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
         postings.insert(trigram, entries);
     }
 
-    Ok(TrigramIndex { root: PathBuf::from(root_str), files, postings })
+    let file_trigrams = rebuild_file_trigrams(files.len(), &postings)?;
+
+    Ok(TrigramIndex {
+        root: PathBuf::from(root_str),
+        files,
+        file_trigrams,
+        postings,
+    })
 }
 
 fn hex_to_trigram(hex: &str) -> Result<[u8; 3]> {
@@ -290,34 +319,7 @@ impl TrigramIndex {
     }
 
     pub fn build_with_options(root: &Path, no_ignore: bool) -> Result<Self> {
-        let walker = ignore::WalkBuilder::new(root)
-            .hidden(true)
-            .git_ignore(!no_ignore)
-            .build();
-
-        let paths: Vec<PathBuf> = walker
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
-            .map(|e| e.into_path())
-            .collect();
-
-        let file_entries: Vec<FileEntry> = paths
-            .iter()
-            .filter_map(|p| {
-                let meta = p.metadata().ok()?;
-                let mtime_ns = meta
-                    .modified()
-                    .ok()?
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .ok()?
-                    .as_nanos();
-                Some(FileEntry {
-                    path: p.clone(),
-                    mtime_ns,
-                    size: meta.len(),
-                })
-            })
-            .collect();
+        let file_entries = collect_file_entries(root, no_ignore);
 
         let per_file: Vec<(u32, FileTrigramHits)> = file_entries
             .par_iter()
@@ -328,21 +330,145 @@ impl TrigramIndex {
             })
             .collect();
 
+        let mut file_trigrams = vec![Vec::new(); file_entries.len()];
         let mut postings: HashMap<[u8; 3], Vec<PostingEntry>> = HashMap::new();
-        for (file_id, file_trigrams) in per_file {
-            for (trigram, line) in file_trigrams {
+        for (file_id, hits) in per_file {
+            for (trigram, line) in &hits {
                 postings
-                    .entry(trigram)
+                    .entry(*trigram)
                     .or_default()
-                    .push(PostingEntry { file_id, line });
+                    .push(PostingEntry {
+                        file_id,
+                        line: *line,
+                    });
             }
+            file_trigrams[file_id as usize] = hits;
         }
         normalize_postings(&mut postings);
 
         Ok(Self {
             root: root.to_path_buf(),
             files: file_entries,
+            file_trigrams,
             postings,
+        })
+    }
+
+    pub fn rebuild_incremental_with_options(
+        mut self,
+        root: &Path,
+        no_ignore: bool,
+    ) -> Result<IncrementalUpdateResult> {
+        let current_entries = collect_file_entries(root, no_ignore);
+        let current_paths: HashMap<&Path, &FileEntry> = current_entries
+            .iter()
+            .map(|entry| (entry.path.as_path(), entry))
+            .collect();
+        let active_files: HashMap<&Path, usize> = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.deleted)
+            .map(|(file_id, entry)| (entry.path.as_path(), file_id))
+            .collect();
+
+        let mut stats = IncrementalUpdateStats::default();
+        let mut modified_entries = Vec::new();
+        let mut added_entries = Vec::new();
+
+        for entry in &current_entries {
+            match active_files.get(entry.path.as_path()) {
+                Some(&file_id) => {
+                    let existing = &self.files[file_id];
+                    if existing.mtime_ns == entry.mtime_ns && existing.size == entry.size {
+                        stats.reused_files += 1;
+                    } else {
+                        stats.modified_files += 1;
+                        modified_entries.push((file_id, entry.clone()));
+                    }
+                }
+                None => {
+                    stats.added_files += 1;
+                    added_entries.push(entry.clone());
+                }
+            }
+        }
+
+        let deleted_file_ids: Vec<usize> = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.deleted)
+            .filter_map(|(file_id, entry)| {
+                (!current_paths.contains_key(entry.path.as_path())).then_some(file_id)
+            })
+            .collect();
+        stats.deleted_files = deleted_file_ids.len();
+
+        let mut affected_trigrams = std::collections::HashSet::new();
+
+        for file_id in deleted_file_ids {
+            remove_file_postings(
+                &mut self.postings,
+                file_id as u32,
+                &self.file_trigrams[file_id],
+                &mut affected_trigrams,
+            );
+            self.file_trigrams[file_id].clear();
+            self.files[file_id].deleted = true;
+        }
+
+        let changed_postings: Vec<(usize, FileEntry, FileTrigramHits)> = modified_entries
+            .par_iter()
+            .map(|(file_id, entry)| {
+                (
+                    *file_id,
+                    entry.clone(),
+                    extract_file_trigrams(&entry.path).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        for (file_id, entry, hits) in changed_postings {
+            remove_file_postings(
+                &mut self.postings,
+                file_id as u32,
+                &self.file_trigrams[file_id],
+                &mut affected_trigrams,
+            );
+            add_file_postings(
+                &mut self.postings,
+                file_id as u32,
+                &hits,
+                &mut affected_trigrams,
+            );
+            self.files[file_id] = entry;
+            self.file_trigrams[file_id] = hits;
+        }
+
+        let new_postings: Vec<(FileEntry, FileTrigramHits)> = added_entries
+            .par_iter()
+            .map(|entry| {
+                (
+                    entry.clone(),
+                    extract_file_trigrams(&entry.path).unwrap_or_default(),
+                )
+            })
+            .collect();
+
+        for (entry, hits) in new_postings {
+            let file_id = self.files.len() as u32;
+            add_file_postings(&mut self.postings, file_id, &hits, &mut affected_trigrams);
+            self.files.push(entry);
+            self.file_trigrams.push(hits);
+        }
+
+        normalize_affected_postings(&mut self.postings, &affected_trigrams);
+        self.root = root.to_path_buf();
+
+        Ok(IncrementalUpdateResult {
+            index: self,
+            stats,
         })
     }
 
@@ -402,7 +528,7 @@ impl TrigramIndex {
             .into_iter()
             .filter_map(|(file_id, line)| {
                 let entry = self.files.get(file_id as usize)?;
-                Some((entry.path.clone(), line as usize))
+                (!entry.deleted).then_some((entry.path.clone(), line as usize))
             })
             .collect()
     }
@@ -452,9 +578,9 @@ impl TrigramIndex {
 
     pub fn staleness_reason(&self) -> Option<String> {
         let indexed_paths: std::collections::HashSet<&Path> =
-            self.files.iter().map(|e| e.path.as_path()).collect();
+            self.files.iter().filter(|entry| !entry.deleted).map(|e| e.path.as_path()).collect();
 
-        for entry in &self.files {
+        for entry in self.files.iter().filter(|entry| !entry.deleted) {
             match entry.path.metadata() {
                 Ok(meta) => {
                     let current_mtime = meta
@@ -534,7 +660,7 @@ impl TrigramIndex {
     }
 
     pub fn file_count(&self) -> usize {
-        self.files.len()
+        self.files.iter().filter(|entry| !entry.deleted).count()
     }
 
     pub fn trigram_count(&self) -> usize {
@@ -543,6 +669,116 @@ impl TrigramIndex {
 
     pub fn total_postings(&self) -> usize {
         self.postings.values().map(|v| v.len()).sum()
+    }
+}
+
+fn collect_file_entries(root: &Path, no_ignore: bool) -> Vec<FileEntry> {
+    ignore::WalkBuilder::new(root)
+        .hidden(true)
+        .git_ignore(!no_ignore)
+        .build()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_some_and(|file_type| file_type.is_file()))
+        .filter_map(|entry| {
+            let path = entry.into_path();
+            let meta = path.metadata().ok()?;
+            let mtime_ns = meta
+                .modified()
+                .ok()?
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .ok()?
+                .as_nanos();
+            Some(FileEntry {
+                path,
+                mtime_ns,
+                size: meta.len(),
+                deleted: false,
+            })
+        })
+        .collect()
+}
+
+fn rebuild_file_trigrams(
+    file_count: usize,
+    postings: &HashMap<[u8; 3], Vec<PostingEntry>>,
+) -> Result<Vec<FileTrigramHits>> {
+    let mut file_trigrams = vec![Vec::new(); file_count];
+    for (trigram, entries) in postings {
+        for entry in entries {
+            let Some(file_hits) = file_trigrams.get_mut(entry.file_id as usize) else {
+                anyhow::bail!("index postings reference missing file id {}", entry.file_id);
+            };
+            file_hits.push((*trigram, entry.line));
+        }
+    }
+
+    for hits in &mut file_trigrams {
+        hits.sort_unstable_by_key(|(trigram, line)| (*trigram, *line));
+        hits.dedup();
+    }
+
+    Ok(file_trigrams)
+}
+
+fn add_file_postings(
+    postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>,
+    file_id: u32,
+    hits: &FileTrigramHits,
+    affected_trigrams: &mut std::collections::HashSet<[u8; 3]>,
+) {
+    for (trigram, line) in hits {
+        postings
+            .entry(*trigram)
+            .or_default()
+            .push(PostingEntry {
+                file_id,
+                line: *line,
+            });
+        affected_trigrams.insert(*trigram);
+    }
+}
+
+fn remove_file_postings(
+    postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>,
+    file_id: u32,
+    hits: &FileTrigramHits,
+    affected_trigrams: &mut std::collections::HashSet<[u8; 3]>,
+) {
+    let mut lines_by_trigram: HashMap<[u8; 3], Vec<u32>> = HashMap::new();
+    for (trigram, line) in hits {
+        lines_by_trigram.entry(*trigram).or_default().push(*line);
+    }
+
+    for (trigram, mut lines) in lines_by_trigram {
+        affected_trigrams.insert(trigram);
+        let Some(entries) = postings.get_mut(&trigram) else {
+            continue;
+        };
+
+        lines.sort_unstable();
+        lines.dedup();
+        entries.retain(|entry| {
+            entry.file_id != file_id || lines.binary_search(&entry.line).is_err()
+        });
+    }
+}
+
+fn normalize_affected_postings(
+    postings: &mut HashMap<[u8; 3], Vec<PostingEntry>>,
+    affected_trigrams: &std::collections::HashSet<[u8; 3]>,
+) {
+    for trigram in affected_trigrams {
+        let remove = if let Some(entries) = postings.get_mut(trigram) {
+            entries.sort_unstable_by_key(|entry| (entry.file_id, entry.line));
+            entries.dedup_by_key(|entry| (entry.file_id, entry.line));
+            entries.is_empty()
+        } else {
+            false
+        };
+
+        if remove {
+            postings.remove(trigram);
+        }
     }
 }
 
@@ -910,7 +1146,7 @@ mod tests {
 
         let data = fs::read(&index_path).unwrap();
         assert_eq!(&data[0..4], b"TGI\x00", "magic bytes");
-        assert_eq!(data[4], 2, "format version should be 2");
+        assert_eq!(data[4], 3, "format version should be 3");
     }
 
     #[test]
@@ -987,5 +1223,128 @@ mod tests {
         assert!(r2_hello.is_empty(), "old content should not match after rebuild");
         let r2_goodbye = index2.search("goodbye", false, true).unwrap();
         assert_eq!(r2_goodbye.len(), 1);
+    }
+
+    #[test]
+    fn test_incremental_update_detects_file_addition_and_reuses_unchanged_files() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "alpha keep\nshared term\n");
+        write_test_file(dir.path(), "b.txt", "beta keep\nshared term\n");
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_test_file(dir.path(), "c.txt", "gamma addition\nshared term\n");
+
+        let update = index
+            .rebuild_incremental_with_options(dir.path(), false)
+            .unwrap();
+        assert_eq!(update.stats.added_files, 1);
+        assert_eq!(update.stats.modified_files, 0);
+        assert_eq!(update.stats.deleted_files, 0);
+        assert_eq!(update.stats.reused_files, 2);
+
+        let results = update.index.search("gamma addition", false, true).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].file.ends_with("c.txt"));
+
+        let preserved = update.index.search("alpha keep", false, true).unwrap();
+        assert_eq!(preserved.len(), 1);
+        assert!(preserved[0].file.ends_with("a.txt"));
+    }
+
+    #[test]
+    fn test_incremental_update_detects_file_removal_and_drops_stale_entries() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "alpha keep\nshared term\n");
+        write_test_file(dir.path(), "b.txt", "remove only needle\nshared term\n");
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::remove_file(dir.path().join("b.txt")).unwrap();
+
+        let update = index
+            .rebuild_incremental_with_options(dir.path(), false)
+            .unwrap();
+        assert_eq!(update.stats.added_files, 0);
+        assert_eq!(update.stats.modified_files, 0);
+        assert_eq!(update.stats.deleted_files, 1);
+        assert_eq!(update.stats.reused_files, 1);
+
+        let removed = update.index.search("remove only needle", false, true).unwrap();
+        assert!(removed.is_empty(), "removed file content should disappear from the index");
+
+        let preserved = update.index.search("alpha keep", false, true).unwrap();
+        assert_eq!(preserved.len(), 1);
+        assert!(preserved[0].file.ends_with("a.txt"));
+    }
+
+    #[test]
+    fn test_incremental_update_detects_file_modification_and_reindexes_only_changed_file() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "old needle\nshared term\n");
+        write_test_file(dir.path(), "b.txt", "preserved needle\nshared term\n");
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_test_file(dir.path(), "a.txt", "new needle\nshared term\n");
+
+        let update = index
+            .rebuild_incremental_with_options(dir.path(), false)
+            .unwrap();
+        assert_eq!(update.stats.added_files, 0);
+        assert_eq!(update.stats.modified_files, 1);
+        assert_eq!(update.stats.deleted_files, 0);
+        assert_eq!(update.stats.reused_files, 1);
+
+        let old_results = update.index.search("old needle", false, true).unwrap();
+        assert!(old_results.is_empty(), "stale postings for modified files should be removed");
+
+        let new_results = update.index.search("new needle", false, true).unwrap();
+        assert_eq!(new_results.len(), 1);
+        assert!(new_results[0].file.ends_with("a.txt"));
+
+        let preserved = update.index.search("preserved needle", false, true).unwrap();
+        assert_eq!(preserved.len(), 1);
+        assert!(preserved[0].file.ends_with("b.txt"));
+    }
+
+    #[test]
+    fn test_incremental_update_handles_mixed_changes() {
+        let dir = tempdir().unwrap();
+        write_test_file(dir.path(), "a.txt", "alpha original\nshared term\n");
+        write_test_file(dir.path(), "b.txt", "beta remove\nshared term\n");
+        write_test_file(dir.path(), "c.txt", "gamma keep\nshared term\n");
+
+        let index = TrigramIndex::build(dir.path()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        write_test_file(dir.path(), "a.txt", "alpha updated\nshared term\n");
+        fs::remove_file(dir.path().join("b.txt")).unwrap();
+        write_test_file(dir.path(), "d.txt", "delta added\nshared term\n");
+
+        let update = index
+            .rebuild_incremental_with_options(dir.path(), false)
+            .unwrap();
+        assert_eq!(update.stats.added_files, 1);
+        assert_eq!(update.stats.modified_files, 1);
+        assert_eq!(update.stats.deleted_files, 1);
+        assert_eq!(update.stats.reused_files, 1);
+
+        assert!(update.index.search("beta remove", false, true).unwrap().is_empty());
+
+        let updated = update.index.search("alpha updated", false, true).unwrap();
+        assert_eq!(updated.len(), 1);
+        assert!(updated[0].file.ends_with("a.txt"));
+
+        let added = update.index.search("delta added", false, true).unwrap();
+        assert_eq!(added.len(), 1);
+        assert!(added[0].file.ends_with("d.txt"));
+
+        let preserved = update.index.search("gamma keep", false, true).unwrap();
+        assert_eq!(preserved.len(), 1);
+        assert!(preserved[0].file.ends_with("c.txt"));
     }
 }

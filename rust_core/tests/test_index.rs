@@ -502,7 +502,7 @@ fn test_tg_search_index_old_format_triggers_rebuild() {
 
     let rebuilt = fs::read(dir.path().join(".tg_index")).unwrap();
     assert_eq!(&rebuilt[0..4], b"TGI\x00");
-    assert_eq!(rebuilt[4], 2, "expected rebuilt index to use the new format");
+    assert_eq!(rebuilt[4], 3, "expected rebuilt index to use the new format");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -530,4 +530,53 @@ fn test_tg_search_index_case_insensitive() {
     assert!(output.status.success());
     let count: usize = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap();
     assert_eq!(count, 2);
+}
+
+#[test]
+fn test_tg_search_index_verbose_distinguishes_full_and_incremental_rebuilds() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let initial = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(initial.status.success(), "stderr={}", String::from_utf8_lossy(&initial.stderr));
+    let initial_stderr = String::from_utf8_lossy(&initial.stderr);
+    assert!(
+        initial_stderr.contains("full rebuild"),
+        "stderr should identify a full rebuild: {initial_stderr}"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    fs::write(dir.path().join("d.txt"), "hello incremental\n").unwrap();
+
+    let incremental = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        incremental.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&incremental.stderr)
+    );
+    let incremental_stderr = String::from_utf8_lossy(&incremental.stderr);
+    assert!(
+        incremental_stderr.contains("incremental update"),
+        "stderr should identify an incremental update: {incremental_stderr}"
+    );
 }
