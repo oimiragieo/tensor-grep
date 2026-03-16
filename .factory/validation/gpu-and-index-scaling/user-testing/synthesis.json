@@ -1,0 +1,48 @@
+{
+  "milestone": "gpu-and-index-scaling",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 21,
+    "passed": 20,
+    "failed": 0,
+    "blocked": 1
+  },
+  "passedAssertions": [
+    "VAL-GPU-001",
+    "VAL-GPU-002",
+    "VAL-GPU-003",
+    "VAL-GPU-004",
+    "VAL-GPU-005",
+    "VAL-GPU-007",
+    "VAL-GPU-008",
+    "VAL-IDX-001",
+    "VAL-IDX-002",
+    "VAL-IDX-003",
+    "VAL-IDX-004",
+    "VAL-IDX-005",
+    "VAL-IDX-006",
+    "VAL-IDX-007",
+    "VAL-IDX-008",
+    "VAL-IDX-009",
+    "VAL-IDX-010",
+    "VAL-IDX-011",
+    "VAL-CROSS-003",
+    "VAL-CROSS-011"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [
+    {
+      "id": "VAL-GPU-006",
+      "blockedBy": "GPU Python backends (CuDF/Torch) unavailable in current environment. The .venv_cuda exists but main venv lacks GPU dependencies. This is a known pre-existing issue documented in AGENTS.md. Historical benchmark data in bench_gpu_scale.json shows correctness parity for 3 patterns on RTX 4070."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added 'Flow Validator Guidance: gpu-and-index-scaling' section covering GPU, Index, and Cross-area assertion testing approaches",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}

@@ -1,0 +1,161 @@
+{
+  "groupId": "gpu-assertions",
+  "testedAt": "2026-03-16T06:12:00Z",
+  "isolation": {
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tempDirectory": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-gpu\\",
+    "benchDataDirectory": "C:\\dev\\projects\\tensor-grep\\bench_data",
+    "gpuCrossoverDocs": "C:\\dev\\projects\\tensor-grep\\docs\\gpu_crossover.md",
+    "gpuBenchmarkArtifact": "C:\\dev\\projects\\tensor-grep\\artifacts\\bench_gpu_scale.json",
+    "os": "Windows 10, PowerShell"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-GPU-001",
+      "title": "GPU crossover documentation exists with measured numbers",
+      "status": "pass",
+      "steps": [
+        { "action": "Check docs/gpu_crossover.md exists", "expected": "File exists and is non-empty", "observed": "File exists, 3375 chars" },
+        { "action": "Verify >= 4 corpus sizes documented", "expected": "Benchmark data for >= 4 sizes", "observed": "Contains 1MB, 10MB, 100MB, 1GB (4 sizes)" },
+        { "action": "Check crossover threshold documented", "expected": "Crossover threshold or explanation", "observed": "States 'No crossover was found' with per-size timing table" },
+        { "action": "Check transfer overhead documented", "expected": "Transfer overhead numbers", "observed": "RTX 4070 vs rg at 1MB: +3.481s; never amortized away" },
+        { "action": "Check when GPU should/shouldn't be used", "expected": "Usage guidance", "observed": "Sections 'Should use GPU' (not for current host) and 'Shouldn't use GPU' (general text search)" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-001-crossover-doc.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-002",
+      "title": "Invalid device ID produces clear error",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search --gpu-device-ids 99 \"ERROR\" bench_data", "expected": "Non-zero exit code, stderr mentions 99", "observed": "Exit code 1, stderr: 'Requested GPU device IDs [99] are not available to the sidecar. Available device IDs: [0, 1].'" },
+        { "action": "Check for stack trace or panic", "expected": "No stack trace or panic", "observed": "Clean error message, no panic, no stack trace" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-002-invalid-device.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-003",
+      "title": "CUDA unavailable produces clear error",
+      "status": "pass",
+      "steps": [
+        { "action": "Set CUDA_VISIBLE_DEVICES=\"\" and run tg search --gpu-device-ids 0 \"ERROR\" bench_data", "expected": "Non-zero exit code, clear CUDA error message", "observed": "Exit code 1, stderr: 'CUDA is unavailable for requested GPU device IDs [0]: CUDA_VISIBLE_DEVICES is empty, so no GPUs are visible to the sidecar.'" },
+        { "action": "Check for Python traceback", "expected": "No raw Python traceback", "observed": "Clean user-facing error message, no traceback" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-003-cuda-unavailable.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-004",
+      "title": "Sidecar crash handled gracefully",
+      "status": "pass",
+      "steps": [
+        { "action": "Create hanging_sidecar.py that reads stdin then sleeps 300s", "expected": "Sidecar script created", "observed": "Script created in artifacts/val-gpu/" },
+        { "action": "Run tg with TG_SIDECAR_SCRIPT=hanging_sidecar.py and TG_SIDECAR_TIMEOUT_MS=3000", "expected": "Timeout within ~3s, non-zero exit, clear error", "observed": "Elapsed 3.03s, exit code 124, stderr: 'Python sidecar timed out after 3000 ms and was terminated'" },
+        { "action": "Check for orphaned python processes", "expected": "No orphaned sidecar processes", "observed": "No hanging_sidecar processes found; only pre-existing unrelated python processes" },
+        { "action": "Verify default timeout is <= 30s in code", "expected": "DEFAULT_SIDECAR_TIMEOUT_MS <= 30000", "observed": "DEFAULT_SIDECAR_TIMEOUT_MS = 30_000 in python_sidecar.rs" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-004-sidecar-crash.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-005",
+      "title": "--gpu-auto conditional on benchmark evidence",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search --help", "expected": "--gpu-auto absent (GPU never wins by >= 20%)", "observed": "--gpu-auto not in help output; --gpu-device-ids present" },
+        { "action": "Check docs/gpu_crossover.md for explanation", "expected": "Document explains why --gpu-auto was not added", "observed": "States: 'the benchmark never produced a row where GPU was at least 20% faster than rg'" },
+        { "action": "Verify bench_gpu_scale.json recommendation", "expected": "should_add_flag: false", "observed": "gpu_auto_recommendation.should_add_flag = false, reason: 'No measured GPU/device row beat rg by at least 20% at any corpus size.'" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-005-gpu-auto-check.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-006",
+      "title": "GPU search correctness parity with CPU",
+      "status": "blocked",
+      "steps": [
+        { "action": "Attempt live GPU search: tg search --gpu-device-ids 0 \"ERROR\" bench_data", "expected": "GPU search completes", "observed": "Exit code 1: 'CuDF and Torch GPU backends were unavailable'" },
+        { "action": "Review historical benchmark correctness data", "expected": "Correctness checks for >= 3 patterns", "observed": "bench_gpu_scale.json has 3 correctness checks (RTX 4070, 10MB corpus): all PASS with matching counts and file sets" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "GPU backends unavailable in current environment",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-006-correctness-parity.txt"]
+      },
+      "issues": "Cannot perform live GPU search: 'CuDF and Torch GPU backends were unavailable'. Historical benchmark data in bench_gpu_scale.json shows correctness parity for 3 patterns on RTX 4070."
+    },
+    {
+      "id": "VAL-GPU-007",
+      "title": "GPU benchmarks cover multiple corpus sizes",
+      "status": "pass",
+      "steps": [
+        { "action": "Read bench_gpu_scale.json", "expected": "Entries for >= 4 corpus sizes with timing data", "observed": "4 rows: 1MB, 10MB, 100MB, 1GB - each with rg, tg_cpu, and per-GPU timing" },
+        { "action": "Verify run_gpu_benchmarks.py supports --corpus-sizes", "expected": "Script supports varying sizes", "observed": "Supports --corpus-sizes arg (comma-separated), default: 1MB,10MB,100MB,1GB" },
+        { "action": "Verify per-size timing data", "expected": "median_s, samples_s per size per backend", "observed": "Each row has rg.median_s, tg_cpu.median_s, and gpu[].median_s with status and samples" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-007-multiple-corpus-sizes.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-008",
+      "title": "GPU sidecar malformed output handled gracefully",
+      "status": "pass",
+      "steps": [
+        { "action": "Create malformed_sidecar.py that returns valid envelope with non-JSON stdout", "expected": "Sidecar script created", "observed": "Script created: returns stdout='THIS IS NOT JSON AT ALL {{{broken'" },
+        { "action": "Run tg search --gpu-device-ids 0 --json \"ERROR\" bench_data with TG_SIDECAR_SCRIPT=malformed_sidecar.py", "expected": "Non-zero exit, clear error, no panic", "observed": "Exit code 1, stderr: 'Error: GPU sidecar returned malformed search JSON payload: expected {total_matches, total_files, matches[]} with string file/text fields and integer line_number values (expected value at line 1 column 1)'" },
+        { "action": "Check for panic or traceback", "expected": "No panic or raw parse-error stack trace", "observed": "No panic, no traceback - clean user-facing error message" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["gpu-and-index-scaling/gpu-assertions/VAL-GPU-008-malformed-output.txt"]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [
+    {
+      "description": "GPU Python backends (CuDF and Torch) are unavailable in the current environment. The .venv_cuda environment exists but the main venv lacks GPU dependencies.",
+      "affectedAssertions": ["VAL-GPU-006"],
+      "quickFixAttempted": "Attempted direct GPU search with default Python; received 'CuDF and Torch GPU backends were unavailable'. This is a known pre-existing issue documented in AGENTS.md."
+    }
+  ],
+  "summary": "Tested 8 assertions: 7 passed, 0 failed, 1 blocked (VAL-GPU-006: GPU backends unavailable for live correctness test, historical benchmark data shows parity)."
+}
