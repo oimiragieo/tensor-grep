@@ -125,3 +125,51 @@ CLI tool (`tg.exe` binary at `rust_core/target/release/tg.exe`). All validation 
 ### Cross-Area (gpu-and-index-scaling)
 - VAL-CROSS-003: No benchmark regression — validate bench artifacts, run check_regression.py
 - VAL-CROSS-011: Index format magic bytes — hex dump first 5 bytes of .tg_index file after M4 changes
+
+## Flow Validator Guidance: harness-workflow
+
+### MCP Tool Assertions (VAL-WORK-001..004, VAL-WORK-009, VAL-WORK-010, VAL-WORK-013)
+- MCP server is at `src/tensor_grep/cli/mcp_server.py`
+- Run MCP tools via: `cd C:\dev\projects\tensor-grep && $env:PYTHONPATH='src'; uv run python -c "import asyncio; from tensor_grep.cli.mcp_server import <tool>; print(asyncio.run(<tool>(...)))"`
+- Alternatively, use the `mcp` module's test client or call tool functions directly
+- MCP tests exist in `tests/unit/test_mcp_server.py` — run with `uv run pytest tests/unit/test_mcp_server.py -v`
+- Each MCP tool must return JSON with `routing_backend` and `routing_reason` fields
+- For VAL-WORK-013: invoke with invalid paths/patterns, verify structured error (not traceback)
+- For VAL-CROSS-002: MCP tool responses must match v1 JSON schema from docs/examples/
+
+### NDJSON & JSON Assertions (VAL-WORK-005, VAL-WORK-006, VAL-WORK-011)
+- `tg.exe` binary: `C:\dev\projects\tensor-grep\rust_core\target\release\tg.exe`
+- `--ndjson` flag on `tg search` emits one JSON object per line
+- `--json` flag unchanged — single JSON document
+- `--json` and `--ndjson` together → error
+- `tg run --rewrite --ndjson` → error
+- Use `bench_data` directory for search targets
+- Parse each line of ndjson output independently with `json.loads()`
+
+### Batch Rewrite Assertions (VAL-WORK-007, VAL-WORK-008, VAL-WORK-012)
+- `tg run --batch-rewrite <config.json> PATH`
+- Config schema: `{"rewrites": [{"pattern": "...", "replacement": "...", "lang": "..."}], "verify": true|false}`
+- Create temp dirs for batch rewrite tests — never test on actual project files
+- For overlap tests: create patterns that produce overlapping edits
+- Invalid configs (missing fields, wrong types) → clear error
+
+### Cross-Area Assertions (harness-workflow)
+- VAL-CROSS-001: Schema compat test passes — `cargo test` in rust_core/ includes schema compat test
+- VAL-CROSS-004: `tg run` never spawns Python — test with Python unavailable or check process tree
+- VAL-CROSS-005: Dry-run rewrite never modifies files — check mtimes before/after
+- VAL-CROSS-006: Overlap validation before write — overlapping edits → rejected, file unchanged
+- VAL-CROSS-007: Batch rewrite uses atomic writes (same path as M3)
+- VAL-CROSS-008: BOM/CRLF/binary safety in batch rewrite
+- VAL-CROSS-009: Stale-file detection in batch rewrite
+- VAL-CROSS-010: E2E agent workflow (search → plan → apply → verify) uses unified v1 JSON
+- VAL-CROSS-012: All test suites pass — cargo test >= 95 passed, pytest >= 510 passed, ruff clean, mypy clean
+
+### Isolation Rules (harness-workflow)
+- Each flow validator uses its own temp directory under `C:\dev\projects\tensor-grep\artifacts\val-hw-<group>\`
+- Do NOT modify project source files
+- Do NOT modify existing artifacts
+- Clean up temp dirs and .tg_index files after validation
+- MCP tool validators share no state with CLI validators
+
+### GPU Assertions (harness-workflow)
+- VAL-GPU-006: GPU search correctness parity with CPU. If GPU Python backends unavailable, validate by reading bench_gpu_scale.json for historical correctness evidence. If available, run live comparison for >= 3 patterns.

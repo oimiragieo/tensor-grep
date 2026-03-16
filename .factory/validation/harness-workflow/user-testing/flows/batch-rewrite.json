@@ -1,0 +1,142 @@
+{
+  "groupId": "batch-rewrite",
+  "testedAt": "2026-03-16T07:37:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tempDirectory": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-hw-batch",
+    "binary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "shell": "PowerShell"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-WORK-007",
+      "title": "Batch rewrite accepts multiple patterns",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create test Python file with 4 functions (foo_old, bar_old, baz_old, qux_helper)",
+          "expected": "File created in temp directory",
+          "observed": "File created at artifacts\\val-hw-batch\\test_multi.py"
+        },
+        {
+          "action": "Create batch config JSON with 3 rewrite rules (foo_old→foo_new, bar_old→bar_new, baz_old→baz_new)",
+          "expected": "Valid JSON config file",
+          "observed": "Config created at artifacts\\val-hw-batch\\batch_config_3.json"
+        },
+        {
+          "action": "Run dry-run: tg run --batch-rewrite batch_config_3.json artifacts\\val-hw-batch",
+          "expected": "JSON plan with total_edits=3, all 3 patterns listed in rewrites array",
+          "observed": "JSON output with version=1, routing_backend=AstBackend, rewrites array with all 3 patterns, total_edits=3, edits array with 3 entries (foo_old→foo_new at line 1, bar_old→bar_new at line 4, baz_old→baz_new at line 7)"
+        },
+        {
+          "action": "Run apply: tg run --batch-rewrite batch_config_3.json --apply artifacts\\val-hw-batch",
+          "expected": "All 3 rewrites applied, stderr reports 3 edits",
+          "observed": "stderr: '[rewrite] applied 3 edit(s)'"
+        },
+        {
+          "action": "Verify file content after apply",
+          "expected": "foo_new, bar_new, baz_new in file; qux_helper unchanged",
+          "observed": "File contains def foo_new(x), def bar_new(y), def baz_new(z); qux_helper unchanged"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalCaptures": [
+          "harness-workflow/batch-rewrite/VAL-WORK-007-dryrun-plan.txt",
+          "harness-workflow/batch-rewrite/VAL-WORK-007-post-apply.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-008",
+      "title": "Batch rewrite handles cross-pattern overlap",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create test file with 'x = process_data(42)' function call",
+          "expected": "File created",
+          "observed": "File created at artifacts\\val-hw-batch\\test_overlap.py"
+        },
+        {
+          "action": "Create overlap config: pattern1='process_data'→'handle_data' (matches identifier), pattern2='process_data(42)'→'transform(42, 99)' (matches call expression overlapping same bytes)",
+          "expected": "Valid overlap config",
+          "observed": "Config created at artifacts\\val-hw-batch\\overlap_config.json"
+        },
+        {
+          "action": "Run dry-run: tg run --batch-rewrite overlap_config.json artifacts\\val-hw-batch\\test_overlap.py",
+          "expected": "rejected_overlaps non-empty, total_edits=0",
+          "observed": "JSON output: total_edits=0, edits=[], rejected_overlaps has 1 entry with file, edit_a {start:4,end:16}, edit_b {start:4,end:20}, reason='batch rewrite overlap prevents applying edits'. stderr: '[rewrite] 1 overlapping edit(s) rejected'"
+        },
+        {
+          "action": "Run apply: tg run --batch-rewrite overlap_config.json --apply artifacts\\val-hw-batch\\test_overlap.py",
+          "expected": "No edits applied, file unchanged",
+          "observed": "stderr: '[rewrite] 1 overlapping edit(s) rejected' and '[rewrite] no non-overlapping edits applied'"
+        },
+        {
+          "action": "Verify file content unchanged after apply",
+          "expected": "File still contains 'x = process_data(42)'",
+          "observed": "File content identical to original: 'x = process_data(42)\\ny = other_func(10)'"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalCaptures": [
+          "harness-workflow/batch-rewrite/VAL-WORK-008-overlap-output.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-012",
+      "title": "Batch rewrite config schema is documented",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check docs/harness_api.md for 'Batch Rewrite Config' section",
+          "expected": "Documentation exists with schema description",
+          "observed": "Section '## Batch Rewrite Config' at line 112 documents: rewrites (required, non-empty array), each with pattern/replacement/lang (string fields), verify (optional boolean), field-specific error messages"
+        },
+        {
+          "action": "Test valid config processes successfully",
+          "expected": "Config with 3 patterns processes without error",
+          "observed": "Valid config ran successfully (dry-run returned plan JSON with 3 edits)"
+        },
+        {
+          "action": "Test invalid config: missing 'pattern' field in rewrites[0]",
+          "expected": "Field-level error mentioning 'rewrites[0].pattern'",
+          "observed": "Error: invalid batch rewrite config field `rewrites[0].pattern`: missing required field"
+        },
+        {
+          "action": "Test invalid config: wrong type for 'verify' (string instead of boolean)",
+          "expected": "Field-level error mentioning 'verify'",
+          "observed": "Error: invalid batch rewrite config field `verify`: expected boolean"
+        },
+        {
+          "action": "Test invalid config: missing 'rewrites' field entirely",
+          "expected": "Field-level error mentioning 'rewrites'",
+          "observed": "Error: invalid batch rewrite config field `rewrites`: missing required field"
+        },
+        {
+          "action": "Test invalid config: unknown field 'extra' in rule object",
+          "expected": "Field-level error mentioning the unknown field",
+          "observed": "Error: invalid batch rewrite config field `rewrites[0].extra`: unknown field"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalCaptures": [
+          "harness-workflow/batch-rewrite/VAL-WORK-012-schema-validation.txt"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: 3 passed. VAL-WORK-007: batch rewrite with 3 patterns planned and applied all edits correctly. VAL-WORK-008: overlapping edits detected, reported in rejected_overlaps, file left unchanged. VAL-WORK-012: schema documented in docs/harness_api.md, all 4 invalid config variants produce clear field-level errors."
+}

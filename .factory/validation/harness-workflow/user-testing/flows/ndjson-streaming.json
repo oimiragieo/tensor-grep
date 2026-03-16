@@ -1,0 +1,96 @@
+{
+  "groupId": "ndjson-streaming",
+  "testedAt": "2026-03-16T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tempDirectory": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-hw-ndjson",
+    "binary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "shell": "PowerShell"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-WORK-005",
+      "title": "NDJSON streaming output works for search",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Created test file with 3 ERROR lines in temp dir",
+          "expected": "Test file created",
+          "observed": "Test file created at artifacts\\val-hw-ndjson\\test.log"
+        },
+        {
+          "action": "Run tg.exe search --ndjson \"ERROR\" <testDir>",
+          "expected": "One JSON object per line, each independently parseable",
+          "observed": "3 lines output, each a valid JSON object with keys: version, routing_backend, routing_reason, sidecar_used, query, path, file, line, text"
+        },
+        {
+          "action": "Parse each line independently with ConvertFrom-Json",
+          "expected": "All lines parse successfully",
+          "observed": "All 3 lines parsed as valid JSON independently. No wrapping array or object."
+        }
+      ],
+      "evidence": {
+        "terminalOutput": "harness-workflow/ndjson/VAL-WORK-005-ndjson-output.txt",
+        "consoleErrors": "none",
+        "exitCode": 0
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-006",
+      "title": "Single-document --json still works unchanged",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run tg.exe search --json \"ERROR\" <testDir>",
+          "expected": "Single JSON document with v1 contract fields",
+          "observed": "Single-line JSON document returned, parsed successfully as one object"
+        },
+        {
+          "action": "Validate JSON structure",
+          "expected": "Contains version, routing_backend, routing_reason, sidecar_used, total_matches, matches",
+          "observed": "All expected fields present: version=1, routing_backend=CpuBackend, routing_reason=cpu-native, total_matches=3, matches array with 3 entries"
+        },
+        {
+          "action": "Verify output is a single document (not NDJSON)",
+          "expected": "Output is 1 line / single parseable JSON document",
+          "observed": "Output was 1 line, single JSON parse succeeded. v1 contract preserved."
+        }
+      ],
+      "evidence": {
+        "terminalOutput": "harness-workflow/ndjson/VAL-WORK-006-json-output.txt",
+        "consoleErrors": "none",
+        "exitCode": 0
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-011",
+      "title": "--ndjson and --json are mutually exclusive",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run tg.exe search --json --ndjson \"ERROR\" <testDir>",
+          "expected": "Clear error about mutual exclusivity",
+          "observed": "Exit code 2. Error: \"the argument '--json' cannot be used with '--ndjson'\""
+        },
+        {
+          "action": "Run tg.exe run --rewrite \"replacement\" --ndjson \"def $NAME\" <testDir>",
+          "expected": "Error: --ndjson not supported for tg run",
+          "observed": "Exit code 2. Error: \"unexpected argument '--ndjson' found\" with tip suggesting --json"
+        }
+      ],
+      "evidence": {
+        "terminalOutput_mutualExclusion": "harness-workflow/ndjson/VAL-WORK-011-mutual-exclusion.txt",
+        "terminalOutput_runError": "harness-workflow/ndjson/VAL-WORK-011-ndjson-run-error.txt",
+        "consoleErrors": "none",
+        "exitCodes": {"search_json_ndjson": 2, "run_ndjson": 2}
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: 3 passed. VAL-WORK-005 confirmed NDJSON streaming emits one valid JSON per line. VAL-WORK-006 confirmed --json still returns a single JSON document with v1 fields. VAL-WORK-011 confirmed --json/--ndjson are mutually exclusive (exit code 2) and --ndjson is rejected for tg run."
+}

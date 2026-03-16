@@ -1,0 +1,59 @@
+{
+  "milestone": "harness-workflow",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 24,
+    "passed": 24,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-WORK-001",
+    "VAL-WORK-002",
+    "VAL-WORK-003",
+    "VAL-WORK-004",
+    "VAL-WORK-005",
+    "VAL-WORK-006",
+    "VAL-WORK-007",
+    "VAL-WORK-008",
+    "VAL-WORK-009",
+    "VAL-WORK-010",
+    "VAL-WORK-011",
+    "VAL-WORK-012",
+    "VAL-WORK-013",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-004",
+    "VAL-CROSS-005",
+    "VAL-CROSS-006",
+    "VAL-CROSS-007",
+    "VAL-CROSS-008",
+    "VAL-CROSS-009",
+    "VAL-CROSS-010",
+    "VAL-CROSS-012",
+    "VAL-GPU-006"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Flow Validator Guidance: harness-workflow section with MCP, NDJSON, batch rewrite, cross-area, and GPU testing guidance",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null,
+  "flowReports": [
+    "flows/mcp-tools.json",
+    "flows/ndjson-streaming.json",
+    "flows/batch-rewrite.json",
+    "flows/cross-area.json"
+  ],
+  "testSuiteResults": {
+    "cargoTest": "145 passed, 0 failed",
+    "pytest": "549 passed, 14 skipped",
+    "ruff": "All checks passed",
+    "mypy": "Success: no issues found in 44 source files"
+  }
+}
