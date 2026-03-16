@@ -239,6 +239,131 @@ def test_run_ast_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path
     assert path == override.resolve()
 
 
+def test_run_ast_multilang_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
+    module = _load_script_module(
+        "run_ast_multilang_benchmarks_script",
+        "benchmarks/run_ast_multilang_benchmarks.py",
+    )
+    monkeypatch.delenv("TENSOR_GREP_AST_MULTILANG_BENCH_DIR", raising=False)
+
+    path = module.resolve_ast_multilang_bench_dir()
+
+    assert path.parts[-2:] == ("artifacts", "bench_ast_multilang")
+
+
+def test_run_ast_multilang_benchmarks_should_emit_four_language_rows(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_ast_multilang_benchmarks_rows",
+        "benchmarks/run_ast_multilang_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_ast_multilang.json"
+    tg_binary = tmp_path / "tg.exe"
+    sg_binary = tmp_path / "sg.exe"
+    hyperfine_binary = tmp_path / "hyperfine.exe"
+    for path in (tg_binary, sg_binary, hyperfine_binary):
+        path.write_text("binary", encoding="utf-8")
+
+    medians_by_lang = {
+        "python": (0.9, 0.4),
+        "javascript": (0.8, 0.5),
+        "typescript": (0.85, 0.5),
+        "rust": (0.75, 0.45),
+    }
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_ast_multilang_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--runs",
+            "10",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+    monkeypatch.setattr(module, "resolve_ast_grep_binary", lambda: sg_binary)
+    monkeypatch.setattr(module, "resolve_hyperfine_binary", lambda: hyperfine_binary)
+    monkeypatch.setattr(module, "resolve_ast_multilang_bench_dir", lambda: tmp_path / "bench_ast_multilang")
+    monkeypatch.setattr(
+        module,
+        "ensure_multilang_ast_bench_corpus",
+        lambda output_dir, *, lang, file_count, total_loc, seed: {
+            "corpus_dir": output_dir,
+            "manifest_path": tmp_path / f"{lang}.manifest.sha256",
+            "file_count": file_count,
+            "total_loc": total_loc,
+            "seed": seed,
+            "lang": lang,
+        },
+    )
+
+    def _fake_run_hyperfine(_hyperfine_path, *, commands, runs, warmup):
+        assert runs == 10
+        assert warmup == 0
+        command_blob = " ".join(commands)
+        for lang, (tg_median, sg_median) in medians_by_lang.items():
+            if f"--lang {lang}" in command_blob:
+                return {
+                    "results": [
+                        {"command": commands[0], "median": tg_median},
+                        {"command": commands[1], "median": sg_median},
+                    ]
+                }
+        raise AssertionError(f"unexpected commands: {commands}")
+
+    monkeypatch.setattr(module, "run_hyperfine", _fake_run_hyperfine)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_ast_multilang"
+    assert payload["suite"] == "run_ast_multilang_benchmarks"
+    assert payload["thresholds"]["python_max_ratio"] == 3.0
+    assert payload["python_ratio_gate_passed"] is True
+    assert payload["passed"] is True
+    assert [row["language"] for row in payload["rows"]] == [
+        "python",
+        "javascript",
+        "typescript",
+        "rust",
+    ]
+    assert payload["rows"][0]["tg_median_s"] == 0.9
+    assert payload["rows"][0]["sg_median_s"] == 0.4
+    assert payload["rows"][0]["ratio"] == 2.25
+    assert all("file_count" in row for row in payload["rows"])
+
+
+def test_run_ast_multilang_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_ast_multilang_benchmarks_missing_ast",
+        "benchmarks/run_ast_multilang_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_ast_multilang.json"
+    tg_binary = tmp_path / "tg.exe"
+    hyperfine_binary = tmp_path / "hyperfine.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    hyperfine_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_ast_multilang_benchmarks.py", "--output", str(output_path)],
+    )
+    monkeypatch.setattr(module, "resolve_ast_grep_binary", lambda: None)
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+    monkeypatch.setattr(module, "resolve_hyperfine_binary", lambda: hyperfine_binary)
+
+    exit_code = module.main()
+
+    assert exit_code == 2
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_ast_multilang"
+    assert payload["passed"] is False
+    assert "ast-grep binary not found" in payload["error"]
+
+
 def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_ast_benchmarks_script_cmd", "benchmarks/run_ast_benchmarks.py"
