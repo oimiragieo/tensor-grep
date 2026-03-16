@@ -78,26 +78,48 @@ pub struct VerifyMismatch {
 }
 
 impl RewritePlan {
-    pub fn verify(&self, backend: &AstBackend) -> Result<VerifyResult> {
-        let search_matches = backend.search(&self.replacement, &self.lang, &self.edits.first()
-            .map(|e| e.file.parent().unwrap_or(Path::new(".")).to_str().unwrap_or("."))
-            .unwrap_or("."))?;
-
-        let found_set: std::collections::HashSet<(String, usize)> = search_matches.iter()
-            .map(|m| (m.file.to_string_lossy().to_string(), m.line))
-            .collect();
+    pub fn verify(&self, _backend: &AstBackend) -> Result<VerifyResult> {
+        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
+        for edit in &self.edits {
+            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
+        }
 
         let mut mismatches = Vec::new();
-        for edit in &self.edits {
-            let key = (edit.file.to_string_lossy().to_string(), edit.line);
-            if !found_set.contains(&key) {
-                mismatches.push(VerifyMismatch {
-                    edit_id: edit.id.clone(),
-                    file: edit.file.clone(),
-                    line: edit.line,
-                    expected: edit.replacement_text.clone(),
-                    actual: String::from("<not found>"),
-                });
+
+        for (file, file_edits) in &edits_by_file {
+            let content = std::fs::read_to_string(file)
+                .with_context(|| format!("verify: failed to read {}", file.display()))?;
+
+            let mut byte_offset_delta: isize = 0;
+
+            for edit in file_edits {
+                let adjusted_start = (edit.byte_range.start as isize + byte_offset_delta) as usize;
+                let adjusted_end = adjusted_start + edit.replacement_text.len();
+
+                if adjusted_end > content.len() {
+                    mismatches.push(VerifyMismatch {
+                        edit_id: edit.id.clone(),
+                        file: edit.file.clone(),
+                        line: edit.line,
+                        expected: edit.replacement_text.clone(),
+                        actual: format!("<out of bounds: file len {}, expected end {}>", content.len(), adjusted_end),
+                    });
+                    continue;
+                }
+
+                let actual = &content[adjusted_start..adjusted_end];
+                if actual != edit.replacement_text {
+                    mismatches.push(VerifyMismatch {
+                        edit_id: edit.id.clone(),
+                        file: edit.file.clone(),
+                        line: edit.line,
+                        expected: edit.replacement_text.clone(),
+                        actual: actual.to_string(),
+                    });
+                }
+
+                byte_offset_delta += edit.replacement_text.len() as isize
+                    - (edit.byte_range.end - edit.byte_range.start) as isize;
             }
         }
 
@@ -353,31 +375,30 @@ impl AstBackend {
         let files = collect_source_files(Path::new(path), language)?;
         let total_files_scanned = files.len();
 
-        let file_results: Vec<Result<(Vec<RewriteEdit>, Option<(PathBuf, String)>)>> = files
+        let file_results: Vec<Result<Vec<RewriteEdit>>> = files
             .par_iter()
-            .map(|file| Self::plan_and_rewrite_file(&compiled_pattern, replacement, language, file))
+            .map(|file| Self::plan_file_rewrites(&compiled_pattern, replacement, language, file))
             .collect();
 
         let mut all_edits = Vec::new();
-        let mut pending_writes: Vec<(PathBuf, String)> = Vec::new();
         for result in file_results {
-            let (edits, write_op) = result?;
-            all_edits.extend(edits);
-            if let Some(w) = write_op {
-                pending_writes.push(w);
-            }
+            all_edits.extend(result?);
         }
 
         all_edits.sort_by(|a, b| a.file.cmp(&b.file).then(a.byte_range.start.cmp(&b.byte_range.start)));
         assign_edit_ids(&mut all_edits);
         let (valid_edits, rejected_overlaps) = validate_no_overlaps(all_edits);
 
-        pending_writes
+        let mut edits_by_file: HashMap<&Path, Vec<&RewriteEdit>> = HashMap::new();
+        for edit in &valid_edits {
+            edits_by_file.entry(edit.file.as_path()).or_default().push(edit);
+        }
+
+        let write_ops: Vec<(&Path, &Vec<&RewriteEdit>)> =
+            edits_by_file.iter().map(|(k, v)| (*k, v)).collect();
+        write_ops
             .par_iter()
-            .try_for_each(|(file, content)| -> Result<()> {
-                std::fs::write(file, content)
-                    .with_context(|| format!("failed to write {}", file.display()))
-            })?;
+            .try_for_each(|(file, file_edits)| apply_edits_to_file(file, file_edits))?;
 
         Ok(RewritePlan {
             version: 1,
@@ -389,61 +410,6 @@ impl AstBackend {
             edits: valid_edits,
             rejected_overlaps,
         })
-    }
-
-    fn plan_and_rewrite_file(
-        pattern: &Pattern,
-        replacement: &str,
-        lang: SupportLang,
-        file: &Path,
-    ) -> Result<(Vec<RewriteEdit>, Option<(PathBuf, String)>)> {
-        let bytes = std::fs::read(file)
-            .with_context(|| format!("failed to read source file {}", file.display()))?;
-        if bytes.is_empty() {
-            return Ok((Vec::new(), None));
-        }
-        let source = String::from_utf8(bytes)
-            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
-        let ast = lang.ast_grep(&source);
-        let file_owned = file.to_path_buf();
-        let mut line_starts: Option<Vec<usize>> = None;
-        let mut edits = Vec::new();
-
-        for matched in ast.root().find_all(pattern.clone()) {
-            let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
-            let byte_range = matched.range();
-            let original_text = matched.text().to_string();
-            let metavar_env = extract_metavar_env(&source, matched.get_env());
-            let edit = matched.replace_by(replacement);
-            let inserted_bytes = edit.inserted_text;
-            let replacement_text = String::from_utf8(inserted_bytes)
-                .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).to_string());
-
-            edits.push(RewriteEdit {
-                id: String::new(),
-                file: file_owned.clone(),
-                line: line_number_for_byte(ls, byte_range.start),
-                byte_range,
-                original_text,
-                replacement_text,
-                metavar_env,
-            });
-        }
-
-        if edits.is_empty() {
-            return Ok((edits, None));
-        }
-
-        let mut rewritten = String::with_capacity(source.len());
-        let mut cursor = 0usize;
-        for edit in &edits {
-            rewritten.push_str(&source[cursor..edit.byte_range.start]);
-            rewritten.push_str(&edit.replacement_text);
-            cursor = edit.byte_range.end;
-        }
-        rewritten.push_str(&source[cursor..]);
-
-        Ok((edits, Some((file_owned, rewritten))))
     }
 
     fn plan_file_rewrites(

@@ -24,6 +24,7 @@ struct PostingEntry {
 
 #[derive(Debug, Clone)]
 pub struct TrigramIndex {
+    root: PathBuf,
     files: Vec<FileEntry>,
     postings: HashMap<[u8; 3], Vec<PostingEntry>>,
 }
@@ -60,6 +61,7 @@ impl TrigramIndex {
             postings.insert(bytes, value);
         }
         Ok(Self {
+            root: PathBuf::new(),
             files: s.files,
             postings,
         })
@@ -73,6 +75,10 @@ fn bincode_serialize(index: &TrigramIndex) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     buf.extend_from_slice(INDEX_MAGIC);
     buf.push(INDEX_FORMAT_VERSION);
+
+    let root_bytes = index.root.to_string_lossy().as_bytes().to_vec();
+    buf.extend_from_slice(&(root_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&root_bytes);
 
     let files_count = index.files.len() as u32;
     buf.extend_from_slice(&files_count.to_le_bytes());
@@ -116,6 +122,11 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
     }
     pos += 1;
 
+    let root_len = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
+    pos += 4;
+    let root_str = String::from_utf8_lossy(&data[pos..pos + root_len]).to_string();
+    pos += root_len;
+
     let files_count = u32::from_le_bytes(data[pos..pos + 4].try_into()?) as usize;
     pos += 4;
 
@@ -156,7 +167,7 @@ fn bincode_deserialize(data: &[u8]) -> Result<TrigramIndex> {
         postings.insert(trigram, entries);
     }
 
-    Ok(TrigramIndex { files, postings })
+    Ok(TrigramIndex { root: PathBuf::from(root_str), files, postings })
 }
 
 fn hex_to_trigram(hex: &str) -> Result<[u8; 3]> {
@@ -229,6 +240,7 @@ impl TrigramIndex {
         }
 
         Ok(Self {
+            root: root.to_path_buf(),
             files: file_entries,
             postings,
         })
@@ -364,30 +376,28 @@ impl TrigramIndex {
             }
         }
 
-        if let Some(first) = self.files.first() {
-            let root = first
-                .path
-                .parent()
-                .unwrap_or(Path::new("."));
-            if root.is_dir() {
-                let current_files: Vec<PathBuf> = ignore::WalkBuilder::new(root)
-                    .hidden(true)
-                    .git_ignore(true)
-                    .build()
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
-                    .map(|e| e.into_path())
-                    .collect();
+        if self.root.is_dir() {
+            let current_files: Vec<PathBuf> = ignore::WalkBuilder::new(&self.root)
+                .hidden(true)
+                .git_ignore(true)
+                .build()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+                .map(|e| e.into_path())
+                .collect();
 
-                for file in &current_files {
-                    if !indexed_paths.contains(file.as_path()) {
-                        return Some(format!("new file: {}", file.display()));
-                    }
+            for file in &current_files {
+                if !indexed_paths.contains(file.as_path()) {
+                    return Some(format!("new file: {}", file.display()));
                 }
             }
         }
 
         None
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {

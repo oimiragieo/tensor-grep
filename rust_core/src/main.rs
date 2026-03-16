@@ -704,26 +704,30 @@ fn handle_ast_rewrite_apply(
         plan.edits.len(),
     );
 
-    if args.verify {
-        let verification = plan.verify(backend)?;
-        if verification.mismatches.is_empty() {
+    let verification = if args.verify {
+        let v = plan.verify(backend)?;
+        if v.mismatches.is_empty() {
             eprintln!(
                 "[verify] {}/{} edits verified",
-                verification.verified, verification.total_edits
+                v.verified, v.total_edits
             );
         } else {
             eprintln!(
                 "[verify] {}/{} edits verified, {} mismatches",
-                verification.verified, verification.total_edits, verification.mismatches.len()
+                v.verified, v.total_edits, v.mismatches.len()
             );
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&verification)?);
-            }
         }
-    }
+        Some(v)
+    } else {
+        None
+    };
 
     if args.json {
-        println!("{}", serde_json::to_string_pretty(&plan)?);
+        let payload = serde_json::json!({
+            "plan": plan,
+            "verification": verification,
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
     }
 
     Ok(())
