@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "routing_backend": "AstBackend",
+  "routing_reason": "ast-native",
+  "sidecar_used": false,
+  "pattern": "def $F($$$ARGS): return $EXPR",
+  "replacement": "lambda $$$ARGS: $EXPR",
+  "lang": "python",
+  "total_files_scanned": 1,
+  "total_edits": 2,
+  "edits": [
+    {
+      "id": "e0000:rewrite_fixture.py:0-27",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "byte_range": {
+        "start": 0,
+        "end": 27
+      },
+      "original_text": "def add(x, y): return x + y",
+      "replacement_text": "lambda x, y: x + y",
+      "metavar_env": {
+        "EXPR": "x + y",
+        "ARGS": "x, y",
+        "F": "add"
+      }
+    },
+    {
+      "id": "e0001:rewrite_fixture.py:28-55",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 2,
+      "byte_range": {
+        "start": 28,
+        "end": 55
+      },
+      "original_text": "def mul(a, b): return a * b",
+      "replacement_text": "lambda a, b: a * b",
+      "metavar_env": {
+        "ARGS": "a, b",
+        "F": "mul",
+        "EXPR": "a * b"
+      }
+    }
+  ]
+}

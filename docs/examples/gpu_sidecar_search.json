@@ -1,0 +1,23 @@
+{
+  "matches": [
+    {
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\search_gpu\\sample_a.log",
+      "line_number": 2,
+      "text": "ERROR database failed"
+    },
+    {
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\search_gpu\\sample_b.log",
+      "line_number": 2,
+      "text": "ERROR database failed"
+    }
+  ],
+  "routing_backend": "GpuSidecar",
+  "routing_gpu_device_ids": [
+    0
+  ],
+  "routing_reason": "gpu-device-ids-explicit",
+  "sidecar_used": true,
+  "total_files": 2,
+  "total_matches": 2,
+  "version": 1
+}
