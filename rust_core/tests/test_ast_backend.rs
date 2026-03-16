@@ -134,6 +134,12 @@ fn test_tg_run_json_metadata_uses_ast_backend_routing() {
     assert_eq!(payload["routing_reason"], "ast-native");
     assert_eq!(payload["sidecar_used"], false);
     assert_eq!(payload["total_matches"], 1);
+
+    let matches = payload["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["file"], file_path.to_string_lossy().as_ref());
+    assert_eq!(matches[0]["line"], 1);
+    assert_eq!(matches[0]["text"], "def add(a, b):\n    return a + b");
 }
 
 #[test]

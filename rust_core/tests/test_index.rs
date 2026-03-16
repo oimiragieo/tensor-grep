@@ -122,6 +122,14 @@ fn test_tg_search_json_contract_includes_unified_envelope() {
     assert_eq!(result["total_matches"], 2);
     assert!(result["query"].is_string());
     assert!(result["path"].is_string());
+
+    let matches = result["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 2);
+    for m in matches {
+        assert!(m["file"].is_string());
+        assert!(m["line"].is_number());
+        assert!(m["text"].is_string());
+    }
 }
 
 #[test]

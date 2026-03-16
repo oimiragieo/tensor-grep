@@ -8,6 +8,13 @@ use walkdir::WalkDir;
 
 pub struct CpuBackend;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuMatch {
+    pub file: PathBuf,
+    pub line: usize,
+    pub text: String,
+}
+
 struct ReplacementOp {
     start: usize,
     end: usize,
@@ -25,14 +32,14 @@ impl CpuBackend {
         Self
     }
 
-    pub fn search(
+    pub fn search_with_paths(
         &self,
         pattern: &str,
         path: &str,
         ignore_case: bool,
         fixed_strings: bool,
         invert_match: bool,
-    ) -> anyhow::Result<Vec<(usize, String)>> {
+    ) -> anyhow::Result<Vec<CpuMatch>> {
         let path_obj = Path::new(path);
         let mut results = Vec::new();
 
@@ -91,12 +98,27 @@ impl CpuBackend {
         Ok(results)
     }
 
+    pub fn search(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> anyhow::Result<Vec<(usize, String)>> {
+        Ok(self
+            .search_with_paths(pattern, path, ignore_case, fixed_strings, invert_match)?
+            .into_iter()
+            .map(|result| (result.line, result.text))
+            .collect())
+    }
+
     fn search_file_memmem(
         &self,
         pattern: &[u8],
         path: &PathBuf,
         invert_match: bool,
-    ) -> anyhow::Result<Vec<(usize, String)>> {
+    ) -> anyhow::Result<Vec<CpuMatch>> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
@@ -111,8 +133,11 @@ impl CpuBackend {
                 let should_include = if invert_match { !is_match } else { is_match };
 
                 if should_include && !line_bytes.is_empty() {
-                    let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                    results.push((line_num, line_str));
+                    results.push(CpuMatch {
+                        file: path.clone(),
+                        line: line_num,
+                        text: String::from_utf8_lossy(line_bytes).into_owned(),
+                    });
                 }
                 start = i + 1;
                 line_num += 1;
@@ -125,8 +150,11 @@ impl CpuBackend {
             let should_include = if invert_match { !is_match } else { is_match };
 
             if should_include && !line_bytes.is_empty() {
-                let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                results.push((line_num, line_str));
+                results.push(CpuMatch {
+                    file: path.clone(),
+                    line: line_num,
+                    text: String::from_utf8_lossy(line_bytes).into_owned(),
+                });
             }
         }
 
@@ -138,7 +166,7 @@ impl CpuBackend {
         re: &regex::bytes::Regex,
         path: &PathBuf,
         invert_match: bool,
-    ) -> anyhow::Result<Vec<(usize, String)>> {
+    ) -> anyhow::Result<Vec<CpuMatch>> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
@@ -153,8 +181,11 @@ impl CpuBackend {
                 let should_include = if invert_match { !is_match } else { is_match };
 
                 if should_include && !line_bytes.is_empty() {
-                    let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                    results.push((line_num, line_str));
+                    results.push(CpuMatch {
+                        file: path.clone(),
+                        line: line_num,
+                        text: String::from_utf8_lossy(line_bytes).into_owned(),
+                    });
                 }
                 start = i + 1;
                 line_num += 1;
@@ -167,8 +198,11 @@ impl CpuBackend {
             let should_include = if invert_match { !is_match } else { is_match };
 
             if should_include && !line_bytes.is_empty() {
-                let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                results.push((line_num, line_str));
+                results.push(CpuMatch {
+                    file: path.clone(),
+                    line: line_num,
+                    text: String::from_utf8_lossy(line_bytes).into_owned(),
+                });
             }
         }
 

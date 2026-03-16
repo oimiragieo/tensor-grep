@@ -227,17 +227,6 @@ impl RoutingDecision {
     };
 }
 
-#[derive(Serialize)]
-struct RoutingMetadata<'a> {
-    version: u32,
-    routing_backend: &'static str,
-    routing_reason: &'static str,
-    sidecar_used: bool,
-    query: &'a str,
-    path: &'a str,
-    total_matches: usize,
-}
-
 fn main() -> anyhow::Result<()> {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
 
@@ -303,14 +292,26 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
     if cli.json {
         let backend = CpuBackend::new();
-        let total_matches = backend.count_matches(
+        let matches = backend.search_with_paths(
             &pattern,
             &path,
             cli.ignore_case,
             cli.fixed_strings,
             cli.invert_match,
         )?;
-        return emit_json_metadata(RoutingDecision::CPU, &pattern, &path, total_matches);
+        return emit_json_search_results(
+            RoutingDecision::CPU,
+            &pattern,
+            &path,
+            matches
+                .into_iter()
+                .map(|matched| SearchMatchJson {
+                    file: matched.file.to_string_lossy().into_owned(),
+                    line: matched.line,
+                    text: matched.text,
+                })
+                .collect(),
+        );
     }
 
     if cli.verbose {
@@ -446,14 +447,26 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
 
     if args.json {
         let backend = CpuBackend::new();
-        let total_matches = backend.count_matches(
+        let matches = backend.search_with_paths(
             &args.pattern,
             &args.path,
             args.ignore_case,
             args.fixed_strings,
             args.invert_match,
         )?;
-        return emit_json_metadata(RoutingDecision::CPU, &args.pattern, &args.path, total_matches);
+        return emit_json_search_results(
+            RoutingDecision::CPU,
+            &args.pattern,
+            &args.path,
+            matches
+                .into_iter()
+                .map(|matched| SearchMatchJson {
+                    file: matched.file.to_string_lossy().into_owned(),
+                    line: matched.line,
+                    text: matched.text,
+                })
+                .collect(),
+        );
     }
 
     if args.verbose {
@@ -553,25 +566,19 @@ fn run_index_query(args: &SearchArgs, index: &TrigramIndex) -> anyhow::Result<()
     let results = index.search(&args.pattern, args.ignore_case, args.fixed_strings)?;
 
     if args.json {
-        let payload = SearchResultJson {
-            version: JSON_OUTPUT_VERSION,
-            routing_backend: RoutingDecision::INDEX.backend,
-            routing_reason: RoutingDecision::INDEX.reason,
-            sidecar_used: RoutingDecision::INDEX.sidecar_used,
-            query: &args.pattern,
-            path: &args.path,
-            total_matches: results.len(),
-            matches: results
-                .iter()
-                .map(|r| SearchMatchJson {
-                    file: r.file.to_string_lossy().into_owned(),
-                    line: r.line,
-                    text: r.text.clone(),
+        return emit_json_search_results(
+            RoutingDecision::INDEX,
+            &args.pattern,
+            &args.path,
+            results
+                .into_iter()
+                .map(|result| SearchMatchJson {
+                    file: result.file.to_string_lossy().into_owned(),
+                    line: result.line,
+                    text: result.text,
                 })
                 .collect(),
-        };
-        println!("{}", serde_json::to_string_pretty(&payload)?);
-        return Ok(());
+        );
     }
 
     if args.count {
@@ -628,11 +635,18 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     let matches = backend.search(&args.pattern, &args.lang, &args.path)?;
 
     if args.json {
-        return emit_json_metadata(
+        return emit_json_search_results(
             RoutingDecision::AST,
             &args.pattern,
             &args.path,
-            matches.len(),
+            matches
+                .into_iter()
+                .map(|matched| SearchMatchJson {
+                    file: matched.file.to_string_lossy().into_owned(),
+                    line: matched.line,
+                    text: matched.matched_text,
+                })
+                .collect(),
         );
     }
 
@@ -850,20 +864,21 @@ fn exit_with_sidecar_error(err: SidecarError) -> anyhow::Result<()> {
     std::process::exit(err.exit_code.max(1));
 }
 
-fn emit_json_metadata(
+fn emit_json_search_results(
     decision: RoutingDecision,
     pattern: &str,
     path: &str,
-    total_matches: usize,
+    matches: Vec<SearchMatchJson>,
 ) -> anyhow::Result<()> {
-    let payload = RoutingMetadata {
+    let payload = SearchResultJson {
         version: JSON_OUTPUT_VERSION,
         routing_backend: decision.backend,
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used,
         query: pattern,
         path,
-        total_matches,
+        total_matches: matches.len(),
+        matches,
     };
 
     println!("{}", serde_json::to_string(&payload)?);
