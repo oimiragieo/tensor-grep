@@ -13,7 +13,9 @@ use std::time::Instant;
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
 use tensor_grep_rs::backend_cpu::CpuBackend;
 #[cfg(feature = "cuda")]
-use tensor_grep_rs::gpu_native::{gpu_native_search_paths, GpuNativeSearchConfig, GpuNativeSearchStats};
+use tensor_grep_rs::gpu_native::{
+    gpu_native_search_paths_multi, GpuNativeSearchConfig, GpuNativeSearchStats,
+};
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
     run_native_search, NativeOutputTarget, NativeSearchConfig, SearchStats,
@@ -1824,7 +1826,7 @@ fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
 fn execute_gpu_native_route(
     params: &GpuSearchParams<'_>,
     decision: RoutingDecision,
-    device_id: i32,
+    device_ids: &[i32],
 ) -> anyhow::Result<()> {
     if let Some(simulated) = simulated_gpu_route_failure() {
         anyhow::bail!(simulated.message);
@@ -1832,12 +1834,6 @@ fn execute_gpu_native_route(
 
     if params.verbose {
         emit_verbose_metadata(decision);
-        if !params.gpu_device_ids.is_empty() && params.gpu_device_ids.len() > 1 {
-            eprintln!(
-                "[gpu-native] multi-GPU routing is not implemented yet; using device {} from {:?}",
-                device_id, params.gpu_device_ids
-            );
-        }
     }
 
     let config = GpuNativeSearchConfig {
@@ -1848,7 +1844,7 @@ fn execute_gpu_native_route(
         max_batch_bytes: None,
     };
 
-    let stats = gpu_native_search_paths(&config, device_id)?;
+    let stats = gpu_native_search_paths_multi(&config, device_ids)?;
     if params.verbose {
         emit_gpu_native_verbose(&stats);
     }
@@ -1881,7 +1877,8 @@ fn handle_auto_gpu_search(
     cpu_fallback_config: NativeSearchConfig,
     rg_fallback: Option<RipgrepSearchArgs>,
 ) -> anyhow::Result<()> {
-    match execute_gpu_native_route(&params, RoutingDecision::GPU_AUTO, 0) {
+    let auto_device_ids = [0];
+    match execute_gpu_native_route(&params, RoutingDecision::GPU_AUTO, &auto_device_ids) {
         Ok(()) => Ok(()),
         Err(err) => {
             let failure = classify_gpu_route_failure(&err.to_string());
@@ -1919,11 +1916,11 @@ fn handle_auto_gpu_search(
 
 #[cfg(feature = "cuda")]
 fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
-    let Some(&device_id) = params.gpu_device_ids.first() else {
+    if params.gpu_device_ids.is_empty() {
         return handle_gpu_sidecar_search(params);
-    };
+    }
 
-    match execute_gpu_native_route(&params, RoutingDecision::GPU_NATIVE, device_id) {
+    match execute_gpu_native_route(&params, RoutingDecision::GPU_NATIVE, params.gpu_device_ids) {
         Ok(()) => Ok(()),
         Err(err) => {
             let failure = classify_gpu_route_failure(&err.to_string());
@@ -2193,7 +2190,7 @@ fn emit_gpu_native_json_results(
         path: params.path,
         total_matches: stats.total_matches,
         total_files: stats.matched_files,
-        routing_gpu_device_ids: vec![stats.selected_device.device_id],
+        routing_gpu_device_ids: stats.selected_devices.iter().map(|device| device.device_id).collect(),
         matches: gpu_native_match_json_entries(stats),
     };
 
@@ -2215,10 +2212,43 @@ fn emit_gpu_native_count_results(params: &GpuSearchParams<'_>, stats: &GpuNative
 
 #[cfg(feature = "cuda")]
 fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
+    if stats.selected_devices.len() <= 1 {
+        eprintln!(
+            "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_throughput_gbps={:.2}",
+            stats.selected_device.device_id,
+            stats.selected_device.name,
+            stats.searched_files,
+            stats.transfer_bytes,
+            stats.pipeline.stream_count,
+            stats.pipeline.double_buffered,
+            stats.pipeline.pinned_host_buffers,
+            stats.pipeline.batch_count,
+            stats.pipeline.overlapped_batches,
+            stats.pipeline.pattern_count,
+            stats.pipeline.pattern_batch_count,
+            stats.pipeline.single_dispatch,
+            stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
+        );
+        return;
+    }
+
+    let device_ids = stats
+        .selected_devices
+        .iter()
+        .map(|device| device.device_id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let device_names = stats
+        .selected_devices
+        .iter()
+        .map(|device| device.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+
     eprintln!(
-        "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_throughput_gbps={:.2}",
-        stats.selected_device.device_id,
-        stats.selected_device.name,
+        "[gpu-native] selected_gpu_device_ids={} selected_gpu_device_names={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_throughput_gbps={:.2}",
+        device_ids,
+        device_names,
         stats.searched_files,
         stats.transfer_bytes,
         stats.pipeline.stream_count,
@@ -2231,6 +2261,20 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
         stats.pipeline.single_dispatch,
         stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
     );
+
+    for device_stats in &stats.device_stats {
+        eprintln!(
+            "[gpu-native] gpu_device_id={} gpu_device_name={} gpu_device_files={} gpu_device_matches={} gpu_device_transfer_bytes={} gpu_device_streams={} gpu_device_batch_count={} gpu_device_transfer_throughput_gbps={:.2}",
+            device_stats.device.device_id,
+            device_stats.device.name,
+            device_stats.searched_files,
+            device_stats.total_matches,
+            device_stats.transfer_bytes,
+            device_stats.pipeline.stream_count,
+            device_stats.pipeline.batch_count,
+            device_stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
+        );
+    }
 }
 
 fn emit_ndjson_search_results(

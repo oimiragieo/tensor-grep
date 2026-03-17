@@ -6,6 +6,8 @@ use cudarc::driver::{
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
 use memchr::memchr_iter;
+use rayon::prelude::*;
+use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -162,6 +164,16 @@ pub struct GpuPinnedTransferBenchmark {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct GpuNativeDeviceStats {
+    pub device: CudaDeviceInfo,
+    pub searched_files: usize,
+    pub matched_files: usize,
+    pub total_matches: usize,
+    pub transfer_bytes: usize,
+    pub pipeline: GpuPipelineStats,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct GpuNativeSearchStats {
     pub searched_files: usize,
     pub matched_files: usize,
@@ -169,8 +181,24 @@ pub struct GpuNativeSearchStats {
     pub transfer_bytes: usize,
     pub pattern_count: usize,
     pub selected_device: CudaDeviceInfo,
+    pub selected_devices: Vec<CudaDeviceInfo>,
+    pub device_stats: Vec<GpuNativeDeviceStats>,
     pub matches: Vec<GpuNativeSearchMatch>,
     pub pipeline: GpuPipelineStats,
+}
+
+#[derive(Debug, Clone)]
+struct SearchFileEntry {
+    path: PathBuf,
+    estimated_bytes: usize,
+    order: usize,
+}
+
+#[derive(Debug, Clone)]
+struct DeviceFileAssignment {
+    device: CudaDeviceInfo,
+    files: Vec<SearchFileEntry>,
+    assigned_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -284,6 +312,11 @@ struct SearchPipelineOutcome {
     transfer_bytes: usize,
     matches: Vec<GpuNativeSearchMatch>,
     pipeline: GpuPipelineStats,
+}
+
+struct DeviceSearchOutcome {
+    stats: GpuNativeDeviceStats,
+    matches: Vec<GpuNativeSearchMatch>,
 }
 
 pub fn enumerate_cuda_devices() -> Result<Vec<CudaDeviceInfo>> {
@@ -426,6 +459,13 @@ pub fn gpu_native_search_paths(
     config: &GpuNativeSearchConfig,
     device_id: i32,
 ) -> Result<GpuNativeSearchStats> {
+    gpu_native_search_paths_multi(config, &[device_id])
+}
+
+pub fn gpu_native_search_paths_multi(
+    config: &GpuNativeSearchConfig,
+    device_ids: &[i32],
+) -> Result<GpuNativeSearchStats> {
     if config.patterns.is_empty() {
         return Err(anyhow!("GPU native search requires at least one non-empty pattern"));
     }
@@ -439,8 +479,81 @@ pub fn gpu_native_search_paths(
         ));
     }
 
-    let selected_device = resolve_cuda_device(device_id)?;
+    if device_ids.is_empty() {
+        return Err(anyhow!("GPU native search requires at least one CUDA device id"));
+    }
+
     let files = collect_search_files(config)?;
+    let selected_devices = resolve_cuda_devices(device_ids)?;
+    let assignments = assign_files_to_devices(&files, &selected_devices)?;
+    let device_outcomes = assignments
+        .into_par_iter()
+        .map(|assignment| run_device_assignment(config, assignment))
+        .collect::<Result<Vec<_>>>()?;
+    let matches = merge_device_matches(&files, &device_outcomes);
+    let matched_files = matches
+        .iter()
+        .map(|matched| matched.path.clone())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let transfer_bytes = device_outcomes.iter().map(|outcome| outcome.stats.transfer_bytes).sum();
+    let device_stats = device_outcomes
+        .iter()
+        .map(|outcome| outcome.stats.clone())
+        .collect::<Vec<_>>();
+    let selected_device = selected_devices
+        .first()
+        .cloned()
+        .context("GPU native search requires at least one resolved CUDA device")?;
+    let pipeline = aggregate_device_pipeline_stats(&device_outcomes, config.patterns.len(), transfer_bytes);
+
+    Ok(GpuNativeSearchStats {
+        searched_files: files.len(),
+        matched_files,
+        total_matches: matches.len(),
+        transfer_bytes,
+        pattern_count: config.patterns.len(),
+        selected_device,
+        selected_devices,
+        device_stats,
+        matches,
+        pipeline,
+    })
+}
+
+fn run_device_assignment(
+    config: &GpuNativeSearchConfig,
+    assignment: DeviceFileAssignment,
+) -> Result<DeviceSearchOutcome> {
+    let files = assignment
+        .files
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<Vec<_>>();
+    let outcome = run_device_search(config, &files, &assignment.device)?;
+    Ok(DeviceSearchOutcome {
+        stats: GpuNativeDeviceStats {
+            device: assignment.device,
+            searched_files: files.len(),
+            matched_files: outcome
+                .matches
+                .iter()
+                .map(|matched| matched.path.clone())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            total_matches: outcome.matches.len(),
+            transfer_bytes: outcome.transfer_bytes,
+            pipeline: outcome.pipeline.clone(),
+        },
+        matches: outcome.matches,
+    })
+}
+
+fn run_device_search(
+    config: &GpuNativeSearchConfig,
+    files: &[PathBuf],
+    selected_device: &CudaDeviceInfo,
+) -> Result<SearchPipelineOutcome> {
     let pattern_batches = plan_pattern_batches(&config.patterns)?;
     let max_patterns_per_dispatch = pattern_batches
         .iter()
@@ -448,7 +561,7 @@ pub fn gpu_native_search_paths(
         .max()
         .unwrap_or(1);
     let batch_plans = plan_file_batches(
-        &files,
+        files,
         resolve_effective_max_batch_bytes(config, max_patterns_per_dispatch),
     )?;
     let dispatch_plans = plan_search_dispatches(&batch_plans, pattern_batches.len());
@@ -459,41 +572,123 @@ pub fn gpu_native_search_paths(
         .unwrap_or(0)
         .max(1);
 
-    let outcome = if batch_plans.is_empty() {
-        SearchPipelineOutcome {
+    if batch_plans.is_empty() {
+        return Ok(SearchPipelineOutcome {
             transfer_bytes: 0,
             matches: Vec::new(),
             pipeline: GpuPipelineStats::default(),
-        }
+        });
+    }
+
+    let runtime = create_kernel_runtime(selected_device.device_id)?;
+    run_search_pipeline(
+        &runtime,
+        &dispatch_plans,
+        &pattern_batches,
+        slot_capacity,
+        files.len(),
+        &config.patterns,
+    )
+}
+
+fn aggregate_device_pipeline_stats(
+    device_outcomes: &[DeviceSearchOutcome],
+    pattern_count: usize,
+    transfer_bytes: usize,
+) -> GpuPipelineStats {
+    if device_outcomes.is_empty() {
+        return GpuPipelineStats::default();
+    }
+
+    let transfer_time_ms = device_outcomes
+        .iter()
+        .map(|outcome| outcome.stats.pipeline.transfer_time_ms)
+        .sum::<f32>();
+    let wall_time_ms = device_outcomes
+        .iter()
+        .map(|outcome| outcome.stats.pipeline.wall_time_ms)
+        .fold(0.0f64, f64::max);
+    let transfer_throughput_bytes_s = if device_outcomes.len() == 1 {
+        device_outcomes[0].stats.pipeline.transfer_throughput_bytes_s
+    } else if wall_time_ms > 0.0 {
+        transfer_bytes as f64 / (wall_time_ms / 1_000.0)
     } else {
-        let runtime = create_kernel_runtime(device_id)?;
-        run_search_pipeline(
-            &runtime,
-            &dispatch_plans,
-            &pattern_batches,
-            slot_capacity,
-            files.len(),
-            &config.patterns,
-        )?
+        0.0
     };
 
-    let matched_files = outcome
-        .matches
-        .iter()
-        .map(|matched| matched.path.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .len();
+    GpuPipelineStats {
+        pinned_host_buffers: device_outcomes
+            .iter()
+            .all(|outcome| outcome.stats.pipeline.pinned_host_buffers),
+        double_buffered: device_outcomes
+            .iter()
+            .any(|outcome| outcome.stats.pipeline.double_buffered),
+        stream_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.stream_count)
+            .sum(),
+        batch_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.batch_count)
+            .sum(),
+        overlapped_batches: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.overlapped_batches)
+            .sum(),
+        pattern_count,
+        pattern_batch_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.pattern_batch_count)
+            .max()
+            .unwrap_or(0),
+        single_dispatch: device_outcomes
+            .iter()
+            .all(|outcome| outcome.stats.pipeline.single_dispatch),
+        transfer_time_ms,
+        kernel_time_ms: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.kernel_time_ms)
+            .sum(),
+        wall_time_ms,
+        transfer_throughput_bytes_s,
+    }
+}
 
-    Ok(GpuNativeSearchStats {
-        searched_files: files.len(),
-        matched_files,
-        total_matches: outcome.matches.len(),
-        transfer_bytes: outcome.transfer_bytes,
-        pattern_count: config.patterns.len(),
-        selected_device,
-        matches: outcome.matches,
-        pipeline: outcome.pipeline,
-    })
+fn merge_device_matches(
+    files: &[PathBuf],
+    device_outcomes: &[DeviceSearchOutcome],
+) -> Vec<GpuNativeSearchMatch> {
+    let file_order = files
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (path.clone(), index))
+        .collect::<HashMap<_, _>>();
+    let mut matches = device_outcomes
+        .iter()
+        .flat_map(|outcome| outcome.matches.clone())
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| {
+        let left_index = file_order.get(&left.path).copied().unwrap_or(usize::MAX);
+        let right_index = file_order.get(&right.path).copied().unwrap_or(usize::MAX);
+        left_index
+            .cmp(&right_index)
+            .then(left.line_number.cmp(&right.line_number))
+            .then(left.pattern_id.cmp(&right.pattern_id))
+            .then(left.text.cmp(&right.text))
+    });
+
+    let mut seen = BTreeSet::new();
+    matches
+        .into_iter()
+        .filter(|matched| {
+            seen.insert((
+                matched.path.clone(),
+                matched.line_number,
+                matched.text.clone(),
+                matched.pattern_id,
+            ))
+        })
+        .collect()
 }
 
 pub fn gpu_native_search(pattern: &str, data: &[u8], device_id: i32) -> Result<Vec<MatchPosition>> {
@@ -1109,20 +1304,6 @@ fn copy_pinned_host_to_device(
     })
 }
 
-fn resolve_cuda_device(device_id: i32) -> Result<CudaDeviceInfo> {
-    let devices = enumerate_cuda_devices()?;
-    devices
-        .iter()
-        .find(|device| device.device_id == device_id)
-        .cloned()
-        .ok_or_else(|| {
-            anyhow!(
-                "invalid CUDA device id {device_id}; available CUDA devices: {}",
-                format_available_devices(&devices)
-            )
-        })
-}
-
 fn resolve_max_batch_bytes(config: &GpuNativeSearchConfig) -> usize {
     config.max_batch_bytes.unwrap_or(DEFAULT_GPU_BATCH_BYTES).max(1)
 }
@@ -1266,12 +1447,7 @@ fn plan_file_batches(files: &[PathBuf], max_batch_bytes: usize) -> Result<Vec<Fi
     let mut current_bytes = 0usize;
 
     for path in files {
-        let estimated_bytes = usize::try_from(
-            fs::metadata(path)
-                .with_context(|| format!("failed to stat GPU native search file {}", path.display()))?
-                .len(),
-        )
-        .with_context(|| format!("GPU native search file is too large: {}", path.display()))?;
+        let estimated_bytes = file_estimated_bytes(path)?;
         let additional_bytes = if current_files.is_empty() {
             estimated_bytes
         } else {
@@ -1312,6 +1488,138 @@ fn plan_file_batches(files: &[PathBuf], max_batch_bytes: usize) -> Result<Vec<Fi
     }
 
     Ok(batches)
+}
+
+fn file_estimated_bytes(path: &Path) -> Result<usize> {
+    usize::try_from(
+        fs::metadata(path)
+            .with_context(|| format!("failed to stat GPU native search file {}", path.display()))?
+            .len(),
+    )
+    .with_context(|| format!("GPU native search file is too large: {}", path.display()))
+}
+
+fn resolve_cuda_devices(device_ids: &[i32]) -> Result<Vec<CudaDeviceInfo>> {
+    if device_ids.is_empty() {
+        return Err(anyhow!("GPU native search requires at least one CUDA device id"));
+    }
+
+    let devices = enumerate_cuda_devices()?;
+    if devices.is_empty() {
+        return Err(anyhow!(
+            "CUDA is unavailable: no CUDA devices were detected by cudarc"
+        ));
+    }
+
+    let mut selected = Vec::new();
+    let mut seen = BTreeSet::new();
+    for &device_id in device_ids {
+        if !seen.insert(device_id) {
+            continue;
+        }
+        let device = devices
+            .iter()
+            .find(|candidate| candidate.device_id == device_id)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "invalid CUDA device id {device_id}; available CUDA devices: {}",
+                    format_available_devices(&devices)
+                )
+            })?;
+        selected.push(device);
+    }
+
+    Ok(selected)
+}
+
+fn assign_files_to_devices(
+    files: &[PathBuf],
+    devices: &[CudaDeviceInfo],
+) -> Result<Vec<DeviceFileAssignment>> {
+    let mut assignments = devices
+        .iter()
+        .cloned()
+        .map(|device| DeviceFileAssignment {
+            device,
+            files: Vec::new(),
+            assigned_bytes: 0,
+        })
+        .collect::<Vec<_>>();
+    if assignments.is_empty() {
+        return Ok(assignments);
+    }
+
+    let mut entries = files
+        .iter()
+        .enumerate()
+        .map(|(order, path)| {
+            Ok(SearchFileEntry {
+                path: path.clone(),
+                estimated_bytes: file_estimated_bytes(path)?,
+                order,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if entries.is_empty() {
+        return Ok(assignments);
+    }
+
+    entries.sort_by(|left, right| {
+        right
+            .estimated_bytes
+            .cmp(&left.estimated_bytes)
+            .then(left.order.cmp(&right.order))
+    });
+
+    let min_files_per_device = minimum_files_per_device(entries.len(), assignments.len());
+    let seed_count = min_files_per_device
+        .saturating_mul(assignments.len())
+        .min(entries.len());
+
+    let assignment_count = assignments.len();
+    for (index, entry) in entries.drain(..seed_count).enumerate() {
+        let target_index = index % assignment_count;
+        add_file_assignment(&mut assignments[target_index], entry);
+    }
+
+    for entry in entries {
+        let target_index = assignments
+            .iter()
+            .enumerate()
+            .min_by(|(_, left), (_, right)| {
+                left.assigned_bytes
+                    .cmp(&right.assigned_bytes)
+                    .then(left.files.len().cmp(&right.files.len()))
+                    .then(left.device.device_id.cmp(&right.device.device_id))
+            })
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+        add_file_assignment(&mut assignments[target_index], entry);
+    }
+
+    for assignment in &mut assignments {
+        assignment.files.sort_by_key(|entry| entry.order);
+    }
+
+    Ok(assignments)
+}
+
+fn minimum_files_per_device(total_files: usize, device_count: usize) -> usize {
+    if total_files == 0 || device_count == 0 {
+        return 0;
+    }
+
+    let mut minimum = total_files.div_ceil(10).max(1);
+    while minimum > 0 && minimum.saturating_mul(device_count) > total_files {
+        minimum -= 1;
+    }
+    minimum
+}
+
+fn add_file_assignment(assignment: &mut DeviceFileAssignment, entry: SearchFileEntry) {
+    assignment.assigned_bytes = assignment.assigned_bytes.saturating_add(entry.estimated_bytes);
+    assignment.files.push(entry);
 }
 
 fn ensure_capacity(capacity: usize, required: usize, path: &Path) -> Result<()> {
@@ -1533,20 +1841,7 @@ fn open_cuda_context(device_id: i32) -> Result<Arc<CudaContext>> {
 }
 
 fn validate_device_id(device_id: i32) -> Result<()> {
-    let devices = enumerate_cuda_devices()?;
-    if devices.is_empty() {
-        return Err(anyhow!(
-            "CUDA is unavailable: no CUDA devices were detected by cudarc"
-        ));
-    }
-    if devices.iter().any(|device| device.device_id == device_id) {
-        return Ok(());
-    }
-
-    Err(anyhow!(
-        "invalid CUDA device id {device_id}; available CUDA devices: {}",
-        format_available_devices(&devices)
-    ))
+    resolve_cuda_devices(&[device_id]).map(|_| ())
 }
 
 fn format_available_devices(devices: &[CudaDeviceInfo]) -> String {

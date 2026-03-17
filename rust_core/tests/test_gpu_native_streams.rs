@@ -7,7 +7,7 @@ use cudarc::driver::CudaContext;
 use tempfile::tempdir;
 use tensor_grep_rs::gpu_native::{
     benchmark_pinned_transfer_throughput, enumerate_cuda_devices, gpu_native_search_paths,
-    GpuNativeSearchConfig, GpuPinnedTransferBenchmark,
+    gpu_native_search_paths_multi, GpuNativeSearchConfig, GpuPinnedTransferBenchmark,
 };
 
 fn first_device_id() -> Option<i32> {
@@ -33,6 +33,22 @@ fn write_overlap_corpus(dir: &Path) -> (PathBuf, Vec<(PathBuf, usize, String)>) 
     }
 
     (corpus, expected)
+}
+
+fn write_multi_gpu_distribution_corpus(dir: &Path) -> PathBuf {
+    let corpus = dir.join("multi-gpu-distribution");
+    fs::create_dir(&corpus).unwrap();
+
+    for index in 0..20usize {
+        let path = corpus.join(format!("file-{index:02}.log"));
+        let filler = "padding line for device balancing\n".repeat(128 + index * 8);
+        let body = format!(
+            "INFO file {index}\n{filler}ERROR multi gpu sentinel {index}\nWARN file {index}\n"
+        );
+        fs::write(path, body).unwrap();
+    }
+
+    corpus
 }
 
 #[test]
@@ -146,6 +162,60 @@ fn test_benchmark_pinned_transfer_throughput_reports_positive_bandwidth() {
     assert!(benchmark.batch_count >= 1);
     assert!(benchmark.stream_count >= 1);
     assert!(benchmark.throughput_bytes_per_s > 0.0);
+}
+
+#[test]
+fn test_gpu_native_multi_gpu_balances_distribution_and_matches_single_gpu_results() {
+    let Ok(devices) = enumerate_cuda_devices() else {
+        return;
+    };
+    if devices.len() < 2 {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let corpus = write_multi_gpu_distribution_corpus(dir.path());
+    let config = GpuNativeSearchConfig {
+        patterns: vec!["ERROR multi gpu sentinel".to_string()],
+        paths: vec![corpus],
+        no_ignore: true,
+        glob: Vec::new(),
+        max_batch_bytes: Some(128 * 1024),
+    };
+
+    let single = gpu_native_search_paths(&config, devices[0].device_id).unwrap();
+    let multi = gpu_native_search_paths_multi(&config, &[devices[0].device_id, devices[1].device_id]).unwrap();
+
+    assert_eq!(
+        multi
+            .selected_devices
+            .iter()
+            .map(|device| device.device_id)
+            .collect::<Vec<_>>(),
+        vec![devices[0].device_id, devices[1].device_id]
+    );
+    assert_eq!(multi.device_stats.len(), 2, "stats={multi:?}");
+
+    let total_files = multi.searched_files.max(1);
+    for device_stats in &multi.device_stats {
+        assert!(device_stats.searched_files > 0, "stats={multi:?}");
+        assert!(
+            device_stats.searched_files * 10 >= total_files,
+            "stats={multi:?}"
+        );
+    }
+
+    let single_matches = single
+        .matches
+        .iter()
+        .map(|matched| (matched.path.clone(), matched.line_number, matched.text.clone()))
+        .collect::<Vec<_>>();
+    let multi_matches = multi
+        .matches
+        .iter()
+        .map(|matched| (matched.path.clone(), matched.line_number, matched.text.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(multi_matches, single_matches);
 }
 
 #[test]

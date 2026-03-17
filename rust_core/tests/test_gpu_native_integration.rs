@@ -230,6 +230,21 @@ fn write_gpu_parity_corpus(dir: &Path, target_bytes: usize) -> PathBuf {
     corpus
 }
 
+fn first_two_cuda_devices() -> Option<Vec<(i32, String)>> {
+    let devices = enumerate_cuda_devices().ok()?;
+    if devices.len() < 2 {
+        return None;
+    }
+
+    Some(
+        devices
+            .into_iter()
+            .take(2)
+            .map(|device| (device.device_id, device.name))
+            .collect(),
+    )
+}
+
 #[test]
 fn test_gpu_native_single_file_json_routes_to_native_backend() {
     let dir = tempdir().unwrap();
@@ -406,6 +421,82 @@ fn test_gpu_native_verbose_output_reports_selected_devices() {
             "stderr={stderr}"
         );
         assert!(stderr.contains(&device.name), "stderr={stderr}");
+    }
+}
+
+#[test]
+fn test_gpu_native_multi_gpu_json_reports_both_devices_and_matches_single_gpu() {
+    let Some(devices) = first_two_cuda_devices() else {
+        return;
+    };
+
+    let dir = tempdir().unwrap();
+    let corpus = write_gpu_parity_corpus(dir.path(), 12 * 1024 * 1024);
+    let device_ids = format!("{},{}", devices[0].0, devices[1].0);
+
+    let multi_output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--gpu-device-ids")
+        .arg(&device_ids)
+        .arg("--json")
+        .arg("ERROR critical path failed")
+        .arg(&corpus)
+        .output()
+        .unwrap();
+    let single_output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--gpu-device-ids")
+        .arg(devices[0].0.to_string())
+        .arg("--json")
+        .arg("ERROR critical path failed")
+        .arg(&corpus)
+        .output()
+        .unwrap();
+
+    assert!(multi_output.status.success(), "stderr={}", String::from_utf8_lossy(&multi_output.stderr));
+    assert!(single_output.status.success(), "stderr={}", String::from_utf8_lossy(&single_output.stderr));
+
+    let payload = parse_json_payload(&multi_output.stdout);
+    assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([devices[0].0, devices[1].0]));
+    assert_eq!(parse_json_tuples(&multi_output.stdout), parse_json_tuples(&single_output.stdout));
+}
+
+#[test]
+fn test_gpu_native_multi_gpu_verbose_reports_both_devices_active() {
+    let Some(devices) = first_two_cuda_devices() else {
+        return;
+    };
+
+    let dir = tempdir().unwrap();
+    let corpus = write_gpu_parity_corpus(dir.path(), 12 * 1024 * 1024);
+    let device_ids = format!("{},{}", devices[0].0, devices[1].0);
+
+    let output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--gpu-device-ids")
+        .arg(&device_ids)
+        .arg("--json")
+        .arg("--verbose")
+        .arg("ERROR critical path failed")
+        .arg(&corpus)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for (device_id, device_name) in devices {
+        assert!(
+            stderr.contains(&format!("gpu_device_id={device_id}")),
+            "stderr={stderr}"
+        );
+        assert!(stderr.contains(&device_name), "stderr={stderr}");
+        assert!(stderr.contains("gpu_device_files="), "stderr={stderr}");
     }
 }
 
