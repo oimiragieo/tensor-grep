@@ -1,0 +1,37 @@
+{
+  "milestone": "routing-and-integration",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 20,
+    "passed": 20,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-ROUTE-001",
+    "VAL-ROUTE-002",
+    "VAL-ROUTE-003",
+    "VAL-ROUTE-004",
+    "VAL-ROUTE-005",
+    "VAL-ROUTE-006",
+    "VAL-ROUTE-007",
+    "VAL-ROUTE-008",
+    "VAL-ROUTE-009",
+    "VAL-ROUTE-010",
+    "VAL-ROUTE-011",
+    "VAL-CROSS-001",
+    "VAL-CROSS-002",
+    "VAL-CROSS-003",
+    "VAL-CROSS-004",
+    "VAL-CROSS-005",
+    "VAL-CROSS-006",
+    "VAL-CROSS-007",
+    "VAL-CROSS-008",
+    "VAL-CROSS-009"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}
