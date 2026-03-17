@@ -1687,6 +1687,7 @@ fn execute_gpu_native_route(
         paths: vec![PathBuf::from(params.path)],
         no_ignore: params.no_ignore,
         glob: params.globs.clone(),
+        max_batch_bytes: None,
     };
 
     let stats = gpu_native_search_paths(&config, device_id)?;
@@ -1989,11 +1990,17 @@ fn emit_gpu_native_count_results(params: &GpuSearchParams<'_>, stats: &GpuNative
 #[cfg(feature = "cuda")]
 fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
     eprintln!(
-        "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={}",
+        "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_transfer_throughput_gbps={:.2}",
         stats.selected_device.device_id,
         stats.selected_device.name,
         stats.searched_files,
-        stats.transfer_bytes
+        stats.transfer_bytes,
+        stats.pipeline.stream_count,
+        stats.pipeline.double_buffered,
+        stats.pipeline.pinned_host_buffers,
+        stats.pipeline.batch_count,
+        stats.pipeline.overlapped_batches,
+        stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
     );
 }
 
