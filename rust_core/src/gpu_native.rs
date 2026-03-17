@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use cudarc::driver::{
-    result as cuda_result, sys, CudaContext, CudaEvent, CudaFunction, CudaModule, CudaSlice,
-    CudaStream, DevicePtrMut, LaunchConfig, PinnedHostSlice, PushKernelArg,
+    result as cuda_result, sys, CudaContext, CudaEvent, CudaFunction, CudaModule,
+    CudaSlice, CudaStream, DevicePtr, DevicePtrMut, LaunchConfig, PinnedHostSlice, PushKernelArg,
 };
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
@@ -373,6 +373,8 @@ pub struct GpuPipelineStats {
     pub stream_count: usize,
     pub batch_count: usize,
     pub overlapped_batches: usize,
+    pub cuda_graph_captures: usize,
+    pub cuda_graph_replays: usize,
     pub pattern_count: usize,
     pub pattern_batch_count: usize,
     pub single_dispatch: bool,
@@ -395,6 +397,8 @@ impl Default for GpuPipelineStats {
             stream_count: 0,
             batch_count: 0,
             overlapped_batches: 0,
+            cuda_graph_captures: 0,
+            cuda_graph_replays: 0,
             pattern_count: 0,
             pattern_batch_count: 0,
             single_dispatch: false,
@@ -446,6 +450,14 @@ pub struct GpuNativeSearchStats {
     pub device_stats: Vec<GpuNativeDeviceStats>,
     pub matches: Vec<GpuNativeSearchMatch>,
     pub pipeline: GpuPipelineStats,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuCudaGraphBenchmark {
+    pub baseline: GpuNativeSearchStats,
+    pub graphed: GpuNativeSearchStats,
+    pub results_identical: bool,
+    pub wall_time_reduction_pct: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -525,12 +537,6 @@ struct DevicePatternBatch {
     pattern_lengths_device: CudaSlice<u32>,
 }
 
-struct DeviceLineClassBuffers {
-    line_starts_device: CudaSlice<u32>,
-    line_lengths_device: CudaSlice<u32>,
-    line_count: usize,
-}
-
 #[derive(Debug, Clone, Default)]
 struct AdaptiveDispatchStats {
     short_line_count: usize,
@@ -540,10 +546,8 @@ struct AdaptiveDispatchStats {
     block_dispatch_count: usize,
 }
 
+#[derive(Debug, Clone)]
 struct SlotAdaptiveDispatch {
-    short_lines: Option<DeviceLineClassBuffers>,
-    medium_lines: Option<DeviceLineClassBuffers>,
-    long_lines: Option<DeviceLineClassBuffers>,
     stats: AdaptiveDispatchStats,
 }
 
@@ -551,6 +555,126 @@ impl SlotAdaptiveDispatch {
     fn total_lines(&self) -> usize {
         self.stats.short_line_count + self.stats.medium_line_count + self.stats.long_line_count
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchLaunchMode {
+    Standard,
+    GraphCapture,
+    GraphReplay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct SearchExecutionOptions {
+    use_cuda_graphs: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GraphCaptureSignature {
+    bytes_used: usize,
+    short_line_count: usize,
+    medium_line_count: usize,
+    long_line_count: usize,
+    pattern_batch_index: usize,
+}
+
+struct GraphCaptureState {
+    signature: GraphCaptureSignature,
+    graph: CapturedCudaGraph,
+    match_count_host: PinnedHostSlice<u32>,
+}
+
+struct CapturedCudaGraph {
+    graph: sys::CUgraph,
+    graph_exec: sys::CUgraphExec,
+    stream: Arc<CudaStream>,
+}
+
+impl CapturedCudaGraph {
+    fn from_captured_stream(stream: &Arc<CudaStream>) -> Result<Option<Self>> {
+        let graph = unsafe { cuda_result::stream::end_capture(stream.cu_stream()) }
+            .map_err(anyhow::Error::new)
+            .context("failed to end CUDA graph capture for GPU search pipeline")?;
+        if graph.is_null() {
+            return Ok(None);
+        }
+
+        let mut graph_exec = std::mem::MaybeUninit::uninit();
+        unsafe { sys::cuGraphInstantiateWithFlags(graph_exec.as_mut_ptr(), graph, 0) }
+            .result()
+            .map_err(anyhow::Error::new)
+            .context("failed to instantiate CUDA graph for GPU search pipeline")?;
+
+        Ok(Some(Self {
+            graph,
+            graph_exec: unsafe { graph_exec.assume_init() },
+            stream: Arc::clone(stream),
+        }))
+    }
+
+    fn launch(&self) -> Result<()> {
+        unsafe { cuda_result::graph::launch(self.graph_exec, self.stream.cu_stream()) }
+            .map_err(anyhow::Error::new)
+            .context("failed to launch CUDA graph for GPU search pipeline")
+    }
+}
+
+impl Drop for CapturedCudaGraph {
+    fn drop(&mut self) {
+        let context = self.stream.context();
+        context.record_err(context.bind_to_thread());
+        if !self.graph_exec.is_null() {
+            context.record_err(unsafe { cuda_result::graph::exec_destroy(self.graph_exec) });
+            self.graph_exec = std::ptr::null_mut();
+        }
+        if !self.graph.is_null() {
+            context.record_err(unsafe { cuda_result::graph::destroy(self.graph) });
+            self.graph = std::ptr::null_mut();
+        }
+    }
+}
+
+struct EventTrackingModeGuard {
+    context: Arc<CudaContext>,
+    restore_enabled: bool,
+}
+
+impl EventTrackingModeGuard {
+    fn disable(context: &Arc<CudaContext>) -> Self {
+        let restore_enabled = context.is_event_tracking();
+        if restore_enabled {
+            // SAFETY: We only disable cudarc's event-tracking shim around CUDA graph
+            // capture/replay submission where we manually synchronize the relevant slot
+            // stream and avoid sharing the captured buffers across streams.
+            unsafe {
+                context.disable_event_tracking();
+            }
+        }
+        Self {
+            context: Arc::clone(context),
+            restore_enabled,
+        }
+    }
+}
+
+impl Drop for EventTrackingModeGuard {
+    fn drop(&mut self) {
+        if self.restore_enabled {
+            // SAFETY: Restoring cudarc's default event-tracking mode is safe once graph
+            // submission setup is complete and preserves the context's prior behavior.
+            unsafe {
+                self.context.enable_event_tracking();
+            }
+        }
+    }
+}
+
+struct ReusableLineClassBuffers {
+    line_starts_host: Vec<u32>,
+    line_lengths_host: Vec<u32>,
+    line_starts_device: CudaSlice<u32>,
+    line_lengths_device: CudaSlice<u32>,
+    len: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -582,12 +706,19 @@ struct SearchPipelineSlot {
     match_positions_buffer: CudaSlice<u32>,
     match_pattern_ids_buffer: CudaSlice<u32>,
     match_count_buffer: CudaSlice<u32>,
+    pattern_batches: Vec<DevicePatternBatch>,
     current_batch: Option<LoadedFileBatch>,
     adaptive_dispatch: Option<SlotAdaptiveDispatch>,
+    short_line_buffers: Option<ReusableLineClassBuffers>,
+    medium_line_buffers: Option<ReusableLineClassBuffers>,
+    long_line_buffers: Option<ReusableLineClassBuffers>,
     current_pattern_batch_index: Option<usize>,
+    current_launch_mode: Option<SearchLaunchMode>,
     transfer_start: Option<CudaEvent>,
     transfer_end: Option<CudaEvent>,
     kernel_end: Option<CudaEvent>,
+    cuda_graph: Option<GraphCaptureState>,
+    graph_launch_started_at: Option<Instant>,
 }
 
 struct TransferBenchmarkSlot {
@@ -601,31 +732,34 @@ struct TransferBenchmarkSlot {
 
 struct RawPinnedHostBuffer {
     inner: PinnedHostSlice<u8>,
+    ptr: *mut u8,
+    len: usize,
 }
 
 impl RawPinnedHostBuffer {
     fn new(context: &Arc<CudaContext>, len: usize) -> Result<Self> {
-        let inner = catch_cuda("allocate CUDA pinned host buffer", || unsafe {
+        let mut inner = catch_cuda("allocate CUDA pinned host buffer", || unsafe {
             context
                 .alloc_pinned::<u8>(len.max(1))
                 .map_err(anyhow::Error::new)
         })?;
+        let ptr = inner
+            .as_mut_ptr()
+            .map_err(anyhow::Error::new)
+            .context("failed to access CUDA pinned host buffer pointer")?;
+        let len = inner.len();
 
-        Ok(Self { inner })
+        Ok(Self { inner, ptr, len })
     }
 
     fn as_slice(&self) -> Result<&[u8]> {
-        self.inner
-            .as_slice()
-            .map_err(anyhow::Error::new)
-            .context("failed to access CUDA pinned host buffer")
+        let _keep_alive = &self.inner;
+        Ok(unsafe { std::slice::from_raw_parts(self.ptr.cast_const(), self.len) })
     }
 
     fn as_mut_slice(&mut self) -> Result<&mut [u8]> {
-        self.inner
-            .as_mut_slice()
-            .map_err(anyhow::Error::new)
-            .context("failed to access CUDA pinned host buffer mutably")
+        let _keep_alive = &self.inner;
+        Ok(unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) })
     }
 }
 
@@ -787,6 +921,523 @@ pub fn gpu_native_search_paths_multi(
     config: &GpuNativeSearchConfig,
     device_ids: &[i32],
 ) -> Result<GpuNativeSearchStats> {
+    gpu_native_search_paths_multi_with_options(config, device_ids, SearchExecutionOptions::default())
+}
+
+pub fn benchmark_cuda_graph_search_paths(
+    config: &GpuNativeSearchConfig,
+    device_id: i32,
+) -> Result<GpuCudaGraphBenchmark> {
+    let baseline = run_cuda_graph_benchmark_search_paths(config, device_id, false)?;
+    let graphed = run_cuda_graph_benchmark_search_paths(config, device_id, true)?;
+    let baseline_wall_time_ms = baseline.pipeline.wall_time_ms;
+    let graphed_wall_time_ms = graphed.pipeline.wall_time_ms;
+    let wall_time_reduction_pct = if baseline_wall_time_ms > 0.0 {
+        ((baseline_wall_time_ms - graphed_wall_time_ms) / baseline_wall_time_ms) * 100.0
+    } else {
+        0.0
+    };
+    let results_identical = baseline.matches == graphed.matches
+        && baseline.total_matches == graphed.total_matches
+        && baseline.matched_files == graphed.matched_files;
+
+    Ok(GpuCudaGraphBenchmark {
+        baseline,
+        graphed,
+        results_identical,
+        wall_time_reduction_pct,
+    })
+}
+
+struct PositionGraphCaptureState {
+    signature: GraphCaptureSignature,
+    graph: CapturedCudaGraph,
+    match_count_host: PinnedHostSlice<u32>,
+    match_positions_host: PinnedHostSlice<u32>,
+    match_pattern_ids_host: PinnedHostSlice<u32>,
+}
+
+fn run_cuda_graph_benchmark_search_paths(
+    config: &GpuNativeSearchConfig,
+    device_id: i32,
+    use_cuda_graphs: bool,
+) -> Result<GpuNativeSearchStats> {
+    if config.patterns.is_empty() {
+        return Err(anyhow!("GPU native search requires at least one non-empty pattern"));
+    }
+    if config.paths.is_empty() {
+        return Err(anyhow!("GPU native search requires at least one search path"));
+    }
+    if config.patterns.iter().any(|pattern| pattern.is_empty()) {
+        return Err(anyhow!(
+            "GPU native search requires all patterns to be non-empty"
+        ));
+    }
+
+    let files = collect_search_files(config)?;
+    let pattern_batches = plan_pattern_batches(&config.patterns)?;
+    let batch_plans = plan_file_batches(
+        &files,
+        resolve_effective_max_batch_bytes(
+            config,
+            pattern_batches
+                .iter()
+                .map(|batch| batch.global_pattern_ids.len())
+                .max()
+                .unwrap_or(1),
+        ),
+    )?;
+    let runtime = create_kernel_runtime(device_id)?;
+    let stream = runtime
+        .context
+        .new_stream()
+        .map_err(anyhow::Error::new)
+        .context("failed to create CUDA stream for graph benchmark search")?;
+    let selected_device = resolve_cuda_devices(&[device_id])?
+        .into_iter()
+        .next()
+        .context("GPU native search requires one resolved CUDA device")?;
+    let slot_capacity = batch_plans
+        .iter()
+        .map(|batch| batch.estimated_bytes)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let max_patterns_per_dispatch = pattern_batches
+        .iter()
+        .map(|batch| batch.global_pattern_ids.len())
+        .max()
+        .unwrap_or(1);
+    let max_match_capacity = resolve_max_match_capacity(slot_capacity, max_patterns_per_dispatch)?;
+    let mut host_buffer = RawPinnedHostBuffer::new(&runtime.context, slot_capacity)
+        .context("failed to allocate pinned host buffer for graph benchmark search")?;
+    let mut data_buffer = unsafe { stream.alloc::<u8>(slot_capacity) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate device data buffer for graph benchmark search")?;
+    let mut match_positions_buffer = unsafe { stream.alloc::<u32>(max_match_capacity) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate graph benchmark match position buffer")?;
+    let mut match_pattern_ids_buffer = unsafe { stream.alloc::<u32>(max_match_capacity) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate graph benchmark match pattern id buffer")?;
+    let mut match_count_buffer = stream
+        .alloc_zeros::<u32>(1)
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate graph benchmark match counter")?;
+    let device_pattern_batches = upload_pattern_batches_on_stream(&stream, &pattern_batches)?;
+
+    let started_at = Instant::now();
+    let mut transfer_bytes = 0usize;
+    let mut matches = Vec::new();
+    let mut transfer_time_ms = 0.0f32;
+    let mut kernel_time_ms = 0.0f32;
+    let mut cuda_graph_captures = 0usize;
+    let mut cuda_graph_replays = 0usize;
+    let mut graph_state: Option<PositionGraphCaptureState> = None;
+
+    for batch_plan in &batch_plans {
+        let loaded = load_file_batch_into_host_buffer(&mut host_buffer, batch_plan)?;
+        if loaded.bytes_used == 0 {
+            continue;
+        }
+        for (pattern_batch_index, pattern_batch) in device_pattern_batches.iter().enumerate() {
+            let max_matches = resolve_max_match_capacity(
+                loaded.bytes_used,
+                pattern_batch.host.global_pattern_ids.len(),
+            )?;
+            let max_matches_u32 = u32::try_from(max_matches)
+                .context("CUDA graph benchmark exceeds u32 match capacity")?;
+            let signature = GraphCaptureSignature {
+                bytes_used: loaded.bytes_used,
+                short_line_count: 0,
+                medium_line_count: 0,
+                long_line_count: 0,
+                pattern_batch_index,
+            };
+            transfer_bytes = transfer_bytes.saturating_add(loaded.bytes_used);
+
+            let (match_count, positions, pattern_ids, elapsed_ms) = if use_cuda_graphs {
+                if graph_state
+                    .as_ref()
+                    .map(|state| state.signature != signature)
+                    .unwrap_or(true)
+                {
+                    graph_state = Some(capture_position_graph_search(
+                        &runtime,
+                        &stream,
+                        &host_buffer,
+                        &mut data_buffer,
+                        &mut match_positions_buffer,
+                        &mut match_pattern_ids_buffer,
+                        &mut match_count_buffer,
+                        pattern_batch,
+                        max_matches,
+                        max_matches_u32,
+                        signature,
+                    )?);
+                    cuda_graph_captures += 1;
+                } else {
+                    cuda_graph_replays += 1;
+                }
+
+                let state = graph_state
+                    .as_ref()
+                    .context("missing CUDA graph state for graph benchmark search")?;
+                let launched_at = Instant::now();
+                state.graph.launch()?;
+                stream
+                    .synchronize()
+                    .map_err(anyhow::Error::new)
+                    .context("failed to synchronize CUDA graph benchmark stream")?;
+                let elapsed_ms = (launched_at.elapsed().as_secs_f64() * 1_000.0) as f32;
+                let match_count = state
+                    .match_count_host
+                    .as_slice()
+                    .map_err(anyhow::Error::new)
+                    .context("failed to read graphed benchmark match count")?
+                    .first()
+                    .copied()
+                    .unwrap_or(0) as usize;
+                let positions = state
+                    .match_positions_host
+                    .as_slice()
+                    .map_err(anyhow::Error::new)
+                    .context("failed to read graphed benchmark match positions")?
+                    .get(..match_count)
+                    .unwrap_or(&[])
+                    .to_vec();
+                let pattern_ids = state
+                    .match_pattern_ids_host
+                    .as_slice()
+                    .map_err(anyhow::Error::new)
+                    .context("failed to read graphed benchmark match pattern ids")?
+                    .get(..match_count)
+                    .unwrap_or(&[])
+                    .to_vec();
+                (match_count, positions, pattern_ids, elapsed_ms)
+            } else {
+                let launched_at = Instant::now();
+                stream
+                    .memset_zeros(&mut match_count_buffer)
+                    .map_err(anyhow::Error::new)
+                    .context("failed to reset graph benchmark match counter")?;
+                copy_pinned_host_to_device(&stream, &host_buffer, loaded.bytes_used, &mut data_buffer)
+                    .context("failed to copy graph benchmark batch to CUDA device")?;
+                let data_len = i32::try_from(loaded.bytes_used)
+                    .context("graph benchmark batch exceeds i32 length")?;
+                launch_position_search_kernel(
+                    &stream,
+                    &runtime.position_function,
+                    &data_buffer,
+                    data_len,
+                    pattern_batch,
+                    &mut match_positions_buffer,
+                    &mut match_pattern_ids_buffer,
+                    max_matches_u32,
+                    &mut match_count_buffer,
+                )?;
+                stream
+                    .synchronize()
+                    .map_err(anyhow::Error::new)
+                    .context("failed to synchronize CUDA graph benchmark baseline stream")?;
+                let elapsed_ms = (launched_at.elapsed().as_secs_f64() * 1_000.0) as f32;
+                let match_count = stream
+                    .clone_dtoh(&match_count_buffer)
+                    .map_err(anyhow::Error::new)
+                    .context("failed to copy graph benchmark match count back to host")?
+                    .into_iter()
+                    .next()
+                    .unwrap_or(0) as usize;
+                let positions = if match_count == 0 {
+                    Vec::new()
+                } else {
+                    let view = match_positions_buffer
+                        .try_slice(0..match_count)
+                        .context("failed to slice graph benchmark match positions buffer")?;
+                    stream
+                        .clone_dtoh(&view)
+                        .map_err(anyhow::Error::new)
+                        .context("failed to copy graph benchmark match positions back to host")?
+                };
+                let pattern_ids = if match_count == 0 {
+                    Vec::new()
+                } else {
+                    let view = match_pattern_ids_buffer
+                        .try_slice(0..match_count)
+                        .context("failed to slice graph benchmark match pattern id buffer")?;
+                    stream
+                        .clone_dtoh(&view)
+                        .map_err(anyhow::Error::new)
+                        .context("failed to copy graph benchmark match pattern ids back to host")?
+                };
+                (match_count, positions, pattern_ids, elapsed_ms)
+            };
+
+            transfer_time_ms += elapsed_ms;
+            kernel_time_ms += elapsed_ms;
+
+            if match_count == 0 {
+                continue;
+            }
+            let mut positions = positions
+                .into_iter()
+                .zip(pattern_ids.into_iter())
+                .map(|(byte_offset, local_pattern_id)| PatternMatchPosition {
+                    byte_offset: byte_offset as usize,
+                    pattern_id: pattern_batch.host.global_pattern_ids[local_pattern_id as usize],
+                })
+                .collect::<Vec<_>>();
+            positions.sort();
+            matches.extend(convert_offsets_to_line_matches(
+                &host_buffer.as_slice()?[..loaded.bytes_used],
+                &loaded.files,
+                &positions,
+                &config.patterns,
+            )?);
+        }
+    }
+
+    let file_order = files
+        .iter()
+        .enumerate()
+        .map(|(index, path)| (path.clone(), index))
+        .collect::<HashMap<_, _>>();
+    matches.sort_by(|left, right| {
+        let left_index = file_order.get(&left.path).copied().unwrap_or(usize::MAX);
+        let right_index = file_order.get(&right.path).copied().unwrap_or(usize::MAX);
+        left_index
+            .cmp(&right_index)
+            .then(left.line_number.cmp(&right.line_number))
+            .then(left.pattern_id.cmp(&right.pattern_id))
+            .then(left.text.cmp(&right.text))
+    });
+    let mut seen = BTreeSet::new();
+    matches.retain(|matched| {
+        seen.insert((
+            matched.path.clone(),
+            matched.line_number,
+            matched.text.clone(),
+            matched.pattern_id,
+        ))
+    });
+    let matched_files = matches
+        .iter()
+        .map(|matched| matched.path.clone())
+        .collect::<BTreeSet<_>>()
+        .len();
+    let wall_time_ms = started_at.elapsed().as_secs_f64() * 1_000.0;
+    let pipeline = GpuPipelineStats {
+        pinned_host_buffers: true,
+        double_buffered: false,
+        stream_count: 1,
+        batch_count: batch_plans.len().saturating_mul(pattern_batches.len()),
+        overlapped_batches: 0,
+        cuda_graph_captures,
+        cuda_graph_replays,
+        pattern_count: config.patterns.len(),
+        pattern_batch_count: pattern_batches.len(),
+        single_dispatch: batch_plans.len() == 1 && pattern_batches.len() == 1,
+        short_line_count: 0,
+        medium_line_count: 0,
+        long_line_count: 0,
+        warp_dispatch_count: 0,
+        block_dispatch_count: 0,
+        transfer_time_ms,
+        kernel_time_ms,
+        wall_time_ms,
+        transfer_throughput_bytes_s: if wall_time_ms > 0.0 {
+            transfer_bytes as f64 / (wall_time_ms / 1_000.0)
+        } else {
+            0.0
+        },
+    };
+    let device_stats = vec![GpuNativeDeviceStats {
+        device: selected_device.clone(),
+        searched_files: files.len(),
+        matched_files,
+        total_matches: matches.len(),
+        transfer_bytes,
+        pipeline: pipeline.clone(),
+    }];
+
+    Ok(GpuNativeSearchStats {
+        searched_files: files.len(),
+        matched_files,
+        total_matches: matches.len(),
+        transfer_bytes,
+        pattern_count: config.patterns.len(),
+        selected_device: selected_device.clone(),
+        selected_devices: vec![selected_device],
+        device_stats,
+        matches,
+        pipeline,
+    })
+}
+
+fn load_file_batch_into_host_buffer(
+    host_buffer: &mut RawPinnedHostBuffer,
+    plan: &FileBatchPlan,
+) -> Result<LoadedFileBatch> {
+    let host = host_buffer.as_mut_slice()?;
+    let mut cursor = 0usize;
+    let mut batch_files = Vec::new();
+
+    for path in &plan.files {
+        let bytes = fs::read(path)
+            .with_context(|| format!("failed to read GPU native search file {}", path.display()))?;
+        if bytes.contains(&b'\0') {
+            continue;
+        }
+
+        if cursor > 0 {
+            ensure_capacity(host.len(), cursor.saturating_add(1), path)?;
+            host[cursor] = 0;
+            cursor += 1;
+        }
+
+        let start = cursor;
+        let end = start.saturating_add(bytes.len());
+        ensure_capacity(host.len(), end, path)?;
+        host[start..end].copy_from_slice(&bytes);
+        cursor = end;
+
+        batch_files.push(BatchedFile {
+            path: path.clone(),
+            start,
+            end,
+        });
+    }
+
+    Ok(LoadedFileBatch {
+        files: batch_files,
+        bytes_used: cursor,
+        classified_lines: ClassifiedLineBatch::default(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn capture_position_graph_search(
+    runtime: &KernelRuntime,
+    stream: &Arc<CudaStream>,
+    host_buffer: &RawPinnedHostBuffer,
+    data_buffer: &mut CudaSlice<u8>,
+    match_positions_buffer: &mut CudaSlice<u32>,
+    match_pattern_ids_buffer: &mut CudaSlice<u32>,
+    match_count_buffer: &mut CudaSlice<u32>,
+    pattern_batch: &DevicePatternBatch,
+    max_matches: usize,
+    max_matches_u32: u32,
+    signature: GraphCaptureSignature,
+) -> Result<PositionGraphCaptureState> {
+    let mut match_count_host = unsafe { runtime.context.alloc_pinned::<u32>(1) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate graphed benchmark match count host buffer")?;
+    let mut match_positions_host = unsafe { runtime.context.alloc_pinned::<u32>(max_matches.max(1)) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate graphed benchmark match positions host buffer")?;
+    let mut match_pattern_ids_host = unsafe { runtime.context.alloc_pinned::<u32>(max_matches.max(1)) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate graphed benchmark match pattern ids host buffer")?;
+    let capture_input_ptr = host_buffer.as_slice()?.as_ptr();
+    let match_count_host_ptr = match_count_host
+        .as_mut_ptr()
+        .map_err(anyhow::Error::new)
+        .context("failed to access graphed benchmark match count host pointer")?;
+    let match_positions_host_ptr = match_positions_host
+        .as_mut_ptr()
+        .map_err(anyhow::Error::new)
+        .context("failed to access graphed benchmark match positions host pointer")?;
+    let match_pattern_ids_host_ptr = match_pattern_ids_host
+        .as_mut_ptr()
+        .map_err(anyhow::Error::new)
+        .context("failed to access graphed benchmark match pattern ids host pointer")?;
+
+    stream
+        .synchronize()
+        .map_err(anyhow::Error::new)
+        .context("failed to synchronize graph benchmark stream before capture")?;
+    let _event_tracking_guard = EventTrackingModeGuard::disable(&runtime.context);
+    stream
+        .begin_capture(sys::CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_RELAXED)
+        .map_err(anyhow::Error::new)
+        .context("failed to begin CUDA graph capture for benchmark search")?;
+
+    let capture = (|| {
+        stream
+            .memset_zeros(match_count_buffer)
+            .map_err(anyhow::Error::new)
+            .context("failed to reset graphed benchmark match counter")?;
+        let capture_input = unsafe { std::slice::from_raw_parts(capture_input_ptr, signature.bytes_used) };
+        copy_host_slice_to_device_during_capture(stream, capture_input, data_buffer)
+            .context("failed to copy graphed benchmark batch to CUDA device")?;
+        let data_len = i32::try_from(signature.bytes_used)
+            .context("graphed benchmark batch exceeds i32 length")?;
+        launch_position_search_kernel(
+            stream,
+            &runtime.position_function,
+            data_buffer,
+            data_len,
+            pattern_batch,
+            match_positions_buffer,
+            match_pattern_ids_buffer,
+            max_matches_u32,
+            match_count_buffer,
+        )?;
+        let match_count_host_slice = unsafe { std::slice::from_raw_parts_mut(match_count_host_ptr, 1) };
+        copy_device_match_count_to_host_slice_during_capture(
+            stream,
+            match_count_buffer,
+            match_count_host_slice,
+        )
+        .context("failed to copy graphed benchmark match count to host")?;
+        let match_positions_host_slice = unsafe {
+            std::slice::from_raw_parts_mut(match_positions_host_ptr, max_matches.max(1))
+        };
+        copy_device_u32_slice_to_host_during_capture(
+            stream,
+            match_positions_buffer,
+            match_positions_host_slice,
+            "copy graphed benchmark match positions to host",
+        )?;
+        let match_pattern_ids_host_slice = unsafe {
+            std::slice::from_raw_parts_mut(match_pattern_ids_host_ptr, max_matches.max(1))
+        };
+        copy_device_u32_slice_to_host_during_capture(
+            stream,
+            match_pattern_ids_buffer,
+            match_pattern_ids_host_slice,
+            "copy graphed benchmark match pattern ids to host",
+        )?;
+
+        let graph = CapturedCudaGraph::from_captured_stream(stream)?
+            .context("CUDA graph capture for benchmark search produced no graph")?;
+        Ok::<PositionGraphCaptureState, anyhow::Error>(PositionGraphCaptureState {
+            signature,
+            graph,
+            match_count_host,
+            match_positions_host,
+            match_pattern_ids_host,
+        })
+    })();
+
+    match capture {
+        Ok(state) => Ok(state),
+        Err(err) => {
+            if let Ok(graph) = unsafe { cuda_result::stream::end_capture(stream.cu_stream()) } {
+                if !graph.is_null() {
+                    let _ = unsafe { cuda_result::graph::destroy(graph) };
+                }
+            }
+            Err(err)
+        }
+    }
+}
+
+fn gpu_native_search_paths_multi_with_options(
+    config: &GpuNativeSearchConfig,
+    device_ids: &[i32],
+    options: SearchExecutionOptions,
+) -> Result<GpuNativeSearchStats> {
     if config.patterns.is_empty() {
         return Err(anyhow!("GPU native search requires at least one non-empty pattern"));
     }
@@ -809,7 +1460,7 @@ pub fn gpu_native_search_paths_multi(
     let assignments = assign_files_to_devices(&files, &selected_devices)?;
     let device_outcomes = assignments
         .into_par_iter()
-        .map(|assignment| run_device_assignment(config, assignment))
+        .map(|assignment| run_device_assignment(config, assignment, options))
         .collect::<Result<Vec<_>>>()?;
     let matches = merge_device_matches(&files, &device_outcomes);
     let matched_files = matches
@@ -845,13 +1496,14 @@ pub fn gpu_native_search_paths_multi(
 fn run_device_assignment(
     config: &GpuNativeSearchConfig,
     assignment: DeviceFileAssignment,
+    options: SearchExecutionOptions,
 ) -> Result<DeviceSearchOutcome> {
     let files = assignment
         .files
         .iter()
         .map(|entry| entry.path.clone())
         .collect::<Vec<_>>();
-    let outcome = run_device_search(config, &files, &assignment.device)?;
+    let outcome = run_device_search(config, &files, &assignment.device, options)?;
     Ok(DeviceSearchOutcome {
         stats: GpuNativeDeviceStats {
             device: assignment.device,
@@ -874,6 +1526,7 @@ fn run_device_search(
     config: &GpuNativeSearchConfig,
     files: &[PathBuf],
     selected_device: &CudaDeviceInfo,
+    options: SearchExecutionOptions,
 ) -> Result<SearchPipelineOutcome> {
     let pattern_batches = plan_pattern_batches(&config.patterns)?;
     let max_patterns_per_dispatch = pattern_batches
@@ -909,6 +1562,7 @@ fn run_device_search(
         slot_capacity,
         files.len(),
         &config.patterns,
+        options,
     )
 }
 
@@ -955,6 +1609,14 @@ fn aggregate_device_pipeline_stats(
         overlapped_batches: device_outcomes
             .iter()
             .map(|outcome| outcome.stats.pipeline.overlapped_batches)
+            .sum(),
+        cuda_graph_captures: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.cuda_graph_captures)
+            .sum(),
+        cuda_graph_replays: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.cuda_graph_replays)
             .sum(),
         pattern_count,
         pattern_batch_count: device_outcomes
@@ -1201,17 +1863,28 @@ fn run_search_pipeline(
     slot_capacity: usize,
     _searched_files: usize,
     all_patterns: &[String],
+    options: SearchExecutionOptions,
 ) -> Result<SearchPipelineOutcome> {
     let max_patterns_per_dispatch = pattern_batches
         .iter()
         .map(|batch| batch.global_pattern_ids.len())
         .max()
         .unwrap_or(1);
-    let device_pattern_batches = upload_pattern_batches(runtime, pattern_batches)?;
     let mut slots = (0..PIPELINE_SLOT_COUNT)
-        .map(|_| create_search_pipeline_slot(runtime, slot_capacity, max_patterns_per_dispatch))
+        .map(|_| {
+            create_search_pipeline_slot(
+                runtime,
+                slot_capacity,
+                max_patterns_per_dispatch,
+                pattern_batches,
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
-    let pattern_stream = runtime.context.default_stream();
+    let coordinator_stream = runtime
+        .context
+        .new_stream()
+        .map_err(anyhow::Error::new)
+        .context("failed to create CUDA coordinator stream for GPU search pipeline")?;
     let started_at = Instant::now();
 
     let mut transfer_bytes = 0usize;
@@ -1224,6 +1897,8 @@ fn run_search_pipeline(
     let mut long_line_count = 0usize;
     let mut warp_dispatch_count = 0usize;
     let mut block_dispatch_count = 0usize;
+    let mut cuda_graph_captures = 0usize;
+    let mut cuda_graph_replays = 0usize;
     let active_stream_count = dispatch_plans.len().clamp(1, PIPELINE_SLOT_COUNT);
     let mut pipeline_start = None;
 
@@ -1231,7 +1906,6 @@ fn run_search_pipeline(
         let slot = &mut slots[dispatch_index % PIPELINE_SLOT_COUNT];
         finalize_search_pipeline_slot(
             slot,
-            &device_pattern_batches,
             all_patterns,
             &mut transfer_bytes,
             &mut matches,
@@ -1243,25 +1917,32 @@ fn run_search_pipeline(
             &mut long_line_count,
             &mut warp_dispatch_count,
             &mut block_dispatch_count,
+            &mut cuda_graph_captures,
+            &mut cuda_graph_replays,
         )?;
         load_file_batch_into_slot(slot, &plan.file_batch)?;
         slot.current_pattern_batch_index = Some(plan.pattern_batch_index);
         if pipeline_start.is_none() {
             pipeline_start = Some(record_timed_event(&slot.stream)?);
         }
-        launch_slot_search(slot, runtime, &device_pattern_batches[plan.pattern_batch_index])?;
+        launch_slot_search(
+            slot,
+            runtime,
+            plan.pattern_batch_index,
+            options,
+        )?;
     }
 
     let pipeline_end = if let Some(start) = pipeline_start.as_ref() {
         for slot in &slots {
             if let Some(kernel_end) = slot.kernel_end.as_ref() {
-                pattern_stream
+                coordinator_stream
                     .wait(kernel_end)
                     .map_err(anyhow::Error::new)
                     .context("failed to coordinate GPU search pipeline completion")?;
             }
         }
-        let end = record_timed_event(&pattern_stream)?;
+        let end = record_timed_event(&coordinator_stream)?;
         end.synchronize()
             .map_err(anyhow::Error::new)
             .context("failed to synchronize GPU search pipeline end event")?;
@@ -1273,7 +1954,6 @@ fn run_search_pipeline(
     for slot in &mut slots {
         finalize_search_pipeline_slot(
             slot,
-            &device_pattern_batches,
             all_patterns,
             &mut transfer_bytes,
             &mut matches,
@@ -1285,6 +1965,8 @@ fn run_search_pipeline(
             &mut long_line_count,
             &mut warp_dispatch_count,
             &mut block_dispatch_count,
+            &mut cuda_graph_captures,
+            &mut cuda_graph_replays,
         )?;
     }
 
@@ -1315,6 +1997,8 @@ fn run_search_pipeline(
             stream_count: active_stream_count,
             batch_count: dispatch_plans.len(),
             overlapped_batches: dispatch_plans.len().saturating_sub(active_stream_count),
+            cuda_graph_captures,
+            cuda_graph_replays,
             pattern_count: all_patterns.len(),
             pattern_batch_count: pattern_batches.len(),
             single_dispatch: pattern_batches.len() == 1,
@@ -1335,6 +2019,7 @@ fn create_search_pipeline_slot(
     runtime: &KernelRuntime,
     capacity: usize,
     max_pattern_count: usize,
+    pattern_batches: &[PatternBatchPlan],
 ) -> Result<SearchPipelineSlot> {
     let stream = runtime
         .context
@@ -1357,6 +2042,7 @@ fn create_search_pipeline_slot(
         .alloc_zeros::<u32>(1)
         .map_err(anyhow::Error::new)
         .context("failed to allocate device match counter for GPU search pipeline")?;
+    let pattern_batches = upload_pattern_batches_on_stream(&stream, pattern_batches)?;
 
     Ok(SearchPipelineSlot {
         stream,
@@ -1365,12 +2051,19 @@ fn create_search_pipeline_slot(
         match_positions_buffer,
         match_pattern_ids_buffer,
         match_count_buffer,
+        pattern_batches,
         current_batch: None,
         adaptive_dispatch: None,
+        short_line_buffers: None,
+        medium_line_buffers: None,
+        long_line_buffers: None,
         current_pattern_batch_index: None,
+        current_launch_mode: None,
         transfer_start: None,
         transfer_end: None,
         kernel_end: None,
+        cuda_graph: None,
+        graph_launch_started_at: None,
     })
 }
 
@@ -1431,7 +2124,6 @@ fn finalize_transfer_benchmark_slot(
 #[allow(clippy::too_many_arguments)]
 fn finalize_search_pipeline_slot(
     slot: &mut SearchPipelineSlot,
-    device_pattern_batches: &[DevicePatternBatch],
     all_patterns: &[String],
     transfer_bytes: &mut usize,
     matches: &mut Vec<GpuNativeSearchMatch>,
@@ -1443,10 +2135,14 @@ fn finalize_search_pipeline_slot(
     long_line_count: &mut usize,
     warp_dispatch_count: &mut usize,
     block_dispatch_count: &mut usize,
+    cuda_graph_captures: &mut usize,
+    cuda_graph_replays: &mut usize,
 ) -> Result<()> {
     let Some(batch) = slot.current_batch.take() else {
         slot.adaptive_dispatch = None;
         slot.current_pattern_batch_index = None;
+        slot.current_launch_mode = None;
+        slot.graph_launch_started_at = None;
         slot.transfer_start = None;
         slot.transfer_end = None;
         slot.kernel_end = None;
@@ -1460,7 +2156,15 @@ fn finalize_search_pipeline_slot(
         .current_pattern_batch_index
         .take()
         .context("missing pattern batch metadata for GPU search pipeline")?;
-    let pattern_batch = &device_pattern_batches[pattern_batch_index].host;
+    let pattern_batch = &slot
+        .pattern_batches
+        .get(pattern_batch_index)
+        .context("missing pattern batch buffers for GPU search pipeline")?
+        .host;
+    let launch_mode = slot
+        .current_launch_mode
+        .take()
+        .unwrap_or(SearchLaunchMode::Standard);
 
     if pattern_batch_index == 0 {
         *short_line_count += adaptive_dispatch.stats.short_line_count;
@@ -1469,6 +2173,11 @@ fn finalize_search_pipeline_slot(
     }
     *warp_dispatch_count += adaptive_dispatch.stats.warp_dispatch_count;
     *block_dispatch_count += adaptive_dispatch.stats.block_dispatch_count;
+    match launch_mode {
+        SearchLaunchMode::GraphCapture => *cuda_graph_captures += 1,
+        SearchLaunchMode::GraphReplay => *cuda_graph_replays += 1,
+        SearchLaunchMode::Standard => {}
+    }
 
     if batch.bytes_used == 0 || adaptive_dispatch.total_lines() == 0 {
         slot.transfer_start = None;
@@ -1478,43 +2187,71 @@ fn finalize_search_pipeline_slot(
     }
     *transfer_bytes += batch.bytes_used;
 
-    let transfer_start = slot
-        .transfer_start
-        .take()
-        .context("missing transfer-start event for GPU search pipeline")?;
-    let transfer_end = slot
-        .transfer_end
-        .take()
-        .context("missing transfer-end event for GPU search pipeline")?;
-    let kernel_end = slot
-        .kernel_end
-        .take()
-        .context("missing kernel-end event for GPU search pipeline")?;
-    kernel_end
-        .synchronize()
-        .map_err(anyhow::Error::new)
-        .context("failed to synchronize GPU search pipeline stream")?;
+    let (batch_transfer_time_ms, batch_kernel_time_ms, match_count) =
+        if launch_mode == SearchLaunchMode::Standard {
+            let transfer_start = slot
+                .transfer_start
+                .take()
+                .context("missing transfer-start event for GPU search pipeline")?;
+            let transfer_end = slot
+                .transfer_end
+                .take()
+                .context("missing transfer-end event for GPU search pipeline")?;
+            let kernel_end = slot
+                .kernel_end
+                .take()
+                .context("missing kernel-end event for GPU search pipeline")?;
+            kernel_end
+                .synchronize()
+                .map_err(anyhow::Error::new)
+                .context("failed to synchronize GPU search pipeline stream")?;
 
-    let batch_transfer_time_ms = transfer_start
-        .elapsed_ms(&transfer_end)
-        .map_err(anyhow::Error::new)
-        .context("failed to measure GPU search pipeline transfer timing")?;
-    let batch_kernel_time_ms = transfer_end
-        .elapsed_ms(&kernel_end)
-        .map_err(anyhow::Error::new)
-        .context("failed to measure GPU search pipeline kernel timing")?;
+            let batch_transfer_time_ms = transfer_start
+                .elapsed_ms(&transfer_end)
+                .map_err(anyhow::Error::new)
+                .context("failed to measure GPU search pipeline transfer timing")?;
+            let batch_kernel_time_ms = transfer_end
+                .elapsed_ms(&kernel_end)
+                .map_err(anyhow::Error::new)
+                .context("failed to measure GPU search pipeline kernel timing")?;
+            let match_count = slot
+                .stream
+                .clone_dtoh(&slot.match_count_buffer)
+                .map_err(anyhow::Error::new)
+                .context("failed to copy GPU search pipeline match count back to host")?
+                .into_iter()
+                .next()
+                .unwrap_or(0) as usize;
+            (batch_transfer_time_ms, batch_kernel_time_ms, match_count)
+        } else {
+            let graph_state = slot
+                .cuda_graph
+                .as_ref()
+                .context("missing CUDA graph state for graphed GPU search pipeline")?;
+            let graph_launch_started_at = slot
+                .graph_launch_started_at
+                .take()
+                .context("missing graphed GPU search pipeline launch timing")?;
+            slot.stream
+                .synchronize()
+                .map_err(anyhow::Error::new)
+                .context("failed to synchronize graphed GPU search pipeline stream")?;
+            let elapsed_ms = (graph_launch_started_at.elapsed().as_secs_f64() * 1_000.0) as f32;
+            let batch_transfer_time_ms = elapsed_ms;
+            let batch_kernel_time_ms = elapsed_ms;
+            let match_count = graph_state
+                .match_count_host
+                .as_slice()
+                .map_err(anyhow::Error::new)
+                .context("failed to read graphed GPU search pipeline match count host buffer")?
+                .first()
+                .copied()
+                .unwrap_or(0) as usize;
+            (batch_transfer_time_ms, batch_kernel_time_ms, match_count)
+        };
     *transfer_time_ms += batch_transfer_time_ms;
     *kernel_time_ms += batch_kernel_time_ms;
     *overlapped_device_time_ms += batch_transfer_time_ms.max(batch_kernel_time_ms);
-
-    let match_count = slot
-        .stream
-        .clone_dtoh(&slot.match_count_buffer)
-        .map_err(anyhow::Error::new)
-        .context("failed to copy GPU search pipeline match count back to host")?
-        .into_iter()
-        .next()
-        .unwrap_or(0) as usize;
     if match_count == 0 {
         return Ok(());
     }
@@ -1562,6 +2299,7 @@ fn finalize_search_pipeline_slot(
         all_patterns,
     )?;
     matches.extend(batch_matches);
+    slot.graph_launch_started_at = None;
     Ok(())
 }
 
@@ -1604,6 +2342,8 @@ fn load_file_batch_into_slot(slot: &mut SearchPipelineSlot, plan: &FileBatchPlan
         classified_lines,
     });
     slot.adaptive_dispatch = None;
+    slot.current_launch_mode = None;
+    slot.graph_launch_started_at = None;
     slot.transfer_start = None;
     slot.transfer_end = None;
     slot.kernel_end = None;
@@ -1613,89 +2353,74 @@ fn load_file_batch_into_slot(slot: &mut SearchPipelineSlot, plan: &FileBatchPlan
 fn launch_slot_search(
     slot: &mut SearchPipelineSlot,
     runtime: &KernelRuntime,
-    pattern_batch: &DevicePatternBatch,
+    pattern_batch_index: usize,
+    options: SearchExecutionOptions,
 ) -> Result<()> {
     let Some(batch) = slot.current_batch.as_ref() else {
         return Ok(());
     };
-    if batch.bytes_used == 0 {
+    let bytes_used = batch.bytes_used;
+    let short_line_count = batch.classified_lines.short_line_count();
+    let medium_line_count = batch.classified_lines.medium_line_count();
+    let long_line_count = batch.classified_lines.long_line_count();
+    let classified_lines = batch.classified_lines.clone();
+
+    if bytes_used == 0 {
         slot.adaptive_dispatch = Some(SlotAdaptiveDispatch {
-            short_lines: None,
-            medium_lines: None,
-            long_lines: None,
             stats: AdaptiveDispatchStats::default(),
         });
+        slot.current_launch_mode = Some(SearchLaunchMode::Standard);
         return Ok(());
     }
 
-    let adaptive_dispatch = upload_adaptive_dispatch(&slot.stream, &batch.classified_lines)?;
+    let adaptive_dispatch = prepare_adaptive_dispatch(slot, &classified_lines)?;
     let total_lines = adaptive_dispatch.total_lines();
+    let pattern_count = slot
+        .pattern_batches
+        .get(pattern_batch_index)
+        .context("missing pattern batch buffers for GPU search launch")?
+        .host
+        .global_pattern_ids
+        .len();
     let max_matches = u32::try_from(
         total_lines
-            .checked_mul(pattern_batch.host.global_pattern_ids.len())
+            .checked_mul(pattern_count)
             .context("GPU search batch match capacity overflow")?,
     )
     .context("GPU search batch exceeds u32 match capacity")?;
     slot.adaptive_dispatch = Some(adaptive_dispatch);
     if total_lines == 0 {
+        slot.current_launch_mode = Some(SearchLaunchMode::Standard);
         return Ok(());
     }
 
-    slot.stream
-        .memset_zeros(&mut slot.match_count_buffer)
-        .map_err(anyhow::Error::new)
-        .context("failed to reset GPU search pipeline match counter")?;
-    slot.transfer_start = Some(record_timed_event(&slot.stream)?);
-    copy_pinned_host_to_device(&slot.stream, &slot.host_buffer, batch.bytes_used, &mut slot.data_buffer)
-        .context("failed to copy pinned search batch to CUDA device")?;
-    slot.transfer_end = Some(record_timed_event(&slot.stream)?);
-    let dispatch = slot
-        .adaptive_dispatch
+    let signature = GraphCaptureSignature {
+        bytes_used,
+        short_line_count,
+        medium_line_count,
+        long_line_count,
+        pattern_batch_index,
+    };
+
+    if !options.use_cuda_graphs {
+        return launch_slot_search_standard(slot, runtime, pattern_batch_index, max_matches);
+    }
+
+    if slot
+        .cuda_graph
         .as_ref()
-        .context("missing adaptive dispatch buffers for GPU search launch")?;
-    if let Some(short_lines) = dispatch.short_lines.as_ref() {
-        launch_line_search_kernel(
-            &slot.stream,
-            &runtime.short_line_function,
-            SHORT_LINE_THREADS_PER_BLOCK,
-            short_lines,
-            &slot.data_buffer,
-            pattern_batch,
-            &mut slot.match_positions_buffer,
-            &mut slot.match_pattern_ids_buffer,
-            max_matches,
-            &mut slot.match_count_buffer,
-        )?;
+        .map(|graph| graph.signature != signature)
+        .unwrap_or(false)
+    {
+        slot.cuda_graph = None;
     }
-    if let Some(medium_lines) = dispatch.medium_lines.as_ref() {
-        launch_warp_line_search_kernel(
-            &slot.stream,
-            &runtime.warp_line_function,
-            medium_lines,
-            &slot.data_buffer,
-            pattern_batch,
-            &mut slot.match_positions_buffer,
-            &mut slot.match_pattern_ids_buffer,
-            max_matches,
-            &mut slot.match_count_buffer,
-        )?;
+
+    if slot.cuda_graph.is_none() {
+        capture_slot_search_graph(slot, runtime, pattern_batch_index, max_matches, signature)?;
+        return launch_slot_search_graph(slot, SearchLaunchMode::GraphCapture);
     }
-    if let Some(long_lines) = dispatch.long_lines.as_ref() {
-        launch_line_search_kernel(
-            &slot.stream,
-            &runtime.block_line_function,
-            LONG_LINE_THREADS_PER_BLOCK,
-            long_lines,
-            &slot.data_buffer,
-            pattern_batch,
-            &mut slot.match_positions_buffer,
-            &mut slot.match_pattern_ids_buffer,
-            max_matches,
-            &mut slot.match_count_buffer,
-        )?;
-    }
-    slot.kernel_end = Some(record_timed_event(&slot.stream)?);
-    Ok(())
+
+    launch_slot_search_graph(slot, SearchLaunchMode::GraphReplay)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1745,7 +2470,9 @@ fn launch_line_search_kernel(
     stream: &Arc<CudaStream>,
     function: &CudaFunction,
     threads_per_block: u32,
-    line_buffers: &DeviceLineClassBuffers,
+    line_starts_device: &CudaSlice<u32>,
+    line_lengths_device: &CudaSlice<u32>,
+    line_count: usize,
     data_device: &CudaSlice<u8>,
     pattern_batch: &DevicePatternBatch,
     match_positions_device: &mut CudaSlice<u32>,
@@ -1753,10 +2480,10 @@ fn launch_line_search_kernel(
     max_matches: u32,
     match_count_device: &mut CudaSlice<u32>,
 ) -> Result<()> {
-    let line_count = i32::try_from(line_buffers.line_count)
+    let line_count = i32::try_from(line_count)
         .context("GPU native line search line count exceeds i32 length")?;
     let launch_config = LaunchConfig {
-        grid_dim: (u32::try_from(line_buffers.line_count).unwrap_or(0), 1, 1),
+        grid_dim: (u32::try_from(line_count).unwrap_or(0), 1, 1),
         block_dim: (threads_per_block, 1, 1),
         shared_mem_bytes: u32::try_from(pattern_batch.host.shared_mem_bytes)
             .context("GPU native search shared memory requirement exceeds u32")?,
@@ -1774,8 +2501,8 @@ fn launch_line_search_kernel(
         launch.arg(&pattern_batch.pattern_offsets_device);
         launch.arg(&pattern_batch.pattern_lengths_device);
         launch.arg(&pattern_count);
-        launch.arg(&line_buffers.line_starts_device);
-        launch.arg(&line_buffers.line_lengths_device);
+        launch.arg(line_starts_device);
+        launch.arg(line_lengths_device);
         launch.arg(&line_count);
         launch.arg(match_positions_device);
         launch.arg(match_pattern_ids_device);
@@ -1791,7 +2518,9 @@ fn launch_line_search_kernel(
 fn launch_warp_line_search_kernel(
     stream: &Arc<CudaStream>,
     function: &CudaFunction,
-    line_buffers: &DeviceLineClassBuffers,
+    line_starts_device: &CudaSlice<u32>,
+    line_lengths_device: &CudaSlice<u32>,
+    line_count: usize,
     data_device: &CudaSlice<u8>,
     pattern_batch: &DevicePatternBatch,
     match_positions_device: &mut CudaSlice<u32>,
@@ -1799,11 +2528,11 @@ fn launch_warp_line_search_kernel(
     max_matches: u32,
     match_count_device: &mut CudaSlice<u32>,
 ) -> Result<()> {
-    let line_count = i32::try_from(line_buffers.line_count)
+    let line_count = i32::try_from(line_count)
         .context("GPU native warp line search count exceeds i32 length")?;
     let launch_config = LaunchConfig {
         grid_dim: (
-            u32::try_from(line_buffers.line_count)
+            u32::try_from(line_count)
                 .unwrap_or(0)
                 .div_ceil(WARPS_PER_BLOCK),
             1,
@@ -1826,8 +2555,8 @@ fn launch_warp_line_search_kernel(
         launch.arg(&pattern_batch.pattern_offsets_device);
         launch.arg(&pattern_batch.pattern_lengths_device);
         launch.arg(&pattern_count);
-        launch.arg(&line_buffers.line_starts_device);
-        launch.arg(&line_buffers.line_lengths_device);
+        launch.arg(line_starts_device);
+        launch.arg(line_lengths_device);
         launch.arg(&line_count);
         launch.arg(match_positions_device);
         launch.arg(match_pattern_ids_device);
@@ -1839,14 +2568,27 @@ fn launch_warp_line_search_kernel(
     })
 }
 
-fn upload_adaptive_dispatch(
-    stream: &Arc<CudaStream>,
+fn prepare_adaptive_dispatch(
+    slot: &mut SearchPipelineSlot,
     classified_lines: &ClassifiedLineBatch,
 ) -> Result<SlotAdaptiveDispatch> {
+    prepare_line_class_buffers(
+        &slot.stream,
+        &mut slot.short_line_buffers,
+        &classified_lines.short_lines,
+    )?;
+    prepare_line_class_buffers(
+        &slot.stream,
+        &mut slot.medium_line_buffers,
+        &classified_lines.medium_lines,
+    )?;
+    prepare_line_class_buffers(
+        &slot.stream,
+        &mut slot.long_line_buffers,
+        &classified_lines.long_lines,
+    )?;
+
     Ok(SlotAdaptiveDispatch {
-        short_lines: upload_line_class_buffers(stream, &classified_lines.short_lines)?,
-        medium_lines: upload_line_class_buffers(stream, &classified_lines.medium_lines)?,
-        long_lines: upload_line_class_buffers(stream, &classified_lines.long_lines)?,
         stats: AdaptiveDispatchStats {
             short_line_count: classified_lines.short_line_count(),
             medium_line_count: classified_lines.medium_line_count(),
@@ -1857,30 +2599,253 @@ fn upload_adaptive_dispatch(
     })
 }
 
-fn upload_line_class_buffers(
+fn prepare_line_class_buffers(
     stream: &Arc<CudaStream>,
+    storage: &mut Option<ReusableLineClassBuffers>,
     lines: &[LineDescriptor],
-) -> Result<Option<DeviceLineClassBuffers>> {
+) -> Result<()> {
     if lines.is_empty() {
-        return Ok(None);
+        if let Some(storage) = storage.as_mut() {
+            storage.len = 0;
+        }
+        return Ok(());
     }
 
-    let line_starts = lines.iter().map(|line| line.start).collect::<Vec<_>>();
-    let line_lengths = lines.iter().map(|line| line.len).collect::<Vec<_>>();
-    let line_starts_device = stream
-        .clone_htod(line_starts.as_slice())
+    let needs_allocation = storage
+        .as_ref()
+        .map(|storage| storage.line_starts_host.len() < lines.len())
+        .unwrap_or(true);
+    if needs_allocation {
+        let line_starts_device = unsafe { stream.alloc::<u32>(lines.len()) }
+            .map_err(anyhow::Error::new)
+            .context("failed to allocate adaptive line start buffer on CUDA device")?;
+        let line_lengths_device = unsafe { stream.alloc::<u32>(lines.len()) }
+            .map_err(anyhow::Error::new)
+            .context("failed to allocate adaptive line length buffer on CUDA device")?;
+        *storage = Some(ReusableLineClassBuffers {
+            line_starts_host: vec![0; lines.len()],
+            line_lengths_host: vec![0; lines.len()],
+            line_starts_device,
+            line_lengths_device,
+            len: 0,
+        });
+    }
+
+    let storage = storage
+        .as_mut()
+        .context("missing reusable adaptive line class buffers")?;
+    for (index, line) in lines.iter().enumerate() {
+        storage.line_starts_host[index] = line.start;
+        storage.line_lengths_host[index] = line.len;
+    }
+    storage.len = lines.len();
+
+    let mut starts_view = storage
+        .line_starts_device
+        .slice_mut(0..storage.len);
+    let mut lengths_view = storage
+        .line_lengths_device
+        .slice_mut(0..storage.len);
+    stream
+        .memcpy_htod(&storage.line_starts_host[..storage.len], &mut starts_view)
         .map_err(anyhow::Error::new)
         .context("failed to copy adaptive line starts to CUDA device")?;
-    let line_lengths_device = stream
-        .clone_htod(line_lengths.as_slice())
+    stream
+        .memcpy_htod(&storage.line_lengths_host[..storage.len], &mut lengths_view)
         .map_err(anyhow::Error::new)
         .context("failed to copy adaptive line lengths to CUDA device")?;
 
-    Ok(Some(DeviceLineClassBuffers {
-        line_starts_device,
-        line_lengths_device,
-        line_count: lines.len(),
-    }))
+    Ok(())
+}
+
+fn launch_slot_search_standard(
+    slot: &mut SearchPipelineSlot,
+    runtime: &KernelRuntime,
+    pattern_batch_index: usize,
+    max_matches: u32,
+) -> Result<()> {
+    let bytes_used = slot
+        .current_batch
+        .as_ref()
+        .map(|batch| batch.bytes_used)
+        .unwrap_or(0);
+    slot.stream
+        .memset_zeros(&mut slot.match_count_buffer)
+        .map_err(anyhow::Error::new)
+        .context("failed to reset GPU search pipeline match counter")?;
+    slot.transfer_start = Some(record_timed_event(&slot.stream)?);
+    copy_pinned_host_to_device(&slot.stream, &slot.host_buffer, bytes_used, &mut slot.data_buffer)
+        .context("failed to copy pinned search batch to CUDA device")?;
+    slot.transfer_end = Some(record_timed_event(&slot.stream)?);
+    launch_slot_search_kernels(slot, runtime, pattern_batch_index, max_matches)?;
+    slot.kernel_end = Some(record_timed_event(&slot.stream)?);
+    slot.graph_launch_started_at = None;
+    slot.current_launch_mode = Some(SearchLaunchMode::Standard);
+    Ok(())
+}
+
+fn capture_slot_search_graph(
+    slot: &mut SearchPipelineSlot,
+    runtime: &KernelRuntime,
+    pattern_batch_index: usize,
+    max_matches: u32,
+    signature: GraphCaptureSignature,
+) -> Result<()> {
+    let bytes_used = slot
+        .current_batch
+        .as_ref()
+        .map(|batch| batch.bytes_used)
+        .unwrap_or(0);
+    let capture_input_ptr = slot
+        .host_buffer
+        .as_slice()?
+        .as_ptr();
+    let mut match_count_host = unsafe { runtime.context.alloc_pinned::<u32>(1) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate graphed GPU match count host buffer")?;
+    let match_count_host_ptr = match_count_host
+        .as_mut_ptr()
+        .map_err(anyhow::Error::new)
+        .context("failed to access graphed GPU match count host buffer")?;
+
+    slot.stream
+        .synchronize()
+        .map_err(anyhow::Error::new)
+        .context("failed to synchronize GPU search pipeline stream before CUDA graph capture")?;
+    let _event_tracking_guard = EventTrackingModeGuard::disable(&runtime.context);
+    slot.stream
+        .begin_capture(sys::CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_RELAXED)
+        .map_err(anyhow::Error::new)
+        .context("failed to begin CUDA graph capture for GPU search pipeline")?;
+
+    let capture = (|| {
+        let capture_input = unsafe { std::slice::from_raw_parts(capture_input_ptr, bytes_used) };
+        copy_host_slice_to_device_during_capture(
+            &slot.stream,
+            capture_input,
+            &mut slot.data_buffer,
+        )
+        .context("failed to copy graphed pinned search batch to CUDA device")?;
+        launch_slot_search_kernels(slot, runtime, pattern_batch_index, max_matches)?;
+        let match_count_host_slice = unsafe { std::slice::from_raw_parts_mut(match_count_host_ptr, 1) };
+        copy_device_match_count_to_host_slice_during_capture(
+            &slot.stream,
+            &slot.match_count_buffer,
+            match_count_host_slice,
+        )
+        .context("failed to enqueue graphed GPU match count copy to host")?;
+        let graph = CapturedCudaGraph::from_captured_stream(&slot.stream)?
+            .context("CUDA graph capture for GPU search pipeline produced no graph")?;
+
+        Ok::<GraphCaptureState, anyhow::Error>(GraphCaptureState {
+            signature,
+            graph,
+            match_count_host,
+        })
+    })();
+
+    match capture {
+        Ok(graph_state) => {
+            slot.cuda_graph = Some(graph_state);
+            slot.graph_launch_started_at = None;
+            slot.transfer_start = None;
+            slot.transfer_end = None;
+            slot.kernel_end = None;
+            Ok(())
+        }
+        Err(err) => {
+            if let Ok(graph) = unsafe { cuda_result::stream::end_capture(slot.stream.cu_stream()) } {
+                if !graph.is_null() {
+                    let _ = unsafe { cuda_result::graph::destroy(graph) };
+                }
+            }
+            Err(err)
+        }
+    }
+}
+
+fn launch_slot_search_graph(
+    slot: &mut SearchPipelineSlot,
+    launch_mode: SearchLaunchMode,
+) -> Result<()> {
+    let graph_state = slot
+        .cuda_graph
+        .as_ref()
+        .context("missing CUDA graph state for GPU search pipeline")?;
+    slot.stream
+        .memset_zeros(&mut slot.match_count_buffer)
+        .map_err(anyhow::Error::new)
+        .context("failed to reset graphed GPU search pipeline match counter before launch")?;
+    graph_state
+        .graph
+        .launch()?;
+    slot.graph_launch_started_at = Some(Instant::now());
+    slot.current_launch_mode = Some(launch_mode);
+    slot.transfer_start = None;
+    slot.transfer_end = None;
+    slot.kernel_end = None;
+    Ok(())
+}
+
+fn launch_slot_search_kernels(
+    slot: &mut SearchPipelineSlot,
+    runtime: &KernelRuntime,
+    pattern_batch_index: usize,
+    max_matches: u32,
+) -> Result<()> {
+    let pattern_batch = slot
+        .pattern_batches
+        .get(pattern_batch_index)
+        .context("missing pattern batch buffers for GPU search kernels")?;
+    if let Some(short_lines) = slot.short_line_buffers.as_ref().filter(|lines| lines.len > 0) {
+        launch_line_search_kernel(
+            &slot.stream,
+            &runtime.short_line_function,
+            SHORT_LINE_THREADS_PER_BLOCK,
+            &short_lines.line_starts_device,
+            &short_lines.line_lengths_device,
+            short_lines.len,
+            &slot.data_buffer,
+            pattern_batch,
+            &mut slot.match_positions_buffer,
+            &mut slot.match_pattern_ids_buffer,
+            max_matches,
+            &mut slot.match_count_buffer,
+        )?;
+    }
+    if let Some(medium_lines) = slot.medium_line_buffers.as_ref().filter(|lines| lines.len > 0) {
+        launch_warp_line_search_kernel(
+            &slot.stream,
+            &runtime.warp_line_function,
+            &medium_lines.line_starts_device,
+            &medium_lines.line_lengths_device,
+            medium_lines.len,
+            &slot.data_buffer,
+            pattern_batch,
+            &mut slot.match_positions_buffer,
+            &mut slot.match_pattern_ids_buffer,
+            max_matches,
+            &mut slot.match_count_buffer,
+        )?;
+    }
+    if let Some(long_lines) = slot.long_line_buffers.as_ref().filter(|lines| lines.len > 0) {
+        launch_line_search_kernel(
+            &slot.stream,
+            &runtime.block_line_function,
+            LONG_LINE_THREADS_PER_BLOCK,
+            &long_lines.line_starts_device,
+            &long_lines.line_lengths_device,
+            long_lines.len,
+            &slot.data_buffer,
+            pattern_batch,
+            &mut slot.match_positions_buffer,
+            &mut slot.match_pattern_ids_buffer,
+            max_matches,
+            &mut slot.match_count_buffer,
+        )?;
+    }
+
+    Ok(())
 }
 
 fn classify_file_lines(
@@ -1950,6 +2915,43 @@ fn copy_pinned_host_to_device(
     let host_slice = &host_buffer.as_slice()?[..num_bytes];
     catch_cuda("copy pinned host buffer to CUDA device", || unsafe {
         cuda_result::memcpy_htod_async(device_ptr, host_slice, stream.cu_stream())
+            .map_err(anyhow::Error::new)
+    })
+}
+
+fn copy_host_slice_to_device_during_capture(
+    stream: &Arc<CudaStream>,
+    host_slice: &[u8],
+    device_buffer: &mut CudaSlice<u8>,
+) -> Result<()> {
+    let (device_ptr, _record_dst) = device_buffer.device_ptr_mut(stream);
+    catch_cuda("copy pinned host buffer to CUDA device during graph capture", || unsafe {
+        cuda_result::memcpy_htod_async(device_ptr, host_slice, stream.cu_stream())
+            .map_err(anyhow::Error::new)
+    })
+}
+
+fn copy_device_match_count_to_host_slice_during_capture(
+    stream: &Arc<CudaStream>,
+    match_count_buffer: &CudaSlice<u32>,
+    match_count_host: &mut [u32],
+) -> Result<()> {
+    let (device_ptr, _record_src) = match_count_buffer.device_ptr(stream);
+    catch_cuda("copy GPU match count to pinned host buffer during graph capture", || unsafe {
+        cuda_result::memcpy_dtoh_async(match_count_host, device_ptr, stream.cu_stream())
+            .map_err(anyhow::Error::new)
+    })
+}
+
+fn copy_device_u32_slice_to_host_during_capture(
+    stream: &Arc<CudaStream>,
+    device_buffer: &CudaSlice<u32>,
+    host_buffer: &mut [u32],
+    description: &str,
+) -> Result<()> {
+    let (device_ptr, _record_src) = device_buffer.device_ptr(stream);
+    catch_cuda(description, || unsafe {
+        cuda_result::memcpy_dtoh_async(host_buffer, device_ptr, stream.cu_stream())
             .map_err(anyhow::Error::new)
     })
 }
@@ -2063,8 +3065,12 @@ fn upload_pattern_batches(
     runtime: &KernelRuntime,
     pattern_batches: &[PatternBatchPlan],
 ) -> Result<Vec<DevicePatternBatch>> {
-    let stream = runtime.context.default_stream();
-    pattern_batches
+    let stream = runtime
+        .context
+        .new_stream()
+        .map_err(anyhow::Error::new)
+        .context("failed to create CUDA stream for pattern uploads")?;
+    let uploaded = pattern_batches
         .iter()
         .map(|batch| {
             let host = Arc::new(batch.clone());
@@ -2088,7 +3094,48 @@ fn upload_pattern_batches(
                 pattern_lengths_device,
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    stream
+        .synchronize()
+        .map_err(anyhow::Error::new)
+        .context("failed to synchronize CUDA pattern upload stream")?;
+    Ok(uploaded)
+}
+
+fn upload_pattern_batches_on_stream(
+    stream: &Arc<CudaStream>,
+    pattern_batches: &[PatternBatchPlan],
+) -> Result<Vec<DevicePatternBatch>> {
+    let uploaded = pattern_batches
+        .iter()
+        .map(|batch| {
+            let host = Arc::new(batch.clone());
+            let pattern_blob_device = stream
+                .clone_htod(host.pattern_blob.as_slice())
+                .map_err(anyhow::Error::new)
+                .context("failed to copy GPU native pattern blob to CUDA device")?;
+            let pattern_offsets_device = stream
+                .clone_htod(host.pattern_offsets.as_slice())
+                .map_err(anyhow::Error::new)
+                .context("failed to copy GPU native pattern offsets to CUDA device")?;
+            let pattern_lengths_device = stream
+                .clone_htod(host.pattern_lengths.as_slice())
+                .map_err(anyhow::Error::new)
+                .context("failed to copy GPU native pattern lengths to CUDA device")?;
+
+            Ok(DevicePatternBatch {
+                host,
+                pattern_blob_device,
+                pattern_offsets_device,
+                pattern_lengths_device,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    stream
+        .synchronize()
+        .map_err(anyhow::Error::new)
+        .context("failed to synchronize CUDA pattern upload stream")?;
+    Ok(uploaded)
 }
 
 fn plan_file_batches(files: &[PathBuf], max_batch_bytes: usize) -> Result<Vec<FileBatchPlan>> {
