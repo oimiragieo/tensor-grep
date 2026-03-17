@@ -8,13 +8,16 @@ use std::ffi::OsString;
 #[cfg(feature = "cuda")]
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
 use tensor_grep_rs::backend_cpu::CpuBackend;
 #[cfg(feature = "cuda")]
 use tensor_grep_rs::gpu_native::{gpu_native_search_paths, GpuNativeSearchConfig, GpuNativeSearchStats};
 use tensor_grep_rs::index::TrigramIndex;
-use tensor_grep_rs::native_search::{run_native_search, NativeSearchConfig, SearchStats};
+use tensor_grep_rs::native_search::{
+    run_native_search, NativeOutputTarget, NativeSearchConfig, SearchStats,
+};
 use tensor_grep_rs::python_sidecar::{
     execute_python_passthrough_command, execute_sidecar_command, SidecarError,
 };
@@ -152,12 +155,16 @@ pub struct SearchArgs {
     #[arg(long)]
     pub verbose: bool,
 
+    /// A pattern to search for. Can be provided multiple times.
+    #[arg(short = 'e', long = "regexp")]
+    pub regexp: Vec<String>,
+
     /// The search pattern (regex or string)
-    pub pattern: String,
+    #[arg(required_unless_present = "regexp")]
+    pub pattern: Option<String>,
 
     /// Path to search
-    #[arg(default_value = ".")]
-    pub path: String,
+    pub path: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -219,6 +226,22 @@ pub enum Commands {
     New,
     /// Start Language Server
     Lsp,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedSearchRequest {
+    patterns: Vec<String>,
+    path: String,
+}
+
+impl ResolvedSearchRequest {
+    fn query_display(&self) -> String {
+        if self.patterns.len() == 1 {
+            self.patterns[0].clone()
+        } else {
+            self.patterns.join(" | ")
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -345,7 +368,8 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
     if !cli.gpu_device_ids.is_empty() {
         return handle_gpu_search(GpuSearchParams {
-            pattern: &pattern,
+            patterns: std::slice::from_ref(&pattern),
+            query: &pattern,
             path: &path,
             line_number: true,
             ignore_case: cli.ignore_case,
@@ -405,7 +429,8 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     if should_attempt_auto_gpu(cli.force_cpu, corpus_bytes) {
         let auto_gpu_ids: [i32; 0] = [];
         let params = GpuSearchParams {
-            pattern: &pattern,
+            patterns: std::slice::from_ref(&pattern),
+            query: &pattern,
             path: &path,
             line_number: true,
             ignore_case: cli.ignore_case,
@@ -475,6 +500,32 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
     }
 
     false
+}
+
+fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchRequest> {
+    let mut patterns = args.regexp.clone();
+    let path = if args.regexp.is_empty() {
+        if let Some(pattern) = args.pattern.as_ref() {
+            patterns.push(pattern.clone());
+        }
+        args.path.clone().unwrap_or_else(|| ".".to_string())
+    } else {
+        match (&args.pattern, &args.path) {
+            (Some(first), Some(path)) => {
+                patterns.push(first.clone());
+                path.clone()
+            }
+            (Some(path), None) => path.clone(),
+            (None, Some(path)) => path.clone(),
+            (None, None) => ".".to_string(),
+        }
+    };
+
+    if patterns.is_empty() {
+        anyhow::bail!("search requires a pattern or at least one -e/--regexp pattern");
+    }
+
+    Ok(ResolvedSearchRequest { patterns, path })
 }
 
 fn select_native_search_routing(
@@ -585,7 +636,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         word_regexp: false,
         globs: Vec::new(),
         no_ignore: true,
-        pattern: pattern.to_string(),
+        patterns: vec![pattern.to_string()],
         path: path.to_string(),
     }
 }
@@ -594,7 +645,7 @@ fn explicit_rg_override_requested() -> bool {
     env::var_os("TG_RG_PATH").is_some() || env::var_os("TG_RG_BINARY").is_some()
 }
 
-fn command_ripgrep_args(args: &SearchArgs) -> RipgrepSearchArgs {
+fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> RipgrepSearchArgs {
     RipgrepSearchArgs {
         ignore_case: args.ignore_case,
         fixed_strings: args.fixed_strings,
@@ -606,8 +657,8 @@ fn command_ripgrep_args(args: &SearchArgs) -> RipgrepSearchArgs {
         word_regexp: args.word_regexp,
         globs: args.globs.clone(),
         no_ignore: args.no_ignore,
-        pattern: args.pattern.clone(),
-        path: args.path.clone(),
+        patterns: request.patterns.clone(),
+        path: request.path.clone(),
     }
 }
 
@@ -636,10 +687,15 @@ fn native_search_config_for_positional(
     }
 }
 
-fn native_search_config_for_command(args: &SearchArgs, decision: RoutingDecision) -> NativeSearchConfig {
+fn native_search_config_for_command(
+    args: &SearchArgs,
+    pattern: &str,
+    path: &str,
+    decision: RoutingDecision,
+) -> NativeSearchConfig {
     NativeSearchConfig {
-        pattern: args.pattern.clone(),
-        paths: vec![PathBuf::from(&args.path)],
+        pattern: pattern.to_string(),
+        paths: vec![PathBuf::from(path)],
         routing_backend: decision.backend,
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used,
@@ -664,10 +720,11 @@ fn native_search_config_for_command(args: &SearchArgs, decision: RoutingDecision
 #[cfg(feature = "cuda")]
 fn native_search_config_for_gpu_params(
     params: &GpuSearchParams<'_>,
+    pattern: &str,
     decision: RoutingDecision,
 ) -> NativeSearchConfig {
     NativeSearchConfig {
-        pattern: params.pattern.to_string(),
+        pattern: pattern.to_string(),
         paths: vec![PathBuf::from(params.path)],
         routing_backend: decision.backend,
         routing_reason: decision.reason,
@@ -696,6 +753,60 @@ fn execute_native_search(config: NativeSearchConfig) -> anyhow::Result<SearchSta
     }
 
     run_native_search(config)
+}
+
+fn collect_native_multi_pattern_matches(
+    patterns: &[String],
+    mut base_config: NativeSearchConfig,
+) -> anyhow::Result<Vec<SearchMatchJson>> {
+    let include_pattern_metadata = patterns.len() > 1;
+    base_config.json = false;
+    base_config.ndjson = false;
+    base_config.count = false;
+    base_config.output_target = NativeOutputTarget::Buffer(Arc::new(Mutex::new(Vec::new())));
+
+    let mut matches = Vec::new();
+    for (pattern_id, pattern) in patterns.iter().enumerate() {
+        let mut pattern_config = base_config.clone();
+        pattern_config.pattern = pattern.clone();
+        let stats = execute_native_search(pattern_config)?;
+        matches.extend(stats.matches.into_iter().map(|matched| SearchMatchJson {
+            file: matched.path.to_string_lossy().into_owned(),
+            line: matched.line_number.unwrap_or(0) as usize,
+            text: matched.text,
+            pattern_id: include_pattern_metadata.then_some(pattern_id),
+            pattern_text: include_pattern_metadata.then(|| pattern.clone()),
+        }));
+    }
+
+    Ok(matches)
+}
+
+fn emit_multi_pattern_native_results(
+    decision: RoutingDecision,
+    query: &str,
+    path: &str,
+    json: bool,
+    ndjson: bool,
+    count: bool,
+    matches: Vec<SearchMatchJson>,
+) -> anyhow::Result<()> {
+    let has_matches = !matches.is_empty();
+    if json {
+        emit_json_search_results(decision, query, path, matches)?;
+    } else if ndjson {
+        emit_ndjson_search_results(decision, query, path, matches)?;
+    } else if count {
+        emit_count_search_matches(path, &matches);
+    } else {
+        emit_plain_search_matches(path, &matches);
+    }
+
+    if !has_matches {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 fn run_native_search_with_optional_rg_fallback(
@@ -732,14 +843,18 @@ fn run_native_search_with_optional_rg_fallback(
 }
 
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
+    let request = resolve_search_request(&args)?;
+    let query = request.query_display();
+
     if args.index {
-        return handle_index_search(&args);
+        return handle_index_search(&args, &request, &query);
     }
 
     if !args.gpu_device_ids.is_empty() {
         return handle_gpu_search(GpuSearchParams {
-            pattern: &args.pattern,
-            path: &args.path,
+            patterns: &request.patterns,
+            query: &query,
+            path: &request.path,
             line_number: false,
             ignore_case: args.ignore_case,
             fixed_strings: args.fixed_strings,
@@ -762,7 +877,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             emit_verbose_metadata(RoutingDecision::RIPGREP);
         }
 
-        let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args))?;
+        let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args, &request))?;
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
         }
@@ -776,19 +891,21 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         && !args.invert_match
         && args.context.is_none()
         && args.max_count.is_none()
-        && !args.word_regexp && args.globs.is_empty()
+        && !args.word_regexp
+        && args.globs.is_empty()
+        && request.patterns.len() == 1
     {
-        let index_path = resolve_index_path(&args.path);
+        let index_path = resolve_index_path(&request.path);
         if index_path.exists() {
             if let Ok(loaded) = TrigramIndex::load(&index_path) {
-                if !loaded.is_stale() && args.pattern.len() >= 3 {
+                if !loaded.is_stale() && request.patterns[0].len() >= 3 {
                     if args.verbose {
                         eprintln!(
                             "[routing] warm index found ({} files), using index-accelerated path",
                             loaded.file_count()
                         );
                     }
-                    return run_index_query(&args, &loaded);
+                    return run_index_query(&args, &request, &query, &loaded);
                 }
             }
         }
@@ -804,15 +921,16 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     );
 
     #[cfg(feature = "cuda")]
-    let corpus_bytes = count_search_corpus_bytes(&[PathBuf::from(&args.path)], args.no_ignore, &args.globs)
+    let corpus_bytes = count_search_corpus_bytes(&[PathBuf::from(&request.path)], args.no_ignore, &args.globs)
         .unwrap_or(0);
 
     #[cfg(feature = "cuda")]
     if should_attempt_auto_gpu(args.force_cpu, corpus_bytes) {
         let auto_gpu_ids: [i32; 0] = [];
         let params = GpuSearchParams {
-            pattern: &args.pattern,
-            path: &args.path,
+            patterns: &request.patterns,
+            query: &query,
+            path: &request.path,
             line_number: false,
             ignore_case: args.ignore_case,
             fixed_strings: args.fixed_strings,
@@ -832,10 +950,15 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         if gpu_native_fallback_reason(&params).is_none() {
             let fallback_decision = cpu_decision.unwrap_or(RoutingDecision::NATIVE_CPU_GPU_FALLBACK);
             let rg_fallback = should_allow_rg_fallback(fallback_decision, args.json, args.ndjson, rg_available)
-                .then(|| command_ripgrep_args(&args));
+                .then(|| command_ripgrep_args(&args, &request));
             return handle_auto_gpu_search(
                 params,
-                native_search_config_for_command(&args, RoutingDecision::NATIVE_CPU_GPU_FALLBACK),
+                native_search_config_for_command(
+                    &args,
+                    &request.patterns[0],
+                    &request.path,
+                    RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
+                ),
                 rg_fallback,
             );
         }
@@ -847,10 +970,31 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         }
 
         let rg_fallback = should_allow_rg_fallback(cpu_decision, args.json, args.ndjson, rg_available)
-            .then(|| command_ripgrep_args(&args));
+            .then(|| command_ripgrep_args(&args, &request));
+
+        if request.patterns.len() > 1 {
+            let matches = collect_native_multi_pattern_matches(
+                &request.patterns,
+                native_search_config_for_command(
+                    &args,
+                    &request.patterns[0],
+                    &request.path,
+                    cpu_decision,
+                ),
+            )?;
+            return emit_multi_pattern_native_results(
+                cpu_decision,
+                &query,
+                &request.path,
+                args.json,
+                args.ndjson,
+                args.count,
+                matches,
+            );
+        }
 
         return run_native_search_with_optional_rg_fallback(
-            native_search_config_for_command(&args, cpu_decision),
+            native_search_config_for_command(&args, &request.patterns[0], &request.path, cpu_decision),
             rg_fallback,
         );
     }
@@ -859,7 +1003,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         emit_verbose_metadata(RoutingDecision::RIPGREP);
     }
 
-    let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args))?;
+    let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args, &request))?;
     if exit_code != 0 {
         std::process::exit(exit_code.max(1));
     }
@@ -877,8 +1021,12 @@ fn resolve_index_path(search_path: &str) -> PathBuf {
     }
 }
 
-fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
-    let index_path = resolve_index_path(&args.path);
+fn handle_index_search(
+    args: &SearchArgs,
+    request: &ResolvedSearchRequest,
+    query: &str,
+) -> anyhow::Result<()> {
+    let index_path = resolve_index_path(&request.path);
 
     let index = if index_path.exists() {
         let loaded = match TrigramIndex::load(&index_path) {
@@ -886,7 +1034,7 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
             Err(e) => {
                 eprintln!("[index] warning: failed to load index: {e}, rebuilding...");
                 let started = Instant::now();
-                let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
+                let fresh = TrigramIndex::build_with_options(Path::new(&request.path), args.no_ignore)?;
                 fresh.save(&index_path)?;
                 if args.verbose {
                     eprintln!(
@@ -897,7 +1045,7 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
                         fresh.total_postings()
                     );
                 }
-                return run_index_query(args, &fresh);
+                return run_index_query(args, request, query, &fresh);
             }
         };
         if let Some(reason) = loaded.staleness_reason() {
@@ -906,7 +1054,7 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
             }
             let started = Instant::now();
             let update =
-                loaded.rebuild_incremental_with_options(Path::new(&args.path), args.no_ignore)?;
+                loaded.rebuild_incremental_with_options(Path::new(&request.path), args.no_ignore)?;
             update.index.save(&index_path)?;
             if args.verbose {
                 eprintln!(
@@ -934,10 +1082,10 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
         }
     } else {
         if args.verbose {
-            eprintln!("[index] full rebuild: building index for {}...", args.path);
+            eprintln!("[index] full rebuild: building index for {}...", request.path);
         }
         let started = Instant::now();
-        let fresh = TrigramIndex::build_with_options(Path::new(&args.path), args.no_ignore)?;
+        let fresh = TrigramIndex::build_with_options(Path::new(&request.path), args.no_ignore)?;
         fresh.save(&index_path)?;
         if args.verbose {
             eprintln!(
@@ -951,56 +1099,46 @@ fn handle_index_search(args: &SearchArgs) -> anyhow::Result<()> {
         fresh
     };
 
-    run_index_query(args, &index)
+    run_index_query(args, request, query, &index)
 }
 
-fn run_index_query(args: &SearchArgs, index: &TrigramIndex) -> anyhow::Result<()> {
+fn run_index_query(
+    args: &SearchArgs,
+    request: &ResolvedSearchRequest,
+    query: &str,
+    index: &TrigramIndex,
+) -> anyhow::Result<()> {
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::INDEX);
     }
 
-    let results = index.search(&args.pattern, args.ignore_case, args.fixed_strings)?;
+    let include_pattern_metadata = request.patterns.len() > 1;
+    let mut matches = Vec::new();
+    for (pattern_id, pattern) in request.patterns.iter().enumerate() {
+        let results = index.search(pattern, args.ignore_case, args.fixed_strings)?;
+        matches.extend(results.into_iter().map(|result| SearchMatchJson {
+            file: result.file.to_string_lossy().into_owned(),
+            line: result.line,
+            text: result.text,
+            pattern_id: include_pattern_metadata.then_some(pattern_id),
+            pattern_text: include_pattern_metadata.then(|| pattern.clone()),
+        }));
+    }
 
     if args.json {
-        return emit_json_search_results(
-            RoutingDecision::INDEX,
-            &args.pattern,
-            &args.path,
-            results
-                .into_iter()
-                .map(|result| SearchMatchJson {
-                    file: result.file.to_string_lossy().into_owned(),
-                    line: result.line,
-                    text: result.text,
-                })
-                .collect(),
-        );
+        return emit_json_search_results(RoutingDecision::INDEX, query, &request.path, matches);
     }
 
     if args.ndjson {
-        return emit_ndjson_search_results(
-            RoutingDecision::INDEX,
-            &args.pattern,
-            &args.path,
-            results
-                .into_iter()
-                .map(|result| SearchMatchJson {
-                    file: result.file.to_string_lossy().into_owned(),
-                    line: result.line,
-                    text: result.text,
-                })
-                .collect(),
-        );
+        return emit_ndjson_search_results(RoutingDecision::INDEX, query, &request.path, matches);
     }
 
     if args.count {
-        println!("{}", results.len());
+        println!("{}", unique_line_matches(&matches).len());
         return Ok(());
     }
 
-    for result in &results {
-        println!("{}:{}:{}", result.file.display(), result.line, result.text);
-    }
+    emit_plain_search_matches(&request.path, &matches);
 
     Ok(())
 }
@@ -1058,11 +1196,15 @@ struct BatchRewriteConfig {
     verify: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
 struct SearchMatchJson {
     file: String,
     line: usize,
     text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern_id: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern_text: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1076,6 +1218,10 @@ struct SearchMatchNdjson<'a> {
     file: &'a str,
     line: usize,
     text: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern_id: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern_text: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -1092,6 +1238,10 @@ struct GpuSidecarSearchMatch {
     file: String,
     line_number: usize,
     text: String,
+    #[serde(default)]
+    pattern_id: Option<usize>,
+    #[serde(default)]
+    pattern_text: Option<String>,
 }
 
 fn run_search_path(args: &RunArgs) -> &str {
@@ -1230,6 +1380,8 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
                     file: matched.file.to_string_lossy().into_owned(),
                     line: matched.line,
                     text: matched.matched_text,
+                    pattern_id: None,
+                    pattern_text: None,
                 })
                 .collect(),
         );
@@ -1469,7 +1621,8 @@ fn handle_ast_batch_rewrite_apply(
 }
 
 struct GpuSearchParams<'a> {
-    pattern: &'a str,
+    patterns: &'a [String],
+    query: &'a str,
     path: &'a str,
     #[cfg_attr(not(feature = "cuda"), allow(dead_code))]
     line_number: bool,
@@ -1530,11 +1683,16 @@ fn gpu_native_fallback_reason(params: &GpuSearchParams<'_>) -> Option<&'static s
         Some("max-count searches are not yet supported by native GPU routing")
     } else if params.word_regexp {
         Some("word-boundary searches are not yet supported by native GPU routing")
-    } else if !params.fixed_strings && pattern_requires_regex_engine(params.pattern) {
+    } else if !params.fixed_strings && patterns_require_regex_engine(params.patterns) {
         Some("regex patterns still require the Python GPU sidecar")
     } else {
         None
     }
+}
+
+#[cfg(feature = "cuda")]
+fn patterns_require_regex_engine(patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| pattern_requires_regex_engine(pattern))
 }
 
 #[cfg(feature = "cuda")]
@@ -1683,7 +1841,7 @@ fn execute_gpu_native_route(
     }
 
     let config = GpuNativeSearchConfig {
-        pattern: params.pattern.to_string(),
+        patterns: params.patterns.to_vec(),
         paths: vec![PathBuf::from(params.path)],
         no_ignore: params.no_ignore,
         glob: params.globs.clone(),
@@ -1700,7 +1858,7 @@ fn execute_gpu_native_route(
     } else if params.ndjson {
         emit_ndjson_search_results(
             decision,
-            params.pattern,
+            params.query,
             params.path,
             gpu_native_match_json_entries(&stats),
         )?;
@@ -1733,6 +1891,21 @@ fn handle_auto_gpu_search(
                     if cpu_fallback_config.verbose {
                         emit_verbose_metadata(RoutingDecision::NATIVE_CPU_GPU_FALLBACK);
                     }
+                    if params.patterns.len() > 1 {
+                        let matches = collect_native_multi_pattern_matches(
+                            params.patterns,
+                            cpu_fallback_config,
+                        )?;
+                        return emit_multi_pattern_native_results(
+                            RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
+                            params.query,
+                            params.path,
+                            params.json,
+                            params.ndjson,
+                            params.count,
+                            matches,
+                        );
+                    }
                     run_native_search_with_optional_rg_fallback(cpu_fallback_config, rg_fallback)
                 }
                 GpuRouteFailureKind::Fatal => {
@@ -1760,6 +1933,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                     let rg_available = ripgrep_is_available();
                     let cpu_config = native_search_config_for_gpu_params(
                         &params,
+                        &params.patterns[0],
                         RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
                     );
                     let rg_fallback = should_allow_rg_fallback(
@@ -1779,11 +1953,26 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                         word_regexp: params.word_regexp,
                         globs: params.globs.clone(),
                         no_ignore: params.no_ignore,
-                        pattern: params.pattern.to_string(),
+                        patterns: params.patterns.to_vec(),
                         path: params.path.to_string(),
                     });
                     if cpu_config.verbose {
                         emit_verbose_metadata(RoutingDecision::NATIVE_CPU_GPU_FALLBACK);
+                    }
+                    if params.patterns.len() > 1 {
+                        let matches = collect_native_multi_pattern_matches(
+                            params.patterns,
+                            cpu_config,
+                        )?;
+                        return emit_multi_pattern_native_results(
+                            RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
+                            params.query,
+                            params.path,
+                            params.json,
+                            params.ndjson,
+                            params.count,
+                            matches,
+                        );
                     }
                     run_native_search_with_optional_rg_fallback(cpu_config, rg_fallback)
                 }
@@ -1802,7 +1991,8 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
     }
 
     let payload = serde_json::json!({
-        "pattern": params.pattern,
+        "pattern": params.patterns.first().cloned().unwrap_or_default(),
+        "patterns": params.patterns,
         "path": params.path,
         "ignore_case": params.ignore_case,
         "fixed_strings": params.fixed_strings,
@@ -1828,11 +2018,13 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                             file: entry.file,
                             line: entry.line_number,
                             text: entry.text,
+                            pattern_id: entry.pattern_id,
+                            pattern_text: entry.pattern_text,
                         })
                         .collect();
                     emit_ndjson_search_results(
                         RoutingDecision::GPU_SIDECAR,
-                        params.pattern,
+                        params.query,
                         params.path,
                         matches,
                     )?;
@@ -1915,6 +2107,62 @@ fn emit_json_search_results(
     Ok(())
 }
 
+fn unique_line_matches(matches: &[SearchMatchJson]) -> Vec<SearchMatchJson> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut unique = Vec::new();
+    for matched in matches {
+        let key = (matched.file.clone(), matched.line, matched.text.clone());
+        if seen.insert(key) {
+            let mut deduped = matched.clone();
+            deduped.pattern_id = None;
+            deduped.pattern_text = None;
+            unique.push(deduped);
+        }
+    }
+    unique
+}
+
+fn emit_plain_search_matches(path: &str, matches: &[SearchMatchJson]) {
+    let unique = unique_line_matches(matches);
+    let with_filename = unique
+        .iter()
+        .map(|matched| matched.file.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1
+        || Path::new(path).is_dir();
+    for matched in unique {
+        if with_filename {
+            println!("{}:{}:{}", matched.file, matched.line, matched.text);
+        } else {
+            println!("{}:{}", matched.line, matched.text);
+        }
+    }
+}
+
+fn emit_count_search_matches(path: &str, matches: &[SearchMatchJson]) {
+    let unique = unique_line_matches(matches);
+    let with_filename = unique
+        .iter()
+        .map(|matched| matched.file.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1
+        || Path::new(path).is_dir();
+    let mut counts = std::collections::BTreeMap::<String, usize>::new();
+    for matched in unique {
+        *counts.entry(matched.file).or_default() += 1;
+    }
+
+    if with_filename {
+        for (file, count) in counts {
+            println!("{file}:{count}");
+        }
+    } else {
+        println!("{}", counts.values().copied().next().unwrap_or(0));
+    }
+}
+
 #[cfg(feature = "cuda")]
 fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatchJson> {
     stats
@@ -1924,6 +2172,8 @@ fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatc
             file: matched.path.to_string_lossy().into_owned(),
             line: matched.line_number,
             text: matched.text.clone(),
+            pattern_id: (stats.pattern_count > 1).then_some(matched.pattern_id),
+            pattern_text: (stats.pattern_count > 1).then(|| matched.pattern_text.clone()),
         })
         .collect()
 }
@@ -1939,7 +2189,7 @@ fn emit_gpu_native_json_results(
         routing_backend: decision.backend,
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used,
-        query: params.pattern,
+        query: params.query,
         path: params.path,
         total_matches: stats.total_matches,
         total_files: stats.matched_files,
@@ -1953,44 +2203,20 @@ fn emit_gpu_native_json_results(
 
 #[cfg(feature = "cuda")]
 fn emit_gpu_native_plain_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
-    let with_filename = stats.searched_files > 1 || Path::new(params.path).is_dir();
-    for matched in &stats.matches {
-        if with_filename {
-            println!(
-                "{}:{}:{}",
-                matched.path.display(),
-                matched.line_number,
-                matched.text
-            );
-        } else {
-            println!("{}:{}", matched.line_number, matched.text);
-        }
-    }
+    let matches = gpu_native_match_json_entries(stats);
+    emit_plain_search_matches(params.path, &matches);
 }
 
 #[cfg(feature = "cuda")]
 fn emit_gpu_native_count_results(params: &GpuSearchParams<'_>, stats: &GpuNativeSearchStats) {
-    let with_filename = stats.searched_files > 1 || Path::new(params.path).is_dir();
-    let mut counts = std::collections::BTreeMap::<String, usize>::new();
-    for matched in &stats.matches {
-        *counts
-            .entry(matched.path.to_string_lossy().into_owned())
-            .or_default() += 1;
-    }
-
-    if with_filename {
-        for (file, count) in counts {
-            println!("{file}:{count}");
-        }
-    } else {
-        println!("{}", stats.total_matches);
-    }
+    let matches = gpu_native_match_json_entries(stats);
+    emit_count_search_matches(params.path, &matches);
 }
 
 #[cfg(feature = "cuda")]
 fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
     eprintln!(
-        "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_transfer_throughput_gbps={:.2}",
+        "[gpu-native] selected_gpu_device_id={} selected_gpu_device_name={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_throughput_gbps={:.2}",
         stats.selected_device.device_id,
         stats.selected_device.name,
         stats.searched_files,
@@ -2000,6 +2226,9 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
         stats.pipeline.pinned_host_buffers,
         stats.pipeline.batch_count,
         stats.pipeline.overlapped_batches,
+        stats.pipeline.pattern_count,
+        stats.pipeline.pattern_batch_count,
+        stats.pipeline.single_dispatch,
         stats.pipeline.transfer_throughput_bytes_s / 1_000_000_000.0
     );
 }
@@ -2021,6 +2250,8 @@ fn emit_ndjson_search_results(
             file: &matched.file,
             line: matched.line,
             text: &matched.text,
+            pattern_id: matched.pattern_id,
+            pattern_text: matched.pattern_text.as_deref(),
         };
         println!("{}", serde_json::to_string(&payload)?);
     }
@@ -2043,11 +2274,18 @@ fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value>
         .matches
         .into_iter()
         .map(|entry| {
-            serde_json::json!({
+            let mut value = serde_json::json!({
                 "file": entry.file,
                 "line_number": entry.line_number,
                 "text": entry.text,
-            })
+            });
+            if let Some(pattern_id) = entry.pattern_id {
+                value["pattern_id"] = serde_json::json!(pattern_id);
+            }
+            if let Some(pattern_text) = entry.pattern_text {
+                value["pattern_text"] = serde_json::json!(pattern_text);
+            }
+            value
         })
         .collect::<Vec<_>>();
 

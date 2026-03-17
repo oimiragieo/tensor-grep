@@ -164,6 +164,15 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     pattern = payload.get("pattern", "")
+    raw_patterns = payload.get("patterns")
+    if isinstance(raw_patterns, list) and raw_patterns:
+        search_patterns = [str(item) for item in raw_patterns if str(item)]
+    elif pattern:
+        search_patterns = [str(pattern)]
+    else:
+        search_patterns = []
+    if not search_patterns:
+        return "", "gpu_search requires at least one non-empty pattern\n", 1
     path = payload.get("path", ".")
     gpu_device_ids = payload.get("gpu_device_ids")
     if not isinstance(gpu_device_ids, list) or not gpu_device_ids:
@@ -218,7 +227,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         word_regexp=bool(payload.get("word_regexp", False)),
         no_ignore=bool(payload.get("no_ignore", False)),
         gpu_device_ids=requested_gpu_device_ids,
-        query_pattern=pattern,
+        query_pattern=search_patterns[0],
     )
 
     try:
@@ -239,16 +248,31 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         all_results.routing_gpu_device_ids = list(
             getattr(pipeline, "selected_gpu_device_ids", []) or []
         )
+        include_pattern_metadata = len(search_patterns) > 1
+        serialized_matches: list[dict[str, Any]] = []
+        matched_files: set[str] = set()
 
         for current_file in candidate_files:
-            result = backend.search(current_file, pattern, config=config)
-            all_results.matches.extend(result.matches)
-            all_results.total_matches += result.total_matches
-            all_results.total_files += result.total_files
-            for fp, count in result.match_counts_by_file.items():
-                all_results.match_counts_by_file[fp] = (
-                    all_results.match_counts_by_file.get(fp, 0) + count
-                )
+            for pattern_id, current_pattern in enumerate(search_patterns):
+                result = backend.search(current_file, current_pattern, config=config)
+                all_results.matches.extend(result.matches)
+                all_results.total_matches += result.total_matches
+                for fp, count in result.match_counts_by_file.items():
+                    all_results.match_counts_by_file[fp] = (
+                        all_results.match_counts_by_file.get(fp, 0) + count
+                    )
+                for match in result.matches:
+                    matched_files.add(match.file)
+                    serialized: dict[str, Any] = {
+                        "file": match.file,
+                        "line_number": match.line_number,
+                        "text": match.text,
+                    }
+                    if include_pattern_metadata:
+                        serialized["pattern_id"] = pattern_id
+                        serialized["pattern_text"] = current_pattern
+                    serialized_matches.append(serialized)
+        all_results.total_files = len(matched_files)
     except ImportError as exc:
         return "", _gpu_import_error(requested_gpu_device_ids, exc), 1
     except Exception as exc:
@@ -263,10 +287,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
             "routing_backend": all_results.routing_backend,
             "routing_reason": all_results.routing_reason,
             "routing_gpu_device_ids": all_results.routing_gpu_device_ids,
-            "matches": [
-                {"file": m.file, "line_number": m.line_number, "text": m.text}
-                for m in all_results.matches
-            ],
+            "matches": serialized_matches,
         }
         return json_mod.dumps(response) + "\n", "", 0
 
@@ -275,8 +296,17 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         for file_path, count in all_results.match_counts_by_file.items():
             lines.append(f"{file_path}:{count}")
     else:
-        for match in all_results.matches:
-            lines.append(f"{match.file}:{match.line_number}:{match.text}")
+        seen_lines: set[tuple[str, int, str]] = set()
+        for serialized_match in serialized_matches:
+            key = (
+                str(serialized_match["file"]),
+                int(serialized_match["line_number"]),
+                str(serialized_match["text"]),
+            )
+            if key in seen_lines:
+                continue
+            seen_lines.add(key)
+            lines.append(f"{key[0]}:{key[1]}:{key[2]}")
     return "\n".join(lines) + "\n" if lines else "", "", 0
 
 

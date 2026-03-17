@@ -57,7 +57,7 @@ fn test_gpu_native_search_reports_pinned_double_buffered_stream_pipeline() {
     let dir = tempdir().unwrap();
     let (corpus, _expected) = write_overlap_corpus(dir.path());
     let config = GpuNativeSearchConfig {
-        pattern: "ERROR overlap sentinel".to_string(),
+        patterns: vec!["ERROR overlap sentinel".to_string()],
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
@@ -82,7 +82,7 @@ fn test_gpu_native_overlap_matches_expected_results_without_races() {
     let dir = tempdir().unwrap();
     let (corpus, expected) = write_overlap_corpus(dir.path());
     let config = GpuNativeSearchConfig {
-        pattern: "ERROR overlap sentinel".to_string(),
+        patterns: vec!["ERROR overlap sentinel".to_string()],
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),
@@ -111,7 +111,7 @@ fn test_gpu_native_overlap_metrics_show_transfer_compute_overlap() {
     let dir = tempdir().unwrap();
     let (corpus, _expected) = write_overlap_corpus(dir.path());
     let config = GpuNativeSearchConfig {
-        pattern: "ERROR overlap sentinel".to_string(),
+        patterns: vec!["ERROR overlap sentinel".to_string()],
         paths: vec![corpus],
         no_ignore: true,
         glob: Vec::new(),

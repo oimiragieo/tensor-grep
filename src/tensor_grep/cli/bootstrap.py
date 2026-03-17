@@ -113,6 +113,57 @@ def _resolve_rg_binary() -> str | None:
     return None
 
 
+def _resolve_native_tg_binary() -> str | None:
+    repo_root = Path(__file__).resolve().parents[3]
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    candidates = [
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "rust_core" / "target" / "debug" / binary_name,
+    ]
+    existing = [candidate for candidate in candidates if candidate.is_file()]
+    if not existing:
+        return None
+    return str(max(existing, key=lambda candidate: candidate.stat().st_mtime_ns))
+
+
+def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
+    if not search_args:
+        return False
+
+    supported_trigger = any(
+        arg in {"--cpu", "--json", "--ndjson", "--gpu-device-ids"}
+        or arg.startswith("--gpu-device-ids=")
+        for arg in search_args
+    )
+    if not supported_trigger:
+        return False
+
+    unsupported_flags = {
+        "--ast",
+        "--files",
+        "--files-with-matches",
+        "--files-without-match",
+        "--format",
+        "--lang",
+        "--ltl",
+        "--only-matching",
+        "--replace",
+        "--stats",
+        "-l",
+        "-o",
+        "-r",
+    }
+    unsupported_prefixes = ("--format=", "--lang=", "--replace=")
+    return not any(
+        arg in unsupported_flags or arg.startswith(unsupported_prefixes) for arg in search_args
+    )
+
+
+def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
+    result = subprocess.run([binary_name, "search", *search_args], check=False)
+    return int(result.returncode)
+
+
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
     result = subprocess.run([binary_name, *search_args], check=False)
     return int(result.returncode)
@@ -141,10 +192,15 @@ def main_entry() -> None:
         return
 
     search_args = _normalize_search_invocation(argv)
-    if search_args is not None and not _requires_full_cli(search_args):
-        binary_name = _resolve_rg_binary()
-        if binary_name is not None:
-            raise SystemExit(_run_rg_passthrough(binary_name, search_args))
+    if search_args is not None:
+        native_binary = _resolve_native_tg_binary()
+        if native_binary is not None and _can_delegate_to_native_tg_search(search_args):
+            raise SystemExit(_run_native_tg_search(native_binary, search_args))
+
+        if not _requires_full_cli(search_args):
+            binary_name = _resolve_rg_binary()
+            if binary_name is not None:
+                raise SystemExit(_run_rg_passthrough(binary_name, search_args))
 
     _run_full_cli()
 

@@ -23,7 +23,7 @@ pub struct RipgrepSearchArgs {
     pub word_regexp: bool,
     pub globs: Vec<String>,
     pub no_ignore: bool,
-    pub pattern: String,
+    pub patterns: Vec<String>,
     pub path: String,
 }
 
@@ -70,7 +70,11 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         command.arg("-g").arg(glob);
     }
 
-    command.arg(&args.pattern).arg(&args.path);
+    for pattern in &args.patterns {
+        command.arg("-e").arg(pattern);
+    }
+
+    command.arg(&args.path);
 
     let status = command.status().context("failed to execute ripgrep")?;
     Ok(status.code().unwrap_or(1))
