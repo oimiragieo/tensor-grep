@@ -1,0 +1,21 @@
+{
+  "featureId": "smart-routing-unification",
+  "reviewedAt": "2026-03-17T11:00:00Z",
+  "commitId": "986e9e05649188dba6684c835f0c07786764bade",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly unifies smart routing behind a single Rust module (`rust_core/src/routing.rs`), enforcing the expected priority tree (--index > --gpu-device-ids > --force-cpu > AST > warm index > auto GPU > auto CPU > rg fallback). Backend names and reasons are updated, docs reflect the changes, tests are comprehensive, and CLI bootstrapping accurately handles the new commands.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker suggested adding a note to the `mission-worker-base` skill about resuming from a prior Droid summary and skipping re-reading the full startup context.",
+      "evidence": "Transcript skeleton shows deviation: 'Resumed from the previous worker summary... only then re-invoked mission-worker-base before handoff.'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Review completed successfully. The code perfectly matches the requirements for smart routing unification, ensuring accurate, predictable backend selection across all branches."
+}

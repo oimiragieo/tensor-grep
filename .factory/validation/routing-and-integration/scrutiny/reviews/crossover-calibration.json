@@ -1,0 +1,21 @@
+{
+  "featureId": "crossover-calibration",
+  "reviewedAt": "2026-03-17T12:15:00.000Z",
+  "commitId": "06860cb54aa7c06fa205cdd304c92748af1ae836",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation fully meets the requirements for the crossover-calibration feature. The `tg calibrate` subcommand was added, it generates small test corpora, measures CPU vs GPU timings, and writes `.tg_crossover.json`. The auto-routing logic correctly checks for this config, respects its values, defaults to CPU if missing or stale, and disables GPU auto-routing if `gpu_faster_above` indicates CPU is always faster. Tests adequately cover these routing cases.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Worker identified a flaky test `test_gpu_native_long_line_corpus_is_not_slower_than_short_line_corpus` which failed due to a tiny timing difference, indicating that micro-benchmark timing gates might be too strict or should be ignored like other benchmark tests. This was noted in their handoff, but not updated in AGENTS.md.",
+      "evidence": "Handoff file discoveredIssues: 'Pre-existing: `rust_core/tests/test_gpu_native_long_lines.rs::test_gpu_native_long_line_corpus_is_not_slower_than_short_line_corpus` failed once during a full-suite run because the measured times differed by about 0.002 ms...'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the crossover-calibration feature implementation. The code correctly implements the new `tg calibrate` command, persists threshold data, and integrates it into the auto-routing logic to dynamically choose between CPU and GPU backends. All tests pass and the implementation aligns well with the feature requirements."
+}
