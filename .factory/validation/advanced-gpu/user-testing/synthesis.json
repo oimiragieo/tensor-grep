@@ -1,0 +1,33 @@
+{
+  "milestone": "advanced-gpu",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-GPU-009",
+    "VAL-GPU-012",
+    "VAL-GPU-013",
+    "VAL-GPU-014",
+    "VAL-GPU-015",
+    "VAL-GPU-016",
+    "VAL-GPU-017",
+    "VAL-GPU-018",
+    "VAL-GPU-019",
+    "VAL-GPU-021"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added notes about bench_data missing multiple patterns and benchmark JSON outputs",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}

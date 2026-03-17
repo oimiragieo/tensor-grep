@@ -32,3 +32,6 @@ Benchmark scripts use hyperfine or Measure-Command internally — they manage th
 
 ## Discovered Testing Knowledge
 - Python CLI wrapper might throw unhandled stack traces when routing to native Rust GPU backend if CuDF/Torch are absent. Use the compiled rust binary 	g.exe directly for pure validation.
+
+- When testing multiple patterns (like 'error' and 'warn'), bench_data might not contain files matching both. Create dummy log files if needed.
+- GPU benchmarks (run_gpu_native_benchmarks.py) often output results to JSON in the artifacts/ directory instead of stdout. Inspect the JSON file to verify benchmark assertions.
