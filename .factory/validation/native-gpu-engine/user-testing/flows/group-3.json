@@ -1,0 +1,46 @@
+{
+  "group": "group-3",
+  "frictions": [
+    "Subagent timed out running large benchmarks, required manual execution via Execute tool.",
+    "No OOM test implemented in the benchmark script."
+  ],
+  "blockers": [],
+  "toolsUsed": ["python benchmarks/run_gpu_native_benchmarks.py"],
+  "assertions": [
+    {
+      "id": "VAL-GPU-008",
+      "status": "pass",
+      "evidence": "bench_run_gpu_native_benchmarks.json shows correctness_checks at 10MB, 100MB, 500MB, and 1GB all passed with matches_equal=true."
+    },
+    {
+      "id": "VAL-GPU-009",
+      "status": "fail",
+      "reason": "Benchmark crossover.exists is false. GPU is slower than rg at all measured scales (best ratio 4.89x slower at 10MB)."
+    },
+    {
+      "id": "VAL-GPU-020",
+      "status": "pass",
+      "evidence": "error_tests.invalid_device status is PASS, exit code 2, valid clear error message."
+    },
+    {
+      "id": "VAL-GPU-021",
+      "status": "fail",
+      "reason": "Not tested. No OOM simulation or massive corpus test is implemented in run_gpu_native_benchmarks.py."
+    },
+    {
+      "id": "VAL-GPU-022",
+      "status": "pass",
+      "evidence": "error_tests.nvrtc_failure status is PASS, exit code 2."
+    },
+    {
+      "id": "VAL-GPU-023",
+      "status": "pass",
+      "evidence": "error_tests.timeout status is PASS, exit code 2."
+    },
+    {
+      "id": "VAL-GPU-024",
+      "status": "pass",
+      "evidence": "error_tests.malformed_inputs status is PASS, exit code 0, matches found."
+    }
+  ]
+}
