@@ -7,6 +7,7 @@ from pathlib import Path
 
 _KNOWN_COMMANDS = {
     "search",
+    "calibrate",
     "devices",
     "classify",
     "run",

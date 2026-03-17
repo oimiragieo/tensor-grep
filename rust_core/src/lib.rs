@@ -4,6 +4,7 @@ pub mod backend_ast;
 pub mod backend_cpu;
 pub mod backend_gpu;
 pub mod cli;
+pub mod crossover;
 #[cfg(feature = "cuda")]
 pub mod gpu_native;
 pub mod index;
@@ -11,6 +12,7 @@ pub mod mmap_arrow;
 pub mod native_search;
 pub mod python_sidecar;
 pub mod rg_passthrough;
+pub mod routing;
 pub mod runtime_paths;
 
 use crate::backend_cpu::CpuBackend;

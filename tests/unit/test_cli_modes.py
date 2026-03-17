@@ -1778,6 +1778,44 @@ def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
     assert seen["argv"] == ["tg", "devices", "--json"]
 
 
+def test_main_entry_should_not_rewrite_calibrate_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "calibrate"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "calibrate"]
+
+
+def test_calibrate_command_delegates_to_native_tg(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 0
+
+    monkeypatch.setattr(cli_main, "_resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, check=False: (seen.update({"cmd": list(cmd), "check": check}) or _Completed()),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["calibrate"])
+
+    assert result.exit_code == 0
+    assert seen == {"cmd": ["tg.exe", "calibrate"], "check": False}
+
+
 def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch):
     from tensor_grep.cli import main as cli_main
 

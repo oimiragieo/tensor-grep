@@ -1,5 +1,7 @@
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
+#[cfg(feature = "cuda")]
+use clap::ValueEnum;
 #[cfg(feature = "cuda")]
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
@@ -12,11 +14,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
 use tensor_grep_rs::backend_cpu::CpuBackend;
+use tensor_grep_rs::crossover::{run_crossover_calibration, write_crossover_config};
 #[cfg(feature = "cuda")]
 use tensor_grep_rs::gpu_native::{
     benchmark_cuda_graph_search_paths, benchmark_pageable_transfer_throughput,
-    benchmark_pinned_transfer_throughput, gpu_native_search_paths_multi, probe_device_allocation,
-    GpuNativeSearchConfig, GpuNativeSearchStats,
+    benchmark_pinned_transfer_throughput, enumerate_cuda_devices, gpu_native_search_paths_multi,
+    probe_device_allocation, GpuNativeSearchConfig, GpuNativeSearchStats,
 };
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
@@ -28,11 +31,13 @@ use tensor_grep_rs::python_sidecar::{
 use tensor_grep_rs::rg_passthrough::{
     execute_ripgrep_search, ripgrep_is_available, RipgrepSearchArgs,
 };
+use tensor_grep_rs::routing::{
+    route_search, BackendSelection, IndexRoutingState, RoutingDecision, SearchRoutingCalibration,
+    SearchRoutingConfig,
+};
 
 const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON  Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH         Path to the ripgrep executable used for text-search passthrough.";
 const JSON_OUTPUT_VERSION: u32 = 1;
-#[cfg(feature = "cuda")]
-const GPU_AUTO_ROUTE_THRESHOLD_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -212,10 +217,15 @@ pub struct RunArgs {
     pub path: Option<String>,
 }
 
+#[derive(Args, Debug, Clone, Default)]
+pub struct CalibrateArgs {}
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Search for a regex pattern with ripgrep-compatible flags
     Search(SearchArgs),
+    /// Measure CPU vs GPU crossover thresholds and persist smart-routing calibration
+    Calibrate(CalibrateArgs),
     /// Start the AI-assistant Model Context Protocol (MCP) server
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
@@ -340,84 +350,6 @@ impl ResolvedSearchRequest {
     }
 }
 
-#[derive(Clone, Copy)]
-struct RoutingDecision {
-    backend: &'static str,
-    reason: &'static str,
-    sidecar_used: bool,
-}
-
-impl RoutingDecision {
-    const NATIVE_CPU_FORCE: Self = Self {
-        backend: "NativeCpuBackend",
-        reason: "force_cpu",
-        sidecar_used: false,
-    };
-
-    const NATIVE_CPU_JSON: Self = Self {
-        backend: "NativeCpuBackend",
-        reason: "json_output",
-        sidecar_used: false,
-    };
-
-    const NATIVE_CPU_RG_UNAVAILABLE: Self = Self {
-        backend: "NativeCpuBackend",
-        reason: "rg_unavailable",
-        sidecar_used: false,
-    };
-
-    const RIPGREP: Self = Self {
-        backend: "RipgrepBackend",
-        reason: "rg_passthrough",
-        sidecar_used: false,
-    };
-
-    const AST: Self = Self {
-        backend: "AstBackend",
-        reason: "ast-native",
-        sidecar_used: false,
-    };
-
-    const GPU_SIDECAR: Self = Self {
-        backend: "GpuSidecar",
-        reason: "gpu-device-ids-explicit",
-        sidecar_used: true,
-    };
-
-    #[cfg(feature = "cuda")]
-    const GPU_NATIVE: Self = Self {
-        backend: "gpu_native",
-        reason: "gpu-device-ids-explicit-native",
-        sidecar_used: false,
-    };
-
-    #[cfg(feature = "cuda")]
-    const GPU_AUTO: Self = Self {
-        backend: "gpu_native",
-        reason: "gpu-auto-size-threshold",
-        sidecar_used: false,
-    };
-
-    const NATIVE_CPU_AUTO: Self = Self {
-        backend: "NativeCpuBackend",
-        reason: "cpu-auto-size-threshold",
-        sidecar_used: false,
-    };
-
-    #[cfg(feature = "cuda")]
-    const NATIVE_CPU_GPU_FALLBACK: Self = Self {
-        backend: "NativeCpuBackend",
-        reason: "gpu-auto-fallback-cpu",
-        sidecar_used: false,
-    };
-
-    const INDEX: Self = Self {
-        backend: "TrigramIndex",
-        reason: "index-accelerated",
-        sidecar_used: false,
-    };
-}
-
 fn main() -> anyhow::Result<()> {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
 
@@ -441,6 +373,7 @@ fn main() -> anyhow::Result<()> {
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Search(args) => handle_ripgrep_search(args),
+        Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
         Commands::Run(args) => handle_ast_run(args),
@@ -459,6 +392,21 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     }
 }
 
+fn handle_calibrate_command(_args: CalibrateArgs) -> anyhow::Result<()> {
+    let executable = env::current_exe().context("failed to resolve current tg executable")?;
+    match run_crossover_calibration(&executable) {
+        Ok(config) => {
+            write_crossover_config(&config, None)?;
+            println!("{}", serde_json::to_string_pretty(&config)?);
+            Ok(())
+        }
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     if cli.pattern.is_none() || cli.path.is_none() {
         use clap::CommandFactory;
@@ -469,28 +417,6 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
     let pattern = cli.pattern.clone().unwrap();
     let path = cli.path.clone().unwrap();
-
-    if !cli.gpu_device_ids.is_empty() {
-        return handle_gpu_search(GpuSearchParams {
-            patterns: std::slice::from_ref(&pattern),
-            query: &pattern,
-            path: &path,
-            line_number: true,
-            ignore_case: cli.ignore_case,
-            fixed_strings: cli.fixed_strings,
-            invert_match: cli.invert_match,
-            count: cli.count,
-            context: None,
-            max_count: None,
-            word_regexp: false,
-            globs: Vec::new(),
-            no_ignore: true,
-            gpu_device_ids: &cli.gpu_device_ids,
-            json: cli.json,
-            ndjson: cli.ndjson,
-            verbose: cli.verbose,
-        });
-    }
 
     if let Some(replacement) = cli.replace {
         let backend = CpuBackend::new();
@@ -505,93 +431,151 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if explicit_rg_override_requested() && !cli.force_cpu && !cli.json && !cli.ndjson {
-        if cli.verbose {
-            emit_verbose_metadata(RoutingDecision::RIPGREP);
-        }
-
-        let exit_code = execute_ripgrep_search(&positional_ripgrep_args(&cli, &pattern, &path))?;
-        if exit_code != 0 {
-            std::process::exit(exit_code.max(1));
-        }
-        return Ok(());
-    }
-
     let rg_available = ripgrep_is_available();
-    let cpu_decision = select_native_search_routing(
-        cli.force_cpu,
-        cli.json,
-        cli.ndjson,
-        cli.verbose,
-        rg_available,
-    );
+    #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
+    let structured_output = cli.json || cli.ndjson;
+    let explicit_gpu = !cli.gpu_device_ids.is_empty();
+    let auto_gpu_ids: [i32; 0] = [];
 
     #[cfg(feature = "cuda")]
     let corpus_bytes = count_search_corpus_bytes(&[PathBuf::from(&path)], true, &[]).unwrap_or(0);
+    #[cfg(not(feature = "cuda"))]
+    let corpus_bytes = 0u64;
 
     #[cfg(feature = "cuda")]
-    if should_attempt_auto_gpu(cli.force_cpu, corpus_bytes) {
-        let auto_gpu_ids: [i32; 0] = [];
-        let params = GpuSearchParams {
-            patterns: std::slice::from_ref(&pattern),
-            query: &pattern,
-            path: &path,
-            line_number: true,
-            ignore_case: cli.ignore_case,
-            fixed_strings: cli.fixed_strings,
-            invert_match: cli.invert_match,
-            count: cli.count,
-            context: None,
-            max_count: None,
-            word_regexp: false,
-            globs: Vec::new(),
-            no_ignore: true,
-            gpu_device_ids: &auto_gpu_ids,
+    let gpu_auto_supported = gpu_native_fallback_reason(&GpuSearchParams {
+        patterns: std::slice::from_ref(&pattern),
+        query: &pattern,
+        path: &path,
+        line_number: true,
+        ignore_case: cli.ignore_case,
+        fixed_strings: cli.fixed_strings,
+        invert_match: cli.invert_match,
+        count: cli.count,
+        context: None,
+        max_count: None,
+        word_regexp: false,
+        globs: Vec::new(),
+        no_ignore: true,
+        gpu_device_ids: &auto_gpu_ids,
+        json: cli.json,
+        ndjson: cli.ndjson,
+        verbose: cli.verbose,
+    })
+    .is_none();
+
+    #[cfg(not(feature = "cuda"))]
+    let gpu_auto_supported = false;
+
+    #[cfg(feature = "cuda")]
+    let calibration = load_search_routing_calibration(Path::new(&path));
+    #[cfg(not(feature = "cuda"))]
+    let calibration: Option<SearchRoutingCalibration> = None;
+
+    #[cfg(feature = "cuda")]
+    let gpu_available = auto_gpu_available_for_routing();
+    #[cfg(not(feature = "cuda"))]
+    let gpu_available = false;
+
+    let decision = route_search(
+        &SearchRoutingConfig {
+            explicit_index: false,
+            explicit_gpu_device_ids: explicit_gpu,
+            force_cpu: cli.force_cpu,
+            ast_command: false,
             json: cli.json,
             ndjson: cli.ndjson,
-            verbose: cli.verbose,
-        };
+            rg_available,
+            corpus_bytes,
+            gpu_auto_supported,
+            prefer_rg_passthrough: false,
+        },
+        calibration.as_ref(),
+        IndexRoutingState::default(),
+        gpu_available,
+    );
 
-        if gpu_native_fallback_reason(&params).is_none() {
-            let fallback_decision = cpu_decision.unwrap_or(RoutingDecision::NATIVE_CPU_GPU_FALLBACK);
-            let rg_fallback = should_allow_rg_fallback(fallback_decision, cli.json, cli.ndjson, rg_available)
+    match decision.selection {
+        BackendSelection::NativeGpu => {
+            let gpu_device_ids = if explicit_gpu {
+                cli.gpu_device_ids.as_slice()
+            } else {
+                &auto_gpu_ids
+            };
+            let params = GpuSearchParams {
+                patterns: std::slice::from_ref(&pattern),
+                query: &pattern,
+                path: &path,
+                line_number: true,
+                ignore_case: cli.ignore_case,
+                fixed_strings: cli.fixed_strings,
+                invert_match: cli.invert_match,
+                count: cli.count,
+                context: None,
+                max_count: None,
+                word_regexp: false,
+                globs: Vec::new(),
+                no_ignore: true,
+                gpu_device_ids,
+                json: cli.json,
+                ndjson: cli.ndjson,
+                verbose: cli.verbose,
+            };
+
+            #[cfg(feature = "cuda")]
+            if decision.reason == RoutingDecision::native_gpu_auto().reason {
+                let fallback_decision =
+                    RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output);
+                let rg_fallback = fallback_decision
+                    .allow_rg_fallback
+                    .then(|| positional_ripgrep_args(&cli, &pattern, &path));
+                return handle_auto_gpu_search(
+                    params,
+                    native_search_config_for_positional(&cli, &pattern, &path, fallback_decision),
+                    rg_fallback,
+                );
+            }
+
+            handle_gpu_search(params)
+        }
+        BackendSelection::NativeCpu => {
+            if decision.reason == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason {
+                eprintln!(
+                    "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search"
+                );
+            }
+            if cli.verbose {
+                emit_verbose_metadata(decision);
+            }
+
+            let rg_fallback = decision
+                .allow_rg_fallback
                 .then(|| positional_ripgrep_args(&cli, &pattern, &path));
-            return handle_auto_gpu_search(
-                params,
-                native_search_config_for_positional(&cli, &pattern, &path, RoutingDecision::NATIVE_CPU_GPU_FALLBACK),
+
+            run_native_search_with_optional_rg_fallback(
+                native_search_config_for_positional(&cli, &pattern, &path, decision),
                 rg_fallback,
-            );
+            )
         }
-    }
+        BackendSelection::Ripgrep => {
+            if cli.verbose {
+                emit_verbose_metadata(decision);
+            }
 
-    if let Some(cpu_decision) = cpu_decision {
-        if cli.verbose {
-            emit_verbose_metadata(cpu_decision);
+            let exit_code = execute_ripgrep_search(&positional_ripgrep_args(&cli, &pattern, &path))?;
+            if exit_code != 0 {
+                std::process::exit(exit_code.max(1));
+            }
+            Ok(())
         }
-
-        let rg_fallback = should_allow_rg_fallback(cpu_decision, cli.json, cli.ndjson, rg_available)
-            .then(|| positional_ripgrep_args(&cli, &pattern, &path));
-
-        return run_native_search_with_optional_rg_fallback(
-            native_search_config_for_positional(&cli, &pattern, &path, cpu_decision),
-            rg_fallback,
-        );
+        _ => anyhow::bail!("unsupported positional routing decision: {}", decision.reason),
     }
-
-    if cli.verbose {
-        emit_verbose_metadata(RoutingDecision::RIPGREP);
-    }
-
-    let exit_code = execute_ripgrep_search(&positional_ripgrep_args(&cli, &pattern, &path))?;
-    if exit_code != 0 {
-        std::process::exit(exit_code.max(1));
-    }
-    Ok(())
 }
 
 fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
     const SUBCOMMANDS: &[&str] = &[
         "search",
+        "calibrate",
         "mcp",
         "classify",
         "run",
@@ -645,23 +629,35 @@ fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchReq
     Ok(ResolvedSearchRequest { patterns, path })
 }
 
-fn select_native_search_routing(
-    force_cpu: bool,
-    json: bool,
-    ndjson: bool,
-    verbose: bool,
-    rg_available: bool,
-) -> Option<RoutingDecision> {
-    if force_cpu {
-        Some(RoutingDecision::NATIVE_CPU_FORCE)
-    } else if json || ndjson {
-        Some(RoutingDecision::NATIVE_CPU_JSON)
-    } else if !rg_available {
-        Some(RoutingDecision::NATIVE_CPU_RG_UNAVAILABLE)
-    } else if verbose {
-        Some(RoutingDecision::NATIVE_CPU_AUTO)
-    } else {
-        None
+fn detect_warm_index_state(args: &SearchArgs, request: &ResolvedSearchRequest) -> IndexRoutingState {
+    if args.index
+        || args.invert_match
+        || args.context.is_some()
+        || args.max_count.is_some()
+        || args.word_regexp
+        || !args.globs.is_empty()
+        || request.patterns.len() != 1
+        || request.patterns[0].len() < 3
+    {
+        return IndexRoutingState::default();
+    }
+
+    let index_path = resolve_index_path(&request.path);
+    if !index_path.exists() {
+        return IndexRoutingState::default();
+    }
+
+    match TrigramIndex::load(&index_path) {
+        Ok(index) => IndexRoutingState {
+            exists: true,
+            is_stale: index.is_stale(),
+            pattern_compatible: true,
+        },
+        Err(_) => IndexRoutingState {
+            exists: true,
+            is_stale: true,
+            pattern_compatible: true,
+        },
     }
 }
 
@@ -727,18 +723,30 @@ fn count_search_corpus_bytes(paths: &[PathBuf], no_ignore: bool, globs: &[String
 }
 
 #[cfg(feature = "cuda")]
-fn should_attempt_auto_gpu(force_cpu: bool, corpus_bytes: u64) -> bool {
-    !force_cpu && corpus_bytes > GPU_AUTO_ROUTE_THRESHOLD_BYTES
+fn load_search_routing_calibration(search_root: &Path) -> Option<SearchRoutingCalibration> {
+    let now = tensor_grep_rs::crossover::current_timestamp();
+    match tensor_grep_rs::crossover::load_fresh_crossover_config(Some(search_root), now) {
+        Ok(Some((_, config))) => Some(SearchRoutingCalibration {
+            threshold_bytes: config.corpus_size_breakpoint_bytes,
+            gpu_positive: config.recommendation != "cpu_always",
+        }),
+        Ok(None) | Err(_) => None,
+    }
 }
 
-fn should_allow_rg_fallback(decision: RoutingDecision, json: bool, ndjson: bool, rg_available: bool) -> bool {
-    !json
-        && !ndjson
-        && rg_available
-        && matches!(
-            decision.reason,
-            "cpu-auto-size-threshold" | "gpu-auto-fallback-cpu" | "rg_unavailable"
-        )
+#[cfg(feature = "cuda")]
+fn auto_gpu_available_for_routing() -> bool {
+    if env::var("TG_TEST_CUDA_BEHAVIOR")
+        .ok()
+        .map(|value| value.trim().eq_ignore_ascii_case("no-devices"))
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    enumerate_cuda_devices()
+        .map(|devices| !devices.is_empty())
+        .unwrap_or(false)
 }
 
 fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> RipgrepSearchArgs {
@@ -756,10 +764,6 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         patterns: vec![pattern.to_string()],
         path: path.to_string(),
     }
-}
-
-fn explicit_rg_override_requested() -> bool {
-    env::var_os("TG_RG_PATH").is_some() || env::var_os("TG_RG_BINARY").is_some()
 }
 
 fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> RipgrepSearchArgs {
@@ -788,9 +792,9 @@ fn native_search_config_for_positional(
     NativeSearchConfig {
         pattern: pattern.to_string(),
         paths: vec![PathBuf::from(path)],
-        routing_backend: decision.backend,
+        routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
-        sidecar_used: decision.sidecar_used,
+        sidecar_used: decision.sidecar_used(),
         ignore_case: cli.ignore_case,
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
@@ -813,9 +817,9 @@ fn native_search_config_for_command(
     NativeSearchConfig {
         pattern: pattern.to_string(),
         paths: vec![PathBuf::from(path)],
-        routing_backend: decision.backend,
+        routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
-        sidecar_used: decision.sidecar_used,
+        sidecar_used: decision.sidecar_used(),
         ignore_case: args.ignore_case,
         fixed_strings: args.fixed_strings,
         word_boundary: args.word_regexp,
@@ -843,9 +847,9 @@ fn native_search_config_for_gpu_params(
     NativeSearchConfig {
         pattern: pattern.to_string(),
         paths: vec![PathBuf::from(params.path)],
-        routing_backend: decision.backend,
+        routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
-        sidecar_used: decision.sidecar_used,
+        sidecar_used: decision.sidecar_used(),
         ignore_case: params.ignore_case,
         fixed_strings: params.fixed_strings,
         word_boundary: params.word_regexp,
@@ -944,7 +948,7 @@ fn run_native_search_with_optional_rg_fallback(
             if let Some(rg_args) = rg_fallback {
                 eprintln!("warning: native CPU search failed, falling back to ripgrep: {err}");
                 if !json && !ndjson && verbose {
-                    emit_verbose_metadata(RoutingDecision::RIPGREP);
+                    emit_verbose_metadata(RoutingDecision::ripgrep());
                 }
                 let exit_code = execute_ripgrep_search(&rg_args)?;
                 if exit_code != 0 {
@@ -962,169 +966,177 @@ fn run_native_search_with_optional_rg_fallback(
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     let request = resolve_search_request(&args)?;
     let query = request.query_display();
+    let rg_available = ripgrep_is_available();
+    #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
+    let structured_output = args.json || args.ndjson;
+    let auto_gpu_ids: [i32; 0] = [];
 
-    if args.index {
-        return handle_index_search(&args, &request, &query);
-    }
+    #[cfg(feature = "cuda")]
+    let corpus_bytes =
+        count_search_corpus_bytes(&[PathBuf::from(&request.path)], args.no_ignore, &args.globs)
+            .unwrap_or(0);
+    #[cfg(not(feature = "cuda"))]
+    let corpus_bytes = 0u64;
 
-    if !args.gpu_device_ids.is_empty() {
-        return handle_gpu_search(GpuSearchParams {
-            patterns: &request.patterns,
-            query: &query,
-            path: &request.path,
-            line_number: false,
-            ignore_case: args.ignore_case,
-            fixed_strings: args.fixed_strings,
-            invert_match: args.invert_match,
-            count: args.count,
-            context: args.context,
-            max_count: args.max_count,
-            word_regexp: args.word_regexp,
-            globs: args.globs.clone(),
-            no_ignore: args.no_ignore,
-            gpu_device_ids: &args.gpu_device_ids,
+    let index_state = detect_warm_index_state(&args, &request);
+
+    #[cfg(feature = "cuda")]
+    let gpu_auto_supported = gpu_native_fallback_reason(&GpuSearchParams {
+        patterns: &request.patterns,
+        query: &query,
+        path: &request.path,
+        line_number: false,
+        ignore_case: args.ignore_case,
+        fixed_strings: args.fixed_strings,
+        invert_match: args.invert_match,
+        count: args.count,
+        context: args.context,
+        max_count: args.max_count,
+        word_regexp: args.word_regexp,
+        globs: args.globs.clone(),
+        no_ignore: args.no_ignore,
+        gpu_device_ids: &auto_gpu_ids,
+        json: args.json,
+        ndjson: args.ndjson,
+        verbose: args.verbose,
+    })
+    .is_none();
+
+    #[cfg(not(feature = "cuda"))]
+    let gpu_auto_supported = false;
+
+    #[cfg(feature = "cuda")]
+    let calibration = load_search_routing_calibration(Path::new(&request.path));
+    #[cfg(not(feature = "cuda"))]
+    let calibration: Option<SearchRoutingCalibration> = None;
+
+    #[cfg(feature = "cuda")]
+    let gpu_available = auto_gpu_available_for_routing();
+    #[cfg(not(feature = "cuda"))]
+    let gpu_available = false;
+
+    let decision = route_search(
+        &SearchRoutingConfig {
+            explicit_index: args.index,
+            explicit_gpu_device_ids: !args.gpu_device_ids.is_empty(),
+            force_cpu: args.force_cpu,
+            ast_command: false,
             json: args.json,
             ndjson: args.ndjson,
-            verbose: args.verbose,
-        });
-    }
-
-    if explicit_rg_override_requested() && !args.force_cpu && !args.json && !args.ndjson {
-        if args.verbose {
-            emit_verbose_metadata(RoutingDecision::RIPGREP);
-        }
-
-        let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args, &request))?;
-        if exit_code != 0 {
-            std::process::exit(exit_code.max(1));
-        }
-        return Ok(());
-    }
-
-    if !args.force_cpu
-        && !args.json
-        && !args.ndjson
-        && !args.index
-        && !args.invert_match
-        && args.context.is_none()
-        && args.max_count.is_none()
-        && !args.word_regexp
-        && args.globs.is_empty()
-        && request.patterns.len() == 1
-    {
-        let index_path = resolve_index_path(&request.path);
-        if index_path.exists() {
-            if let Ok(loaded) = TrigramIndex::load(&index_path) {
-                if !loaded.is_stale() && request.patterns[0].len() >= 3 {
-                    if args.verbose {
-                        eprintln!(
-                            "[routing] warm index found ({} files), using index-accelerated path",
-                            loaded.file_count()
-                        );
-                    }
-                    return run_index_query(&args, &request, &query, &loaded);
-                }
-            }
-        }
-    }
-
-    let rg_available = ripgrep_is_available();
-    let cpu_decision = select_native_search_routing(
-        args.force_cpu,
-        args.json,
-        args.ndjson,
-        args.verbose,
-        rg_available,
+            rg_available,
+            corpus_bytes,
+            gpu_auto_supported,
+            prefer_rg_passthrough: args.context.is_some() && !args.json && !args.ndjson,
+        },
+        calibration.as_ref(),
+        index_state,
+        gpu_available,
     );
 
-    #[cfg(feature = "cuda")]
-    let corpus_bytes = count_search_corpus_bytes(&[PathBuf::from(&request.path)], args.no_ignore, &args.globs)
-        .unwrap_or(0);
+    match decision.selection {
+        BackendSelection::TrigramIndex => {
+            handle_index_search(&args, &request, &query)
+        }
+        BackendSelection::NativeGpu => {
+            let gpu_device_ids = if args.gpu_device_ids.is_empty() {
+                &auto_gpu_ids
+            } else {
+                args.gpu_device_ids.as_slice()
+            };
+            let params = GpuSearchParams {
+                patterns: &request.patterns,
+                query: &query,
+                path: &request.path,
+                line_number: false,
+                ignore_case: args.ignore_case,
+                fixed_strings: args.fixed_strings,
+                invert_match: args.invert_match,
+                count: args.count,
+                context: args.context,
+                max_count: args.max_count,
+                word_regexp: args.word_regexp,
+                globs: args.globs.clone(),
+                no_ignore: args.no_ignore,
+                gpu_device_ids,
+                json: args.json,
+                ndjson: args.ndjson,
+                verbose: args.verbose,
+            };
 
-    #[cfg(feature = "cuda")]
-    if should_attempt_auto_gpu(args.force_cpu, corpus_bytes) {
-        let auto_gpu_ids: [i32; 0] = [];
-        let params = GpuSearchParams {
-            patterns: &request.patterns,
-            query: &query,
-            path: &request.path,
-            line_number: false,
-            ignore_case: args.ignore_case,
-            fixed_strings: args.fixed_strings,
-            invert_match: args.invert_match,
-            count: args.count,
-            context: args.context,
-            max_count: args.max_count,
-            word_regexp: args.word_regexp,
-            globs: args.globs.clone(),
-            no_ignore: args.no_ignore,
-            gpu_device_ids: &auto_gpu_ids,
-            json: args.json,
-            ndjson: args.ndjson,
-            verbose: args.verbose,
-        };
+            #[cfg(feature = "cuda")]
+            if decision.reason == RoutingDecision::native_gpu_auto().reason {
+                let fallback_decision =
+                    RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output);
+                let rg_fallback = fallback_decision
+                    .allow_rg_fallback
+                    .then(|| command_ripgrep_args(&args, &request));
+                return handle_auto_gpu_search(
+                    params,
+                    native_search_config_for_command(
+                        &args,
+                        &request.patterns[0],
+                        &request.path,
+                        fallback_decision,
+                    ),
+                    rg_fallback,
+                );
+            }
 
-        if gpu_native_fallback_reason(&params).is_none() {
-            let fallback_decision = cpu_decision.unwrap_or(RoutingDecision::NATIVE_CPU_GPU_FALLBACK);
-            let rg_fallback = should_allow_rg_fallback(fallback_decision, args.json, args.ndjson, rg_available)
+            handle_gpu_search(params)
+        }
+        BackendSelection::NativeCpu => {
+            if decision.reason == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason {
+                eprintln!(
+                    "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search"
+                );
+            }
+            if args.verbose {
+                emit_verbose_metadata(decision);
+            }
+
+            let rg_fallback = decision
+                .allow_rg_fallback
                 .then(|| command_ripgrep_args(&args, &request));
-            return handle_auto_gpu_search(
-                params,
-                native_search_config_for_command(
-                    &args,
-                    &request.patterns[0],
+
+            if request.patterns.len() > 1 {
+                let matches = collect_native_multi_pattern_matches(
+                    &request.patterns,
+                    native_search_config_for_command(
+                        &args,
+                        &request.patterns[0],
+                        &request.path,
+                        decision,
+                    ),
+                )?;
+                return emit_multi_pattern_native_results(
+                    decision,
+                    &query,
                     &request.path,
-                    RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
-                ),
+                    args.json,
+                    args.ndjson,
+                    args.count,
+                    matches,
+                );
+            }
+
+            run_native_search_with_optional_rg_fallback(
+                native_search_config_for_command(&args, &request.patterns[0], &request.path, decision),
                 rg_fallback,
-            );
+            )
         }
-    }
+        BackendSelection::Ripgrep => {
+            if args.verbose {
+                emit_verbose_metadata(decision);
+            }
 
-    if let Some(cpu_decision) = cpu_decision {
-        if args.verbose {
-            emit_verbose_metadata(cpu_decision);
+            let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args, &request))?;
+            if exit_code != 0 {
+                std::process::exit(exit_code.max(1));
+            }
+            Ok(())
         }
-
-        let rg_fallback = should_allow_rg_fallback(cpu_decision, args.json, args.ndjson, rg_available)
-            .then(|| command_ripgrep_args(&args, &request));
-
-        if request.patterns.len() > 1 {
-            let matches = collect_native_multi_pattern_matches(
-                &request.patterns,
-                native_search_config_for_command(
-                    &args,
-                    &request.patterns[0],
-                    &request.path,
-                    cpu_decision,
-                ),
-            )?;
-            return emit_multi_pattern_native_results(
-                cpu_decision,
-                &query,
-                &request.path,
-                args.json,
-                args.ndjson,
-                args.count,
-                matches,
-            );
-        }
-
-        return run_native_search_with_optional_rg_fallback(
-            native_search_config_for_command(&args, &request.patterns[0], &request.path, cpu_decision),
-            rg_fallback,
-        );
+        _ => anyhow::bail!("unsupported search routing decision: {}", decision.reason),
     }
-
-    if args.verbose {
-        emit_verbose_metadata(RoutingDecision::RIPGREP);
-    }
-
-    let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args, &request))?;
-    if exit_code != 0 {
-        std::process::exit(exit_code.max(1));
-    }
-    Ok(())
 }
 
 fn resolve_index_path(search_path: &str) -> PathBuf {
@@ -1226,7 +1238,7 @@ fn run_index_query(
     index: &TrigramIndex,
 ) -> anyhow::Result<()> {
     if args.verbose {
-        emit_verbose_metadata(RoutingDecision::INDEX);
+        emit_verbose_metadata(RoutingDecision::warm_index());
     }
 
     let include_pattern_metadata = request.patterns.len() > 1;
@@ -1243,11 +1255,11 @@ fn run_index_query(
     }
 
     if args.json {
-        return emit_json_search_results(RoutingDecision::INDEX, query, &request.path, matches);
+        return emit_json_search_results(RoutingDecision::warm_index(), query, &request.path, matches);
     }
 
     if args.ndjson {
-        return emit_ndjson_search_results(RoutingDecision::INDEX, query, &request.path, matches);
+        return emit_ndjson_search_results(RoutingDecision::warm_index(), query, &request.path, matches);
     }
 
     if args.count {
@@ -1488,7 +1500,7 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
 
     if args.json {
         return emit_json_search_results(
-            RoutingDecision::AST,
+            RoutingDecision::ast(),
             pattern,
             path,
             matches
@@ -1505,7 +1517,7 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     }
 
     if args.verbose {
-        emit_verbose_metadata(RoutingDecision::AST);
+        emit_verbose_metadata(RoutingDecision::ast());
     }
 
     for matched in matches {
@@ -1522,7 +1534,7 @@ fn handle_ast_rewrite(
     path: &str,
 ) -> anyhow::Result<()> {
     if args.verbose {
-        emit_verbose_metadata(RoutingDecision::AST);
+        emit_verbose_metadata(RoutingDecision::ast());
     }
 
     let pattern = run_pattern(args)?;
@@ -1567,7 +1579,7 @@ fn handle_ast_rewrite_apply(
     path: &str,
 ) -> anyhow::Result<()> {
     if args.verbose {
-        emit_verbose_metadata(RoutingDecision::AST);
+        emit_verbose_metadata(RoutingDecision::ast());
     }
 
     let pattern = run_pattern(args)?;
@@ -1630,7 +1642,7 @@ fn handle_ast_batch_rewrite(
     path: &str,
 ) -> anyhow::Result<()> {
     if args.verbose {
-        emit_verbose_metadata(RoutingDecision::AST);
+        emit_verbose_metadata(RoutingDecision::ast());
     }
 
     let plan = backend.plan_batch_rewrites(&config.rewrites, path)?;
@@ -1682,7 +1694,7 @@ fn handle_ast_batch_rewrite_apply(
     path: &str,
 ) -> anyhow::Result<()> {
     if args.verbose {
-        emit_verbose_metadata(RoutingDecision::AST);
+        emit_verbose_metadata(RoutingDecision::ast());
     }
 
     let plan = backend.plan_and_apply_batch(&config.rewrites, path)?;
@@ -2107,7 +2119,7 @@ fn handle_auto_gpu_search(
     rg_fallback: Option<RipgrepSearchArgs>,
 ) -> anyhow::Result<()> {
     let auto_device_ids = [0];
-    match execute_gpu_native_route(&params, RoutingDecision::GPU_AUTO, &auto_device_ids) {
+    match execute_gpu_native_route(&params, RoutingDecision::native_gpu_auto(), &auto_device_ids) {
         Ok(()) => Ok(()),
         Err(err) => {
             let failure = classify_gpu_route_failure(&err.to_string());
@@ -2115,7 +2127,10 @@ fn handle_auto_gpu_search(
                 GpuRouteFailureKind::Unavailable => {
                     eprintln!("warning: {}; falling back to native CPU search", failure.message);
                     if cpu_fallback_config.verbose {
-                        emit_verbose_metadata(RoutingDecision::NATIVE_CPU_GPU_FALLBACK);
+                        emit_verbose_metadata(RoutingDecision::native_cpu_gpu_fallback(
+                            ripgrep_is_available(),
+                            cpu_fallback_config.json || cpu_fallback_config.ndjson,
+                        ));
                     }
                     if params.patterns.len() > 1 {
                         let matches = collect_native_multi_pattern_matches(
@@ -2123,7 +2138,10 @@ fn handle_auto_gpu_search(
                             cpu_fallback_config,
                         )?;
                         return emit_multi_pattern_native_results(
-                            RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
+                            RoutingDecision::native_cpu_gpu_fallback(
+                                ripgrep_is_available(),
+                                params.json || params.ndjson,
+                            ),
                             params.query,
                             params.path,
                             params.json,
@@ -2149,7 +2167,11 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
         return handle_gpu_sidecar_search(params);
     }
 
-    match execute_gpu_native_route(&params, RoutingDecision::GPU_NATIVE, params.gpu_device_ids) {
+    match execute_gpu_native_route(
+        &params,
+        RoutingDecision::native_gpu_explicit(),
+        params.gpu_device_ids,
+    ) {
         Ok(()) => Ok(()),
         Err(err) => {
             let failure = classify_gpu_route_failure(&err.to_string());
@@ -2157,18 +2179,14 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                 GpuRouteFailureKind::Unavailable => {
                     eprintln!("warning: {}; falling back to native CPU search", failure.message);
                     let rg_available = ripgrep_is_available();
+                    let fallback_decision =
+                        RoutingDecision::native_cpu_gpu_fallback(rg_available, params.json || params.ndjson);
                     let cpu_config = native_search_config_for_gpu_params(
                         &params,
                         &params.patterns[0],
-                        RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
+                        fallback_decision,
                     );
-                    let rg_fallback = should_allow_rg_fallback(
-                        RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
-                        params.json,
-                        params.ndjson,
-                        rg_available,
-                    )
-                    .then(|| RipgrepSearchArgs {
+                    let rg_fallback = fallback_decision.allow_rg_fallback.then(|| RipgrepSearchArgs {
                         ignore_case: params.ignore_case,
                         fixed_strings: params.fixed_strings,
                         invert_match: params.invert_match,
@@ -2183,7 +2201,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                         path: params.path.to_string(),
                     });
                     if cpu_config.verbose {
-                        emit_verbose_metadata(RoutingDecision::NATIVE_CPU_GPU_FALLBACK);
+                        emit_verbose_metadata(fallback_decision);
                     }
                     if params.patterns.len() > 1 {
                         let matches = collect_native_multi_pattern_matches(
@@ -2191,7 +2209,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                             cpu_config,
                         )?;
                         return emit_multi_pattern_native_results(
-                            RoutingDecision::NATIVE_CPU_GPU_FALLBACK,
+                            fallback_decision,
                             params.query,
                             params.path,
                             params.json,
@@ -2213,7 +2231,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
 
 fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
     if params.verbose {
-        emit_verbose_metadata(RoutingDecision::GPU_SIDECAR);
+        emit_verbose_metadata(RoutingDecision::gpu_sidecar());
     }
 
     let payload = serde_json::json!({
@@ -2249,7 +2267,7 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                         })
                         .collect();
                     emit_ndjson_search_results(
-                        RoutingDecision::GPU_SIDECAR,
+                        RoutingDecision::gpu_sidecar(),
                         params.query,
                         params.path,
                         matches,
@@ -2320,9 +2338,9 @@ fn emit_json_search_results(
 ) -> anyhow::Result<()> {
     let payload = SearchResultJson {
         version: JSON_OUTPUT_VERSION,
-        routing_backend: decision.backend,
+        routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
-        sidecar_used: decision.sidecar_used,
+        sidecar_used: decision.sidecar_used(),
         query: pattern,
         path,
         total_matches: matches.len(),
@@ -2412,9 +2430,9 @@ fn emit_gpu_native_json_results(
 ) -> anyhow::Result<()> {
     let payload = GpuNativeSearchResultJson {
         version: JSON_OUTPUT_VERSION,
-        routing_backend: decision.backend,
+        routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
-        sidecar_used: decision.sidecar_used,
+        sidecar_used: decision.sidecar_used(),
         query: params.query,
         path: params.path,
         total_matches: stats.total_matches,
@@ -2515,9 +2533,9 @@ fn emit_ndjson_search_results(
     for matched in matches {
         let payload = SearchMatchNdjson {
             version: JSON_OUTPUT_VERSION,
-            routing_backend: decision.backend,
+            routing_backend: decision.routing_backend(),
             routing_reason: decision.reason,
-            sidecar_used: decision.sidecar_used,
+            sidecar_used: decision.sidecar_used(),
             query: pattern,
             path,
             file: &matched.file,
@@ -2564,9 +2582,9 @@ fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value>
 
     Ok(serde_json::json!({
         "version": JSON_OUTPUT_VERSION,
-        "routing_backend": RoutingDecision::GPU_SIDECAR.backend,
-        "routing_reason": RoutingDecision::GPU_SIDECAR.reason,
-        "sidecar_used": RoutingDecision::GPU_SIDECAR.sidecar_used,
+        "routing_backend": RoutingDecision::gpu_sidecar().routing_backend(),
+        "routing_reason": RoutingDecision::gpu_sidecar().reason,
+        "sidecar_used": RoutingDecision::gpu_sidecar().sidecar_used(),
         "total_matches": payload.total_matches,
         "total_files": payload.total_files,
         "routing_gpu_device_ids": payload.routing_gpu_device_ids,
@@ -2577,6 +2595,8 @@ fn normalize_gpu_sidecar_json(stdout: &str) -> anyhow::Result<serde_json::Value>
 fn emit_verbose_metadata(decision: RoutingDecision) {
     eprintln!(
         "[routing] routing_backend={} routing_reason={} sidecar_used={}",
-        decision.backend, decision.reason, decision.sidecar_used
+        decision.routing_backend(),
+        decision.reason,
+        decision.sidecar_used()
     );
 }

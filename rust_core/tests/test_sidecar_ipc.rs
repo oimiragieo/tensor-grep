@@ -260,7 +260,7 @@ fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
     let payload: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(payload["version"], 1);
     if cfg!(feature = "cuda") {
-        assert_eq!(payload["routing_backend"], "gpu_native");
+        assert_eq!(payload["routing_backend"], "NativeGpuBackend");
         assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit-native");
         assert_eq!(payload["sidecar_used"], false);
         assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([0]));

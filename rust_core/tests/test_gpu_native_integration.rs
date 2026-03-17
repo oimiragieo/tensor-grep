@@ -270,7 +270,7 @@ fn test_gpu_native_single_file_json_routes_to_native_backend() {
     );
 
     let payload = parse_json_payload(&output.stdout);
-    assert_eq!(payload["routing_backend"], "gpu_native");
+    assert_eq!(payload["routing_backend"], "NativeGpuBackend");
     assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit-native");
     assert_eq!(payload["sidecar_used"], false);
     assert_eq!(payload["total_files"], 1);
@@ -308,7 +308,7 @@ fn test_gpu_native_directory_search_batches_files_and_matches_cpu_output() {
     assert!(cpu_output.status.success(), "stderr={}", String::from_utf8_lossy(&cpu_output.stderr));
 
     let gpu_payload = parse_json_payload(&gpu_output.stdout);
-    assert_eq!(gpu_payload["routing_backend"], "gpu_native");
+    assert_eq!(gpu_payload["routing_backend"], "NativeGpuBackend");
     assert_eq!(gpu_payload["routing_reason"], "gpu-device-ids-explicit-native");
     assert_eq!(gpu_payload["sidecar_used"], false);
     assert_eq!(gpu_payload["total_files"], 3);
@@ -523,7 +523,7 @@ fn test_gpu_native_multi_pattern_json_reports_pattern_metadata() {
     assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
 
     let payload = parse_json_payload(&output.stdout);
-    assert_eq!(payload["routing_backend"], "gpu_native");
+    assert_eq!(payload["routing_backend"], "NativeGpuBackend");
     assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit-native");
     assert_eq!(payload["sidecar_used"], false);
     let matches = payload["matches"].as_array().unwrap();

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::thread;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use tempfile::{tempdir, TempDir};
@@ -65,6 +66,43 @@ fn write_sized_routing_corpus(dir: &Path, target_bytes: usize) -> PathBuf {
     }
 
     corpus
+}
+
+fn unix_timestamp_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn write_crossover_config(
+    path: &Path,
+    breakpoint_bytes: u64,
+    cpu_median_ms: f64,
+    gpu_median_ms: f64,
+    recommendation: &str,
+    calibration_timestamp: u64,
+) {
+    let payload = serde_json::json!({
+        "corpus_size_breakpoint_bytes": breakpoint_bytes,
+        "cpu_median_ms": cpu_median_ms,
+        "gpu_median_ms": gpu_median_ms,
+        "recommendation": recommendation,
+        "calibration_timestamp": calibration_timestamp,
+        "device_name": "Mock RTX 4070",
+        "measurements": [
+            {
+                "size_bytes": breakpoint_bytes,
+                "cpu_median_ms": cpu_median_ms,
+                "gpu_median_ms": gpu_median_ms,
+                "cpu_samples_ms": [cpu_median_ms],
+                "gpu_samples_ms": [gpu_median_ms]
+            }
+        ]
+    });
+
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
 }
 
 fn write_python_source() -> (TempDir, PathBuf) {
@@ -186,6 +224,69 @@ fn assert_ndjson_routing(
 }
 
 #[test]
+fn test_calibrate_writes_valid_crossover_config_from_mock_results() {
+    let dir = tempdir().unwrap();
+    let config_path = dir.path().join("crossover.json");
+    let mock_results = serde_json::json!({
+        "device_name": "Mock RTX 4070",
+        "measurements": [
+            {
+                "size_bytes": 1_u64 * 1024 * 1024,
+                "cpu_samples_ms": [5.0, 6.0, 5.5],
+                "gpu_samples_ms": [20.0, 21.0, 19.0]
+            },
+            {
+                "size_bytes": 10_u64 * 1024 * 1024,
+                "cpu_samples_ms": [12.0, 11.5, 12.5],
+                "gpu_samples_ms": [14.0, 13.5, 14.5]
+            },
+            {
+                "size_bytes": 100_u64 * 1024 * 1024,
+                "cpu_samples_ms": [50.0, 49.0, 51.0],
+                "gpu_samples_ms": [39.0, 40.0, 41.0]
+            },
+            {
+                "size_bytes": 500_u64 * 1024 * 1024,
+                "cpu_samples_ms": [240.0, 245.0, 250.0],
+                "gpu_samples_ms": [145.0, 150.0, 155.0]
+            },
+            {
+                "size_bytes": 1024_u64 * 1024 * 1024,
+                "cpu_samples_ms": [500.0, 510.0, 520.0],
+                "gpu_samples_ms": [250.0, 255.0, 260.0]
+            }
+        ]
+    });
+
+    let output = tg()
+        .arg("calibrate")
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .env("TG_TEST_CALIBRATION_RESULTS", mock_results.to_string())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout_payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        stdout_payload["corpus_size_breakpoint_bytes"],
+        Value::from(100_u64 * 1024 * 1024)
+    );
+    assert_eq!(stdout_payload["recommendation"], Value::from("gpu_above_100mb"));
+    assert_eq!(stdout_payload["device_name"], Value::from("Mock RTX 4070"));
+    assert_eq!(stdout_payload["measurements"].as_array().unwrap().len(), 5);
+
+    let config_payload: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    assert_eq!(config_payload, stdout_payload);
+}
+
+#[test]
 fn test_routing_default_search_uses_native_cpu_auto_route() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
@@ -234,6 +335,15 @@ fn test_routing_large_corpus_auto_routes_to_gpu_native() {
 
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 100 * 1024 * 1024);
+    let config_path = dir.path().join("fresh-crossover.json");
+    write_crossover_config(
+        &config_path,
+        10 * 1024 * 1024,
+        90.0,
+        40.0,
+        "gpu_above_10mb",
+        unix_timestamp_now(),
+    );
 
     let output = tg()
         .arg("search")
@@ -242,13 +352,132 @@ fn test_routing_large_corpus_auto_routes_to_gpu_native() {
         .arg("--verbose")
         .arg("ERROR gpu auto route")
         .arg(&corpus)
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
         .output()
         .unwrap();
 
     assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "gpu_native", "gpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "NativeGpuBackend", "gpu-auto-size-threshold", false);
+}
+
+#[test]
+fn test_routing_large_corpus_without_calibration_routes_to_native_cpu() {
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
+    let config_path = dir.path().join("missing-crossover.json");
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+}
+
+#[test]
+fn test_routing_stale_crossover_config_falls_back_to_native_cpu() {
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
+    let config_path = dir.path().join("stale-crossover.json");
+    write_crossover_config(
+        &config_path,
+        10 * 1024 * 1024,
+        80.0,
+        40.0,
+        "gpu_above_10mb",
+        unix_timestamp_now() - (8 * 24 * 60 * 60),
+    );
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+}
+
+#[test]
+fn test_routing_cpu_always_crossover_config_never_auto_routes_to_gpu() {
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
+    let config_path = dir.path().join("cpu-always-crossover.json");
+    write_crossover_config(
+        &config_path,
+        1024 * 1024 * 1024,
+        500.0,
+        650.0,
+        "cpu_always",
+        unix_timestamp_now(),
+    );
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+}
+
+#[cfg(feature = "cuda")]
+#[test]
+fn test_routing_fresh_crossover_config_uses_calibrated_gpu_breakpoint() {
+    let devices = tensor_grep_rs::gpu_native::enumerate_cuda_devices();
+    if devices.as_ref().map_or(true, |devices| devices.is_empty()) {
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let corpus = write_sized_routing_corpus(dir.path(), 20 * 1024 * 1024);
+    let config_path = dir.path().join("fresh-crossover.json");
+    write_crossover_config(
+        &config_path,
+        10 * 1024 * 1024,
+        90.0,
+        40.0,
+        "gpu_above_10mb",
+        unix_timestamp_now(),
+    );
+
+    let output = tg()
+        .arg("search")
+        .arg("--fixed-strings")
+        .arg("--count")
+        .arg("--verbose")
+        .arg("ERROR gpu auto route")
+        .arg(&corpus)
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeGpuBackend", "gpu-auto-size-threshold", false);
 }
 
 #[cfg(feature = "cuda")]
@@ -256,6 +485,15 @@ fn test_routing_large_corpus_auto_routes_to_gpu_native() {
 fn test_routing_large_corpus_falls_back_to_cpu_when_cuda_is_unavailable() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 100 * 1024 * 1024);
+    let config_path = dir.path().join("fresh-crossover.json");
+    write_crossover_config(
+        &config_path,
+        10 * 1024 * 1024,
+        90.0,
+        40.0,
+        "gpu_above_10mb",
+        unix_timestamp_now(),
+    );
 
     let output = tg()
         .arg("search")
@@ -263,6 +501,7 @@ fn test_routing_large_corpus_falls_back_to_cpu_when_cuda_is_unavailable() {
         .arg("--json")
         .arg("ERROR gpu auto route")
         .arg(&corpus)
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
         .env("TG_TEST_CUDA_BEHAVIOR", "no-devices")
         .output()
         .unwrap();
@@ -285,6 +524,15 @@ fn test_routing_large_corpus_falls_back_to_cpu_when_cuda_is_unavailable() {
 fn test_routing_large_corpus_gpu_init_failure_is_user_facing() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 100 * 1024 * 1024);
+    let config_path = dir.path().join("fresh-crossover.json");
+    write_crossover_config(
+        &config_path,
+        10 * 1024 * 1024,
+        90.0,
+        40.0,
+        "gpu_above_10mb",
+        unix_timestamp_now(),
+    );
 
     let output = tg()
         .arg("search")
@@ -292,6 +540,7 @@ fn test_routing_large_corpus_gpu_init_failure_is_user_facing() {
         .arg("--count")
         .arg("ERROR gpu auto route")
         .arg(&corpus)
+        .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
         .env("TG_TEST_CUDA_BEHAVIOR", "init-failure:driver version is too old")
         .output()
         .unwrap();
@@ -556,7 +805,7 @@ fn test_routing_explicit_index_uses_trigram_index_json() {
 }
 
 #[test]
-fn test_routing_json_prefers_native_engine_even_when_warm_index_is_available() {
+fn test_routing_json_prefers_warm_index_even_when_json_is_requested() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
@@ -570,7 +819,7 @@ fn test_routing_json_prefers_native_engine_even_when_warm_index_is_available() {
         .output()
         .unwrap();
 
-    let payload = assert_json_routing(&output, "NativeCpuBackend", "json_output", false);
+    let payload = assert_json_routing(&output, "TrigramIndex", "index-accelerated", false);
     assert_eq!(payload["total_matches"], 3);
 }
 
@@ -614,7 +863,7 @@ fn test_routing_warm_index_is_bypassed_by_context_lines() {
 
     assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
@@ -639,7 +888,7 @@ fn test_routing_explicit_gpu_device_ids_use_gpu_sidecar() {
         .unwrap();
 
     if cfg!(feature = "cuda") {
-        let payload = assert_json_routing(&output, "gpu_native", "gpu-device-ids-explicit-native", false);
+        let payload = assert_json_routing(&output, "NativeGpuBackend", "gpu-device-ids-explicit-native", false);
         assert_eq!(payload["total_matches"], 4);
         assert!(!marker.exists(), "native GPU routing should not invoke the Python sidecar");
     } else {
@@ -867,7 +1116,7 @@ fn test_routing_explicit_gpu_device_ids_override_warm_index() {
         .unwrap();
 
     if cfg!(feature = "cuda") {
-        let payload = assert_json_routing(&output, "gpu_native", "gpu-device-ids-explicit-native", false);
+        let payload = assert_json_routing(&output, "NativeGpuBackend", "gpu-device-ids-explicit-native", false);
         assert_eq!(payload["total_matches"], 3);
         assert!(!marker.exists(), "native GPU routing should bypass the Python sidecar");
     } else {

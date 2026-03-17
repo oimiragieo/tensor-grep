@@ -54,7 +54,7 @@ class TestGpuSidecarRouting:
             text=True,
             check=False,
         )
-        if "routing_backend=gpu_native" in result.stderr:
+        if "routing_backend=NativeGpuBackend" in result.stderr:
             assert "gpu-device-ids-explicit-native" in result.stderr
             assert "sidecar_used=false" in result.stderr
         else:

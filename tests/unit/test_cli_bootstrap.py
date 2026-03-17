@@ -173,6 +173,23 @@ def test_main_entry_should_fallback_to_full_cli_for_help(monkeypatch):
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_fallback_to_full_cli_for_calibrate_subcommand(monkeypatch):
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "calibrate"])
+    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda binary_name, search_args: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_route_scan_to_ast_workflow_cli(monkeypatch):
     seen: dict[str, object] = {}
 

@@ -1428,6 +1428,18 @@ def search_command(
 
 
 @app.command()
+def calibrate() -> None:
+    """Measure CPU vs GPU crossover thresholds using the native Rust binary."""
+    native_tg_binary = _resolve_native_tg_binary()
+    if native_tg_binary is None:
+        typer.echo("Error: native tg binary not found for calibrate command.", err=True)
+        raise typer.Exit(2)
+
+    completed = subprocess.run([str(native_tg_binary), "calibrate"], check=False)
+    raise typer.Exit(int(completed.returncode))
+
+
+@app.command()
 def devices(
     json_output: bool = typer.Option(
         False,
@@ -1915,6 +1927,7 @@ def main_entry() -> None:
 
     known_commands = {
         "search",
+        "calibrate",
         "devices",
         "classify",
         "run",
