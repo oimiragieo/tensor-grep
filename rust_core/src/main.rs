@@ -1155,6 +1155,11 @@ fn handle_index_search(
     request: &ResolvedSearchRequest,
     query: &str,
 ) -> anyhow::Result<()> {
+    let search_path = Path::new(&request.path);
+    if !search_path.exists() {
+        anyhow::bail!("index search path does not exist: {}", search_path.display());
+    }
+
     let index_path = resolve_index_path(&request.path);
 
     let index = if index_path.exists() {

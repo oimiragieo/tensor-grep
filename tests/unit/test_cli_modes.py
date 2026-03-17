@@ -652,6 +652,8 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
+    assert payload["version"] == 1
+    assert payload["sidecar_used"] is False
     assert payload["routing_backend"] == "FakeBackend"
     assert payload["routing_reason"] == "unit_test_fake_pipeline"
     assert payload["routing_gpu_device_ids"] == [7, 3]
@@ -685,6 +687,8 @@ def test_cli_json_output_should_surface_distributed_worker_metadata_from_backend
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
+    assert payload["version"] == 1
+    assert payload["sidecar_used"] is False
     assert payload["routing_backend"] == "FakeBackend"
     assert payload["routing_reason"] == "unit_test_fake_pipeline"
     assert payload["routing_gpu_device_ids"] == [7, 3]

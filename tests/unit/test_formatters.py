@@ -36,10 +36,12 @@ class TestFormatters:
         fmt = JsonFormatter()
         output = fmt.format(self.result)
         parsed = json.loads(output)
+        assert parsed["version"] == 1
         assert parsed["total_matches"] == 1
         assert parsed["matched_file_paths"] == ["test.log"]
         assert parsed["match_counts_by_file"] == {"test.log": 1}
         assert parsed["matches"][0]["text"] == "ERROR test"
+        assert parsed["sidecar_used"] is False
         assert parsed["routing_backend"] == "CuDFBackend"
         assert parsed["routing_reason"] == "gpu_explicit_ids_cudf"
         assert parsed["routing_gpu_device_ids"] == [7, 3]

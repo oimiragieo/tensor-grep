@@ -84,9 +84,9 @@ enum SearchMatcher {
 }
 
 impl SearchMatcher {
-    fn new(pattern: &str, ignore_case: bool, fixed_strings: bool) -> Option<Self> {
+    fn new(pattern: &str, ignore_case: bool, fixed_strings: bool) -> Result<Self> {
         if fixed_strings {
-            return Some(Self::Fixed {
+            return Ok(Self::Fixed {
                 needle: pattern.to_string(),
                 lower_needle: ignore_case.then(|| pattern.to_lowercase()),
             });
@@ -95,7 +95,7 @@ impl SearchMatcher {
         regex::RegexBuilder::new(pattern)
             .case_insensitive(ignore_case)
             .build()
-            .ok()
+            .context(format!("failed to compile index search pattern '{pattern}'"))
             .map(Self::Regex)
     }
 
@@ -634,10 +634,7 @@ impl TrigramIndex {
                     return Ok(Vec::new());
                 }
 
-                let matcher = match SearchMatcher::new(pattern, ignore_case, fixed_strings) {
-                    Some(matcher) => matcher,
-                    None => return Ok(Vec::new()),
-                };
+                let matcher = SearchMatcher::new(pattern, ignore_case, fixed_strings)?;
 
                 let mut by_file: HashMap<&Path, Vec<usize>> = HashMap::new();
                 for (file, line) in &candidates {
@@ -692,10 +689,7 @@ impl TrigramIndex {
         ignore_case: bool,
         fixed_strings: bool,
     ) -> Result<Vec<IndexQueryResult>> {
-        let matcher = match SearchMatcher::new(pattern, ignore_case, fixed_strings) {
-            Some(matcher) => matcher,
-            None => return Ok(Vec::new()),
-        };
+        let matcher = SearchMatcher::new(pattern, ignore_case, fixed_strings)?;
 
         let results: Vec<Result<Vec<IndexQueryResult>>> = self
             .files
