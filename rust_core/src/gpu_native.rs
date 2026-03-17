@@ -16,9 +16,26 @@ use std::sync::Arc;
 use std::sync::Once;
 use std::time::Instant;
 
-const SEARCH_KERNEL_NAME: &str = "gpu_text_search";
+const POSITION_SEARCH_KERNEL_NAME: &str = "gpu_text_search_positions";
+const SHORT_LINE_SEARCH_KERNEL_NAME: &str = "gpu_text_search_short_lines";
+const WARP_LINE_SEARCH_KERNEL_NAME: &str = "gpu_text_search_warp_lines";
+const BLOCK_LINE_SEARCH_KERNEL_NAME: &str = "gpu_text_search_block_lines";
 const SEARCH_KERNEL_SOURCE: &str = r#"
-extern "C" __global__ void gpu_text_search(
+__device__ __forceinline__ bool gpu_text_search_matches_at(
+    const unsigned char* text,
+    unsigned int start,
+    const unsigned char* pattern,
+    unsigned int pattern_len
+) {
+    for (unsigned int pattern_index = 0; pattern_index < pattern_len; ++pattern_index) {
+        if (text[start + pattern_index] != pattern[pattern_index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+extern "C" __global__ void gpu_text_search_positions(
     const unsigned char* text,
     int text_len,
     const unsigned char* pattern_bytes,
@@ -61,15 +78,7 @@ extern "C" __global__ void gpu_text_search(
         }
 
         unsigned int pattern_offset = shared_offsets[local_pattern_id];
-        bool matched = true;
-        for (unsigned int pattern_index = 0; pattern_index < pattern_len; ++pattern_index) {
-            if (text[idx + pattern_index] != shared_patterns[pattern_offset + pattern_index]) {
-                matched = false;
-                break;
-            }
-        }
-
-        if (matched) {
+        if (gpu_text_search_matches_at(text, idx, shared_patterns + pattern_offset, pattern_len)) {
             unsigned int slot = atomicAdd(match_count, 1u);
             if (slot < max_matches) {
                 match_positions[slot] = idx;
@@ -78,8 +87,250 @@ extern "C" __global__ void gpu_text_search(
         }
     }
 }
+
+extern "C" __global__ void gpu_text_search_short_lines(
+    const unsigned char* text,
+    const unsigned char* pattern_bytes,
+    int pattern_blob_len,
+    const unsigned int* pattern_offsets,
+    const unsigned int* pattern_lengths,
+    int pattern_count,
+    const unsigned int* line_starts,
+    const unsigned int* line_lengths,
+    int line_count,
+    unsigned int* match_positions,
+    unsigned int* match_pattern_ids,
+    unsigned int max_matches,
+    unsigned int* match_count
+) {
+    if (line_count <= 0 || pattern_count <= 0 || pattern_blob_len <= 0) {
+        return;
+    }
+
+    extern __shared__ unsigned char shared_bytes[];
+    unsigned int* shared_offsets = reinterpret_cast<unsigned int*>(shared_bytes);
+    unsigned int* shared_lengths = shared_offsets + pattern_count;
+    unsigned char* shared_patterns = reinterpret_cast<unsigned char*>(shared_lengths + pattern_count);
+
+    for (unsigned int index = threadIdx.x; index < (unsigned int)pattern_count; index += blockDim.x) {
+        shared_offsets[index] = pattern_offsets[index];
+        shared_lengths[index] = pattern_lengths[index];
+    }
+    for (unsigned int index = threadIdx.x; index < (unsigned int)pattern_blob_len; index += blockDim.x) {
+        shared_patterns[index] = pattern_bytes[index];
+    }
+    __syncthreads();
+
+    unsigned int line_index = blockIdx.x;
+    if (line_index >= (unsigned int)line_count) {
+        return;
+    }
+
+    unsigned int line_start = line_starts[line_index];
+    unsigned int line_len = line_lengths[line_index];
+    __shared__ int shared_match_pos;
+
+    for (int local_pattern_id = 0; local_pattern_id < pattern_count; ++local_pattern_id) {
+        if (threadIdx.x == 0) {
+            shared_match_pos = 2147483647;
+        }
+        __syncthreads();
+
+        unsigned int pattern_len = shared_lengths[local_pattern_id];
+        if (pattern_len == 0 || pattern_len > line_len) {
+            __syncthreads();
+            continue;
+        }
+
+        unsigned int search_limit = line_len - pattern_len + 1;
+        if (threadIdx.x < search_limit) {
+            unsigned int pattern_offset = shared_offsets[local_pattern_id];
+            if (gpu_text_search_matches_at(
+                    text,
+                    line_start + threadIdx.x,
+                    shared_patterns + pattern_offset,
+                    pattern_len)) {
+                atomicMin(&shared_match_pos, (int)threadIdx.x);
+            }
+        }
+        __syncthreads();
+
+        if (threadIdx.x == 0 && shared_match_pos != 2147483647) {
+            unsigned int slot = atomicAdd(match_count, 1u);
+            if (slot < max_matches) {
+                match_positions[slot] = line_start + (unsigned int)shared_match_pos;
+                match_pattern_ids[slot] = (unsigned int)local_pattern_id;
+            }
+        }
+        __syncthreads();
+    }
+}
+
+extern "C" __global__ void gpu_text_search_warp_lines(
+    const unsigned char* text,
+    const unsigned char* pattern_bytes,
+    int pattern_blob_len,
+    const unsigned int* pattern_offsets,
+    const unsigned int* pattern_lengths,
+    int pattern_count,
+    const unsigned int* line_starts,
+    const unsigned int* line_lengths,
+    int line_count,
+    unsigned int* match_positions,
+    unsigned int* match_pattern_ids,
+    unsigned int max_matches,
+    unsigned int* match_count
+) {
+    if (line_count <= 0 || pattern_count <= 0 || pattern_blob_len <= 0) {
+        return;
+    }
+
+    extern __shared__ unsigned char shared_bytes[];
+    unsigned int* shared_offsets = reinterpret_cast<unsigned int*>(shared_bytes);
+    unsigned int* shared_lengths = shared_offsets + pattern_count;
+    unsigned char* shared_patterns = reinterpret_cast<unsigned char*>(shared_lengths + pattern_count);
+
+    for (unsigned int index = threadIdx.x; index < (unsigned int)pattern_count; index += blockDim.x) {
+        shared_offsets[index] = pattern_offsets[index];
+        shared_lengths[index] = pattern_lengths[index];
+    }
+    for (unsigned int index = threadIdx.x; index < (unsigned int)pattern_blob_len; index += blockDim.x) {
+        shared_patterns[index] = pattern_bytes[index];
+    }
+    __syncthreads();
+
+    unsigned int warp_index = blockIdx.x * (blockDim.x / 32) + (threadIdx.x / 32);
+    if (warp_index >= (unsigned int)line_count) {
+        return;
+    }
+
+    unsigned int lane = threadIdx.x & 31;
+    unsigned int line_start = line_starts[warp_index];
+    unsigned int line_len = line_lengths[warp_index];
+
+    for (int local_pattern_id = 0; local_pattern_id < pattern_count; ++local_pattern_id) {
+        unsigned int pattern_len = shared_lengths[local_pattern_id];
+        if (pattern_len == 0 || pattern_len > line_len) {
+            continue;
+        }
+
+        unsigned int pattern_offset = shared_offsets[local_pattern_id];
+        unsigned int search_limit = line_len - pattern_len + 1;
+        int local_match = -1;
+        for (unsigned int position = lane; position < search_limit; position += 32) {
+            if (gpu_text_search_matches_at(
+                    text,
+                    line_start + position,
+                    shared_patterns + pattern_offset,
+                    pattern_len)) {
+                local_match = (int)position;
+                break;
+            }
+        }
+
+        unsigned int found_mask = __ballot_sync(0xffffffffu, local_match >= 0);
+        if (found_mask == 0) {
+            continue;
+        }
+
+        int first_lane = __ffs((int)found_mask) - 1;
+        int first_match = __shfl_sync(0xffffffffu, local_match, first_lane);
+        if (lane == 0) {
+            unsigned int slot = atomicAdd(match_count, 1u);
+            if (slot < max_matches) {
+                match_positions[slot] = line_start + (unsigned int)first_match;
+                match_pattern_ids[slot] = (unsigned int)local_pattern_id;
+            }
+        }
+    }
+}
+
+extern "C" __global__ void gpu_text_search_block_lines(
+    const unsigned char* text,
+    const unsigned char* pattern_bytes,
+    int pattern_blob_len,
+    const unsigned int* pattern_offsets,
+    const unsigned int* pattern_lengths,
+    int pattern_count,
+    const unsigned int* line_starts,
+    const unsigned int* line_lengths,
+    int line_count,
+    unsigned int* match_positions,
+    unsigned int* match_pattern_ids,
+    unsigned int max_matches,
+    unsigned int* match_count
+) {
+    if (line_count <= 0 || pattern_count <= 0 || pattern_blob_len <= 0) {
+        return;
+    }
+
+    extern __shared__ unsigned char shared_bytes[];
+    unsigned int* shared_offsets = reinterpret_cast<unsigned int*>(shared_bytes);
+    unsigned int* shared_lengths = shared_offsets + pattern_count;
+    unsigned char* shared_patterns = reinterpret_cast<unsigned char*>(shared_lengths + pattern_count);
+
+    for (unsigned int index = threadIdx.x; index < (unsigned int)pattern_count; index += blockDim.x) {
+        shared_offsets[index] = pattern_offsets[index];
+        shared_lengths[index] = pattern_lengths[index];
+    }
+    for (unsigned int index = threadIdx.x; index < (unsigned int)pattern_blob_len; index += blockDim.x) {
+        shared_patterns[index] = pattern_bytes[index];
+    }
+    __syncthreads();
+
+    unsigned int line_index = blockIdx.x;
+    if (line_index >= (unsigned int)line_count) {
+        return;
+    }
+
+    unsigned int line_start = line_starts[line_index];
+    unsigned int line_len = line_lengths[line_index];
+    __shared__ int shared_match_pos;
+
+    for (int local_pattern_id = 0; local_pattern_id < pattern_count; ++local_pattern_id) {
+        if (threadIdx.x == 0) {
+            shared_match_pos = 2147483647;
+        }
+        __syncthreads();
+
+        unsigned int pattern_len = shared_lengths[local_pattern_id];
+        if (pattern_len == 0 || pattern_len > line_len) {
+            __syncthreads();
+            continue;
+        }
+
+        unsigned int pattern_offset = shared_offsets[local_pattern_id];
+        unsigned int search_limit = line_len - pattern_len + 1;
+        for (unsigned int position = threadIdx.x; position < search_limit; position += blockDim.x) {
+            if (gpu_text_search_matches_at(
+                    text,
+                    line_start + position,
+                    shared_patterns + pattern_offset,
+                    pattern_len)) {
+                atomicMin(&shared_match_pos, (int)position);
+            }
+        }
+        __syncthreads();
+
+        if (threadIdx.x == 0 && shared_match_pos != 2147483647) {
+            unsigned int slot = atomicAdd(match_count, 1u);
+            if (slot < max_matches) {
+                match_positions[slot] = line_start + (unsigned int)shared_match_pos;
+                match_pattern_ids[slot] = (unsigned int)local_pattern_id;
+            }
+        }
+        __syncthreads();
+    }
+}
 "#;
 const KERNEL_THREADS_PER_BLOCK: u32 = 256;
+const SHORT_LINE_THREADS_PER_BLOCK: u32 = 128;
+const WARP_LINE_THREADS_PER_BLOCK: u32 = 128;
+const LONG_LINE_THREADS_PER_BLOCK: u32 = 256;
+const SHORT_LINE_BYTES_THRESHOLD: u32 = 128;
+const LONG_LINE_BYTES_THRESHOLD: u32 = 4 * 1024;
+const WARP_SIZE: u32 = 32;
+const WARPS_PER_BLOCK: u32 = WARP_LINE_THREADS_PER_BLOCK / WARP_SIZE;
 const PIPELINE_SLOT_COUNT: usize = 2;
 const DEFAULT_GPU_BATCH_BYTES: usize = 128 * 1024 * 1024;
 const SHARED_PATTERN_MEMORY_LIMIT_BYTES: usize = 48 * 1024;
@@ -125,6 +376,11 @@ pub struct GpuPipelineStats {
     pub pattern_count: usize,
     pub pattern_batch_count: usize,
     pub single_dispatch: bool,
+    pub short_line_count: usize,
+    pub medium_line_count: usize,
+    pub long_line_count: usize,
+    pub warp_dispatch_count: usize,
+    pub block_dispatch_count: usize,
     pub transfer_time_ms: f32,
     pub kernel_time_ms: f32,
     pub wall_time_ms: f64,
@@ -142,6 +398,11 @@ impl Default for GpuPipelineStats {
             pattern_count: 0,
             pattern_batch_count: 0,
             single_dispatch: false,
+            short_line_count: 0,
+            medium_line_count: 0,
+            long_line_count: 0,
+            warp_dispatch_count: 0,
+            block_dispatch_count: 0,
             transfer_time_ms: 0.0,
             kernel_time_ms: 0.0,
             wall_time_ms: 0.0,
@@ -208,6 +469,33 @@ struct BatchedFile {
     end: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LineDescriptor {
+    start: u32,
+    len: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ClassifiedLineBatch {
+    short_lines: Vec<LineDescriptor>,
+    medium_lines: Vec<LineDescriptor>,
+    long_lines: Vec<LineDescriptor>,
+}
+
+impl ClassifiedLineBatch {
+    fn short_line_count(&self) -> usize {
+        self.short_lines.len()
+    }
+
+    fn medium_line_count(&self) -> usize {
+        self.medium_lines.len()
+    }
+
+    fn long_line_count(&self) -> usize {
+        self.long_lines.len()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct FileBatchPlan {
     files: Vec<PathBuf>,
@@ -227,6 +515,7 @@ struct PatternBatchPlan {
 struct LoadedFileBatch {
     files: Vec<BatchedFile>,
     bytes_used: usize,
+    classified_lines: ClassifiedLineBatch,
 }
 
 struct DevicePatternBatch {
@@ -234,6 +523,34 @@ struct DevicePatternBatch {
     pattern_blob_device: CudaSlice<u8>,
     pattern_offsets_device: CudaSlice<u32>,
     pattern_lengths_device: CudaSlice<u32>,
+}
+
+struct DeviceLineClassBuffers {
+    line_starts_device: CudaSlice<u32>,
+    line_lengths_device: CudaSlice<u32>,
+    line_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AdaptiveDispatchStats {
+    short_line_count: usize,
+    medium_line_count: usize,
+    long_line_count: usize,
+    warp_dispatch_count: usize,
+    block_dispatch_count: usize,
+}
+
+struct SlotAdaptiveDispatch {
+    short_lines: Option<DeviceLineClassBuffers>,
+    medium_lines: Option<DeviceLineClassBuffers>,
+    long_lines: Option<DeviceLineClassBuffers>,
+    stats: AdaptiveDispatchStats,
+}
+
+impl SlotAdaptiveDispatch {
+    fn total_lines(&self) -> usize {
+        self.stats.short_line_count + self.stats.medium_line_count + self.stats.long_line_count
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -252,7 +569,10 @@ pub struct CudaDeviceInfo {
 struct KernelRuntime {
     context: Arc<CudaContext>,
     _module: Arc<CudaModule>,
-    function: CudaFunction,
+    position_function: CudaFunction,
+    short_line_function: CudaFunction,
+    warp_line_function: CudaFunction,
+    block_line_function: CudaFunction,
 }
 
 struct SearchPipelineSlot {
@@ -263,6 +583,7 @@ struct SearchPipelineSlot {
     match_pattern_ids_buffer: CudaSlice<u32>,
     match_count_buffer: CudaSlice<u32>,
     current_batch: Option<LoadedFileBatch>,
+    adaptive_dispatch: Option<SlotAdaptiveDispatch>,
     current_pattern_batch_index: Option<usize>,
     transfer_start: Option<CudaEvent>,
     transfer_end: Option<CudaEvent>,
@@ -644,6 +965,26 @@ fn aggregate_device_pipeline_stats(
         single_dispatch: device_outcomes
             .iter()
             .all(|outcome| outcome.stats.pipeline.single_dispatch),
+        short_line_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.short_line_count)
+            .sum(),
+        medium_line_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.medium_line_count)
+            .sum(),
+        long_line_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.long_line_count)
+            .sum(),
+        warp_dispatch_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.warp_dispatch_count)
+            .sum(),
+        block_dispatch_count: device_outcomes
+            .iter()
+            .map(|outcome| outcome.stats.pipeline.block_dispatch_count)
+            .sum(),
         transfer_time_ms,
         kernel_time_ms: device_outcomes
             .iter()
@@ -751,9 +1092,9 @@ pub fn gpu_native_search_patterns(
             .memset_zeros(&mut match_count_device)
             .map_err(anyhow::Error::new)
             .context("failed to reset CUDA match counter")?;
-        launch_search_kernel(
+        launch_position_search_kernel(
             &stream,
-            &runtime.function,
+            &runtime.position_function,
             &data_device,
             data_len,
             device_batch,
@@ -810,19 +1151,46 @@ fn create_kernel_runtime(device_id: i32) -> Result<KernelRuntime> {
     validate_device_id(device_id)?;
     let context = open_cuda_context(device_id)?;
     let module = compile_kernel_module(&context, device_id)?;
-    let function = module
-        .load_function(SEARCH_KERNEL_NAME)
+    let position_function = module
+        .load_function(POSITION_SEARCH_KERNEL_NAME)
         .map_err(anyhow::Error::new)
         .with_context(|| {
             format!(
-                "failed to load CUDA kernel `{SEARCH_KERNEL_NAME}` for device {device_id}"
+                "failed to load CUDA kernel `{POSITION_SEARCH_KERNEL_NAME}` for device {device_id}"
+            )
+        })?;
+    let short_line_function = module
+        .load_function(SHORT_LINE_SEARCH_KERNEL_NAME)
+        .map_err(anyhow::Error::new)
+        .with_context(|| {
+            format!(
+                "failed to load CUDA kernel `{SHORT_LINE_SEARCH_KERNEL_NAME}` for device {device_id}"
+            )
+        })?;
+    let warp_line_function = module
+        .load_function(WARP_LINE_SEARCH_KERNEL_NAME)
+        .map_err(anyhow::Error::new)
+        .with_context(|| {
+            format!(
+                "failed to load CUDA kernel `{WARP_LINE_SEARCH_KERNEL_NAME}` for device {device_id}"
+            )
+        })?;
+    let block_line_function = module
+        .load_function(BLOCK_LINE_SEARCH_KERNEL_NAME)
+        .map_err(anyhow::Error::new)
+        .with_context(|| {
+            format!(
+                "failed to load CUDA kernel `{BLOCK_LINE_SEARCH_KERNEL_NAME}` for device {device_id}"
             )
         })?;
 
     Ok(KernelRuntime {
         context,
         _module: module,
-        function,
+        position_function,
+        short_line_function,
+        warp_line_function,
+        block_line_function,
     })
 }
 
@@ -851,6 +1219,11 @@ fn run_search_pipeline(
     let mut transfer_time_ms = 0.0f32;
     let mut kernel_time_ms = 0.0f32;
     let mut overlapped_device_time_ms = 0.0f32;
+    let mut short_line_count = 0usize;
+    let mut medium_line_count = 0usize;
+    let mut long_line_count = 0usize;
+    let mut warp_dispatch_count = 0usize;
+    let mut block_dispatch_count = 0usize;
     let active_stream_count = dispatch_plans.len().clamp(1, PIPELINE_SLOT_COUNT);
     let mut pipeline_start = None;
 
@@ -865,6 +1238,11 @@ fn run_search_pipeline(
             &mut transfer_time_ms,
             &mut kernel_time_ms,
             &mut overlapped_device_time_ms,
+            &mut short_line_count,
+            &mut medium_line_count,
+            &mut long_line_count,
+            &mut warp_dispatch_count,
+            &mut block_dispatch_count,
         )?;
         load_file_batch_into_slot(slot, &plan.file_batch)?;
         slot.current_pattern_batch_index = Some(plan.pattern_batch_index);
@@ -902,6 +1280,11 @@ fn run_search_pipeline(
             &mut transfer_time_ms,
             &mut kernel_time_ms,
             &mut overlapped_device_time_ms,
+            &mut short_line_count,
+            &mut medium_line_count,
+            &mut long_line_count,
+            &mut warp_dispatch_count,
+            &mut block_dispatch_count,
         )?;
     }
 
@@ -935,6 +1318,11 @@ fn run_search_pipeline(
             pattern_count: all_patterns.len(),
             pattern_batch_count: pattern_batches.len(),
             single_dispatch: pattern_batches.len() == 1,
+            short_line_count,
+            medium_line_count,
+            long_line_count,
+            warp_dispatch_count,
+            block_dispatch_count,
             transfer_time_ms,
             kernel_time_ms,
             wall_time_ms,
@@ -978,6 +1366,7 @@ fn create_search_pipeline_slot(
         match_pattern_ids_buffer,
         match_count_buffer,
         current_batch: None,
+        adaptive_dispatch: None,
         current_pattern_batch_index: None,
         transfer_start: None,
         transfer_end: None,
@@ -1049,27 +1438,45 @@ fn finalize_search_pipeline_slot(
     transfer_time_ms: &mut f32,
     kernel_time_ms: &mut f32,
     overlapped_device_time_ms: &mut f32,
+    short_line_count: &mut usize,
+    medium_line_count: &mut usize,
+    long_line_count: &mut usize,
+    warp_dispatch_count: &mut usize,
+    block_dispatch_count: &mut usize,
 ) -> Result<()> {
     let Some(batch) = slot.current_batch.take() else {
+        slot.adaptive_dispatch = None;
         slot.current_pattern_batch_index = None;
         slot.transfer_start = None;
         slot.transfer_end = None;
         slot.kernel_end = None;
         return Ok(());
     };
+    let adaptive_dispatch = slot
+        .adaptive_dispatch
+        .take()
+        .context("missing adaptive dispatch metadata for GPU search pipeline")?;
     let pattern_batch_index = slot
         .current_pattern_batch_index
         .take()
         .context("missing pattern batch metadata for GPU search pipeline")?;
     let pattern_batch = &device_pattern_batches[pattern_batch_index].host;
 
-    *transfer_bytes += batch.bytes_used;
-    if batch.bytes_used == 0 {
+    if pattern_batch_index == 0 {
+        *short_line_count += adaptive_dispatch.stats.short_line_count;
+        *medium_line_count += adaptive_dispatch.stats.medium_line_count;
+        *long_line_count += adaptive_dispatch.stats.long_line_count;
+    }
+    *warp_dispatch_count += adaptive_dispatch.stats.warp_dispatch_count;
+    *block_dispatch_count += adaptive_dispatch.stats.block_dispatch_count;
+
+    if batch.bytes_used == 0 || adaptive_dispatch.total_lines() == 0 {
         slot.transfer_start = None;
         slot.transfer_end = None;
         slot.kernel_end = None;
         return Ok(());
     }
+    *transfer_bytes += batch.bytes_used;
 
     let transfer_start = slot
         .transfer_start
@@ -1111,8 +1518,8 @@ fn finalize_search_pipeline_slot(
     if match_count == 0 {
         return Ok(());
     }
-    let max_matches = batch
-        .bytes_used
+    let max_matches = adaptive_dispatch
+        .total_lines()
         .checked_mul(pattern_batch.global_pattern_ids.len())
         .context("GPU search pipeline match capacity overflow")?;
     if match_count > max_matches {
@@ -1162,6 +1569,7 @@ fn load_file_batch_into_slot(slot: &mut SearchPipelineSlot, plan: &FileBatchPlan
     let host_buffer = slot.host_buffer.as_mut_slice()?;
     let mut cursor = 0usize;
     let mut batch_files = Vec::new();
+    let mut classified_lines = ClassifiedLineBatch::default();
 
     for path in &plan.files {
         let bytes = fs::read(path)
@@ -1187,12 +1595,15 @@ fn load_file_batch_into_slot(slot: &mut SearchPipelineSlot, plan: &FileBatchPlan
             start,
             end,
         });
+        classify_file_lines(start, &bytes, &mut classified_lines)?;
     }
 
     slot.current_batch = Some(LoadedFileBatch {
         files: batch_files,
         bytes_used: cursor,
+        classified_lines,
     });
+    slot.adaptive_dispatch = None;
     slot.transfer_start = None;
     slot.transfer_end = None;
     slot.kernel_end = None;
@@ -1208,15 +1619,27 @@ fn launch_slot_search(
         return Ok(());
     };
     if batch.bytes_used == 0 {
+        slot.adaptive_dispatch = Some(SlotAdaptiveDispatch {
+            short_lines: None,
+            medium_lines: None,
+            long_lines: None,
+            stats: AdaptiveDispatchStats::default(),
+        });
         return Ok(());
     }
 
-    let data_len = i32::try_from(batch.bytes_used).context("GPU search batch exceeds i32 length")?;
-    let max_matches = u32::try_from(resolve_max_match_capacity(
-        batch.bytes_used,
-        pattern_batch.host.global_pattern_ids.len(),
-    )?)
-        .context("GPU search batch exceeds u32 match capacity")?;
+    let adaptive_dispatch = upload_adaptive_dispatch(&slot.stream, &batch.classified_lines)?;
+    let total_lines = adaptive_dispatch.total_lines();
+    let max_matches = u32::try_from(
+        total_lines
+            .checked_mul(pattern_batch.host.global_pattern_ids.len())
+            .context("GPU search batch match capacity overflow")?,
+    )
+    .context("GPU search batch exceeds u32 match capacity")?;
+    slot.adaptive_dispatch = Some(adaptive_dispatch);
+    if total_lines == 0 {
+        return Ok(());
+    }
 
     slot.stream
         .memset_zeros(&mut slot.match_count_buffer)
@@ -1226,23 +1649,57 @@ fn launch_slot_search(
     copy_pinned_host_to_device(&slot.stream, &slot.host_buffer, batch.bytes_used, &mut slot.data_buffer)
         .context("failed to copy pinned search batch to CUDA device")?;
     slot.transfer_end = Some(record_timed_event(&slot.stream)?);
-    launch_search_kernel(
-        &slot.stream,
-        &runtime.function,
-        &slot.data_buffer,
-        data_len,
-        pattern_batch,
-        &mut slot.match_positions_buffer,
-        &mut slot.match_pattern_ids_buffer,
-        max_matches,
-        &mut slot.match_count_buffer,
-    )?;
+    let dispatch = slot
+        .adaptive_dispatch
+        .as_ref()
+        .context("missing adaptive dispatch buffers for GPU search launch")?;
+    if let Some(short_lines) = dispatch.short_lines.as_ref() {
+        launch_line_search_kernel(
+            &slot.stream,
+            &runtime.short_line_function,
+            SHORT_LINE_THREADS_PER_BLOCK,
+            short_lines,
+            &slot.data_buffer,
+            pattern_batch,
+            &mut slot.match_positions_buffer,
+            &mut slot.match_pattern_ids_buffer,
+            max_matches,
+            &mut slot.match_count_buffer,
+        )?;
+    }
+    if let Some(medium_lines) = dispatch.medium_lines.as_ref() {
+        launch_warp_line_search_kernel(
+            &slot.stream,
+            &runtime.warp_line_function,
+            medium_lines,
+            &slot.data_buffer,
+            pattern_batch,
+            &mut slot.match_positions_buffer,
+            &mut slot.match_pattern_ids_buffer,
+            max_matches,
+            &mut slot.match_count_buffer,
+        )?;
+    }
+    if let Some(long_lines) = dispatch.long_lines.as_ref() {
+        launch_line_search_kernel(
+            &slot.stream,
+            &runtime.block_line_function,
+            LONG_LINE_THREADS_PER_BLOCK,
+            long_lines,
+            &slot.data_buffer,
+            pattern_batch,
+            &mut slot.match_positions_buffer,
+            &mut slot.match_pattern_ids_buffer,
+            max_matches,
+            &mut slot.match_count_buffer,
+        )?;
+    }
     slot.kernel_end = Some(record_timed_event(&slot.stream)?);
     Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn launch_search_kernel(
+fn launch_position_search_kernel(
     stream: &Arc<CudaStream>,
     function: &CudaFunction,
     data_device: &CudaSlice<u8>,
@@ -1281,6 +1738,199 @@ fn launch_search_kernel(
             .map(|_| ())
             .map_err(anyhow::Error::new)
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_line_search_kernel(
+    stream: &Arc<CudaStream>,
+    function: &CudaFunction,
+    threads_per_block: u32,
+    line_buffers: &DeviceLineClassBuffers,
+    data_device: &CudaSlice<u8>,
+    pattern_batch: &DevicePatternBatch,
+    match_positions_device: &mut CudaSlice<u32>,
+    match_pattern_ids_device: &mut CudaSlice<u32>,
+    max_matches: u32,
+    match_count_device: &mut CudaSlice<u32>,
+) -> Result<()> {
+    let line_count = i32::try_from(line_buffers.line_count)
+        .context("GPU native line search line count exceeds i32 length")?;
+    let launch_config = LaunchConfig {
+        grid_dim: (u32::try_from(line_buffers.line_count).unwrap_or(0), 1, 1),
+        block_dim: (threads_per_block, 1, 1),
+        shared_mem_bytes: u32::try_from(pattern_batch.host.shared_mem_bytes)
+            .context("GPU native search shared memory requirement exceeds u32")?,
+    };
+    let pattern_blob_len = i32::try_from(pattern_batch.host.pattern_blob.len())
+        .context("GPU native search pattern blob exceeds i32 length")?;
+    let pattern_count = i32::try_from(pattern_batch.host.global_pattern_ids.len())
+        .context("GPU native search pattern count exceeds i32 length")?;
+
+    catch_cuda("launch adaptive GPU line search kernel", || {
+        let mut launch = stream.launch_builder(function);
+        launch.arg(data_device);
+        launch.arg(&pattern_batch.pattern_blob_device);
+        launch.arg(&pattern_blob_len);
+        launch.arg(&pattern_batch.pattern_offsets_device);
+        launch.arg(&pattern_batch.pattern_lengths_device);
+        launch.arg(&pattern_count);
+        launch.arg(&line_buffers.line_starts_device);
+        launch.arg(&line_buffers.line_lengths_device);
+        launch.arg(&line_count);
+        launch.arg(match_positions_device);
+        launch.arg(match_pattern_ids_device);
+        launch.arg(&max_matches);
+        launch.arg(match_count_device);
+        unsafe { launch.launch(launch_config) }
+            .map(|_| ())
+            .map_err(anyhow::Error::new)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_warp_line_search_kernel(
+    stream: &Arc<CudaStream>,
+    function: &CudaFunction,
+    line_buffers: &DeviceLineClassBuffers,
+    data_device: &CudaSlice<u8>,
+    pattern_batch: &DevicePatternBatch,
+    match_positions_device: &mut CudaSlice<u32>,
+    match_pattern_ids_device: &mut CudaSlice<u32>,
+    max_matches: u32,
+    match_count_device: &mut CudaSlice<u32>,
+) -> Result<()> {
+    let line_count = i32::try_from(line_buffers.line_count)
+        .context("GPU native warp line search count exceeds i32 length")?;
+    let launch_config = LaunchConfig {
+        grid_dim: (
+            u32::try_from(line_buffers.line_count)
+                .unwrap_or(0)
+                .div_ceil(WARPS_PER_BLOCK),
+            1,
+            1,
+        ),
+        block_dim: (WARP_LINE_THREADS_PER_BLOCK, 1, 1),
+        shared_mem_bytes: u32::try_from(pattern_batch.host.shared_mem_bytes)
+            .context("GPU native search shared memory requirement exceeds u32")?,
+    };
+    let pattern_blob_len = i32::try_from(pattern_batch.host.pattern_blob.len())
+        .context("GPU native search pattern blob exceeds i32 length")?;
+    let pattern_count = i32::try_from(pattern_batch.host.global_pattern_ids.len())
+        .context("GPU native search pattern count exceeds i32 length")?;
+
+    catch_cuda("launch warp-cooperative GPU line search kernel", || {
+        let mut launch = stream.launch_builder(function);
+        launch.arg(data_device);
+        launch.arg(&pattern_batch.pattern_blob_device);
+        launch.arg(&pattern_blob_len);
+        launch.arg(&pattern_batch.pattern_offsets_device);
+        launch.arg(&pattern_batch.pattern_lengths_device);
+        launch.arg(&pattern_count);
+        launch.arg(&line_buffers.line_starts_device);
+        launch.arg(&line_buffers.line_lengths_device);
+        launch.arg(&line_count);
+        launch.arg(match_positions_device);
+        launch.arg(match_pattern_ids_device);
+        launch.arg(&max_matches);
+        launch.arg(match_count_device);
+        unsafe { launch.launch(launch_config) }
+            .map(|_| ())
+            .map_err(anyhow::Error::new)
+    })
+}
+
+fn upload_adaptive_dispatch(
+    stream: &Arc<CudaStream>,
+    classified_lines: &ClassifiedLineBatch,
+) -> Result<SlotAdaptiveDispatch> {
+    Ok(SlotAdaptiveDispatch {
+        short_lines: upload_line_class_buffers(stream, &classified_lines.short_lines)?,
+        medium_lines: upload_line_class_buffers(stream, &classified_lines.medium_lines)?,
+        long_lines: upload_line_class_buffers(stream, &classified_lines.long_lines)?,
+        stats: AdaptiveDispatchStats {
+            short_line_count: classified_lines.short_line_count(),
+            medium_line_count: classified_lines.medium_line_count(),
+            long_line_count: classified_lines.long_line_count(),
+            warp_dispatch_count: usize::from(!classified_lines.medium_lines.is_empty()),
+            block_dispatch_count: usize::from(!classified_lines.long_lines.is_empty()),
+        },
+    })
+}
+
+fn upload_line_class_buffers(
+    stream: &Arc<CudaStream>,
+    lines: &[LineDescriptor],
+) -> Result<Option<DeviceLineClassBuffers>> {
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    let line_starts = lines.iter().map(|line| line.start).collect::<Vec<_>>();
+    let line_lengths = lines.iter().map(|line| line.len).collect::<Vec<_>>();
+    let line_starts_device = stream
+        .clone_htod(line_starts.as_slice())
+        .map_err(anyhow::Error::new)
+        .context("failed to copy adaptive line starts to CUDA device")?;
+    let line_lengths_device = stream
+        .clone_htod(line_lengths.as_slice())
+        .map_err(anyhow::Error::new)
+        .context("failed to copy adaptive line lengths to CUDA device")?;
+
+    Ok(Some(DeviceLineClassBuffers {
+        line_starts_device,
+        line_lengths_device,
+        line_count: lines.len(),
+    }))
+}
+
+fn classify_file_lines(
+    batch_start: usize,
+    bytes: &[u8],
+    classified_lines: &mut ClassifiedLineBatch,
+) -> Result<()> {
+    let mut line_start = 0usize;
+    for newline_index in memchr_iter(b'\n', bytes) {
+        push_classified_line(
+            batch_start.saturating_add(line_start),
+            newline_index.saturating_sub(line_start),
+            classified_lines,
+        )?;
+        line_start = newline_index.saturating_add(1);
+    }
+    if line_start < bytes.len() {
+        push_classified_line(
+            batch_start.saturating_add(line_start),
+            bytes.len().saturating_sub(line_start),
+            classified_lines,
+        )?;
+    }
+    Ok(())
+}
+
+fn push_classified_line(
+    absolute_start: usize,
+    line_len: usize,
+    classified_lines: &mut ClassifiedLineBatch,
+) -> Result<()> {
+    if line_len == 0 {
+        return Ok(());
+    }
+
+    let descriptor = LineDescriptor {
+        start: u32::try_from(absolute_start)
+            .context("GPU native line start exceeds u32 range")?,
+        len: u32::try_from(line_len).context("GPU native line length exceeds u32 range")?,
+    };
+
+    if descriptor.len < SHORT_LINE_BYTES_THRESHOLD {
+        classified_lines.short_lines.push(descriptor);
+    } else if descriptor.len <= LONG_LINE_BYTES_THRESHOLD {
+        classified_lines.medium_lines.push(descriptor);
+    } else {
+        classified_lines.long_lines.push(descriptor);
+    }
+
+    Ok(())
 }
 
 fn record_timed_event(stream: &Arc<CudaStream>) -> Result<CudaEvent> {
