@@ -1476,6 +1476,86 @@ def test_run_gpu_native_benchmarks_should_emit_rows_correctness_and_error_tests(
     assert payload["crossover"]["first_gpu_faster_than_rg"] == "100MB"
 
 
+def test_run_gpu_native_benchmarks_should_emit_advanced_sections_when_enabled(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_native_benchmarks_script_advanced", "benchmarks/run_gpu_native_benchmarks.py"
+    )
+    output_path = tmp_path / "bench_gpu_native_advanced.json"
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_native_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--advanced",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+
+    def _fake_run_gpu_native_benchmarks(**kwargs):
+        captured.update(kwargs)
+        return {
+            "bench_dir": str(tmp_path / "gpu_native_bench_data"),
+            "corpus_sizes": [
+                {"label": "10MB", "bytes": 10 * 1024 * 1024},
+                {"label": "100MB", "bytes": 100 * 1024 * 1024},
+                {"label": "500MB", "bytes": 500 * 1024 * 1024},
+                {"label": "1GB", "bytes": 1024 * 1024 * 1024},
+            ],
+            "rows": [],
+            "correctness_checks": [],
+            "error_tests": {},
+            "crossover": {
+                "exists": True,
+                "first_gpu_faster_than_rg": "500MB",
+                "summary": "GPU first beats rg at 500MB.",
+            },
+            "throughput_target": {
+                "met": True,
+                "winning_rows": [{"size_label": "500MB", "speedup_vs_rg": 12.4}],
+            },
+            "advanced": {
+                "enabled": True,
+                "stream_overlap": {"status": "PASS", "benefit_pct": 18.2},
+                "transfer_throughput": {
+                    "status": "PASS",
+                    "pinned": {"throughput_bytes_per_s": 12_500_000_000.0},
+                    "pageable": {"throughput_bytes_per_s": 6_200_000_000.0},
+                },
+                "multi_pattern": {"status": "PASS", "speedup_vs_cpu": 2.7},
+                "multi_gpu": {"status": "PASS", "improvement_pct": 18.6},
+                "long_lines": {"status": "PASS", "gpu_speedup_vs_cpu": 1.4},
+                "cuda_graphs": {"status": "PASS", "wall_time_reduction_pct": 11.8},
+                "oom_validation": {
+                    "status": "PASS",
+                    "requested_bytes": 13 * 1024 * 1024 * 1024,
+                    "stderr": "CUDA out of memory while allocating 13.00 GiB",
+                },
+            },
+            "warnings": [],
+            "errors": [],
+        }
+
+    monkeypatch.setattr(module, "run_gpu_native_benchmarks", _fake_run_gpu_native_benchmarks)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured["advanced"] is True
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["advanced"]["enabled"] is True
+    assert payload["throughput_target"]["met"] is True
+    assert payload["advanced"]["multi_gpu"]["improvement_pct"] == 18.6
+    assert payload["advanced"]["oom_validation"]["status"] == "PASS"
+
+
 def test_run_hot_query_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module(
         "run_hot_query_benchmarks_script", "benchmarks/run_hot_query_benchmarks.py"

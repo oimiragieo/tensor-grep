@@ -1,5 +1,5 @@
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 #[cfg(feature = "cuda")]
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,9 @@ use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule
 use tensor_grep_rs::backend_cpu::CpuBackend;
 #[cfg(feature = "cuda")]
 use tensor_grep_rs::gpu_native::{
-    gpu_native_search_paths_multi, GpuNativeSearchConfig, GpuNativeSearchStats,
+    benchmark_cuda_graph_search_paths, benchmark_pageable_transfer_throughput,
+    benchmark_pinned_transfer_throughput, gpu_native_search_paths_multi, probe_device_allocation,
+    GpuNativeSearchConfig, GpuNativeSearchStats,
 };
 use tensor_grep_rs::index::TrigramIndex;
 use tensor_grep_rs::native_search::{
@@ -228,6 +230,98 @@ pub enum Commands {
     New,
     /// Start Language Server
     Lsp,
+    #[cfg(feature = "cuda")]
+    #[command(hide = true, name = "__gpu-native-stats")]
+    GpuNativeStats(GpuNativeStatsArgs),
+    #[cfg(feature = "cuda")]
+    #[command(hide = true, name = "__gpu-transfer-bench")]
+    GpuTransferBench(GpuTransferBenchArgs),
+    #[cfg(feature = "cuda")]
+    #[command(hide = true, name = "__gpu-cuda-graphs")]
+    GpuCudaGraphs(GpuCudaGraphArgs),
+    #[cfg(feature = "cuda")]
+    #[command(hide = true, name = "__gpu-oom-probe")]
+    GpuOomProbe(GpuOomProbeArgs),
+}
+
+#[cfg(feature = "cuda")]
+#[derive(Args, Debug, Clone)]
+pub struct GpuNativeStatsArgs {
+    #[arg(long = "pattern", required = true)]
+    pub patterns: Vec<String>,
+
+    #[arg(long)]
+    pub path: PathBuf,
+
+    #[arg(long = "gpu-device-ids", value_delimiter = ',')]
+    pub gpu_device_ids: Vec<i32>,
+
+    #[arg(long = "no-ignore")]
+    pub no_ignore: bool,
+
+    #[arg(short = 'g', long = "glob")]
+    pub globs: Vec<String>,
+
+    #[arg(long)]
+    pub max_batch_bytes: Option<usize>,
+
+    #[arg(long)]
+    pub summary_only: bool,
+}
+
+#[cfg(feature = "cuda")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum GpuTransferMemoryKind {
+    Pinned,
+    Pageable,
+}
+
+#[cfg(feature = "cuda")]
+#[derive(Args, Debug, Clone)]
+pub struct GpuTransferBenchArgs {
+    #[arg(long)]
+    pub device_id: i32,
+
+    #[arg(long)]
+    pub total_bytes: usize,
+
+    #[arg(long)]
+    pub batch_bytes: usize,
+
+    #[arg(long, value_enum, default_value_t = GpuTransferMemoryKind::Pinned)]
+    pub memory_kind: GpuTransferMemoryKind,
+}
+
+#[cfg(feature = "cuda")]
+#[derive(Args, Debug, Clone)]
+pub struct GpuCudaGraphArgs {
+    #[arg(long = "pattern", required = true)]
+    pub patterns: Vec<String>,
+
+    #[arg(long)]
+    pub path: PathBuf,
+
+    #[arg(long)]
+    pub device_id: i32,
+
+    #[arg(long = "no-ignore")]
+    pub no_ignore: bool,
+
+    #[arg(short = 'g', long = "glob")]
+    pub globs: Vec<String>,
+
+    #[arg(long)]
+    pub max_batch_bytes: Option<usize>,
+}
+
+#[cfg(feature = "cuda")]
+#[derive(Args, Debug, Clone)]
+pub struct GpuOomProbeArgs {
+    #[arg(long)]
+    pub device_id: i32,
+
+    #[arg(long)]
+    pub bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -354,6 +448,14 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Test => handle_sidecar_command("test", vec![]),
         Commands::New => handle_sidecar_command("new", vec![]),
         Commands::Lsp => handle_python_passthrough("lsp", vec![]),
+        #[cfg(feature = "cuda")]
+        Commands::GpuNativeStats(args) => handle_gpu_native_stats_command(args),
+        #[cfg(feature = "cuda")]
+        Commands::GpuTransferBench(args) => handle_gpu_transfer_benchmark_command(args),
+        #[cfg(feature = "cuda")]
+        Commands::GpuCudaGraphs(args) => handle_gpu_cuda_graph_benchmark_command(args),
+        #[cfg(feature = "cuda")]
+        Commands::GpuOomProbe(args) => handle_gpu_oom_probe_command(args),
     }
 }
 
@@ -488,7 +590,20 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 }
 
 fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
-    const SUBCOMMANDS: &[&str] = &["search", "mcp", "classify", "run", "scan", "test", "new", "lsp"];
+    const SUBCOMMANDS: &[&str] = &[
+        "search",
+        "mcp",
+        "classify",
+        "run",
+        "scan",
+        "test",
+        "new",
+        "lsp",
+        "__gpu-native-stats",
+        "__gpu-transfer-bench",
+        "__gpu-cuda-graphs",
+        "__gpu-oom-probe",
+    ];
 
     for arg in raw_args.iter().skip(1) {
         let token = arg.to_string_lossy();
@@ -1743,6 +1858,18 @@ fn simulated_gpu_route_failure() -> Option<GpuRouteFailure> {
             message: "GPU operation timed out after 30s".to_string(),
         });
     }
+    if trimmed.eq_ignore_ascii_case("oom") {
+        return Some(GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: "CUDA out of memory while allocating the requested GPU buffer".to_string(),
+        });
+    }
+    if let Some(request) = trimmed.strip_prefix("oom:") {
+        return Some(GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: format!("CUDA out of memory while allocating {}", request.trim()),
+        });
+    }
     if let Some(duration) = trimmed.strip_prefix("timeout:") {
         return Some(GpuRouteFailure {
             kind: GpuRouteFailureKind::Fatal,
@@ -1794,6 +1921,12 @@ fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
             message: raw_message.to_string(),
         };
     }
+    if raw_message.starts_with("CUDA out of memory") {
+        return GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: raw_message.to_string(),
+        };
+    }
     if raw_message.starts_with("GPU operation timed out") {
         return GpuRouteFailure {
             kind: GpuRouteFailureKind::Fatal,
@@ -1812,6 +1945,17 @@ fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
             message: "CUDA is unavailable: no usable GPU devices were found".to_string(),
         };
     }
+    if lower.contains("out of memory") || lower.contains("cuda_error_out_of_memory") {
+        let detail = raw_message.trim();
+        return GpuRouteFailure {
+            kind: GpuRouteFailureKind::Fatal,
+            message: if detail.is_empty() {
+                "CUDA out of memory while allocating the requested GPU buffer".to_string()
+            } else {
+                format!("CUDA out of memory: {detail}")
+            },
+        };
+    }
 
     GpuRouteFailure {
         kind: GpuRouteFailureKind::Fatal,
@@ -1819,6 +1963,91 @@ fn classify_gpu_route_failure(raw_message: &str) -> GpuRouteFailure {
             "CUDA initialization failed: {}",
             sanitize_cuda_detail(raw_message)
         ),
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn gpu_native_config_from_internal_args(args: &GpuNativeStatsArgs) -> GpuNativeSearchConfig {
+    GpuNativeSearchConfig {
+        patterns: args.patterns.clone(),
+        paths: vec![args.path.clone()],
+        no_ignore: args.no_ignore,
+        glob: args.globs.clone(),
+        max_batch_bytes: args.max_batch_bytes,
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn gpu_native_config_from_graph_args(args: &GpuCudaGraphArgs) -> GpuNativeSearchConfig {
+    GpuNativeSearchConfig {
+        patterns: args.patterns.clone(),
+        paths: vec![args.path.clone()],
+        no_ignore: args.no_ignore,
+        glob: args.globs.clone(),
+        max_batch_bytes: args.max_batch_bytes,
+    }
+}
+
+#[cfg(feature = "cuda")]
+fn handle_gpu_native_stats_command(args: GpuNativeStatsArgs) -> anyhow::Result<()> {
+    let mut stats = gpu_native_search_paths_multi(
+        &gpu_native_config_from_internal_args(&args),
+        &args.gpu_device_ids,
+    )?;
+    if args.summary_only {
+        stats.matches.clear();
+    }
+    println!("{}", serde_json::to_string_pretty(&stats)?);
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn handle_gpu_transfer_benchmark_command(args: GpuTransferBenchArgs) -> anyhow::Result<()> {
+    let benchmark = match args.memory_kind {
+        GpuTransferMemoryKind::Pinned => benchmark_pinned_transfer_throughput(
+            args.device_id,
+            args.total_bytes,
+            args.batch_bytes,
+        )?,
+        GpuTransferMemoryKind::Pageable => benchmark_pageable_transfer_throughput(
+            args.device_id,
+            args.total_bytes,
+            args.batch_bytes,
+        )?,
+    };
+    println!("{}", serde_json::to_string_pretty(&benchmark)?);
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn handle_gpu_cuda_graph_benchmark_command(args: GpuCudaGraphArgs) -> anyhow::Result<()> {
+    let benchmark = benchmark_cuda_graph_search_paths(
+        &gpu_native_config_from_graph_args(&args),
+        args.device_id,
+    )?;
+    println!("{}", serde_json::to_string_pretty(&benchmark)?);
+    Ok(())
+}
+
+#[cfg(feature = "cuda")]
+fn handle_gpu_oom_probe_command(args: GpuOomProbeArgs) -> anyhow::Result<()> {
+    match probe_device_allocation(args.device_id, args.bytes) {
+        Ok(()) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "status": "PASS",
+                    "device_id": args.device_id,
+                    "bytes": args.bytes,
+                }))?
+            );
+            Ok(())
+        }
+        Err(err) => {
+            let failure = classify_gpu_route_failure(&err.to_string());
+            eprintln!("{}", failure.message);
+            std::process::exit(2);
+        }
     }
 }
 

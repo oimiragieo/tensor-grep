@@ -7,6 +7,7 @@ use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions};
 use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
 use memchr::memchr_iter;
 use rayon::prelude::*;
+use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
@@ -358,6 +359,7 @@ pub struct GpuNativeSearchConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize)]
 pub struct GpuNativeSearchMatch {
     pub path: PathBuf,
     pub line_number: usize,
@@ -367,6 +369,7 @@ pub struct GpuNativeSearchMatch {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize)]
 pub struct GpuPipelineStats {
     pub pinned_host_buffers: bool,
     pub double_buffered: bool,
@@ -416,6 +419,7 @@ impl Default for GpuPipelineStats {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize)]
 pub struct GpuPinnedTransferBenchmark {
     pub pinned_host_buffers: bool,
     pub double_buffered: bool,
@@ -429,6 +433,7 @@ pub struct GpuPinnedTransferBenchmark {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize)]
 pub struct GpuNativeDeviceStats {
     pub device: CudaDeviceInfo,
     pub searched_files: usize,
@@ -439,6 +444,7 @@ pub struct GpuNativeDeviceStats {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize)]
 pub struct GpuNativeSearchStats {
     pub searched_files: usize,
     pub matched_files: usize,
@@ -453,6 +459,7 @@ pub struct GpuNativeSearchStats {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize)]
 pub struct GpuCudaGraphBenchmark {
     pub baseline: GpuNativeSearchStats,
     pub graphed: GpuNativeSearchStats,
@@ -683,7 +690,7 @@ struct SearchDispatchPlan {
     pattern_batch_index: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CudaDeviceInfo {
     pub device_id: i32,
     pub name: String,
@@ -724,6 +731,15 @@ struct SearchPipelineSlot {
 struct TransferBenchmarkSlot {
     stream: Arc<CudaStream>,
     host_buffer: RawPinnedHostBuffer,
+    device_buffer: CudaSlice<u8>,
+    transfer_start: Option<CudaEvent>,
+    transfer_end: Option<CudaEvent>,
+    pending_transfer: bool,
+}
+
+struct PageableTransferBenchmarkSlot {
+    stream: Arc<CudaStream>,
+    host_buffer: Vec<u8>,
     device_buffer: CudaSlice<u8>,
     transfer_start: Option<CudaEvent>,
     transfer_end: Option<CudaEvent>,
@@ -908,6 +924,132 @@ pub fn benchmark_pinned_transfer_throughput(
         wall_time_ms,
         throughput_bytes_per_s,
     })
+}
+
+pub fn benchmark_pageable_transfer_throughput(
+    device_id: i32,
+    total_bytes: usize,
+    batch_bytes: usize,
+) -> Result<GpuPinnedTransferBenchmark> {
+    if total_bytes == 0 {
+        return Err(anyhow!("GPU pageable transfer benchmark requires total_bytes > 0"));
+    }
+    if batch_bytes == 0 {
+        return Err(anyhow!("GPU pageable transfer benchmark requires batch_bytes > 0"));
+    }
+
+    validate_device_id(device_id)?;
+    let context = open_cuda_context(device_id)?;
+    let effective_batch_bytes = batch_bytes.min(total_bytes).max(1);
+    let batch_count = total_bytes.div_ceil(effective_batch_bytes);
+    let active_stream_count = batch_count.clamp(1, PIPELINE_SLOT_COUNT);
+    let slot_capacity = effective_batch_bytes;
+    let mut slots = (0..PIPELINE_SLOT_COUNT)
+        .map(|_| create_pageable_transfer_benchmark_slot(&context, slot_capacity))
+        .collect::<Result<Vec<_>>>()?;
+    let mut pipeline_start = None;
+
+    for slot in &mut slots {
+        slot.host_buffer.fill(0x5a);
+    }
+
+    let started_at = Instant::now();
+    let mut transfer_time_ms = 0.0f32;
+    for batch_index in 0..batch_count {
+        let slot = &mut slots[batch_index % PIPELINE_SLOT_COUNT];
+        let remaining_bytes = total_bytes.saturating_sub(batch_index * effective_batch_bytes);
+        let bytes_this_batch = remaining_bytes.min(effective_batch_bytes);
+        finalize_pageable_transfer_benchmark_slot(slot, &mut transfer_time_ms)?;
+        if pipeline_start.is_none() {
+            pipeline_start = Some(record_timed_event(&slot.stream)?);
+        }
+        slot.transfer_start = Some(record_timed_event(&slot.stream)?);
+        copy_pageable_host_to_device(&slot.stream, &slot.host_buffer, bytes_this_batch, &mut slot.device_buffer)
+            .context("failed to copy pageable benchmark buffer to CUDA device")?;
+        slot.transfer_end = Some(record_timed_event(&slot.stream)?);
+        slot.pending_transfer = true;
+    }
+
+    let pipeline_end = if let Some(start) = pipeline_start.as_ref() {
+        let coordinator_stream = context.default_stream();
+        for slot in &slots {
+            if let Some(transfer_end) = slot.transfer_end.as_ref() {
+                coordinator_stream
+                    .wait(transfer_end)
+                    .map_err(anyhow::Error::new)
+                    .context("failed to coordinate CUDA pageable transfer benchmark completion")?;
+            }
+        }
+        let end = record_timed_event(&coordinator_stream)?;
+        end.synchronize()
+            .map_err(anyhow::Error::new)
+            .context("failed to synchronize CUDA pageable transfer benchmark end event")?;
+        Some((start, end))
+    } else {
+        None
+    };
+
+    for slot in &mut slots {
+        finalize_pageable_transfer_benchmark_slot(slot, &mut transfer_time_ms)?;
+    }
+
+    let wall_time_ms = if let Some((start, end)) = pipeline_end.as_ref() {
+        f64::from(
+            start
+                .elapsed_ms(end)
+                .map_err(anyhow::Error::new)
+                .context("failed to measure CUDA pageable transfer benchmark wall time")?,
+        )
+    } else {
+        started_at.elapsed().as_secs_f64() * 1_000.0
+    };
+    let throughput_bytes_per_s = if wall_time_ms > 0.0 {
+        total_bytes as f64 / (wall_time_ms / 1_000.0)
+    } else {
+        0.0
+    };
+
+    Ok(GpuPinnedTransferBenchmark {
+        pinned_host_buffers: false,
+        double_buffered: active_stream_count >= 2,
+        stream_count: active_stream_count,
+        batch_count,
+        total_bytes,
+        batch_bytes: effective_batch_bytes,
+        transfer_time_ms,
+        wall_time_ms,
+        throughput_bytes_per_s,
+    })
+}
+
+pub fn probe_device_allocation(device_id: i32, bytes: usize) -> Result<()> {
+    if bytes == 0 {
+        return Err(anyhow!("GPU allocation probe requires bytes > 0"));
+    }
+
+    validate_device_id(device_id)?;
+    let context = open_cuda_context(device_id)?;
+    let stream = context.default_stream();
+    let allocation = catch_cuda(
+        &format!("allocate {bytes} bytes on CUDA device {device_id}"),
+        || unsafe { stream.alloc::<u8>(bytes.max(1)).map_err(anyhow::Error::new) },
+    );
+    match allocation {
+        Ok(_buffer) => Ok(()),
+        Err(err) => {
+            let detail = err.to_string();
+            let lower = detail.to_ascii_lowercase();
+            let requested_gib = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            if lower.contains("out of memory") || lower.contains("cuda_error_out_of_memory") {
+                return Err(anyhow!(
+                    "CUDA out of memory while allocating {requested_gib:.2} GiB ({bytes} bytes) on device {device_id}"
+                ));
+            }
+            Err(anyhow!(
+                "failed to allocate {requested_gib:.2} GiB ({bytes} bytes) on CUDA device {device_id}: {detail}"
+            ))
+        }
+    }
 }
 
 pub fn gpu_native_search_paths(
@@ -2091,6 +2233,29 @@ fn create_transfer_benchmark_slot(
     })
 }
 
+fn create_pageable_transfer_benchmark_slot(
+    context: &Arc<CudaContext>,
+    capacity: usize,
+) -> Result<PageableTransferBenchmarkSlot> {
+    let stream = context
+        .new_stream()
+        .map_err(anyhow::Error::new)
+        .context("failed to create CUDA stream for pageable transfer benchmark")?;
+    let host_buffer = vec![0u8; capacity.max(1)];
+    let device_buffer = unsafe { stream.alloc::<u8>(capacity.max(1)) }
+        .map_err(anyhow::Error::new)
+        .context("failed to allocate device pageable transfer buffer for transfer benchmark")?;
+
+    Ok(PageableTransferBenchmarkSlot {
+        stream,
+        host_buffer,
+        device_buffer,
+        transfer_start: None,
+        transfer_end: None,
+        pending_transfer: false,
+    })
+}
+
 fn finalize_transfer_benchmark_slot(
     slot: &mut TransferBenchmarkSlot,
     transfer_time_ms: &mut f32,
@@ -2117,6 +2282,36 @@ fn finalize_transfer_benchmark_slot(
         .elapsed_ms(&transfer_end)
         .map_err(anyhow::Error::new)
         .context("failed to measure pinned transfer benchmark event timing")?;
+    slot.pending_transfer = false;
+    Ok(())
+}
+
+fn finalize_pageable_transfer_benchmark_slot(
+    slot: &mut PageableTransferBenchmarkSlot,
+    transfer_time_ms: &mut f32,
+) -> Result<()> {
+    if !slot.pending_transfer {
+        slot.transfer_start = None;
+        slot.transfer_end = None;
+        return Ok(());
+    }
+
+    let transfer_start = slot
+        .transfer_start
+        .take()
+        .context("missing transfer-start event for pageable transfer benchmark")?;
+    let transfer_end = slot
+        .transfer_end
+        .take()
+        .context("missing transfer-end event for pageable transfer benchmark")?;
+    transfer_end
+        .synchronize()
+        .map_err(anyhow::Error::new)
+        .context("failed to synchronize pageable transfer benchmark stream")?;
+    *transfer_time_ms += transfer_start
+        .elapsed_ms(&transfer_end)
+        .map_err(anyhow::Error::new)
+        .context("failed to measure pageable transfer benchmark event timing")?;
     slot.pending_transfer = false;
     Ok(())
 }
@@ -2917,6 +3112,19 @@ fn copy_pinned_host_to_device(
         cuda_result::memcpy_htod_async(device_ptr, host_slice, stream.cu_stream())
             .map_err(anyhow::Error::new)
     })
+}
+
+fn copy_pageable_host_to_device(
+    stream: &Arc<CudaStream>,
+    host_buffer: &[u8],
+    num_bytes: usize,
+    device_buffer: &mut CudaSlice<u8>,
+) -> Result<()> {
+    let mut device_view = device_buffer.slice_mut(0..num_bytes);
+    stream
+        .memcpy_htod(&host_buffer[..num_bytes], &mut device_view)
+        .map_err(anyhow::Error::new)
+        .context("failed to copy pageable host buffer to CUDA device")
 }
 
 fn copy_host_slice_to_device_during_capture(

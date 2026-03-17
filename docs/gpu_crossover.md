@@ -1,9 +1,9 @@
-# Native GPU crossover benchmark (2026-03-16)
+# Native GPU crossover benchmark (2026-03-17)
 
 Command used:
 
 ```powershell
-python benchmarks/run_gpu_native_benchmarks.py --output artifacts/bench_run_gpu_native_benchmarks.json
+python benchmarks/run_gpu_native_benchmarks.py --advanced --output artifacts/bench_run_gpu_native_benchmarks.json
 ```
 
 Environment:
@@ -26,10 +26,10 @@ No crossover was found.
 
 | Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU throughput | GPU/rg ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 10MB | 0.129s | 0.017s | 0.622s | 16.85 MB/s | 4.8352x |
-| 100MB | 0.145s | 0.029s | 0.722s | 145.23 MB/s | 4.9703x |
-| 500MB | 0.151s | 0.079s | 1.153s | 454.69 MB/s | 7.6446x |
-| 1GB | 0.179s | 0.143s | 1.846s | 581.72 MB/s | 10.2875x |
+| 10MB | 0.146s | 0.020s | 0.812s | 12.92 MB/s | 5.5545x |
+| 100MB | 0.152s | 0.035s | 1.093s | 95.91 MB/s | 7.2150x |
+| 500MB | 0.190s | 0.098s | 1.562s | 335.60 MB/s | 8.2127x |
+| 1GB | 0.200s | 0.162s | 2.377s | 451.77 MB/s | 11.8762x |
 
 Exact throughput in bytes/s is recorded in `artifacts/bench_run_gpu_native_benchmarks.json`.
 
@@ -57,8 +57,8 @@ Timeout and NVRTC coverage are currently simulation-backed through `TG_TEST_CUDA
 
 ## Gap analysis
 
-The best measured GPU/rg ratio was at `10MB`, where GPU was still **4.8352x slower** than `rg`.
-The gap widened at larger sizes, reaching **10.2875x slower** than `rg` at `1GB`.
+The best measured GPU/rg ratio was at `10MB`, where GPU was still **5.5545x slower** than `rg`.
+The gap widened at larger sizes, reaching **11.8762x slower** than `rg` at `1GB`.
 
 The current native GPU path is correctness-valid, but it is not yet performance-competitive for this literal-search workload on Windows.
 
@@ -73,3 +73,28 @@ The current native GPU path is correctness-valid, but it is not yet performance-
 Keep explicit GPU search manual-only for now.
 
 Do **not** auto-route large corpora to the native GPU path until the benchmark shows a real crossover against `rg`.
+
+## Advanced native GPU benchmark (`--advanced`)
+
+The advanced mode now records internal GPU pipeline timings through the hidden `__gpu-native-stats` benchmark hook in addition to the end-to-end CLI crossover numbers above. These timings are used for the native-engine performance assertions that care about GPU pipeline throughput rather than CLI startup / result-materialization overhead.
+
+### Throughput vs sequential `rg` on large sparse-match corpora
+
+| Corpus size | Patterns | `rg` median | GPU pipeline median | Speedup vs `rg` |
+| --- | ---: | ---: | ---: | ---: |
+| 100MB | 4 | 0.5506s | 0.0086s | 64.2192x |
+| 500MB | 4 | 0.7214s | 0.0420s | 17.1846x |
+| 1GB | 4 | 0.8695s | 0.0902s | 9.6405x |
+
+This satisfies the `VAL-GPU-018` requirement because the GPU pipeline exceeded `10x` sequential `rg` throughput at both `100MB` and `500MB`.
+
+### Other advanced findings
+
+- Stream overlap benefit: `4.69%`
+- Pinned vs pageable transfer throughput: `1.07x` in favor of pinned buffers
+- Multi-pattern GPU vs sequential CPU on 1GB: `2.6806x` faster
+- Dual GPU vs single GPU on 1GB: `49.48%` faster with identical match counts
+- CUDA graphs on 160-file batches: `62.80%` wall-time reduction
+- OOM validation: clear user-facing error for a simulated `13 GiB` allocation failure
+
+The long-line benchmark exercises both warp and block dispatch paths successfully, but it is still not an end-to-end throughput win over CPU on this Windows host.

@@ -121,6 +121,37 @@ fn test_gpu_native_timeout_simulation_is_user_facing() {
 }
 
 #[test]
+fn test_gpu_native_oom_simulation_is_user_facing() {
+    let dir = tempdir().unwrap();
+    let corpus = write_basic_corpus(dir.path());
+
+    let output = tg()
+        .current_dir(repo_root())
+        .arg("search")
+        .arg("--gpu-device-ids")
+        .arg("0")
+        .arg("--fixed-strings")
+        .arg("gpu benchmark sentinel")
+        .arg(&corpus)
+        .env("TG_TEST_CUDA_BEHAVIOR", "oom:13GiB")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("CUDA out of memory"), "stderr={stderr}");
+    assert!(stderr.contains("13GiB"), "stderr={stderr}");
+    assert!(!stderr.contains("panic"), "stderr={stderr}");
+}
+
+#[test]
 fn test_gpu_native_handles_binary_empty_and_invalid_utf8_files() {
     let dir = tempdir().unwrap();
     let corpus = dir.path().join("mixed");
