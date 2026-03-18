@@ -208,7 +208,13 @@ fn test_rust_replace_in_place_empty_file_is_no_op() {
 
     let backend = CpuBackend::new();
     backend
-        .replace_in_place("anything", "something", file_path.to_str().unwrap(), false, true)
+        .replace_in_place(
+            "anything",
+            "something",
+            file_path.to_str().unwrap(),
+            false,
+            true,
+        )
         .unwrap();
 
     assert_eq!(read_file(&file_path), "");
@@ -238,7 +244,13 @@ fn test_rust_replace_in_place_can_replace_entire_file_contents() {
 
     let backend = CpuBackend::new();
     backend
-        .replace_in_place("whole file", "updated", file_path.to_str().unwrap(), false, true)
+        .replace_in_place(
+            "whole file",
+            "updated",
+            file_path.to_str().unwrap(),
+            false,
+            true,
+        )
         .unwrap();
 
     assert_eq!(read_file(&file_path), "updated");

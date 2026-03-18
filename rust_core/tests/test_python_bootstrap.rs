@@ -6,7 +6,11 @@ use tempfile::tempdir;
 fn write_log_file() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("sample.log");
-    fs::write(&file_path, "INFO ok\nERROR failed\nDEBUG trace\nERROR timeout\n").unwrap();
+    fs::write(
+        &file_path,
+        "INFO ok\nERROR failed\nDEBUG trace\nERROR timeout\n",
+    )
+    .unwrap();
     (dir, file_path)
 }
 
@@ -33,7 +37,10 @@ fn test_plain_text_search_succeeds_with_invalid_pythonhome() {
         .unwrap();
 
     assert_success(&output);
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "2:ERROR failed\n4:ERROR timeout\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "2:ERROR failed\n4:ERROR timeout\n"
+    );
 }
 
 #[test]

@@ -30,11 +30,7 @@ fn create_sparse_file(path: &std::path::Path, len: u64) {
 
 fn write_batch_config(dir: &std::path::Path, payload: &Value) -> PathBuf {
     let config_path = dir.join("batch-rewrite.json");
-    fs::write(
-        &config_path,
-        serde_json::to_vec_pretty(payload).unwrap(),
-    )
-    .unwrap();
+    fs::write(&config_path, serde_json::to_vec_pretty(payload).unwrap()).unwrap();
     config_path
 }
 
@@ -110,7 +106,11 @@ fn test_plan_rewrites_across_multiple_files() {
         .unwrap();
 
     assert_eq!(plan.edits.len(), 2);
-    let files: Vec<&str> = plan.edits.iter().map(|e| e.file.file_name().unwrap().to_str().unwrap()).collect();
+    let files: Vec<&str> = plan
+        .edits
+        .iter()
+        .map(|e| e.file.file_name().unwrap().to_str().unwrap())
+        .collect();
     assert!(files.contains(&"a.py"));
     assert!(files.contains(&"b.py"));
 }
@@ -238,7 +238,10 @@ fn test_rewrite_plan_captures_planned_file_mtime() {
     assert_eq!(planned_mtime_ns, file_mtime_ns(&file_path));
 
     let json = serde_json::to_value(&plan).unwrap();
-    assert_eq!(json["edits"][0]["planned_mtime_ns"].as_u64().unwrap(), planned_mtime_ns);
+    assert_eq!(
+        json["edits"][0]["planned_mtime_ns"].as_u64().unwrap(),
+        planned_mtime_ns
+    );
 }
 
 #[test]
@@ -306,10 +309,16 @@ fn test_tg_run_rewrite_dry_run_emits_json_plan() {
 
     let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(plan["edits"][0]["replacement_text"], "lambda x, y: x + y");
-    assert_eq!(plan["edits"][0]["original_text"], "def add(x, y): return x + y");
+    assert_eq!(
+        plan["edits"][0]["original_text"],
+        "def add(x, y): return x + y"
+    );
 
     let content = fs::read_to_string(&file_path).unwrap();
-    assert!(content.contains("def add"), "dry-run should not modify file");
+    assert!(
+        content.contains("def add"),
+        "dry-run should not modify file"
+    );
 }
 
 #[test]
@@ -395,17 +404,29 @@ fn test_rewrite_plan_json_contract_fields() {
 
     let e0 = &edits[0];
     let id0 = e0["id"].as_str().unwrap();
-    assert!(id0.starts_with("e0000:"), "edit ID should be deterministic: {id0}");
-    assert!(id0.contains("fixture.py:"), "edit ID should contain filename: {id0}");
+    assert!(
+        id0.starts_with("e0000:"),
+        "edit ID should be deterministic: {id0}"
+    );
+    assert!(
+        id0.contains("fixture.py:"),
+        "edit ID should contain filename: {id0}"
+    );
     let planned_mtime_ns = e0["planned_mtime_ns"].as_u64().unwrap();
-    assert!(planned_mtime_ns > 0, "planned_mtime_ns should be present in rewrite plan JSON");
+    assert!(
+        planned_mtime_ns > 0,
+        "planned_mtime_ns should be present in rewrite plan JSON"
+    );
     assert!(e0["metavar_env"]["F"].is_string());
     assert!(e0["metavar_env"]["EXPR"].is_string());
     assert!(e0["metavar_env"]["ARGS"].is_string());
 
     let e1 = &edits[1];
     let id1 = e1["id"].as_str().unwrap();
-    assert!(id1.starts_with("e0001:"), "second edit should have sequential ID: {id1}");
+    assert!(
+        id1.starts_with("e0001:"),
+        "second edit should have sequential ID: {id1}"
+    );
     assert_ne!(id0, id1, "edit IDs must be unique");
     assert_eq!(e1["planned_mtime_ns"].as_u64().unwrap(), planned_mtime_ns);
 }
@@ -452,13 +473,32 @@ fn test_tg_run_rewrite_diff_shows_unified_diff() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--- a/"), "should contain --- header: {stdout}");
-    assert!(stdout.contains("+++ b/"), "should contain +++ header: {stdout}");
-    assert!(stdout.contains("@@"), "should contain hunk header: {stdout}");
-    assert!(stdout.contains("-def add(x, y): return x + y"), "should show removed line: {stdout}");
-    assert!(stdout.contains("+lambda x, y: x + y"), "should show added line: {stdout}");
+    assert!(
+        stdout.contains("--- a/"),
+        "should contain --- header: {stdout}"
+    );
+    assert!(
+        stdout.contains("+++ b/"),
+        "should contain +++ header: {stdout}"
+    );
+    assert!(
+        stdout.contains("@@"),
+        "should contain hunk header: {stdout}"
+    );
+    assert!(
+        stdout.contains("-def add(x, y): return x + y"),
+        "should show removed line: {stdout}"
+    );
+    assert!(
+        stdout.contains("+lambda x, y: x + y"),
+        "should show added line: {stdout}"
+    );
 
     let content = fs::read_to_string(&file_path).unwrap();
     assert_eq!(content, source, "diff should not modify file");
@@ -492,10 +532,16 @@ fn test_apply_rewrite_is_idempotent_when_pattern_no_longer_matches() {
             file_path.to_str().unwrap(),
         )
         .unwrap();
-    assert!(plan2.edits.is_empty(), "pattern should not match after rewrite");
+    assert!(
+        plan2.edits.is_empty(),
+        "pattern should not match after rewrite"
+    );
 
     let after_second = fs::read_to_string(&file_path).unwrap();
-    assert_eq!(after_second, after_first, "file should be unchanged after idempotent re-run");
+    assert_eq!(
+        after_second, after_first,
+        "file should be unchanged after idempotent re-run"
+    );
 }
 
 #[test]
@@ -515,9 +561,18 @@ fn test_apply_rewrite_preserves_surrounding_code() {
 
     AstBackend::apply_rewrites(&plan).unwrap();
     let result = fs::read_to_string(&file_path).unwrap();
-    assert!(result.starts_with("import os\n"), "should preserve import: {result}");
-    assert!(result.contains("lambda x, y: x + y"), "should have rewrite: {result}");
-    assert!(result.ends_with("result = add(1, 2)\n"), "should preserve trailing code: {result}");
+    assert!(
+        result.starts_with("import os\n"),
+        "should preserve import: {result}"
+    );
+    assert!(
+        result.contains("lambda x, y: x + y"),
+        "should have rewrite: {result}"
+    );
+    assert!(
+        result.ends_with("result = add(1, 2)\n"),
+        "should preserve trailing code: {result}"
+    );
 }
 
 #[test]
@@ -561,7 +616,10 @@ fn test_apply_rewrite_rust_language() {
     AstBackend::apply_rewrites(&plan).unwrap();
 
     let result = fs::read_to_string(&file_path).unwrap();
-    assert!(result.contains("return a + b;"), "should insert return: {result}");
+    assert!(
+        result.contains("return a + b;"),
+        "should insert return: {result}"
+    );
 }
 
 #[test]
@@ -581,7 +639,11 @@ fn test_rewrite_newline_preservation() {
 
     AstBackend::apply_rewrites(&plan).unwrap();
     let result = fs::read_to_string(&file_path).unwrap();
-    assert!(result.contains("\r\n"), "should preserve CRLF line endings: {:?}", result.as_bytes());
+    assert!(
+        result.contains("\r\n"),
+        "should preserve CRLF line endings: {:?}",
+        result.as_bytes()
+    );
 }
 
 #[test]
@@ -609,7 +671,13 @@ fn test_rewrite_preserves_utf8_bom_and_adjusts_byte_offsets() {
 
     let rewritten = fs::read(&file_path).unwrap();
     assert!(rewritten.starts_with(UTF8_BOM));
-    assert_eq!(rewritten.windows(UTF8_BOM.len()).filter(|window| *window == UTF8_BOM).count(), 1);
+    assert_eq!(
+        rewritten
+            .windows(UTF8_BOM.len())
+            .filter(|window| *window == UTF8_BOM)
+            .count(),
+        1
+    );
     assert_eq!(&rewritten[UTF8_BOM.len()..], b"lambda x: x\n");
 }
 
@@ -682,7 +750,10 @@ fn test_rewrite_planning_skips_binary_files_without_error() {
     assert_eq!(plan.total_files_scanned, 2);
     assert_eq!(plan.edits.len(), 1);
     assert_eq!(plan.edits[0].file, text_path);
-    assert_eq!(fs::read(&binary_path).unwrap(), b"def add(x): return x\0garbage\n");
+    assert_eq!(
+        fs::read(&binary_path).unwrap(),
+        b"def add(x): return x\0garbage\n"
+    );
 }
 
 #[test]
@@ -704,22 +775,27 @@ fn test_tg_run_rewrite_skips_large_files_with_warning_and_processes_other_files(
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("warning"), "stderr={stderr}");
     assert!(stderr.contains("large.py"), "stderr={stderr}");
-    assert!(stderr.contains("100 MB") || stderr.contains("100MB"), "stderr={stderr}");
+    assert!(
+        stderr.contains("100 MB") || stderr.contains("100MB"),
+        "stderr={stderr}"
+    );
 
     let plan: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(plan["total_edits"], 1);
     assert_eq!(plan["edits"].as_array().unwrap().len(), 1);
-    assert!(
-        plan["edits"][0]["file"]
-            .as_str()
-            .unwrap()
-            .ends_with("small.py")
-    );
+    assert!(plan["edits"][0]["file"]
+        .as_str()
+        .unwrap()
+        .ends_with("small.py"));
 }
 
 #[test]
@@ -760,7 +836,11 @@ fn test_tg_run_rewrite_apply_verify_cli() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("applied"), "stderr={stderr}");
     assert!(stderr.contains("verified"), "stderr={stderr}");
@@ -777,16 +857,20 @@ fn test_end_to_end_search_plan_diff_apply_verify() {
     let path_str = file_path.to_str().unwrap();
 
     // Search
-    let matches = backend.search("def $F($$$ARGS): return $EXPR", "python", path_str).unwrap();
+    let matches = backend
+        .search("def $F($$$ARGS): return $EXPR", "python", path_str)
+        .unwrap();
     assert_eq!(matches.len(), 2);
 
     // Plan
-    let plan = backend.plan_rewrites(
-        "def $F($$$ARGS): return $EXPR",
-        "lambda $$$ARGS: $EXPR",
-        "python",
-        path_str,
-    ).unwrap();
+    let plan = backend
+        .plan_rewrites(
+            "def $F($$$ARGS): return $EXPR",
+            "lambda $$$ARGS: $EXPR",
+            "python",
+            path_str,
+        )
+        .unwrap();
     assert_eq!(plan.edits.len(), 2);
     assert_eq!(plan.version, 1);
     assert!(!plan.edits[0].id.is_empty());
@@ -825,20 +909,31 @@ fn test_tg_run_apply_verify_json_is_single_document() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: Value = serde_json::from_str(&stdout).expect("stdout must be single valid JSON document");
+    let parsed: Value =
+        serde_json::from_str(&stdout).expect("stdout must be single valid JSON document");
     assert_eq!(parsed["version"], 1);
     assert_eq!(parsed["routing_backend"], "AstBackend");
     assert_eq!(parsed["routing_reason"], "ast-native");
     assert_eq!(parsed["sidecar_used"], false);
     assert!(parsed["plan"].is_object(), "must have plan field");
-    assert!(parsed["verification"].is_object(), "must have verification field");
+    assert!(
+        parsed["verification"].is_object(),
+        "must have verification field"
+    );
     assert_eq!(parsed["plan"]["version"], 1);
     assert_eq!(parsed["verification"]["total_edits"], 1);
     assert_eq!(parsed["verification"]["verified"], 1);
-    assert!(parsed["verification"]["mismatches"].as_array().unwrap().is_empty());
+    assert!(parsed["verification"]["mismatches"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -859,7 +954,10 @@ fn test_verify_detects_tampered_file() {
     fs::write(&file_path, "TAMPERED CONTENT\n").unwrap();
 
     let verification = plan.verify(&backend).unwrap();
-    assert!(!verification.mismatches.is_empty(), "should detect tampered file");
+    assert!(
+        !verification.mismatches.is_empty(),
+        "should detect tampered file"
+    );
     assert_eq!(verification.verified, 0);
 }
 
@@ -1158,7 +1256,14 @@ fn test_tg_run_batch_rewrite_invalid_config_reports_field_level_error() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("rewrites[0].replacement"), "stderr={stderr}");
+    assert!(
+        stderr.contains("rewrites[0].replacement"),
+        "stderr={stderr}"
+    );
 }

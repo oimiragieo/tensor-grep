@@ -241,7 +241,7 @@ fn test_calibrate_writes_valid_crossover_config_from_mock_results() {
         "device_name": "Mock RTX 4070",
         "measurements": [
             {
-                "size_bytes": 1_u64 * 1024 * 1024,
+                "size_bytes": 1024_u64 * 1024,
                 "cpu_samples_ms": [5.0, 6.0, 5.5],
                 "gpu_samples_ms": [20.0, 21.0, 19.0]
             },

@@ -155,8 +155,8 @@ fn test_benchmark_pinned_transfer_throughput_reports_positive_bandwidth() {
         return;
     };
 
-    let benchmark = benchmark_pinned_transfer_throughput(device_id, 32 * 1024 * 1024, 8 * 1024 * 1024)
-        .unwrap();
+    let benchmark =
+        benchmark_pinned_transfer_throughput(device_id, 32 * 1024 * 1024, 8 * 1024 * 1024).unwrap();
 
     assert!(benchmark.pinned_host_buffers);
     assert!(benchmark.batch_count >= 1);
@@ -184,7 +184,9 @@ fn test_gpu_native_multi_gpu_balances_distribution_and_matches_single_gpu_result
     };
 
     let single = gpu_native_search_paths(&config, devices[0].device_id).unwrap();
-    let multi = gpu_native_search_paths_multi(&config, &[devices[0].device_id, devices[1].device_id]).unwrap();
+    let multi =
+        gpu_native_search_paths_multi(&config, &[devices[0].device_id, devices[1].device_id])
+            .unwrap();
 
     assert_eq!(
         multi
@@ -208,12 +210,24 @@ fn test_gpu_native_multi_gpu_balances_distribution_and_matches_single_gpu_result
     let single_matches = single
         .matches
         .iter()
-        .map(|matched| (matched.path.clone(), matched.line_number, matched.text.clone()))
+        .map(|matched| {
+            (
+                matched.path.clone(),
+                matched.line_number,
+                matched.text.clone(),
+            )
+        })
         .collect::<Vec<_>>();
     let multi_matches = multi
         .matches
         .iter()
-        .map(|matched| (matched.path.clone(), matched.line_number, matched.text.clone()))
+        .map(|matched| {
+            (
+                matched.path.clone(),
+                matched.line_number,
+                matched.text.clone(),
+            )
+        })
         .collect::<Vec<_>>();
     assert_eq!(multi_matches, single_matches);
 }

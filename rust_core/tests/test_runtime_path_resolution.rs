@@ -266,7 +266,10 @@ fn test_tg_search_uses_tg_rg_path_override_for_rg_fallback() {
         .arg("ERROR")
         .arg(&file_path)
         .env("TG_RG_PATH", &rg_wrapper)
-        .env("TG_TEST_NATIVE_SEARCH_FORCE_ERROR", "synthetic native CPU failure");
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "synthetic native CPU failure",
+        );
 
     let output = run_with_timeout(tg, Duration::from_secs(10));
 
@@ -298,7 +301,10 @@ fn test_tg_search_warns_when_tg_rg_path_override_is_missing() {
         .arg("ERROR")
         .arg(&file_path)
         .env("TG_RG_PATH", dir.path().join("missing-rg.exe"))
-        .env("TG_TEST_NATIVE_SEARCH_FORCE_ERROR", "synthetic native CPU failure");
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "synthetic native CPU failure",
+        );
 
     let output = run_with_timeout(tg, Duration::from_secs(10));
 

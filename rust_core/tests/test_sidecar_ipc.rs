@@ -296,7 +296,10 @@ fn test_gpu_search_invalid_device_id_reports_clear_error_without_traceback() {
     if cfg!(feature = "cuda") {
         assert!(stderr.contains("invalid CUDA device id"), "stderr={stderr}");
     } else {
-        assert!(stderr.contains("Requested GPU device ID"), "stderr={stderr}");
+        assert!(
+            stderr.contains("Requested GPU device ID"),
+            "stderr={stderr}"
+        );
         assert!(stderr.contains("Available device IDs"), "stderr={stderr}");
     }
     assert!(!stderr.contains("Traceback"), "stderr={stderr}");
@@ -365,7 +368,11 @@ fn test_sidecar_timeout_kills_child_and_reports_error() {
     assert!(stderr.contains("timed out"), "stderr={stderr}");
     assert!(stderr.contains("terminated"), "stderr={stderr}");
 
-    let pid: u32 = fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+    let pid: u32 = fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
     assert!(
         wait_for_process_exit(pid, Duration::from_secs(2)),
         "expected sidecar pid {pid} to be terminated"

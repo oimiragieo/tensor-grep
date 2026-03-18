@@ -95,7 +95,9 @@ impl SearchMatcher {
         regex::RegexBuilder::new(pattern)
             .case_insensitive(ignore_case)
             .build()
-            .context(format!("failed to compile index search pattern '{pattern}'"))
+            .context(format!(
+                "failed to compile index search pattern '{pattern}'"
+            ))
             .map(Self::Regex)
     }
 

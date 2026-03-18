@@ -89,7 +89,11 @@ fn write_boundary_fixture(dir: &Path) -> PathBuf {
     let corpus = dir.join("boundary");
     fs::create_dir(&corpus).unwrap();
     fs::write(corpus.join("a.txt"), "prefix ABC").unwrap();
-    fs::write(corpus.join("b.txt"), "D standalone should not match\nABCD real match\n").unwrap();
+    fs::write(
+        corpus.join("b.txt"),
+        "D standalone should not match\nABCD real match\n",
+    )
+    .unwrap();
     corpus
 }
 
@@ -155,7 +159,10 @@ fn write_timing_corpus(dir: &Path, target_bytes: usize) -> PathBuf {
     corpus
 }
 
-fn cpu_union_pattern_tuples(corpus: &Path, patterns: &[String]) -> Vec<(String, usize, String, usize, String)> {
+fn cpu_union_pattern_tuples(
+    corpus: &Path,
+    patterns: &[String],
+) -> Vec<(String, usize, String, usize, String)> {
     let mut tuples = Vec::new();
     for (pattern_id, pattern) in patterns.iter().enumerate() {
         let output = tg()
@@ -224,7 +231,11 @@ fn write_gpu_parity_corpus(dir: &Path, target_bytes: usize) -> PathBuf {
         } else {
             (index + 1) * chunk_size
         };
-        fs::write(corpus.join(format!("chunk-{index}.log")), &bytes[start..end]).unwrap();
+        fs::write(
+            corpus.join(format!("chunk-{index}.log")),
+            &bytes[start..end],
+        )
+        .unwrap();
     }
 
     corpus
@@ -304,12 +315,23 @@ fn test_gpu_native_directory_search_batches_files_and_matches_cpu_output() {
         .output()
         .unwrap();
 
-    assert!(gpu_output.status.success(), "stderr={}", String::from_utf8_lossy(&gpu_output.stderr));
-    assert!(cpu_output.status.success(), "stderr={}", String::from_utf8_lossy(&cpu_output.stderr));
+    assert!(
+        gpu_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&gpu_output.stderr)
+    );
+    assert!(
+        cpu_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&cpu_output.stderr)
+    );
 
     let gpu_payload = parse_json_payload(&gpu_output.stdout);
     assert_eq!(gpu_payload["routing_backend"], "NativeGpuBackend");
-    assert_eq!(gpu_payload["routing_reason"], "gpu-device-ids-explicit-native");
+    assert_eq!(
+        gpu_payload["routing_reason"],
+        "gpu-device-ids-explicit-native"
+    );
     assert_eq!(gpu_payload["sidecar_used"], false);
     assert_eq!(gpu_payload["total_files"], 3);
     assert_eq!(gpu_payload["total_matches"], 3);
@@ -318,7 +340,10 @@ fn test_gpu_native_directory_search_batches_files_and_matches_cpu_output() {
     assert!(stderr.contains("gpu_batch_files=3"), "stderr={stderr}");
     assert!(stderr.contains("gpu_transfer_bytes="), "stderr={stderr}");
 
-    assert_eq!(parse_json_tuples(&gpu_output.stdout), parse_json_tuples(&cpu_output.stdout));
+    assert_eq!(
+        parse_json_tuples(&gpu_output.stdout),
+        parse_json_tuples(&cpu_output.stdout)
+    );
 }
 
 #[test]
@@ -337,7 +362,11 @@ fn test_gpu_native_search_avoids_cross_file_boundary_matches() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let payload = parse_json_payload(&output.stdout);
     assert_eq!(payload["total_matches"], 1);
@@ -384,10 +413,22 @@ fn test_gpu_native_matches_cpu_for_five_patterns_on_ten_mb_corpus() {
             .output()
             .unwrap();
 
-        assert!(gpu_output.status.success(), "pattern={pattern} stderr={}", String::from_utf8_lossy(&gpu_output.stderr));
-        assert!(cpu_output.status.success(), "pattern={pattern} stderr={}", String::from_utf8_lossy(&cpu_output.stderr));
+        assert!(
+            gpu_output.status.success(),
+            "pattern={pattern} stderr={}",
+            String::from_utf8_lossy(&gpu_output.stderr)
+        );
+        assert!(
+            cpu_output.status.success(),
+            "pattern={pattern} stderr={}",
+            String::from_utf8_lossy(&cpu_output.stderr)
+        );
 
-        assert_eq!(parse_json_tuples(&gpu_output.stdout), parse_json_tuples(&cpu_output.stdout), "pattern={pattern}");
+        assert_eq!(
+            parse_json_tuples(&gpu_output.stdout),
+            parse_json_tuples(&cpu_output.stdout),
+            "pattern={pattern}"
+        );
     }
 }
 
@@ -414,7 +455,11 @@ fn test_gpu_native_verbose_output_reports_selected_devices() {
             .output()
             .unwrap();
 
-        assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains(&format!("selected_gpu_device_id={}", device.device_id)),
@@ -457,12 +502,26 @@ fn test_gpu_native_multi_gpu_json_reports_both_devices_and_matches_single_gpu() 
         .output()
         .unwrap();
 
-    assert!(multi_output.status.success(), "stderr={}", String::from_utf8_lossy(&multi_output.stderr));
-    assert!(single_output.status.success(), "stderr={}", String::from_utf8_lossy(&single_output.stderr));
+    assert!(
+        multi_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&multi_output.stderr)
+    );
+    assert!(
+        single_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&single_output.stderr)
+    );
 
     let payload = parse_json_payload(&multi_output.stdout);
-    assert_eq!(payload["routing_gpu_device_ids"], serde_json::json!([devices[0].0, devices[1].0]));
-    assert_eq!(parse_json_tuples(&multi_output.stdout), parse_json_tuples(&single_output.stdout));
+    assert_eq!(
+        payload["routing_gpu_device_ids"],
+        serde_json::json!([devices[0].0, devices[1].0])
+    );
+    assert_eq!(
+        parse_json_tuples(&multi_output.stdout),
+        parse_json_tuples(&single_output.stdout)
+    );
 }
 
 #[test]
@@ -488,7 +547,11 @@ fn test_gpu_native_multi_gpu_verbose_reports_both_devices_active() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     for (device_id, device_name) in devices {
         assert!(
@@ -520,19 +583,30 @@ fn test_gpu_native_multi_pattern_json_reports_pattern_metadata() {
     command.arg(&file_path);
 
     let output = command.output().unwrap();
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let payload = parse_json_payload(&output.stdout);
     assert_eq!(payload["routing_backend"], "NativeGpuBackend");
     assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit-native");
     assert_eq!(payload["sidecar_used"], false);
     let matches = payload["matches"].as_array().unwrap();
-    assert!(matches.iter().all(|matched| matched.get("pattern_id").is_some()));
-    assert!(matches.iter().all(|matched| matched.get("pattern_text").is_some()));
+    assert!(matches
+        .iter()
+        .all(|matched| matched.get("pattern_id").is_some()));
+    assert!(matches
+        .iter()
+        .all(|matched| matched.get("pattern_text").is_some()));
 
     let expected = cpu_union_pattern_tuples(
         &file_path,
-        &patterns.iter().map(|pattern| pattern.to_string()).collect::<Vec<_>>(),
+        &patterns
+            .iter()
+            .map(|pattern| pattern.to_string())
+            .collect::<Vec<_>>(),
     );
     assert_eq!(parse_pattern_json_tuples(&output.stdout), expected);
 }
@@ -557,16 +631,27 @@ fn test_gpu_native_multi_pattern_matches_cpu_union_for_various_pattern_counts() 
         command.arg(&corpus);
 
         let output = command.output().unwrap();
-        assert!(output.status.success(), "pattern_count={pattern_count} stderr={}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "pattern_count={pattern_count} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
 
         let expected = cpu_union_pattern_tuples(&corpus, &patterns);
-        assert_eq!(parse_pattern_json_tuples(&output.stdout), expected, "pattern_count={pattern_count}");
+        assert_eq!(
+            parse_pattern_json_tuples(&output.stdout),
+            expected,
+            "pattern_count={pattern_count}"
+        );
     }
 }
 
 #[test]
 fn test_gpu_native_multi_pattern_falls_back_to_batched_passes_for_large_pattern_sets() {
-    let Some(device_id) = enumerate_cuda_devices().ok().and_then(|devices| devices.first().map(|device| device.device_id)) else {
+    let Some(device_id) = enumerate_cuda_devices()
+        .ok()
+        .and_then(|devices| devices.first().map(|device| device.device_id))
+    else {
         return;
     };
 
@@ -605,7 +690,10 @@ fn test_gpu_native_multi_pattern_falls_back_to_batched_passes_for_large_pattern_
 
 #[test]
 fn test_gpu_native_three_pattern_dispatch_is_below_two_times_single_pattern() {
-    let Some(device_id) = enumerate_cuda_devices().ok().and_then(|devices| devices.first().map(|device| device.device_id)) else {
+    let Some(device_id) = enumerate_cuda_devices()
+        .ok()
+        .and_then(|devices| devices.first().map(|device| device.device_id))
+    else {
         return;
     };
 
@@ -642,5 +730,8 @@ fn test_gpu_native_three_pattern_dispatch_is_below_two_times_single_pattern() {
 
     let single_ms = median_ms(&mut single_samples);
     let multi_ms = median_ms(&mut multi_samples);
-    assert!(multi_ms < single_ms * 2.0, "single_ms={single_ms} multi_ms={multi_ms}");
+    assert!(
+        multi_ms < single_ms * 2.0,
+        "single_ms={single_ms} multi_ms={multi_ms}"
+    );
 }

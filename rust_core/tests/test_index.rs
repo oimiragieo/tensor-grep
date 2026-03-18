@@ -737,7 +737,10 @@ fn test_tg_search_index_survives_repeated_mutation_cycles() {
 
         let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(payload["routing_backend"], "TrigramIndex");
-        assert_eq!(payload["total_matches"].as_u64().unwrap() as usize, expected);
+        assert_eq!(
+            payload["total_matches"].as_u64().unwrap() as usize,
+            expected
+        );
     };
 
     expect_count(2);
@@ -745,7 +748,11 @@ fn test_tg_search_index_survives_repeated_mutation_cycles() {
     fs::write(dir.path().join("fresh.txt"), "hello fresh file\n").unwrap();
     expect_count(3);
 
-    fs::write(dir.path().join("b.txt"), "nothing here\nhello again friend\nhello third line\n").unwrap();
+    fs::write(
+        dir.path().join("b.txt"),
+        "nothing here\nhello again friend\nhello third line\n",
+    )
+    .unwrap();
     expect_count(4);
 
     fs::remove_file(dir.path().join("a.txt")).unwrap();

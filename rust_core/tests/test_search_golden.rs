@@ -30,7 +30,12 @@ fn scenarios() -> Vec<Scenario> {
     vec![
         Scenario {
             name: "simple string match",
-            args: &["search", "--no-ignore", "ERROR", "tests/golden/fixture_data"],
+            args: &[
+                "search",
+                "--no-ignore",
+                "ERROR",
+                "tests/golden/fixture_data",
+            ],
             golden_file: "simple_string_match.txt",
             compare_mode: CompareMode::SortedLines,
         },
@@ -172,14 +177,15 @@ fn test_search_subcommand_matches_recorded_golden_outputs() {
             String::from_utf8_lossy(&output.stderr)
         );
 
-        let expected = fs::read_to_string(repo_root.join("tests/golden").join(scenario.golden_file))
-            .unwrap();
+        let expected =
+            fs::read_to_string(repo_root.join("tests/golden").join(scenario.golden_file)).unwrap();
         let actual = String::from_utf8(output.stdout).unwrap();
         let normalized_expected = normalize_for_compare(&expected, scenario.compare_mode);
         let normalized_actual = normalize_for_compare(&actual, scenario.compare_mode);
 
         assert_eq!(
-            normalized_actual, normalized_expected,
+            normalized_actual,
+            normalized_expected,
             "scenario={} stderr={} ",
             scenario.name,
             String::from_utf8_lossy(&output.stderr)

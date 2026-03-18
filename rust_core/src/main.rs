@@ -1,7 +1,7 @@
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
 #[cfg(feature = "cuda")]
 use clap::ValueEnum;
+use clap::{Args, Parser, Subcommand};
 #[cfg(feature = "cuda")]
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
@@ -543,7 +543,9 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             handle_gpu_search(params)
         }
         BackendSelection::NativeCpu => {
-            if decision.reason == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason {
+            if decision.reason
+                == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason
+            {
                 eprintln!(
                     "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search"
                 );
@@ -566,13 +568,17 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 emit_verbose_metadata(decision);
             }
 
-            let exit_code = execute_ripgrep_search(&positional_ripgrep_args(&cli, &pattern, &path))?;
+            let exit_code =
+                execute_ripgrep_search(&positional_ripgrep_args(&cli, &pattern, &path))?;
             if exit_code != 0 {
                 std::process::exit(exit_code.max(1));
             }
             Ok(())
         }
-        _ => anyhow::bail!("unsupported positional routing decision: {}", decision.reason),
+        _ => anyhow::bail!(
+            "unsupported positional routing decision: {}",
+            decision.reason
+        ),
     }
 }
 
@@ -635,7 +641,10 @@ fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchReq
     Ok(ResolvedSearchRequest { patterns, path })
 }
 
-fn detect_warm_index_state(args: &SearchArgs, request: &ResolvedSearchRequest) -> IndexRoutingState {
+fn detect_warm_index_state(
+    args: &SearchArgs,
+    request: &ResolvedSearchRequest,
+) -> IndexRoutingState {
     if args.index
         || args.invert_match
         || args.context.is_some()
@@ -668,7 +677,11 @@ fn detect_warm_index_state(args: &SearchArgs, request: &ResolvedSearchRequest) -
 }
 
 #[cfg(feature = "cuda")]
-fn count_search_corpus_bytes(paths: &[PathBuf], no_ignore: bool, globs: &[String]) -> anyhow::Result<u64> {
+fn count_search_corpus_bytes(
+    paths: &[PathBuf],
+    no_ignore: bool,
+    globs: &[String],
+) -> anyhow::Result<u64> {
     let mut total_bytes = 0u64;
     let mut roots = Vec::new();
 
@@ -709,7 +722,9 @@ fn count_search_corpus_bytes(paths: &[PathBuf], no_ignore: bool, globs: &[String
     if !globs.is_empty() {
         let mut overrides = OverrideBuilder::new(&roots[0]);
         for glob in globs {
-            overrides.add(glob).with_context(|| format!("failed to add glob override '{glob}'"))?;
+            overrides
+                .add(glob)
+                .with_context(|| format!("failed to add glob override '{glob}'"))?;
         }
         builder.overrides(
             overrides
@@ -720,7 +735,11 @@ fn count_search_corpus_bytes(paths: &[PathBuf], no_ignore: bool, globs: &[String
 
     for entry in builder.build() {
         let entry = entry?;
-        if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+        if entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+        {
             total_bytes = total_bytes.saturating_add(entry.metadata()?.len());
         }
     }
@@ -1040,9 +1059,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     );
 
     match decision.selection {
-        BackendSelection::TrigramIndex => {
-            handle_index_search(&args, &request, &query)
-        }
+        BackendSelection::TrigramIndex => handle_index_search(&args, &request, &query),
         BackendSelection::NativeGpu => {
             let gpu_device_ids = if args.gpu_device_ids.is_empty() {
                 &auto_gpu_ids
@@ -1091,7 +1108,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             handle_gpu_search(params)
         }
         BackendSelection::NativeCpu => {
-            if decision.reason == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason {
+            if decision.reason
+                == RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output).reason
+            {
                 eprintln!(
                     "warning: CUDA is unavailable: no usable GPU devices were found; falling back to native CPU search"
                 );
@@ -1126,7 +1145,12 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             }
 
             run_native_search_with_optional_rg_fallback(
-                native_search_config_for_command(&args, &request.patterns[0], &request.path, decision),
+                native_search_config_for_command(
+                    &args,
+                    &request.patterns[0],
+                    &request.path,
+                    decision,
+                ),
                 rg_fallback,
             )
         }
@@ -1148,9 +1172,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
 fn resolve_index_path(search_path: &str) -> PathBuf {
     let root = Path::new(search_path);
     if root.is_file() {
-        root.parent()
-            .unwrap_or(Path::new("."))
-            .join(".tg_index")
+        root.parent().unwrap_or(Path::new(".")).join(".tg_index")
     } else {
         root.join(".tg_index")
     }
@@ -1163,7 +1185,10 @@ fn handle_index_search(
 ) -> anyhow::Result<()> {
     let search_path = Path::new(&request.path);
     if !search_path.exists() {
-        anyhow::bail!("index search path does not exist: {}", search_path.display());
+        anyhow::bail!(
+            "index search path does not exist: {}",
+            search_path.display()
+        );
     }
 
     let index_path = resolve_index_path(&request.path);
@@ -1174,7 +1199,8 @@ fn handle_index_search(
             Err(e) => {
                 eprintln!("[index] warning: failed to load index: {e}, rebuilding...");
                 let started = Instant::now();
-                let fresh = TrigramIndex::build_with_options(Path::new(&request.path), args.no_ignore)?;
+                let fresh =
+                    TrigramIndex::build_with_options(Path::new(&request.path), args.no_ignore)?;
                 fresh.save(&index_path)?;
                 if args.verbose {
                     eprintln!(
@@ -1193,8 +1219,8 @@ fn handle_index_search(
                 eprintln!("[index] stale: {reason}");
             }
             let started = Instant::now();
-            let update =
-                loaded.rebuild_incremental_with_options(Path::new(&request.path), args.no_ignore)?;
+            let update = loaded
+                .rebuild_incremental_with_options(Path::new(&request.path), args.no_ignore)?;
             update.index.save(&index_path)?;
             if args.verbose {
                 eprintln!(
@@ -1222,7 +1248,10 @@ fn handle_index_search(
         }
     } else {
         if args.verbose {
-            eprintln!("[index] full rebuild: building index for {}...", request.path);
+            eprintln!(
+                "[index] full rebuild: building index for {}...",
+                request.path
+            );
         }
         let started = Instant::now();
         let fresh = TrigramIndex::build_with_options(Path::new(&request.path), args.no_ignore)?;
@@ -1266,11 +1295,21 @@ fn run_index_query(
     }
 
     if args.json {
-        return emit_json_search_results(RoutingDecision::warm_index(), query, &request.path, matches);
+        return emit_json_search_results(
+            RoutingDecision::warm_index(),
+            query,
+            &request.path,
+            matches,
+        );
     }
 
     if args.ndjson {
-        return emit_ndjson_search_results(RoutingDecision::warm_index(), query, &request.path, matches);
+        return emit_ndjson_search_results(
+            RoutingDecision::warm_index(),
+            query,
+            &request.path,
+            matches,
+        );
     }
 
     if args.count {
@@ -1403,14 +1442,24 @@ fn run_pattern(args: &RunArgs) -> anyhow::Result<&str> {
 }
 
 fn load_batch_rewrite_config(config_path: &Path) -> anyhow::Result<BatchRewriteConfig> {
-    let contents = std::fs::read_to_string(config_path)
-        .with_context(|| format!("failed to read batch rewrite config {}", config_path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse batch rewrite config {}", config_path.display()))?;
+    let contents = std::fs::read_to_string(config_path).with_context(|| {
+        format!(
+            "failed to read batch rewrite config {}",
+            config_path.display()
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&contents).with_context(|| {
+        format!(
+            "failed to parse batch rewrite config {}",
+            config_path.display()
+        )
+    })?;
     parse_batch_rewrite_config_value(&value)
 }
 
-fn parse_batch_rewrite_config_value(value: &serde_json::Value) -> anyhow::Result<BatchRewriteConfig> {
+fn parse_batch_rewrite_config_value(
+    value: &serde_json::Value,
+) -> anyhow::Result<BatchRewriteConfig> {
     let object = value.as_object().ok_or_else(|| {
         anyhow::anyhow!("invalid batch rewrite config field `$`: expected object")
     })?;
@@ -1428,7 +1477,9 @@ fn parse_batch_rewrite_config_value(value: &serde_json::Value) -> anyhow::Result
         anyhow::anyhow!("invalid batch rewrite config field `rewrites`: expected array")
     })?;
     if rewrites_array.is_empty() {
-        anyhow::bail!("invalid batch rewrite config field `rewrites`: expected at least one rewrite rule");
+        anyhow::bail!(
+            "invalid batch rewrite config field `rewrites`: expected at least one rewrite rule"
+        );
     }
 
     let verify = match object.get("verify") {
@@ -1453,7 +1504,8 @@ fn parse_batch_rewrite_config_value(value: &serde_json::Value) -> anyhow::Result
         }
 
         let pattern = read_batch_rewrite_string_field(rule_object, &field_prefix, "pattern")?;
-        let replacement = read_batch_rewrite_string_field(rule_object, &field_prefix, "replacement")?;
+        let replacement =
+            read_batch_rewrite_string_field(rule_object, &field_prefix, "replacement")?;
         let lang = read_batch_rewrite_string_field(rule_object, &field_prefix, "lang")?;
 
         rewrites.push(BatchRewriteRule {
@@ -1479,7 +1531,9 @@ fn read_batch_rewrite_string_field(
         anyhow::anyhow!("invalid batch rewrite config field `{field_path}`: expected string")
     })?;
     if string_value.is_empty() {
-        anyhow::bail!("invalid batch rewrite config field `{field_path}`: expected non-empty string");
+        anyhow::bail!(
+            "invalid batch rewrite config field `{field_path}`: expected non-empty string"
+        );
     }
     Ok(string_value.to_string())
 }
@@ -1608,22 +1662,18 @@ fn handle_ast_rewrite_apply(
         return Ok(());
     }
 
-    eprintln!(
-        "[rewrite] applied {} edit(s)",
-        plan.edits.len(),
-    );
+    eprintln!("[rewrite] applied {} edit(s)", plan.edits.len(),);
 
     let verification = if args.verify {
         let v = plan.verify(backend)?;
         if v.mismatches.is_empty() {
-            eprintln!(
-                "[verify] {}/{} edits verified",
-                v.verified, v.total_edits
-            );
+            eprintln!("[verify] {}/{} edits verified", v.verified, v.total_edits);
         } else {
             eprintln!(
                 "[verify] {}/{} edits verified, {} mismatches",
-                v.verified, v.total_edits, v.mismatches.len()
+                v.verified,
+                v.total_edits,
+                v.mismatches.len()
             );
         }
         Some(v)
@@ -1731,7 +1781,10 @@ fn handle_ast_batch_rewrite_apply(
     let verification = if config.verify || args.verify {
         let result = plan.verify(backend)?;
         if result.mismatches.is_empty() {
-            eprintln!("[verify] {}/{} edits verified", result.verified, result.total_edits);
+            eprintln!(
+                "[verify] {}/{} edits verified",
+                result.verified, result.total_edits
+            );
         } else {
             eprintln!(
                 "[verify] {}/{} edits verified, {} mismatches",
@@ -1832,7 +1885,9 @@ fn gpu_native_fallback_reason(params: &GpuSearchParams<'_>) -> Option<&'static s
 
 #[cfg(feature = "cuda")]
 fn patterns_require_regex_engine(patterns: &[String]) -> bool {
-    patterns.iter().any(|pattern| pattern_requires_regex_engine(pattern))
+    patterns
+        .iter()
+        .any(|pattern| pattern_requires_regex_engine(pattern))
 }
 
 #[cfg(feature = "cuda")]
@@ -1866,7 +1921,10 @@ fn simulated_gpu_route_failure() -> Option<GpuRouteFailure> {
     if let Some(reason) = trimmed.strip_prefix("init-failure:") {
         return Some(GpuRouteFailure {
             kind: GpuRouteFailureKind::Fatal,
-            message: format!("CUDA initialization failed: {}", sanitize_cuda_detail(reason)),
+            message: format!(
+                "CUDA initialization failed: {}",
+                sanitize_cuda_detail(reason)
+            ),
         });
     }
     if let Some(reason) = trimmed.strip_prefix("nvrtc-failure:") {
@@ -1921,7 +1979,10 @@ fn sanitize_cuda_detail(raw: &str) -> String {
     if compact.contains("CUDA_ERROR") || compact.contains("DriverError") {
         return "the CUDA runtime reported an initialization error".to_string();
     }
-    compact.trim().trim_matches(|ch| ch == ':' || ch == '.').to_string()
+    compact
+        .trim()
+        .trim_matches(|ch| ch == ':' || ch == '.')
+        .to_string()
 }
 
 #[cfg(feature = "cuda")]
@@ -2130,13 +2191,20 @@ fn handle_auto_gpu_search(
     rg_fallback: Option<RipgrepSearchArgs>,
 ) -> anyhow::Result<()> {
     let auto_device_ids = [0];
-    match execute_gpu_native_route(&params, RoutingDecision::native_gpu_auto(), &auto_device_ids) {
+    match execute_gpu_native_route(
+        &params,
+        RoutingDecision::native_gpu_auto(),
+        &auto_device_ids,
+    ) {
         Ok(()) => Ok(()),
         Err(err) => {
             let failure = classify_gpu_route_failure(&err.to_string());
             match failure.kind {
                 GpuRouteFailureKind::Unavailable => {
-                    eprintln!("warning: {}; falling back to native CPU search", failure.message);
+                    eprintln!(
+                        "warning: {}; falling back to native CPU search",
+                        failure.message
+                    );
                     if cpu_fallback_config.verbose {
                         emit_verbose_metadata(RoutingDecision::native_cpu_gpu_fallback(
                             ripgrep_is_available(),
@@ -2188,37 +2256,43 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
             let failure = classify_gpu_route_failure(&err.to_string());
             match failure.kind {
                 GpuRouteFailureKind::Unavailable => {
-                    eprintln!("warning: {}; falling back to native CPU search", failure.message);
+                    eprintln!(
+                        "warning: {}; falling back to native CPU search",
+                        failure.message
+                    );
                     let rg_available = ripgrep_is_available();
-                    let fallback_decision =
-                        RoutingDecision::native_cpu_gpu_fallback(rg_available, params.json || params.ndjson);
+                    let fallback_decision = RoutingDecision::native_cpu_gpu_fallback(
+                        rg_available,
+                        params.json || params.ndjson,
+                    );
                     let cpu_config = native_search_config_for_gpu_params(
                         &params,
                         &params.patterns[0],
                         fallback_decision,
                     );
-                    let rg_fallback = fallback_decision.allow_rg_fallback.then(|| RipgrepSearchArgs {
-                        ignore_case: params.ignore_case,
-                        fixed_strings: params.fixed_strings,
-                        invert_match: params.invert_match,
-                        count: params.count,
-                        line_number: params.line_number,
-                        context: params.context,
-                        max_count: params.max_count,
-                        word_regexp: params.word_regexp,
-                        globs: params.globs.clone(),
-                        no_ignore: params.no_ignore,
-                        patterns: params.patterns.to_vec(),
-                        path: params.path.to_string(),
-                    });
+                    let rg_fallback =
+                        fallback_decision
+                            .allow_rg_fallback
+                            .then(|| RipgrepSearchArgs {
+                                ignore_case: params.ignore_case,
+                                fixed_strings: params.fixed_strings,
+                                invert_match: params.invert_match,
+                                count: params.count,
+                                line_number: params.line_number,
+                                context: params.context,
+                                max_count: params.max_count,
+                                word_regexp: params.word_regexp,
+                                globs: params.globs.clone(),
+                                no_ignore: params.no_ignore,
+                                patterns: params.patterns.to_vec(),
+                                path: params.path.to_string(),
+                            });
                     if cpu_config.verbose {
                         emit_verbose_metadata(fallback_decision);
                     }
                     if params.patterns.len() > 1 {
-                        let matches = collect_native_multi_pattern_matches(
-                            params.patterns,
-                            cpu_config,
-                        )?;
+                        let matches =
+                            collect_native_multi_pattern_matches(params.patterns, cpu_config)?;
                         return emit_multi_pattern_native_results(
                             fallback_decision,
                             params.query,
@@ -2448,7 +2522,11 @@ fn emit_gpu_native_json_results(
         path: params.path,
         total_matches: stats.total_matches,
         total_files: stats.matched_files,
-        routing_gpu_device_ids: stats.selected_devices.iter().map(|device| device.device_id).collect(),
+        routing_gpu_device_ids: stats
+            .selected_devices
+            .iter()
+            .map(|device| device.device_id)
+            .collect(),
         matches: gpu_native_match_json_entries(stats),
     };
 

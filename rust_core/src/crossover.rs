@@ -132,16 +132,26 @@ pub fn resolve_crossover_config_path(search_root: Option<&Path>) -> PathBuf {
     project_path
 }
 
-pub fn load_crossover_config(search_root: Option<&Path>) -> Result<Option<(PathBuf, CrossoverConfig)>> {
+pub fn load_crossover_config(
+    search_root: Option<&Path>,
+) -> Result<Option<(PathBuf, CrossoverConfig)>> {
     let path = resolve_crossover_config_path(search_root);
     if !path.is_file() {
         return Ok(None);
     }
 
-    let bytes = fs::read(&path)
-        .with_context(|| format!("failed to read crossover calibration file {}", path.display()))?;
-    let config: CrossoverConfig = serde_json::from_slice(&bytes)
-        .with_context(|| format!("failed to parse crossover calibration file {}", path.display()))?;
+    let bytes = fs::read(&path).with_context(|| {
+        format!(
+            "failed to read crossover calibration file {}",
+            path.display()
+        )
+    })?;
+    let config: CrossoverConfig = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "failed to parse crossover calibration file {}",
+            path.display()
+        )
+    })?;
     Ok(Some((path, config)))
 }
 
@@ -174,15 +184,20 @@ pub fn run_crossover_calibration(executable: &Path) -> Result<CrossoverConfig> {
     }
 
     let cache_dir = resolve_crossover_cache_dir();
-    fs::create_dir_all(&cache_dir)
-        .with_context(|| format!("failed to create crossover cache directory {}", cache_dir.display()))?;
+    fs::create_dir_all(&cache_dir).with_context(|| {
+        format!(
+            "failed to create crossover cache directory {}",
+            cache_dir.display()
+        )
+    })?;
 
     let device_name = detect_device_name(DEFAULT_DEVICE_ID)?;
     let mut measurements = Vec::new();
     for size_bytes in DEFAULT_CALIBRATION_SIZES {
         let corpus_dir = ensure_cached_corpus(&cache_dir, size_bytes)?;
         let cpu_samples_ms = benchmark_mode(executable, &corpus_dir, SearchMode::Cpu)?;
-        let gpu_samples_ms = benchmark_mode(executable, &corpus_dir, SearchMode::Gpu(DEFAULT_DEVICE_ID))?;
+        let gpu_samples_ms =
+            benchmark_mode(executable, &corpus_dir, SearchMode::Gpu(DEFAULT_DEVICE_ID))?;
         measurements.push(CalibrationMeasurement::from_samples(
             size_bytes,
             cpu_samples_ms,
@@ -193,7 +208,10 @@ pub fn run_crossover_calibration(executable: &Path) -> Result<CrossoverConfig> {
     summarize_measurements(device_name, measurements, now_timestamp)
 }
 
-pub fn write_crossover_config(config: &CrossoverConfig, search_root: Option<&Path>) -> Result<PathBuf> {
+pub fn write_crossover_config(
+    config: &CrossoverConfig,
+    search_root: Option<&Path>,
+) -> Result<PathBuf> {
     let path = resolve_crossover_config_path(search_root);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| {
@@ -204,7 +222,8 @@ pub fn write_crossover_config(config: &CrossoverConfig, search_root: Option<&Pat
         })?;
     }
 
-    let bytes = serde_json::to_vec_pretty(config).context("failed to serialize crossover config")?;
+    let bytes =
+        serde_json::to_vec_pretty(config).context("failed to serialize crossover config")?;
     fs::write(&path, bytes)
         .with_context(|| format!("failed to write crossover config {}", path.display()))?;
     Ok(path)
@@ -239,17 +258,16 @@ fn summarize_measurements(
             .min_by(|left, right| {
                 let left_ratio = left.gpu_median_ms / left.cpu_median_ms.max(0.000_1);
                 let right_ratio = right.gpu_median_ms / right.cpu_median_ms.max(0.000_1);
-                left_ratio.partial_cmp(&right_ratio).unwrap_or(std::cmp::Ordering::Equal)
+                left_ratio
+                    .partial_cmp(&right_ratio)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .cloned()
             .unwrap()
     });
 
     let recommendation = if winner.is_some() {
-        format!(
-            "gpu_above_{}mb",
-            representative.corpus_megabytes().max(1)
-        )
+        format!("gpu_above_{}mb", representative.corpus_megabytes().max(1))
     } else {
         "cpu_always".to_string()
     };
@@ -270,7 +288,11 @@ fn summarize_measurements(
 }
 
 impl CalibrationMeasurement {
-    fn from_samples(size_bytes: u64, cpu_samples_ms: Vec<f64>, gpu_samples_ms: Vec<f64>) -> Result<Self> {
+    fn from_samples(
+        size_bytes: u64,
+        cpu_samples_ms: Vec<f64>,
+        gpu_samples_ms: Vec<f64>,
+    ) -> Result<Self> {
         Ok(Self {
             size_bytes,
             cpu_median_ms: median(&cpu_samples_ms)?,
@@ -361,19 +383,23 @@ fn ensure_cached_corpus(cache_dir: &Path, size_bytes: u64) -> Result<PathBuf> {
 
     for index in 0..GENERATED_FILE_COUNT {
         let file_path = corpus_dir.join(format!("chunk-{index}.log"));
-        let file = File::create(&file_path)
-            .with_context(|| format!("failed to create cached corpus file {}", file_path.display()))?;
+        let file = File::create(&file_path).with_context(|| {
+            format!(
+                "failed to create cached corpus file {}",
+                file_path.display()
+            )
+        })?;
         let mut writer = BufWriter::new(file);
         let mut written = 0u64;
         while written < target_per_file {
-            writer
-                .write_all(chunk.as_bytes())
-                .with_context(|| format!("failed to write cached corpus file {}", file_path.display()))?;
+            writer.write_all(chunk.as_bytes()).with_context(|| {
+                format!("failed to write cached corpus file {}", file_path.display())
+            })?;
             written = written.saturating_add(chunk.len() as u64);
         }
-        writer
-            .flush()
-            .with_context(|| format!("failed to flush cached corpus file {}", file_path.display()))?;
+        writer.flush().with_context(|| {
+            format!("failed to flush cached corpus file {}", file_path.display())
+        })?;
     }
 
     Ok(corpus_dir)
@@ -429,10 +455,18 @@ fn normalize_search_root(path: &Path) -> PathBuf {
 
 fn user_crossover_config_path() -> Option<PathBuf> {
     if let Some(path) = env::var_os("XDG_CONFIG_HOME") {
-        return Some(PathBuf::from(path).join("tensor-grep").join("crossover.json"));
+        return Some(
+            PathBuf::from(path)
+                .join("tensor-grep")
+                .join("crossover.json"),
+        );
     }
     if let Some(path) = env::var_os("APPDATA") {
-        return Some(PathBuf::from(path).join("tensor-grep").join("crossover.json"));
+        return Some(
+            PathBuf::from(path)
+                .join("tensor-grep")
+                .join("crossover.json"),
+        );
     }
     env::var_os("HOME").map(|home| {
         PathBuf::from(home)
@@ -445,8 +479,12 @@ fn user_crossover_config_path() -> Option<PathBuf> {
 fn detect_device_name(device_id: i32) -> Result<String> {
     #[cfg(feature = "cuda")]
     {
-        let devices = crate::gpu_native::enumerate_cuda_devices().context("failed to enumerate CUDA devices")?;
-        if let Some(device) = devices.into_iter().find(|device| device.device_id == device_id) {
+        let devices = crate::gpu_native::enumerate_cuda_devices()
+            .context("failed to enumerate CUDA devices")?;
+        if let Some(device) = devices
+            .into_iter()
+            .find(|device| device.device_id == device_id)
+        {
             return Ok(device.name);
         }
         bail!("CUDA device {device_id} is unavailable for crossover calibration");

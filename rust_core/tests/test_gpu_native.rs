@@ -14,15 +14,14 @@ fn cpu_match_positions(pattern: &str, data: &[u8]) -> Vec<MatchPosition> {
     data.windows(needle.len())
         .enumerate()
         .filter_map(|(offset, window)| {
-            (window == needle).then_some(MatchPosition { byte_offset: offset })
+            (window == needle).then_some(MatchPosition {
+                byte_offset: offset,
+            })
         })
         .collect()
 }
 
-fn cpu_match_positions_for_patterns(
-    patterns: &[&str],
-    data: &[u8],
-) -> Vec<PatternMatchPosition> {
+fn cpu_match_positions_for_patterns(patterns: &[&str], data: &[u8]) -> Vec<PatternMatchPosition> {
     let mut matches = Vec::new();
     for (pattern_id, pattern) in patterns.iter().enumerate() {
         let needle = pattern.as_bytes();
@@ -30,12 +29,16 @@ fn cpu_match_positions_for_patterns(
             continue;
         }
 
-        matches.extend(data.windows(needle.len()).enumerate().filter_map(|(offset, window)| {
-            (window == needle).then_some(PatternMatchPosition {
-                byte_offset: offset,
-                pattern_id,
-            })
-        }));
+        matches.extend(
+            data.windows(needle.len())
+                .enumerate()
+                .filter_map(|(offset, window)| {
+                    (window == needle).then_some(PatternMatchPosition {
+                        byte_offset: offset,
+                        pattern_id,
+                    })
+                }),
+        );
     }
     matches.sort_by_key(|matched| (matched.byte_offset, matched.pattern_id));
     matches
@@ -72,7 +75,10 @@ fn test_gpu_native_search_patterns_reports_pattern_ids() {
     let patterns = ["ERROR", "WARN", "FATAL"];
     let matches = gpu_native_search_patterns(&patterns, haystack, first_device_id()).unwrap();
 
-    assert_eq!(matches, cpu_match_positions_for_patterns(&patterns, haystack));
+    assert_eq!(
+        matches,
+        cpu_match_positions_for_patterns(&patterns, haystack)
+    );
 }
 
 #[test]
@@ -81,7 +87,10 @@ fn test_gpu_native_search_patterns_matches_cpu_for_unicode_inputs() {
     let patterns = ["caf\u{00e9}", "\u{65e5}\u{672c}\u{8a9e}", "\u{1f50d}"];
     let matches = gpu_native_search_patterns(&patterns, haystack, first_device_id()).unwrap();
 
-    assert_eq!(matches, cpu_match_positions_for_patterns(&patterns, haystack));
+    assert_eq!(
+        matches,
+        cpu_match_positions_for_patterns(&patterns, haystack)
+    );
 }
 
 #[test]
@@ -90,11 +99,9 @@ fn test_device_enumeration_lists_available_gpus() {
 
     assert!(!devices.is_empty());
     assert!(devices.iter().all(|device| !device.name.trim().is_empty()));
-    assert!(
-        devices
-            .iter()
-            .all(|device| device.compute_capability.0 > 0 && device.compute_capability.1 >= 0)
-    );
+    assert!(devices
+        .iter()
+        .all(|device| device.compute_capability.0 > 0 && device.compute_capability.1 >= 0));
 }
 
 #[test]

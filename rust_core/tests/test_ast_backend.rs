@@ -99,7 +99,11 @@ fn test_ast_backend_reports_line_numbers_for_multiple_python_matches() {
     let backend = AstBackend::new();
 
     let matches = backend
-        .search("def $F($$$ARGS): return $EXPR", "python", file_path.to_str().unwrap())
+        .search(
+            "def $F($$$ARGS): return $EXPR",
+            "python",
+            file_path.to_str().unwrap(),
+        )
         .unwrap();
 
     assert_eq!(matches.len(), 2);
@@ -166,8 +170,14 @@ fn test_tg_run_verbose_emits_ast_routing_metadata_and_match_output() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("routing_backend=AstBackend"), "stderr={stderr}");
-    assert!(stderr.contains("routing_reason=ast-native"), "stderr={stderr}");
+    assert!(
+        stderr.contains("routing_backend=AstBackend"),
+        "stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("routing_reason=ast-native"),
+        "stderr={stderr}"
+    );
     assert!(stderr.contains("sidecar_used=false"), "stderr={stderr}");
     assert!(
         stdout.starts_with(&format!("{}:1:def add(a, b):", file_path.display())),
@@ -216,9 +226,16 @@ fn test_tg_run_reports_invalid_pattern_without_panic() {
         .unwrap();
 
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        output.stdout.is_empty(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
-    assert!(stderr.contains("invalid pattern") || stderr.contains("parse"), "stderr={stderr}");
+    assert!(
+        stderr.contains("invalid pattern") || stderr.contains("parse"),
+        "stderr={stderr}"
+    );
     assert!(!stderr.contains("panicked"), "stderr={stderr}");
 }

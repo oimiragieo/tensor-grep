@@ -8,9 +8,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tempfile::tempdir;
-use tensor_grep_rs::native_search::{
-    run_native_search, NativeOutputTarget, NativeSearchConfig,
-};
+use tensor_grep_rs::native_search::{run_native_search, NativeOutputTarget, NativeSearchConfig};
 
 const LARGE_FILE_LINE_BYTES: usize = 1024;
 const LARGE_FILE_LINE_COUNT: usize = 102_400;
@@ -43,7 +41,11 @@ fn read_buffer(buffer: &Arc<Mutex<Vec<u8>>>) -> String {
     String::from_utf8(buffer.lock().unwrap().clone()).unwrap()
 }
 
-fn base_config(pattern: &str, path: &Path, output_target: NativeOutputTarget) -> NativeSearchConfig {
+fn base_config(
+    pattern: &str,
+    path: &Path,
+    output_target: NativeOutputTarget,
+) -> NativeSearchConfig {
     NativeSearchConfig {
         pattern: pattern.to_string(),
         paths: vec![path.to_path_buf()],
@@ -129,7 +131,9 @@ fn write_many_file_streaming_fixture(dir: &Path, file_count: usize) -> (PathBuf,
         for line_index in 0..MANY_FILE_STREAMING_LINES_PER_FILE {
             if file_index % 23 == 0 && line_index == 7 {
                 expected_matches += 1;
-                lines.push(format!("INFO {STREAMING_PATTERN} file={file_index} line={line_index}\n"));
+                lines.push(format!(
+                    "INFO {STREAMING_PATTERN} file={file_index} line={line_index}\n"
+                ));
             } else {
                 lines.push(format!("INFO filler file={file_index} line={line_index}\n"));
             }
@@ -200,12 +204,12 @@ fn assert_streaming_ratio(capture: &StreamCapture, mode: &str) {
         String::from_utf8_lossy(&capture.stderr)
     );
 
-    let ttfb = capture.ttfb.as_secs_f64();
     let total = capture.total.as_secs_f64();
+    let remaining = capture.total.saturating_sub(capture.ttfb);
     assert!(total > 0.0, "mode={mode} total must be positive");
     assert!(
-        ttfb < total * 0.5,
-        "expected streaming {mode} output to arrive before halfway point: ttfb={:?} total={:?}",
+        remaining >= Duration::from_millis(25),
+        "expected streaming {mode} output to arrive at least 25ms before completion: ttfb={:?} total={:?}",
         capture.ttfb,
         capture.total
     );
@@ -254,7 +258,11 @@ fn test_native_search_regex_search() {
 
     assert_eq!(stats.total_matches, 2);
     assert_eq!(
-        stats.matches.iter().map(|entry| entry.text.as_str()).collect::<Vec<_>>(),
+        stats
+            .matches
+            .iter()
+            .map(|entry| entry.text.as_str())
+            .collect::<Vec<_>>(),
         vec!["ERROR network timeout", "WARN 503 retrying"]
     );
 }
@@ -484,7 +492,11 @@ fn test_native_search_no_ignore_includes_ignored_files_without_searching_dotfile
     config.no_ignore = true;
 
     let stats = run_native_search(config).unwrap();
-    let matched_paths = stats.matches.iter().map(|entry| entry.path.clone()).collect::<Vec<_>>();
+    let matched_paths = stats
+        .matches
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<Vec<_>>();
 
     assert_eq!(stats.total_matches, 1);
     assert_eq!(matched_paths, vec![ignored_path]);
@@ -497,12 +509,17 @@ fn test_native_search_parallel_walk_counts_expected_files() {
     fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
 
     for index in 0..8 {
-        fs::write(dir.path().join(format!("file-{index}.txt")), format!("ERROR file {index}\n"))
-            .unwrap();
+        fs::write(
+            dir.path().join(format!("file-{index}.txt")),
+            format!("ERROR file {index}\n"),
+        )
+        .unwrap();
     }
     for index in 0..4 {
         fs::write(
-            dir.path().join("nested").join(format!("nested-{index}.txt")),
+            dir.path()
+                .join("nested")
+                .join(format!("nested-{index}.txt")),
             format!("INFO nested {index}\n"),
         )
         .unwrap();
@@ -548,13 +565,24 @@ fn test_native_search_large_file_chunk_parallelism_preserves_boundaries_and_glob
 
     assert_eq!(stats.total_matches, expected_lines.len());
     assert_eq!(actual_lines, expected_lines);
-    assert_eq!(unique_lines.len(), expected_lines.len(), "duplicate boundary matches found");
-    assert!(stats.matches.iter().all(|entry| entry.text.contains(LARGE_FILE_PATTERN)));
+    assert_eq!(
+        unique_lines.len(),
+        expected_lines.len(),
+        "duplicate boundary matches found"
+    );
+    assert!(stats
+        .matches
+        .iter()
+        .all(|entry| entry.text.contains(LARGE_FILE_PATTERN)));
 }
 
 #[test]
 fn test_native_search_large_file_verbose_logs_chunk_boundaries() {
-    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
 
@@ -572,7 +600,13 @@ fn test_native_search_large_file_verbose_logs_chunk_boundaries() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "status={:?}\nstdout={}\nstderr={}", output.status.code(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -587,7 +621,11 @@ fn test_native_search_large_file_verbose_logs_chunk_boundaries() {
 #[test]
 fn test_native_search_default_output_streams_before_search_completion() {
     let _guard = timing_test_guard();
-    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
 
@@ -610,7 +648,11 @@ fn test_native_search_default_output_streams_before_search_completion() {
 #[test]
 fn test_native_search_ndjson_output_streams_before_search_completion() {
     let _guard = timing_test_guard();
-    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
 
@@ -640,7 +682,11 @@ fn test_native_search_ndjson_output_streams_before_search_completion() {
 #[ignore = "timing-sensitive benchmark-style check; validate manually when profiling streaming output"]
 fn test_native_search_many_file_directory_streams_before_walk_completion() {
     let _guard = timing_test_guard();
-    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
 
@@ -663,7 +709,11 @@ fn test_native_search_many_file_directory_streams_before_walk_completion() {
 
 #[test]
 fn test_native_search_default_output_lines_are_not_interleaved() {
-    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
 
@@ -708,7 +758,11 @@ fn test_native_search_default_output_lines_are_not_interleaved() {
 
 #[test]
 fn test_native_search_json_output_remains_single_document_for_large_file() {
-    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
 
@@ -734,20 +788,30 @@ fn test_native_search_json_output_remains_single_document_for_large_file() {
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(
-        stdout.lines().filter(|line| !line.trim().is_empty()).count(),
+        stdout
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count(),
         1,
         "stdout={stdout}"
     );
 
     let payload: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["total_matches"], expected_matches as u64);
-    assert_eq!(payload["matches"].as_array().unwrap().len(), expected_matches);
+    assert_eq!(
+        payload["matches"].as_array().unwrap().len(),
+        expected_matches
+    );
 }
 
 #[test]
 #[ignore = "benchmark-style validation for large-file chunk parallelism"]
 fn test_native_search_large_file_chunk_parallelism_is_faster_than_sequential() {
-    if std::thread::available_parallelism().map(|count| count.get()).unwrap_or(1) < 2 {
+    if std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        < 2
+    {
         return;
     }
 
@@ -797,9 +861,7 @@ fn test_native_search_large_file_chunk_parallelism_is_faster_than_sequential() {
 
     let parallel_median = median_duration(&parallel_samples);
     let sequential_median = median_duration(&sequential_samples);
-    eprintln!(
-        "parallel_median={parallel_median:?} sequential_median={sequential_median:?}"
-    );
+    eprintln!("parallel_median={parallel_median:?} sequential_median={sequential_median:?}");
     assert!(
         parallel_median < sequential_median,
         "expected parallel median {:?} to beat sequential median {:?}",

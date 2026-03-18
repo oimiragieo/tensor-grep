@@ -48,11 +48,20 @@ fn test_gpu_native_replays_captured_cuda_graphs_without_changing_results() {
 
     let benchmark = benchmark_cuda_graph_search_paths(&config, device_id).unwrap();
 
-    assert!(benchmark.baseline.pipeline.batch_count >= 100, "benchmark={benchmark:?}");
+    assert!(
+        benchmark.baseline.pipeline.batch_count >= 100,
+        "benchmark={benchmark:?}"
+    );
     assert!(benchmark.results_identical, "benchmark={benchmark:?}");
     assert_eq!(benchmark.baseline.matches, benchmark.graphed.matches);
-    assert!(benchmark.graphed.pipeline.cuda_graph_captures >= 1, "benchmark={benchmark:?}");
-    assert!(benchmark.graphed.pipeline.cuda_graph_replays >= 1, "benchmark={benchmark:?}");
+    assert!(
+        benchmark.graphed.pipeline.cuda_graph_captures >= 1,
+        "benchmark={benchmark:?}"
+    );
+    assert!(
+        benchmark.graphed.pipeline.cuda_graph_replays >= 1,
+        "benchmark={benchmark:?}"
+    );
 }
 
 #[test]
@@ -74,7 +83,10 @@ fn test_gpu_native_cuda_graphs_reduce_batch_overhead_by_ten_percent() {
 
     let benchmark = benchmark_cuda_graph_search_paths(&config, device_id).unwrap();
 
-    assert!(benchmark.baseline.pipeline.batch_count >= 100, "benchmark={benchmark:?}");
+    assert!(
+        benchmark.baseline.pipeline.batch_count >= 100,
+        "benchmark={benchmark:?}"
+    );
     assert!(benchmark.results_identical, "benchmark={benchmark:?}");
     assert!(
         benchmark.wall_time_reduction_pct >= 10.0,

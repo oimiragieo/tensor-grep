@@ -25,7 +25,11 @@ fn parse_json_payload(stdout: &[u8]) -> Value {
 fn write_basic_corpus(dir: &Path) -> PathBuf {
     let corpus = dir.join("corpus");
     fs::create_dir(&corpus).unwrap();
-    fs::write(corpus.join("a.log"), "INFO ok\nERROR gpu benchmark sentinel\n").unwrap();
+    fs::write(
+        corpus.join("a.log"),
+        "INFO ok\nERROR gpu benchmark sentinel\n",
+    )
+    .unwrap();
     corpus
 }
 
@@ -42,7 +46,10 @@ fn test_gpu_native_nvrtc_failure_simulation_is_user_facing() {
         .arg("--fixed-strings")
         .arg("gpu benchmark sentinel")
         .arg(&corpus)
-        .env("TG_TEST_CUDA_BEHAVIOR", "nvrtc-failure:simulated NVRTC compile error")
+        .env(
+            "TG_TEST_CUDA_BEHAVIOR",
+            "nvrtc-failure:simulated NVRTC compile error",
+        )
         .output()
         .unwrap();
 
@@ -55,8 +62,14 @@ fn test_gpu_native_nvrtc_failure_simulation_is_user_facing() {
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("CUDA kernel compilation failed"), "stderr={stderr}");
-    assert!(stderr.contains("simulated NVRTC compile error"), "stderr={stderr}");
+    assert!(
+        stderr.contains("CUDA kernel compilation failed"),
+        "stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("simulated NVRTC compile error"),
+        "stderr={stderr}"
+    );
     assert!(!stderr.contains("panic"), "stderr={stderr}");
 }
 
@@ -85,7 +98,10 @@ fn test_gpu_native_invalid_device_lists_available_devices() {
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("invalid CUDA device id 99"), "stderr={stderr}");
+    assert!(
+        stderr.contains("invalid CUDA device id 99"),
+        "stderr={stderr}"
+    );
     assert!(stderr.contains("available CUDA devices"), "stderr={stderr}");
 }
 
@@ -115,7 +131,10 @@ fn test_gpu_native_timeout_simulation_is_user_facing() {
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("GPU operation timed out"), "stderr={stderr}");
+    assert!(
+        stderr.contains("GPU operation timed out"),
+        "stderr={stderr}"
+    );
     assert!(stderr.contains("300ms"), "stderr={stderr}");
     assert!(!stderr.contains("panic"), "stderr={stderr}");
 }
@@ -156,7 +175,11 @@ fn test_gpu_native_handles_binary_empty_and_invalid_utf8_files() {
     let dir = tempdir().unwrap();
     let corpus = dir.path().join("mixed");
     fs::create_dir(&corpus).unwrap();
-    fs::write(corpus.join("good.log"), "INFO ok\nERROR gpu benchmark sentinel\n").unwrap();
+    fs::write(
+        corpus.join("good.log"),
+        "INFO ok\nERROR gpu benchmark sentinel\n",
+    )
+    .unwrap();
     fs::write(corpus.join("empty.log"), "").unwrap();
     fs::write(corpus.join("binary.bin"), b"\x00\x01\x02").unwrap();
     fs::write(
@@ -177,7 +200,11 @@ fn test_gpu_native_handles_binary_empty_and_invalid_utf8_files() {
         .output()
         .unwrap();
 
-    assert!(gpu_output.status.success(), "stderr={}", String::from_utf8_lossy(&gpu_output.stderr));
+    assert!(
+        gpu_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&gpu_output.stderr)
+    );
 
     let gpu_payload = parse_json_payload(&gpu_output.stdout);
     assert!(gpu_payload["total_matches"].as_u64().unwrap() >= 1);

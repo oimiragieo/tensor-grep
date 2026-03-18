@@ -91,7 +91,9 @@ impl AtomicLineWriter {
     fn finish(&mut self) -> io::Result<()> {
         self.flush_complete_lines()?;
         if !self.pending.is_empty() {
-            self.target.write_all(&self.pending).map_err(io::Error::other)?;
+            self.target
+                .write_all(&self.pending)
+                .map_err(io::Error::other)?;
             self.pending.clear();
         }
         Ok(())
@@ -225,7 +227,11 @@ where
         self.inner.matched(searcher, mat)
     }
 
-    fn context(&mut self, searcher: &Searcher, context: &SinkContext<'_>) -> Result<bool, Self::Error> {
+    fn context(
+        &mut self,
+        searcher: &Searcher,
+        context: &SinkContext<'_>,
+    ) -> Result<bool, Self::Error> {
         self.inner.context(searcher, context)
     }
 
@@ -365,10 +371,16 @@ impl ParallelWalkWorker {
 
         self.searcher_with_line_numbers
             .search_path(&self.matcher, path, &mut sink)
-            .with_context(|| format!("native standard output search failed for {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "native standard output search failed for {}",
+                    path.display()
+                )
+            })?;
 
         let binary_detected = sink.saw_binary();
-        let binary_match_detected = binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
+        let binary_match_detected =
+            binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if binary_detected {
             matches.clear();
             match_count = 0;
@@ -409,7 +421,8 @@ impl ParallelWalkWorker {
             .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
 
         let binary_detected = sink.saw_binary();
-        let binary_match_detected = binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
+        let binary_match_detected =
+            binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if binary_detected {
             matches.clear();
             match_count = 0;
@@ -437,7 +450,8 @@ impl ParallelWalkWorker {
             .with_context(|| format!("native count output search failed for {}", path.display()))?;
 
         let binary_detected = sink.saw_binary();
-        let binary_match_detected = binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
+        let binary_match_detected =
+            binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if !binary_detected {
             append_count_output_bytes(&mut self.output_buffer, &self.config, path, match_count)?;
         } else {
@@ -504,7 +518,11 @@ where
         Ok(keep_going)
     }
 
-    fn context(&mut self, searcher: &Searcher, context: &SinkContext<'_>) -> Result<bool, Self::Error> {
+    fn context(
+        &mut self,
+        searcher: &Searcher,
+        context: &SinkContext<'_>,
+    ) -> Result<bool, Self::Error> {
         self.inner.context(searcher, context)
     }
 
@@ -713,7 +731,10 @@ fn split_search_inputs(config: &NativeSearchConfig) -> Result<SearchInputs> {
 
     for path in &config.paths {
         if !path.exists() {
-            return Err(anyhow!("native search path does not exist: {}", path.display()));
+            return Err(anyhow!(
+                "native search path does not exist: {}",
+                path.display()
+            ));
         }
         if path.is_file() {
             inputs.files.push(path.clone());
@@ -735,7 +756,10 @@ fn should_use_parallel_walk_search(config: &NativeSearchConfig) -> bool {
         && config.max_count.is_none()
 }
 
-fn search_walk_roots_parallel(config: &NativeSearchConfig, roots: &[PathBuf]) -> Result<SearchStats> {
+fn search_walk_roots_parallel(
+    config: &NativeSearchConfig,
+    roots: &[PathBuf],
+) -> Result<SearchStats> {
     let shared_stats = Arc::new(Mutex::new(SearchStats::default()));
     let shared_error = Arc::new(Mutex::new(None));
     let should_quit = Arc::new(AtomicBool::new(false));
@@ -766,7 +790,11 @@ fn search_walk_roots_parallel(config: &NativeSearchConfig, roots: &[PathBuf]) ->
                 }
             };
 
-            if !entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+            if !entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false)
+            {
                 return WalkState::Continue;
             }
 
@@ -868,7 +896,12 @@ fn search_file_streaming_standard_sequential(
         let mut sink = BinaryAwareSink::new(sink);
         searcher
             .search_path(matcher, path, &mut sink)
-            .with_context(|| format!("native standard output search failed for {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "native standard output search failed for {}",
+                    path.display()
+                )
+            })?;
         let binary_detected = sink.saw_binary();
         let matches = sink.into_inner().into_matches();
         (matches, binary_detected)
@@ -903,8 +936,8 @@ fn search_file_streaming_plain_sequential(
     } else {
         STREAMING_OUTPUT_FLUSH_BYTES
     };
-    let retain_matches = matches!(config.output_target, NativeOutputTarget::Buffer(_))
-        || cfg!(debug_assertions);
+    let retain_matches =
+        matches!(config.output_target, NativeOutputTarget::Buffer(_)) || cfg!(debug_assertions);
     let mut matches = Vec::new();
     let mut match_count = 0usize;
     let mut pending_output = Vec::with_capacity(streaming_output_flush_bytes);
@@ -948,7 +981,12 @@ fn search_file_streaming_plain_sequential(
     }));
     searcher
         .search_path(matcher, path, &mut sink)
-        .with_context(|| format!("native standard output search failed for {}", path.display()))?;
+        .with_context(|| {
+            format!(
+                "native standard output search failed for {}",
+                path.display()
+            )
+        })?;
 
     let binary_detected = sink.saw_binary();
     let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
@@ -988,7 +1026,11 @@ fn search_file_streaming_ndjson_sequential(
     search_file_ndjson_with_searcher(config, matcher, path, &mut searcher)
 }
 
-fn search_file(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<FileSearchResult> {
+fn search_file(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
     if should_use_chunk_parallel_search(config, path)? {
         return search_file_chunk_parallel(config, matcher, path);
     }
@@ -1004,9 +1046,12 @@ fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
     if config.crlf {
         builder.crlf(true);
     }
-    builder
-        .build(&config.pattern)
-        .with_context(|| format!("failed to compile native search pattern '{}'", config.pattern))
+    builder.build(&config.pattern).with_context(|| {
+        format!(
+            "failed to compile native search pattern '{}'",
+            config.pattern
+        )
+    })
 }
 
 fn build_searcher(config: &NativeSearchConfig, line_number: bool) -> Searcher {
@@ -1042,7 +1087,11 @@ fn collect_walked_files(config: &NativeSearchConfig, roots: &[PathBuf]) -> Resul
         let shared_files = Arc::clone(&shared_files);
         Box::new(move |entry| {
             if let Ok(entry) = entry {
-                if entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+                if entry
+                    .file_type()
+                    .map(|kind| kind.is_file())
+                    .unwrap_or(false)
+                {
                     if let Ok(mut guard) = shared_files.lock() {
                         guard.push(entry.path().to_path_buf());
                     }
@@ -1121,7 +1170,12 @@ fn should_use_chunk_parallel_search(config: &NativeSearchConfig, path: &Path) ->
     }
 
     let file_len = std::fs::metadata(path)
-        .with_context(|| format!("failed to read native search metadata for {}", path.display()))?
+        .with_context(|| {
+            format!(
+                "failed to read native search metadata for {}",
+                path.display()
+            )
+        })?
         .len();
     Ok(file_len >= config.large_file_chunk_threshold_bytes as u64)
 }
@@ -1160,7 +1214,14 @@ fn search_file_chunk_parallel(
     if config.count {
         let chunk_counts = chunk_plan
             .par_iter()
-            .map(|chunk| search_chunk_count(config, matcher, path, &mmap[chunk.byte_start..chunk.byte_end]))
+            .map(|chunk| {
+                search_chunk_count(
+                    config,
+                    matcher,
+                    path,
+                    &mmap[chunk.byte_start..chunk.byte_end],
+                )
+            })
             .collect::<Vec<_>>();
 
         let mut match_count = 0usize;
@@ -1179,7 +1240,15 @@ fn search_file_chunk_parallel(
 
     let chunk_matches = chunk_plan
         .par_iter()
-        .map(|chunk| search_chunk(config, matcher, path, &mmap[chunk.byte_start..chunk.byte_end], chunk.first_line_number))
+        .map(|chunk| {
+            search_chunk(
+                config,
+                matcher,
+                path,
+                &mmap[chunk.byte_start..chunk.byte_end],
+                chunk.first_line_number,
+            )
+        })
         .collect::<Vec<_>>();
 
     let mut matches = Vec::new();
@@ -1196,7 +1265,11 @@ fn search_file_chunk_parallel(
     })
 }
 
-fn plan_file_chunks(contents: &[u8], requested_chunk_count: usize, count_only: bool) -> Vec<FileChunkPlan> {
+fn plan_file_chunks(
+    contents: &[u8],
+    requested_chunk_count: usize,
+    count_only: bool,
+) -> Vec<FileChunkPlan> {
     if contents.is_empty() || requested_chunk_count == 0 {
         return Vec::new();
     }
@@ -1206,7 +1279,9 @@ fn plan_file_chunks(contents: &[u8], requested_chunk_count: usize, count_only: b
     let mut byte_start = 0usize;
 
     while byte_start < contents.len() {
-        let minimum_end = byte_start.saturating_add(target_chunk_size).min(contents.len());
+        let minimum_end = byte_start
+            .saturating_add(target_chunk_size)
+            .min(contents.len());
         let byte_end = if minimum_end >= contents.len() {
             contents.len()
         } else {
@@ -1276,9 +1351,7 @@ fn emit_chunk_parallel_debug(
     for (index, chunk) in chunk_plan.iter().enumerate() {
         eprintln!(
             "[native-search] chunk[{index}] byte_start={} byte_end={} first_line={}",
-            chunk.byte_start,
-            chunk.byte_end,
-            chunk.first_line_number
+            chunk.byte_start, chunk.byte_end, chunk.first_line_number
         );
     }
 }
@@ -1327,7 +1400,12 @@ fn search_chunk_count(
                 Ok(true)
             }),
         )
-        .with_context(|| format!("native chunk-parallel count search failed for {}", path.display()))?;
+        .with_context(|| {
+            format!(
+                "native chunk-parallel count search failed for {}",
+                path.display()
+            )
+        })?;
     Ok(match_count)
 }
 
@@ -1458,7 +1536,11 @@ fn search_file_json(
     search_file_collect_matches_with_searcher(config, matcher, path, &mut searcher)
 }
 
-fn emit_count_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: &Path) -> Result<()> {
+fn emit_count_output(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<()> {
     let mut searcher = build_searcher(config, true);
     let count = count_matches_with_searcher(matcher, path, &mut searcher)?;
     let mut bytes = Vec::new();
@@ -1466,7 +1548,11 @@ fn emit_count_output(config: &NativeSearchConfig, matcher: &RegexMatcher, path: 
     config.output_target.write_all(&bytes)
 }
 
-fn emit_count_output_from_matches(config: &NativeSearchConfig, path: &Path, count: usize) -> Result<()> {
+fn emit_count_output_from_matches(
+    config: &NativeSearchConfig,
+    path: &Path,
+    count: usize,
+) -> Result<()> {
     let mut bytes = Vec::new();
     append_count_output_bytes(&mut bytes, config, path, count)?;
     config.output_target.write_all(&bytes)
