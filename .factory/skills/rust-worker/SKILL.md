@@ -54,7 +54,18 @@ Use this worker for:
    - Test with `cargo test --features cuda` and `cargo build --features cuda --release`.
    - Reference `.factory/research/gpu-text-search.md` for kernel design patterns.
 
-7. **For rewrite safety changes**: Test with edge cases: BOM files, CRLF files, binary files (NUL bytes), large files (>100MB), non-ASCII content (CJK, emoji). Verify atomic write via temp+rename pattern.
+7. **For AST search speed optimizations** (parallel walk, pre-filter):
+   - Use `ignore::WalkParallel` for directory traversal. The walker threads should do everything: walk, read, pre-filter, parse, match. Use `mpsc::channel` to collect results, then sort by (file, line) for deterministic output.
+   - Fixed-string pre-filter: Before tree-sitter parse, check `source.contains(&literal)` where `literal` is extracted from the AST pattern. If no literal is extractable (pure metavars), skip the pre-filter and scan all files.
+   - Use `ignore::types::TypesBuilder` to register language extensions at walk time — don't post-filter.
+   - sg's architecture (what we're matching): parallel walk + in-thread processing, `min(cpus, 12)` threads, `read_to_string` + contains check + parse + match per file.
+   - Reference `.factory/research/sg_internals_report.md` for sg's exact flow.
+
+8. **For rewrite speed optimizations** (fused I/O, no fsync):
+   - In `plan_and_apply`, pass the file content from the planning read to the apply phase — do NOT re-read the file.
+   - Replace `sync_all()` with `sync_data()` or remove fsync entirely. Add a code comment citing NTFS rename atomicity guarantees. sg uses plain `std::fs::write()` with no fsync.
+   - Remove the redundant per-file `ensure_file_not_stale` inside `apply_edits_to_file` when `ensure_files_not_stale` already ran as a batch.
+   - Test with edge cases: BOM files, CRLF files, binary files (NUL bytes), large files (>100MB), non-ASCII content (CJK, emoji). Verify atomic write via temp+rename pattern.
 
 8. **For index changes**: Preserve `TGI\x00` magic + version byte. If format changes, bump FORMAT_VERSION and handle old-format migration (rebuild with warning, not crash). Verify query result parity with uncompressed index.
 

@@ -16,6 +16,9 @@ commands:
   benchmark_ast_multilang: python benchmarks/run_ast_multilang_benchmarks.py --output artifacts/bench_ast_multilang.json
   benchmark_ast_workflow: python benchmarks/run_ast_workflow_benchmarks.py --output artifacts/bench_run_ast_workflow_benchmarks.json
   benchmark_rewrite: python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite.json
+  benchmark_parity: python benchmarks/run_ast_parity_check.py
+  rust_test_release: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml --release
+  rust_build_release: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release
   benchmark_gpu: python benchmarks/run_gpu_benchmarks.py --output artifacts/bench_run_gpu_benchmarks.json
   benchmark_harness_loop: python benchmarks/run_harness_loop_benchmark.py --output artifacts/bench_harness_loop.json
   benchmark_index_scaling: python benchmarks/run_index_scaling_benchmark.py --output artifacts/bench_index_scaling.json
