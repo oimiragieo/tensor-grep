@@ -54,7 +54,7 @@ def test_run_ast_benchmarks_should_emit_m3_gate_artifact(monkeypatch, tmp_path):
 
     exit_code = module.main()
 
-    assert exit_code == 0
+    assert exit_code == 1
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["artifact"] == "bench_ast_m3"
     assert payload["file_count"] == 1000
@@ -62,8 +62,8 @@ def test_run_ast_benchmarks_should_emit_m3_gate_artifact(monkeypatch, tmp_path):
     assert payload["tg_median_s"] == 0.9
     assert payload["sg_median_s"] == 0.4
     assert payload["ratio"] == 2.25
-    assert payload["threshold"] == 3.0
-    assert payload["passed"] is True
+    assert payload["threshold"] == 1.1
+    assert payload["passed"] is False
 
 
 def test_run_ast_parity_check_should_fail_explicitly_when_sg_is_missing(monkeypatch, tmp_path):

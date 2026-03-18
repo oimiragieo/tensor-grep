@@ -333,6 +333,9 @@ def build_base_payload(args: argparse.Namespace) -> dict[str, object]:
         "total_loc": args.loc,
         "seed": args.seed,
         "minimum_matchable_patterns_per_file": MIN_MATCHABLE_PATTERNS_PER_FILE,
+        "thresholds": {
+            "max_ratio_tg_vs_sg": args.max_ratio,
+        },
     }
 
 
@@ -348,6 +351,12 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=42, help="Deterministic corpus seed.")
     parser.add_argument("--pattern", default=DEFAULT_PATTERN)
     parser.add_argument("--replacement", default=DEFAULT_REPLACEMENT)
+    parser.add_argument(
+        "--max-ratio",
+        type=float,
+        default=1.1,
+        help="Maximum allowed tg_apply_median / sg_apply_median ratio.",
+    )
     args = parser.parse_args()
 
     output_path = Path(args.output).expanduser().resolve()
@@ -406,9 +415,14 @@ def main() -> int:
             **results,
         }
     )
-    payload["passed"] = all(
+    phase_timings_ok = all(
         float(payload["phase_timings_s"][phase]["median"]) > 0 for phase in ("plan", "diff", "apply")
     )
+    ratio_gate_passed = True
+    if payload.get("ratio_tg_vs_sg") is not None:
+        ratio_gate_passed = float(payload["ratio_tg_vs_sg"]) <= float(args.max_ratio)
+    payload["ratio_gate_passed"] = ratio_gate_passed
+    payload["passed"] = phase_timings_ok and ratio_gate_passed
 
     write_json(output_path, payload)
 
@@ -419,8 +433,9 @@ def main() -> int:
     if payload.get("sg_apply_median_s"):
         print(f"sg apply median: {payload['sg_apply_median_s']:.3f}s")
         print(f"ratio (tg/sg):   {payload['ratio_tg_vs_sg']}")
+        print(f"threshold:       <= {args.max_ratio:.3f}")
     print(f"Results written to {output_path}")
-    return 0
+    return 0 if payload["passed"] else 1
 
 
 if __name__ == "__main__":

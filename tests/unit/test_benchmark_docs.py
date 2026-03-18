@@ -47,3 +47,5 @@ def test_benchmark_docs_should_describe_artifact_and_baseline_governance() -> No
     assert "environment" in doc
     assert "generated_at_epoch_s" in doc
     assert "Do not update benchmark docs or claims" in doc
+    assert "Gate (`<= 1.1`)" in doc
+    assert "max_ratio_tg_vs_sg" in doc

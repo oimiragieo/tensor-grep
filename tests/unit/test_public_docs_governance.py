@@ -18,6 +18,10 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "native CPU engine" in readme
     assert "native GPU engine" in readme
     assert "benchmark-governed" in readme
+    assert "100 MB" in readme or "100MB" in readme
+    assert "tg run --rewrite" in readme
+    assert "--apply" in readme
+    assert "atomic temp-file rename contract" in readme
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

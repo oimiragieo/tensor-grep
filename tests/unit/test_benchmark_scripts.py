@@ -509,13 +509,13 @@ def test_run_ast_multilang_benchmarks_should_emit_four_language_rows(monkeypatch
 
     exit_code = module.main()
 
-    assert exit_code == 0
+    assert exit_code == 1
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["artifact"] == "bench_ast_multilang"
     assert payload["suite"] == "run_ast_multilang_benchmarks"
-    assert payload["thresholds"]["python_max_ratio"] == 3.0
-    assert payload["python_ratio_gate_passed"] is True
-    assert payload["passed"] is True
+    assert payload["thresholds"]["python_max_ratio"] == 1.1
+    assert payload["python_ratio_gate_passed"] is False
+    assert payload["passed"] is False
     assert [row["language"] for row in payload["rows"]] == [
         "python",
         "javascript",
@@ -631,6 +631,7 @@ def test_run_ast_rewrite_benchmarks_should_emit_phase_timings_and_total_rewrites
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["artifact"] == "bench_ast_rewrite"
     assert payload["suite"] == "run_ast_rewrite_benchmarks"
+    assert payload["thresholds"]["max_ratio_tg_vs_sg"] == 1.1
     assert payload["file_count"] == 5000
     assert payload["total_loc"] == 250000
     assert payload["total_rewrites"] == 250000
@@ -638,6 +639,67 @@ def test_run_ast_rewrite_benchmarks_should_emit_phase_timings_and_total_rewrites
     assert payload["phase_timings_s"]["plan"]["median"] == 0.75
     assert payload["phase_timings_s"]["diff"]["median"] == 1.2
     assert payload["phase_timings_s"]["apply"]["median"] == 0.95
+    assert payload["passed"] is True
+
+
+def test_run_ast_rewrite_benchmarks_should_fail_gate_when_sg_is_faster(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_ast_rewrite_benchmarks_ratio_gate",
+        "benchmarks/run_ast_rewrite_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_ast_rewrite.json"
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_ast_rewrite_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--runs",
+            "2",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_ast_rewrite_bench_dir", lambda: tmp_path / "bench_ast_rewrite")
+    monkeypatch.setattr(
+        module,
+        "ensure_rewrite_bench_corpus",
+        lambda output_dir, *, file_count, total_loc, seed: {
+            "corpus_dir": output_dir,
+            "manifest_path": tmp_path / "bench_ast_rewrite.manifest.sha256",
+            "file_count": file_count,
+            "total_loc": total_loc,
+            "seed": seed,
+            "min_rewrites_per_file": total_loc // file_count,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "run_rewrite_benchmark",
+        lambda **_kwargs: {
+            "pattern": module.DEFAULT_PATTERN,
+            "replacement": module.DEFAULT_REPLACEMENT,
+            "runs": 2,
+            "total_rewrites": 50000,
+            "phase_timings_s": {
+                "plan": {"median": 0.5, "samples": [0.5, 0.51]},
+                "diff": {"median": 0.6, "samples": [0.6, 0.61]},
+                "apply": {"median": 1.21, "samples": [1.2, 1.21]},
+            },
+            "sg_apply": {"median": 1.0, "samples": [1.0, 1.01]},
+            "ratio_tg_vs_sg": 1.21,
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 1
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["thresholds"]["max_ratio_tg_vs_sg"] == 1.1
+    assert payload["passed"] is False
+    assert payload["ratio_gate_passed"] is False
 
 
 def test_run_harness_loop_iteration_should_require_zero_remaining_matches(monkeypatch, tmp_path):
@@ -1055,6 +1117,15 @@ def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path
 
     assert cmd[0] == str(tg_binary)
     assert cmd[1:] == ["run", "--lang", "python", "pattern", "bench_ast_data"]
+
+
+def test_run_ast_benchmarks_should_default_to_ten_percent_ratio_gate(monkeypatch):
+    module = _load_script_module("run_ast_benchmarks_script_gate", "benchmarks/run_ast_benchmarks.py")
+    monkeypatch.setattr("sys.argv", ["run_ast_benchmarks.py"])
+
+    args = module.parse_args()
+
+    assert args.max_ratio == 1.1
 
 
 def test_run_ast_workflow_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
@@ -2090,3 +2161,4 @@ def test_run_ast_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(
     assert payload["artifact"] == "bench_ast_m3"
     assert payload["passed"] is False
     assert "ast-grep binary not found" in payload["error"]
+

@@ -91,7 +91,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--python-max-ratio",
         type=float,
-        default=3.0,
+        default=1.1,
         help="Maximum allowed tg_median / sg_median ratio for the Python row.",
     )
     return parser.parse_args()
