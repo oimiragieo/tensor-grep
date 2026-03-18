@@ -820,6 +820,41 @@ fn test_verify_after_apply_succeeds() {
 }
 
 #[test]
+fn test_batch_plan_and_apply_verify_succeeds() {
+    let dir = tempdir().unwrap();
+    let first_file = dir.path().join("defs.py");
+    let second_file = dir.path().join("values.py");
+    fs::write(&first_file, "def add(x): return x\n").unwrap();
+    fs::write(&second_file, "value = add(1)\n").unwrap();
+
+    let backend = AstBackend::new();
+    let rewrites = vec![
+        BatchRewriteRule {
+            pattern: "def $F($$$ARGS): return $EXPR".to_string(),
+            replacement: "lambda $$$ARGS: $EXPR".to_string(),
+            lang: "python".to_string(),
+        },
+        BatchRewriteRule {
+            pattern: "value = $EXPR".to_string(),
+            replacement: "result = $EXPR".to_string(),
+            lang: "python".to_string(),
+        },
+    ];
+
+    let plan = backend
+        .plan_and_apply_batch(&rewrites, dir.path().to_str().unwrap())
+        .unwrap();
+
+    let verification = plan.verify(&backend).unwrap();
+    assert_eq!(verification.total_edits, 2);
+    assert_eq!(verification.verified, 2);
+    assert!(verification.mismatches.is_empty());
+
+    assert_eq!(fs::read_to_string(&first_file).unwrap(), "lambda x: x\n");
+    assert_eq!(fs::read_to_string(&second_file).unwrap(), "result = add(1)\n");
+}
+
+#[test]
 fn test_tg_run_rewrite_apply_verify_cli() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
 
