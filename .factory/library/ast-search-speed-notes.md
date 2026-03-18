@@ -4,3 +4,6 @@
 - On the Windows 16-core mission host, `python benchmarks/run_ast_benchmarks.py --output artifacts/bench_ast_m3.json` still reported `tg_median=0.403s`, `sg_median=0.137s`, `ratio=2.937`.
 - The benchmark corpus (`benchmarks/gen_corpus.py`) is a single flat directory of 1000 Python files where every line matches `def $F($$$ARGS): return $EXPR`, so the new prefilter provides no skip benefit there.
 - Likely next investigation: compare `WalkParallel` in-thread processing against a hybrid `WalkParallel` discovery + dedicated worker pool on flat corpora, because the functional changes landed but the benchmark ratio did not improve on this corpus.
+- Round 2 switched `search_path_with_prefilter` to a hybrid path: collect candidate files first with the ignore walker, then run `rayon::par_iter()` for AST parse+match work.
+- On this same host, `python benchmarks/run_ast_benchmarks.py --warmup 3 --runs 10 --output artifacts/bench_ast_m3.json` now reports `tg_median=0.227s`, `sg_median=0.136s`, `ratio=1.667` at commit `d2474b7`.
+- A sequential `WalkBuilder::build()` file collection phase performed better on this flat 1000-file corpus than the `build_parallel().run()` + channel collection prototype; the main remaining gap now looks like per-file parse/read overhead rather than walker scheduling.

@@ -5,7 +5,7 @@ use ast_grep_core::{
 use ast_grep_language::SupportLang;
 use ignore::{
     types::{Types, TypesBuilder},
-    WalkBuilder, WalkState,
+    WalkBuilder,
 };
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,6 @@ use std::io::{ErrorKind, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -649,48 +648,37 @@ fn search_path_with_prefilter(
         return Ok(matches);
     }
 
-    let walker = build_ast_search_walk_builder(path, lang)?;
-    let (tx, rx) = mpsc::channel::<std::result::Result<Vec<AstMatch>, String>>();
-
-    walker.build_parallel().run(|| {
-        let tx = tx.clone();
-        let pattern = pattern.clone();
-        let prefilter_literal = prefilter_literal.clone();
-        Box::new(move |entry| {
-            let Ok(entry) = entry else {
-                return WalkState::Continue;
-            };
-            if !entry.file_type().is_some_and(|kind| kind.is_file()) {
-                return WalkState::Continue;
-            }
-
-            match AstBackend::search_file_static(
-                &pattern,
-                lang,
-                prefilter_literal.as_deref(),
-                entry.path(),
-            ) {
-                Ok(file_matches) => {
-                    if !file_matches.is_empty() {
-                        let _ = tx.send(Ok(file_matches));
-                    }
-                    WalkState::Continue
-                }
-                Err(err) => {
-                    let _ = tx.send(Err(err.to_string()));
-                    WalkState::Quit
-                }
-            }
+    let files = collect_ast_search_files(path, lang)?;
+    let per_file_matches: Result<Vec<Vec<AstMatch>>> = files
+        .par_iter()
+        .map(|file| {
+            AstBackend::search_file_static(pattern, lang, prefilter_literal.as_deref(), file)
         })
-    });
-    drop(tx);
+        .collect();
 
-    let mut matches = Vec::new();
-    for message in rx {
-        matches.extend(message.map_err(anyhow::Error::msg)?);
-    }
+    let mut matches = per_file_matches?.into_iter().flatten().collect::<Vec<_>>();
     matches.sort_unstable_by(compare_ast_matches);
     Ok(matches)
+}
+
+/// Collects AST candidate files with ignore/type filters before parallel parsing.
+fn collect_ast_search_files(path: &Path, lang: SupportLang) -> Result<Vec<PathBuf>> {
+    if !path.exists() {
+        anyhow::bail!("Path not found: {}", path.display());
+    }
+
+    if path.is_file() {
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    let mut files: Vec<PathBuf> = build_ast_search_walk_builder(path, lang)?
+        .build()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
+        .map(|entry| entry.into_path())
+        .collect();
+    files.sort_unstable();
+    Ok(files)
 }
 
 fn build_ast_search_walk_builder(path: &Path, lang: SupportLang) -> Result<WalkBuilder> {
@@ -774,7 +762,6 @@ fn load_search_source(file: &Path) -> Result<Option<String>> {
     if bytes.is_empty() || has_binary_bytes(&bytes) {
         return Ok(None);
     }
-
     let source = String::from_utf8(bytes)
         .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
     Ok(Some(source))
@@ -1468,6 +1455,30 @@ mod tests {
             .unwrap();
 
         assert_eq!(matched_files(&matches), vec![visible]);
+    }
+
+    #[test]
+    fn collect_ast_search_files_applies_type_filters_and_gitignore() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        write_search_fixture(dir.path(), ".gitignore", "*.generated.py\n");
+        let uppercase = write_search_fixture(dir.path(), "UPPER.PY", "def upper(x): return x\n");
+        let pyw = write_search_fixture(dir.path(), "window.pyw", "def gui(x): return x\n");
+        let nested_py = write_search_fixture(&nested, "nested.py", "def nested(x): return x\n");
+        write_search_fixture(
+            dir.path(),
+            "ignored.generated.py",
+            "def ignored(x): return x\n",
+        );
+        write_search_fixture(dir.path(), "notes.txt", "def text(x): return x\n");
+        write_search_fixture(dir.path(), "no_extension", "def plain(x): return x\n");
+
+        let files = collect_ast_search_files(dir.path(), SupportLang::Python).unwrap();
+        let mut expected = vec![nested_py, uppercase, pyw];
+        expected.sort_unstable();
+
+        assert_eq!(files, expected);
     }
 
     #[test]
