@@ -502,6 +502,7 @@ def main() -> int:
 
     artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
     payload = {
+        "artifact": "bench_run_benchmarks",
         "suite": "run_benchmarks",
         "generated_at_epoch_s": time.time(),
         "timing_samples_per_scenario": TIMING_SAMPLES_PER_SCENARIO,

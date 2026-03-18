@@ -3,7 +3,7 @@
 Command used:
 
 ```powershell
-python benchmarks/run_gpu_native_benchmarks.py --advanced --output artifacts/bench_run_gpu_native_benchmarks.json
+python benchmarks/run_gpu_native_benchmarks.py --output artifacts/bench_run_gpu_native_benchmarks.json
 ```
 
 Environment:
@@ -16,6 +16,8 @@ Environment:
 - Query: fixed-string `gpu benchmark sentinel`
 - Timing: median of 3 end-to-end CLI runs per command
 
+The artifact also detected device `1` (`NVIDIA GeForce RTX 5070`), but the benchmark path on this host still records a missing kernel image for that card. Do not treat device discovery as proof of end-to-end 5070 benchmark coverage here.
+
 ## Result
 
 No crossover was found.
@@ -24,14 +26,14 @@ No crossover was found.
 
 ## Per-size benchmark data
 
-| Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU throughput | GPU/rg ratio |
+| Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU/rg ratio |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 10MB | 0.146s | 0.020s | 0.812s | 12.92 MB/s | 5.5545x |
-| 100MB | 0.152s | 0.035s | 1.093s | 95.91 MB/s | 7.2150x |
-| 500MB | 0.190s | 0.098s | 1.562s | 335.60 MB/s | 8.2127x |
-| 1GB | 0.200s | 0.162s | 2.377s | 451.77 MB/s | 11.8762x |
+| 10MB | 0.125s | 0.317s | 0.869s | 6.9329x |
+| 100MB | 0.120s | 0.300s | 1.004s | 8.3682x |
+| 500MB | 0.202s | 0.364s | 1.384s | 6.8427x |
+| 1GB | 0.202s | 0.455s | 2.045s | 10.1223x |
 
-Exact throughput in bytes/s is recorded in `artifacts/bench_run_gpu_native_benchmarks.json`.
+Exact throughput and correctness metadata are recorded in `artifacts/bench_run_gpu_native_benchmarks.json`.
 
 ## Correctness parity
 
@@ -49,24 +51,24 @@ GPU and CPU match counts were identical at all four corpus sizes:
 | Check | Result |
 | --- | --- |
 | Invalid device ID `99` | PASS — exits `2` and lists available CUDA devices |
-| NVRTC compilation failure simulation | PASS — exits `2` with `CUDA kernel compilation failed: ...` |
-| Timeout simulation | PASS — exits `2` with `GPU operation timed out after 300ms` |
+| CUDA unavailable | PASS — reported explicitly in artifact/test coverage |
+| Timeout simulation | PASS — exits `2` with a timeout error |
 | Malformed / binary / empty files | PASS — GPU path returns valid JSON and handles the mixed fixture without crashing |
 
-Timeout and NVRTC coverage are currently simulation-backed through `TG_TEST_CUDA_BEHAVIOR`.
+Some fault cases are simulation-backed through `TG_TEST_CUDA_BEHAVIOR`.
 
 ## Gap analysis
 
-The best measured GPU/rg ratio was at `10MB`, where GPU was still **5.5545x slower** than `rg`.
-The gap widened at larger sizes, reaching **11.8762x slower** than `rg` at `1GB`.
+The best measured GPU/rg ratio was at `10MB`, where GPU was still **6.9329x slower** than `rg`.
+The gap remained negative at every measured size and reached **10.1223x slower** than `rg` at `1GB`.
 
 The current native GPU path is correctness-valid, but it is not yet performance-competitive for this literal-search workload on Windows.
 
 ## Optimizations needed before GPU crossover is plausible
 
-1. Cache NVRTC-compiled kernels across CLI invocations
-2. Overlap host-to-device transfers with kernel execution via CUDA streams
-3. Move large transfers to pinned host memory
+1. Reduce end-to-end CLI overhead relative to kernel time
+2. Keep kernel compilation and setup costs off the steady-state hot path
+3. Improve transfer amortization before enabling any automatic GPU routing
 
 ## Routing decision
 
@@ -74,27 +76,6 @@ Keep explicit GPU search manual-only for now.
 
 Do **not** auto-route large corpora to the native GPU path until the benchmark shows a real crossover against `rg`.
 
-## Advanced native GPU benchmark (`--advanced`)
+## Historical note
 
-The advanced mode now records internal GPU pipeline timings through the hidden `__gpu-native-stats` benchmark hook in addition to the end-to-end CLI crossover numbers above. These timings are used for the native-engine performance assertions that care about GPU pipeline throughput rather than CLI startup / result-materialization overhead.
-
-### Throughput vs sequential `rg` on large sparse-match corpora
-
-| Corpus size | Patterns | `rg` median | GPU pipeline median | Speedup vs `rg` |
-| --- | ---: | ---: | ---: | ---: |
-| 100MB | 4 | 0.5506s | 0.0086s | 64.2192x |
-| 500MB | 4 | 0.7214s | 0.0420s | 17.1846x |
-| 1GB | 4 | 0.8695s | 0.0902s | 9.6405x |
-
-This satisfies the `VAL-GPU-018` requirement because the GPU pipeline exceeded `10x` sequential `rg` throughput at both `100MB` and `500MB`.
-
-### Other advanced findings
-
-- Stream overlap benefit: `4.69%`
-- Pinned vs pageable transfer throughput: `1.07x` in favor of pinned buffers
-- Multi-pattern GPU vs sequential CPU on 1GB: `2.6806x` faster
-- Dual GPU vs single GPU on 1GB: `49.48%` faster with identical match counts
-- CUDA graphs on 160-file batches: `62.80%` wall-time reduction
-- OOM validation: clear user-facing error for a simulated `13 GiB` allocation failure
-
-The long-line benchmark exercises both warp and block dispatch paths successfully, but it is still not an end-to-end throughput win over CPU on this Windows host.
+Earlier internal advanced-mode runs showed strong GPU pipeline throughput for isolated kernels and multi-pattern workloads. Those numbers are useful for optimization history, but they are not the governing end-to-end routing contract. The current public routing decision should follow the end-to-end crossover artifact above.

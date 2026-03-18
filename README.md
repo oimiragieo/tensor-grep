@@ -4,9 +4,23 @@
 
 # tensor-grep (tg)
 
-Line oriented search tool using native Rust engines, CUDA GPU acceleration, and structural AST searching via Graph Neural Networks. Combines the raw performance of ripgrep with native GPU-accelerated search and the semantic power of Transformer AI networks.
+Native search and rewrite tool for large text corpora and codebases. `tensor-grep` combines a Rust-native CPU text engine, Rust-native AST search/rewrite, indexed repeated-query acceleration, and a benchmark-governed native GPU path for large workloads.
 
 `tensor-grep` has first class support on Windows, macOS and Linux. The native CPU engine embeds ripgrep's grep crates directly (no subprocess overhead) with chunk parallelism for large files. The native GPU engine uses Rust-native CUDA via `cudarc` with NVRTC JIT compilation, CUDA streams, pinned memory, and CUDA graphs. Smart routing automatically selects the fastest backend based on measured crossover data.
+
+Harness consumers should use the documented public contracts in [docs/harness_api.md](docs/harness_api.md) and the workflow guide in [docs/harness_cookbook.md](docs/harness_cookbook.md).
+
+## Canonical Docs
+
+Use these documents as the current product contract instead of relying on scattered examples:
+
+- [docs/benchmarks.md](docs/benchmarks.md) for the accepted benchmark matrix, artifact naming, and regression rules
+- [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current native GPU crossover story and its limits
+- [docs/routing_policy.md](docs/routing_policy.md) for current CPU/GPU/index/AST routing behavior
+- [docs/harness_api.md](docs/harness_api.md) for machine-readable CLI and MCP contract shapes
+- [docs/harness_cookbook.md](docs/harness_cookbook.md) for end-to-end harness workflows using `tg.exe search --json`, `tg.exe search --ndjson`, `tg.exe run --rewrite`, `tg.exe calibrate`, and `tg mcp`
+
+The project is benchmark-governed. Public claims should follow the canonical docs above, not historical README snapshots.
 
 [![CI Status](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml/badge.svg)](https://github.com/oimiragieo/tensor-grep/actions)
 [![PyPI version](https://badge.fury.io/py/tensor-grep.svg)](https://pypi.org/project/tensor-grep/)
@@ -16,132 +30,36 @@ Dual-licensed under MIT or the UNLICENSE.
 ### CHANGELOG
 Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
-## Quick examples comparing tools
+## Benchmark Snapshot
 
-Fresh benchmark pass results (2026-03-16, local run on current `main`) from this repository's benchmark scripts are below.
+The canonical benchmark matrix lives in [docs/benchmarks.md](docs/benchmarks.md). The short version:
 
-Environment notes:
-- End-to-end CLI timings include Python process startup cost.
-- These figures are from a local `uv run python benchmarks/run_benchmarks.py` / `run_ast_benchmarks.py` / `run_ast_workflow_benchmarks.py` / `run_gpu_benchmarks.py` execution.
-- `run_benchmarks.py` and `run_ast_benchmarks.py` now measure the bootstrap entrypoint used by the installed `tg` console script, rather than the older `tensor_grep.cli.main` module path.
-- `ripgrep` remains faster on most text-search scenarios in this local benchmark setup.
-- The current Windows local run no longer trips the stored regression guard in `benchmarks/baselines/run_benchmarks.windows.json`.
-- The GPU microbenchmark requires benchmark extras plus a reachable Triton endpoint for `cyBERT`; on this host the AST and Torch backend timings completed, while `cyBERT` was explicitly skipped because no Triton server was running.
-- On Windows, benchmark scripts now auto-extract the `ripgrep` binary from the GitHub release archive when it is not found on `PATH`, so Windows CI runs are fully self-contained.
-- `--replace` throughput improved **+6.36%** after switching to `MmapMut` in-place byte mutations (zero-copy path, removing the prior `std::fs::read` allocation).
-- Hot-query cache path acceleration confirmed via `benchmarks/run_hot_query_benchmarks.py`; repeated queries over unchanged files are reliably tracked for regression.
+- cold generic text search stays near `rg`
+- native CPU large-file search is the main measured win over `rg`
+- native AST search/rewrite is benchmarked separately from plain text search
+- indexed repeated-query paths are benchmarked separately from cold scans
+- native GPU remains benchmark-governed and hardware-specific
 
-### ripgrep vs tensor-grep (`benchmarks/run_benchmarks.py`)
+Important constraint:
 
-| Scenario | ripgrep | tensor-grep | Result |
-| --- | --- | --- | --- |
-| Simple String Match | 0.451s | 0.609s | Parity PASS |
-| Case-Insensitive Match | 0.501s | 0.671s | Parity PASS |
-| Regex Match | 0.506s | 0.682s | Parity PASS |
-| Invert Match | 1.309s | 1.477s | Parity PASS |
-| Count Matches | 0.146s | 0.093s | Parity PASS |
-| Context Lines (`-C2`) | 1.757s | 1.956s | Parity PASS |
-| Max Count (`-m 5`) | 0.116s | 0.280s | Parity PASS |
-| File Glob Filtering | 0.511s | 0.611s | Parity PASS |
-| Word Boundary | 0.495s | 0.696s | Parity PASS |
-| Fixed Strings (`-F`) | 0.476s | 0.594s | Parity PASS |
-
-### Native Engine Performance (measured)
-
-The native Rust engines bypass Python startup and subprocess overhead entirely.
-
-**Native CPU engine** (embeds ripgrep's grep crates directly):
-| Workload size | vs ripgrep | Notes |
-| --- | --- | --- |
-| Cold search (small files) | Within 5% of rg | No subprocess overhead; direct library call |
-| Large files (100MB+) | **2–4× faster than rg** | Chunk parallelism splits large files across cores |
-
-**Native GPU engine** (Rust-native CUDA via `cudarc`, NVRTC JIT):
-| Workload size | vs ripgrep | Notes |
-| --- | --- | --- |
-| 100MB corpus | **64.2× faster than rg** | With CUDA streams, pinned memory, CUDA graphs |
-| 500MB corpus | **17.2× faster than rg** | Advanced optimizations (warp-parallel search) |
-
-**Multi-GPU** (RTX 4070 + RTX 5070):
-| Configuration | Improvement | Notes |
-| --- | --- | --- |
-| Dual GPU vs single GPU | **49.5% faster** | Automatic work distribution across devices |
-
-**CUDA graphs**: 62.8% kernel launch overhead reduction via graph capture and replay.
-
-### ast-grep vs tensor-grep AST mode (`benchmarks/run_ast_benchmarks.py`)
-
-| Scenario | ast-grep | tensor-grep | Result |
-| --- | --- | --- | --- |
-| Simple Function Def | 0.126s | 0.428s | Parity PASS |
-| Try/Except Block | 0.113s | 0.404s | Parity PASS |
-| Class Declaration | 0.118s | 0.401s | Parity PASS |
-
-### tensor-grep AST workflow startup (`benchmarks/run_ast_workflow_benchmarks.py`)
-
-| Scenario | tensor-grep |
-| --- | --- |
-| `tg run "def $FUNC():\n    $$$BODY" .` synthetic AST workflow | 0.331s |
-| `tg scan --config sgconfig.yml` synthetic AST workflow | 0.328s |
-| `tg test --config sgconfig.yml` synthetic AST workflow | 0.503s |
-
-### Advanced backend microbenchmarks (`benchmarks/run_gpu_benchmarks.py`)
-
-| Backend | Workload | Time | Output |
-| --- | --- | --- | --- |
-| AST backend | `function_definition` on test module | 0.062s | 4 matches |
-| cyBERT backend | Semantic classification on 10,000 log lines | skipped on this host | Triton endpoint not running |
-| Torch backend | Exact match on 10,000 log lines | 0.630s | 2,000 matches |
-
-### Test Coverage
-
-- **200+ Rust tests** covering native text search, AST search/rewrite, trigram index, routing decisions, native GPU engine (CUDA kernels, streams, graphs, multi-GPU), crossover calibration, schema compatibility, encoding safety, batch rewrites, and incremental index updates.
-- **572 Python tests** covering CLI bootstrap, CPU/GPU backends, MCP server tools, sidecar protocol, release validation, smart routing, and benchmark harnesses.
-
-### Benchmark Governance (Regression Protection)
-
-- Benchmark scripts now emit machine-readable JSON artifacts in `artifacts/`.
-- Use `benchmarks/check_regression.py` to compare current runs against a baseline and fail if regression exceeds threshold.
-- Regression checks are now environment-aware (platform/machine metadata); cross-OS comparisons are rejected by default unless explicitly overridden.
-- Main CI (`.github/workflows/ci.yml`) now includes a required `benchmark-regression` job on Ubuntu that runs `benchmarks/run_benchmarks.py`, enforces baseline regression thresholds, and publishes a markdown summary + JSON/text artifacts.
-- Standalone benchmark workflow (`.github/workflows/benchmark.yml`) remains available for manual and scheduled deep benchmark passes.
-- Current local status on 2026-03-16: `benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json` passed.
-- Additional benchmark scripts available: multi-language AST (`run_ast_multi_lang_benchmarks.py`), large-scale rewrite, harness loop, and index scaling benchmarks.
-- Multi-language corpus generators (`gen_corpus.py`) now support Python, JavaScript, TypeScript, and Rust for benchmark validation across languages.
-- Release workflow now validates the full GitHub binary artifact filename matrix and publishes `CHECKSUMS.txt` (SHA256) alongside release binaries for reproducible integrity checks.
-- Release asset verification enforces that each managed binary's `CHECKSUMS.txt` digest matches GitHub release `asset.digest` metadata, closing post-upload integrity gaps.
+- do not treat internal GPU pipeline throughput as the same thing as end-to-end CLI crossover
+- current GPU routing decisions should follow [docs/gpu_crossover.md](docs/gpu_crossover.md), not isolated microbenchmarks
 
 ## Why should I use `tensor-grep`?
 
-- **Native CPU engine beats ripgrep on large files.** The native Rust engine embeds ripgrep's grep crates directly (no subprocess spawn), adds chunk parallelism for large files, and delivers streaming output. Measured result: **2–4× faster than rg on 100MB+ files**, within 5% on cold search.
-- **Native GPU engine for massive throughput.** Rust-native CUDA via `cudarc` with NVRTC JIT compilation, CUDA streams, pinned memory, warp-parallel search for long lines, and CUDA graph replay. Measured result: **64.2× faster than rg at 100MB**. Supports both RTX 4070 (sm_89) and RTX 5070 (sm_120).
-- **Multi-GPU acceleration.** Automatic work distribution across multiple GPUs. Measured result: **49.5% improvement** with dual GPU (RTX 4070 + RTX 5070). Select devices with `--gpu-device-ids 0,1`.
-- **Smart routing with measured crossover data.** Run `tg calibrate` to measure your hardware's CPU vs GPU crossover thresholds. After calibration, `tg` automatically selects the fastest backend (CPU or GPU) based on corpus size — no manual `--cpu`/`--gpu-device-ids` flags needed.
+- **Native CPU engine with real large-file wins.** The Rust text engine embeds ripgrep's grep crates directly, avoids subprocess overhead, and adds chunk parallelism for large files. See [docs/benchmarks.md](docs/benchmarks.md) for the accepted benchmark matrix.
+- **Native AST search and rewrite.** `tg run` stays fully native for structural search, rewrite planning, diff, apply, and verify.
+- **Repeated-query acceleration.** The trigram index gives warm-query wins on unchanged corpora without changing the public search contract.
+- **Harness-first machine interfaces.** JSON, NDJSON, diff, batch rewrite, and MCP are documented and regression-tested. Start with [docs/harness_api.md](docs/harness_api.md) and [docs/harness_cookbook.md](docs/harness_cookbook.md).
+- **Smart routing with measured calibration.** `tg calibrate` writes the current CPU/GPU routing contract. The active routing rules are documented in [docs/routing_policy.md](docs/routing_policy.md).
+- **Benchmark-governed GPU path.** Native CUDA support exists, but route selection stays tied to measured crossover data. The current GPU story is documented in [docs/gpu_crossover.md](docs/gpu_crossover.md).
 - **Multi-pattern GPU search.** Pass multiple patterns with `-e pattern1 -e pattern2` for GPU-accelerated multi-pattern matching in a single pass.
-- **It scales linearly with hardware.** If you are dealing with massive log files (100GB+) and you have access to enterprise NVIDIA GPUs or even modern consumer cards, `tensor-grep` will automatically chunk and distribute regex matching natively inside GPU VRAM, bypassing CPU entirely.
-- **Explicit multi-GPU routing contract.** Runtime scheduling now exposes stable ID enumeration (`DeviceDetector.enumerate_device_ids()`) and rich device enumeration (`DeviceDetector.list_devices()`), where `list_devices()` returns `(device_id, vram_capacity_mb)` for each routable GPU. This is the canonical API contract for sharding/routing decisions.
-- **Explicit device pinning override.** Set `TENSOR_GREP_DEVICE_IDS` (for example `TENSOR_GREP_DEVICE_IDS=3,7`) to constrain scheduling and fanout to specific GPUs.
-- **Per-request GPU pinning for library/runtime callers.** `SearchConfig(gpu_device_ids=[...])` now propagates through `Pipeline -> MemoryManager -> CuDFBackend` so workloads can be pinned to selected GPUs without mutating process-wide env vars.
-- **Explicit pinning is first-class in routing.** When `gpu_device_ids` is provided for search modes that do not require CPU-only semantics, pipeline selection attempts pinned GPU backends first, then safely falls back to `rg`/Rust/CPU if unavailable.
-- **Explicit hardware contract errors.** Passing `--ast` or `--gpu-device-ids` when the required backend is genuinely unavailable now raises a `ConfigurationError` immediately rather than silently falling back to an unrelated backend. Misrouted workloads are surfaced as configuration mistakes, not silently degraded results.
-- **Runtime GPU routing observability.** `Pipeline` now records `selected_gpu_device_ids` for the active backend selection so service wrappers and telemetry pipelines can audit exactly which GPU IDs were used.
-- **Per-result routing metadata.** `SearchResult` now carries `routing_backend`, `routing_reason`, `routing_gpu_device_ids`, and `routing_gpu_chunk_plan_mb` for structured post-search telemetry.
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
-- **Device-ID normalization contract.** Duplicate/invalid preferred IDs are ignored during routing normalization; if all requested IDs are invalid, the scheduler falls back to the detected routable GPU set instead of disabling GPU execution.
 - **It is a drop-in replacement for ripgrep.** `tg search` accepts the exact same 70+ CLI flags (`-i`, `-v`, `-C`, `-g`, `-t`) that you already know and love from `ripgrep`.
-- **In-Place File Mutations (NEW):** Unlike ripgrep, `tensor-grep` natively supports memory-mapped find-and-replace mutability via `--replace`. Apply `sed`-like capture groups (e.g. `$1`) at millions of lines per second without ever leaving the Rust terminal backend. The replace path now uses `MmapMut` for true zero-copy in-place byte mutations, removing the prior `std::fs::read` allocation bottleneck (**+6.36% throughput**).
-- **AST-Grep Parity (NEW):** Structural code searching via PyTorch Geometric Graph Neural Networks (GNNs). Run `tg run`, `tg scan`, `tg lsp` to match structural code patterns (e.g. `if ($A) { return $B; }`) rather than dumb text strings.
-- **Repeated AST searches are materially faster now.** `AstBackend` caches compiled tree-sitter queries plus parsed file state (`mtime_ns`/size keyed) so `tg scan` / `tg test` / repeated in-process AST workloads stop recompiling and reparsing unchanged modules on every pass.
-- **AST caches are now shared across backend instances in the same process.** `scan` / `test` no longer pay separate parser/query/source cache misses just because different rules selected separate `AstBackend` objects.
-- **Bounded AST parsed-source cache.** The shared `_shared_parsed_source_cache` now enforces a byte-bounded LRU eviction policy so long-running processes cannot grow the cache without bound. The cap is configurable via `TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES` (default: 256 MB). Cache keys use inode + ctime for correct file identity across renames and in-place edits.
-- **Persistent AST result cache.** Repeated structural queries across unchanged files can now reuse on-disk AST result entries across CLI invocations. Cache location can be overridden with `TENSOR_GREP_AST_CACHE_DIR`, or disabled with `TENSOR_GREP_AST_CACHE=0`.
-- **Persistent AST node-type index.** Simple native AST queries such as `function_definition` can now reuse an on-disk node-type line index across runs, which lets later native queries over unchanged files skip reparsing entirely.
-- **REI-style repeated literal index.** `StringZillaBackend` now builds a per-file trigram line index for repeated fixed-string searches. On this host, a synthetic hot-corpus microbenchmark dropped from about `1.05s` on the first indexed build to about `0.0025s` on the second cached literal query over the same file.
-- **Safe repeated-regex prefilter in Python fallback.** When `tg` must fall back to Python regex and the pattern has a guaranteed literal core, `CPUBackend` now reuses a trigram prefilter index to cut candidate lines before running `re`. The cache now persists across backend instances and fresh CLI invocations. On this host, a synthetic repeated regex microbenchmark dropped from about `0.243s` on the first indexed query to about `0.014s` on the second cached query over the same file.
-- **Hot-query benchmark harness.** `benchmarks/run_hot_query_benchmarks.py` now tracks these repeated-query cache paths explicitly so we can catch regressions instead of relying on ad hoc microbenchmarks.
-- **Semantic Understanding:** The `tg classify` command utilizes a specialized `cyBERT` HuggingFace transformer to identify malicious log patterns, detect hidden base64 payloads, and assign severity (WARN/ERROR/INFO) based on *context* rather than strict regex matches. NLP queries (`QueryType.NLP`) are now fully wired through `CybertBackend` end-to-end (previously the routing path was unconnected dead code).
-- **CybertBackend server liveness check.** `CybertBackend.is_available()` now performs a real liveness probe against the configured Triton inference server rather than always returning `True`. The probe timeout is configurable via `TENSOR_GREP_TRITON_TIMEOUT_SECONDS` (default: 5 s).
-- **Resilient Fallback:** If you don't have a GPU, `tensor-grep` instantly transparently falls back to an embedded PyO3/Rust backend using `memmap2`, matching the baseline performance of standard CPU ripgrep.
+- **In-place file mutations.** Unlike ripgrep, `tensor-grep` supports native find-and-replace mutability via `--replace` on the Rust path.
+- **Native structural search and rewrite.** Run `tg run`, `tg scan`, and batch rewrite flows against the native AST backend instead of text-only matching.
+- **Repeated-query acceleration.** Indexed literal and regex-prefilter paths are benchmarked separately from cold scans. See [docs/benchmarks.md](docs/benchmarks.md) for the current measured line instead of relying on stale microbench numbers.
+- **Semantic Understanding:** `tg classify` uses `cyBERT` when the NLP stack is installed and reachable. Treat it as an optional path, not part of the default hot search loop.
 - **Unified Harness API (NEW).** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
 - **NDJSON Streaming Output (NEW).** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
 - **Batch AST Rewrite (NEW).** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.
@@ -158,9 +76,9 @@ The native Rust engines bypass Python startup and subprocess overhead entirely.
 
 I'd like to try to convince you why you *shouldn't* use `tensor-grep`. This should give you a glimpse at some important downsides.
 
-- **You only search small files.** For small codebases, the overhead of moving memory across the PCIe bus into GPU VRAM actually makes `tensor-grep` marginally slower than standard CPU-bound `ripgrep`. It only shines when the dataset is massive.
-- **You are on Windows Native.** While we support Windows native PyTorch CUDA, Windows `multiprocessing` uses `spawn()` rather than Linux's `fork()`. This adds an unavoidable ~11 second overhead to boot the CUDA context. (Use WSL2 instead for instant initialization!).
-- **You need pure standalone binaries.** While we provide Nuitka-compiled standalone executables, they are ~3GB in size because they must statically bundle PyTorch and the CUDA toolkit.
+- **You only search small files.** `rg` is still the baseline for tiny cold searches, and `tensor-grep` is designed to win on larger files, repeated queries, AST workflows, and harness loops.
+- **You want GPU to win automatically on every host.** It does not. GPU routing is benchmark-governed and hardware-specific. Read [docs/gpu_crossover.md](docs/gpu_crossover.md) before forcing a GPU claim.
+- **You need tiny standalone binaries.** The fully bundled release artifacts are still large because they carry optional Python/NLP/CUDA compatibility layers for non-native paths.
 - **You don't want heavy dependencies.** A full `tensor-grep` installation with AST and NLP capabilities requires installing `torch`, `torch-geometric`, `transformers`, and NVIDIA drivers. If you just want a 3MB fast search tool, stick to pure `ripgrep`.
 
 ## Installation
@@ -423,16 +341,16 @@ The `cuda` feature links against `cudarc` (Rust-native CUDA bindings) and compil
 
 ### CPU-only (no GPU needed)
 
-The native CPU engine requires only a Rust toolchain. No GPU, CUDA, or Python runtime needed for the native binary. Performance: within 5% of rg on cold search, 2–4× faster on large files (100MB+).
+The native CPU engine requires only a Rust toolchain. No GPU, CUDA, or Python runtime is needed for the native binary. Current performance claims should be taken from [docs/benchmarks.md](docs/benchmarks.md), not this README.
 
 ### GPU-accelerated (native CUDA)
 
-To unlock GPU acceleration (measured up to 64× faster than rg), your system must meet these requirements:
+To unlock GPU acceleration, your system must meet these requirements. End-to-end GPU routing is still benchmark-governed and host-specific; see [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current measured line.
 
 * **Hardware:**
   * NVIDIA GPU (RTX 30/40/50 series recommended; tested on RTX 4070 sm_89 and RTX 5070 sm_120)
   * Minimum 4GB VRAM (8GB+ recommended for massive corpora)
-  * Multi-GPU supported (tested: RTX 4070 + RTX 5070, 49.5% improvement)
+  * Multi-GPU supported; current gains are workload-dependent and documented in [docs/gpu_crossover.md](docs/gpu_crossover.md)
 * **Software / Drivers:**
   * **NVIDIA Display Drivers:** v535.xx or newer
   * **CUDA Toolkit:** 12.0 or newer (CUDA 12.4+ recommended; `nvcc` must be on PATH for JIT compilation)
@@ -440,10 +358,10 @@ To unlock GPU acceleration (measured up to 64× faster than rg), your system mus
 
 ### Python backends (optional)
 
-For AST structural search, NLP classification, and legacy cuDF GPU paths:
-* **Linux / WSL2:** NVIDIA RAPIDS `cuDF` (`cudf-cu12`) for cuDF GPU backend.
-* **Windows Native:** PyTorch with CUDA 12 support.
-* **All platforms:** `uv pip install "tensor-grep[ast,nlp]"` for AST and NLP features.
+The native CPU, AST, index, and primary GPU paths live in Rust. Python remains optional for NLP classification and compatibility sidecar paths:
+* **Linux / WSL2:** NVIDIA RAPIDS `cuDF` (`cudf-cu12`) for optional sidecar-backed GPU integrations.
+* **Windows Native:** PyTorch with CUDA 12 support for optional NLP and compatibility flows.
+* **All platforms:** `uv pip install "tensor-grep[ast,nlp]"` for optional AST/NLP Python extras where needed.
 
 ## Enterprise Roadmap: GPUDirect Storage (GDS)
 
@@ -455,10 +373,12 @@ For multi-terabyte log repositories, the CPU RAM bounce-buffer becomes the limit
 
 ## Tips
 
-### Windows PyTorch Spawn Overhead
-Because Windows Python `multiprocessing` requires `spawn()` rather than Linux's `fork()`, the PyTorch CUDA context takes ~11 seconds to initialize across multiple worker processes on Windows. 
-- For small files (< 50MB), `tensor-grep` automatically bypasses the GPU on Windows to avoid this delay, routing to an optimized `CPUBackend` instead.
-- For massive logs (> 200MB), the 11s Windows spawn overhead is absorbed by the sheer throughput of the GPU matrix math.
-- **CUDA worker isolation (Windows).** The `CuDFBackend` process pool now sets `CUDA_VISIBLE_DEVICES` in each worker *before* importing any CUDA library, preventing cross-GPU contamination when multiple GPUs are present. Windows process pools additionally set `max_tasks_per_child=1` to reclaim leaked CUDA context memory between tasks.
+### Routing first, forcing later
 
-To achieve maximum enterprise performance on a Windows machine, **run tensor-grep inside WSL2**, where `fork()` allows instantaneous CUDA bindings.
+- use `tg calibrate` before relying on auto GPU routing
+- use `--gpu-device-ids` only when you have a workload that actually benefits
+- use `--index` for warm repeated-query workflows
+- use `--ndjson` for large result streams
+- use plan -> diff -> apply+verify for structural edits
+
+For current backend selection rules, see [docs/routing_policy.md](docs/routing_policy.md).

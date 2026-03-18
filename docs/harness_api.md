@@ -26,6 +26,9 @@ These top-level fields are shared across every JSON shape documented here.
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
 | GPU sidecar JSON | `tg.exe search --gpu-device-ids ... --json ...` | [`examples/gpu_sidecar_search.json`](examples/gpu_sidecar_search.json) |
+| Calibrate JSON | `tg.exe calibrate` | [`examples/calibrate.json`](examples/calibrate.json) |
+| Search NDJSON | `tg.exe search --ndjson ...` | [`examples/search.ndjson`](examples/search.ndjson) |
+| MCP rewrite diff JSON | `tg_rewrite_diff(...)` | [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json) |
 
 ## Search JSON
 
@@ -198,6 +201,90 @@ Each GPU sidecar `matches[]` object has:
 
 On this worker host the real GPU Python backends were unavailable, so the committed example was produced by running the real native `tg.exe` command against `bench_data/` with `TG_SIDECAR_SCRIPT` set to a deterministic mock. That still exercises the Rust sidecar transport and envelope normalization path.
 
+## Calibrate JSON
+
+Emitted by `tg.exe calibrate`.
+
+Example: [`examples/calibrate.json`](examples/calibrate.json)
+
+This shape is the persisted routing calibration contract consumed by the native Rust router.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. Current value: `1`. |
+| `routing_backend` | `string` | `Calibration` for the committed example. |
+| `routing_reason` | `string` | `manual-calibrate` for the committed example. |
+| `sidecar_used` | `boolean` | Always `false` for the native calibrate command. |
+| `corpus_size_breakpoint_bytes` | `integer` | Smallest corpus size where GPU became the recommended route in the calibrated run. |
+| `cpu_median_ms` | `number` | Representative CPU median at the chosen breakpoint. |
+| `gpu_median_ms` | `number` | Representative GPU median at the chosen breakpoint. |
+| `recommendation` | `string` | Stable routing recommendation such as `gpu_above_100mb` or `cpu_always`. |
+| `calibration_timestamp` | `integer` | Unix timestamp written with the accepted calibration result. |
+| `device_name` | `string` | Device name associated with the calibration run. |
+| `measurements` | `array<object>` | Calibration points used to derive the recommendation. |
+
+Each `measurements[]` object has:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `size_bytes` | `integer` | Corpus size benchmarked at this point. |
+| `cpu_median_ms` | `number` | CPU median for the point. |
+| `gpu_median_ms` | `number` | GPU median for the point. |
+| `cpu_samples_ms` | `array<number>` | Raw CPU timing samples retained for auditability. |
+| `gpu_samples_ms` | `array<number>` | Raw GPU timing samples retained for auditability. |
+
+## Search NDJSON
+
+Emitted by `tg.exe search --ndjson ...`.
+
+Example: [`examples/search.ndjson`](examples/search.ndjson)
+
+This is the streaming variant of Search JSON. Each line is a standalone JSON object with the common envelope plus a single match row.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | Backend selected by the Rust router. |
+| `routing_reason` | `string` | Stable reason for the route. |
+| `sidecar_used` | `boolean` | `false` for the committed native example. |
+| `query` | `string` | Search pattern. |
+| `path` | `string` | Search root. |
+| `file` | `string` | Absolute path of the matched file for this row. |
+| `line` | `integer` | 1-based line number for this row. |
+| `text` | `string` | Matching line text. |
+| `pattern_id` | `integer \| null` | Present for multi-pattern routes. |
+| `pattern_text` | `string \| null` | Present when `pattern_id` is present. |
+
+## MCP Tool Responses
+
+The MCP server exposes stable tool contracts layered on top of the native CLI outputs.
+
+Current tool set:
+
+- `tg_index_search(pattern, path=".")`
+- `tg_rewrite_plan(pattern, replacement, lang, path=".")`
+- `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False)`
+- `tg_rewrite_diff(pattern, replacement, lang, path=".")`
+
+Response mapping:
+
+- `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
+- `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
+- `tg_rewrite_apply(..., verify=True)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
+- `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text
+
+Example diff wrapper: [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json)
+
+`tg_rewrite_diff(...)` response fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `AstBackend`. |
+| `routing_reason` | `string` | `ast-native`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `diff` | `string` | Unified diff preview generated by the native CLI. |
+
 ## Rust vs Python field differences
 
 The current codebase still exposes a few shape differences between native Rust JSON and Python-originated JSON:
@@ -249,5 +336,19 @@ tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' 'def $F($$$ARGS): ret
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --apply --verify --json 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
 tg.exe run --batch-rewrite batch-rewrite.json --apply --json bench_data\<temp-rewrite-dir>
 tg.exe search --gpu-device-ids 0 --json ERROR bench_data\<temp-gpu-dir>
+tg.exe calibrate
+tg.exe search --no-ignore --ndjson ERROR bench_data\<temp-search-dir>
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --diff 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
 ```
+
+## Compatibility Policy
+
+The harness API is a versioned public contract.
+
+Rules:
+
+- additive field changes are allowed within the same major contract version when existing required fields and meanings stay intact
+- breaking changes require a version bump
+- field renames, type changes, removing required fields, or changing single-document output into a different transport shape are breaking changes
+- new example artifacts and schema tests must land with any contract expansion
+- docs, example artifacts, and schema tests must stay in sync

@@ -175,6 +175,7 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
     assert len(capture_calls) == 2
     payload = captured["payload"]
     assert isinstance(payload, dict)
+    assert payload["artifact"] == "bench_run_benchmarks"
     assert payload["timing_samples_per_scenario"] == 3
     rows = payload["rows"]
     assert rows == [
@@ -392,6 +393,7 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
 
     assert exit_code == 0
     payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_run_native_cpu_benchmarks"
     assert payload["suite"] == "run_native_cpu_benchmarks"
     assert payload["passed"] is True
     assert [row["name"] for row in payload["rows"]] == [
@@ -1160,6 +1162,7 @@ def test_run_ast_workflow_benchmarks_should_emit_run_scan_and_test_rows(monkeypa
     assert exit_code == 0
     payload = captured["payload"]
     assert isinstance(payload, dict)
+    assert payload["artifact"] == "bench_run_ast_workflow_benchmarks"
     assert payload["suite"] == "run_ast_workflow_benchmarks"
     rows = payload["rows"]
     assert len(rows) == 3

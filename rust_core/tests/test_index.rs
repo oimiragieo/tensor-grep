@@ -712,3 +712,42 @@ fn test_tg_search_index_verbose_distinguishes_full_and_incremental_rebuilds() {
         "stderr should identify an incremental update: {incremental_stderr}"
     );
 }
+
+#[test]
+fn test_tg_search_index_survives_repeated_mutation_cycles() {
+    let dir = tempdir().unwrap();
+    write_corpus(dir.path());
+
+    let expect_count = |expected: usize| {
+        let output = tg()
+            .arg("search")
+            .arg("--index")
+            .arg("--fixed-strings")
+            .arg("--json")
+            .arg("hello")
+            .arg(dir.path())
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(payload["routing_backend"], "TrigramIndex");
+        assert_eq!(payload["total_matches"].as_u64().unwrap() as usize, expected);
+    };
+
+    expect_count(2);
+
+    fs::write(dir.path().join("fresh.txt"), "hello fresh file\n").unwrap();
+    expect_count(3);
+
+    fs::write(dir.path().join("b.txt"), "nothing here\nhello again friend\nhello third line\n").unwrap();
+    expect_count(4);
+
+    fs::remove_file(dir.path().join("a.txt")).unwrap();
+    expect_count(3);
+}

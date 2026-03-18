@@ -276,6 +276,7 @@ def main() -> int:
     passed = all(row["status"] == "PASS" for row in rows)
 
     payload = {
+        "artifact": "bench_run_native_cpu_benchmarks",
         "suite": "run_native_cpu_benchmarks",
         "generated_at_epoch_s": time.time(),
         "environment": {

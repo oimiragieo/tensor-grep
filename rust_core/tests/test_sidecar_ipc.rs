@@ -406,6 +406,83 @@ fn test_gpu_search_schema_invalid_json_reports_clear_error() {
     assert!(!stderr.contains("panic"), "stderr={stderr}");
 }
 
+#[cfg(not(feature = "cuda"))]
+#[test]
+fn test_gpu_search_recovers_after_previous_malformed_sidecar_payload() {
+    let dir = tempdir().unwrap();
+    let corpus_dir = dir.path().join("corpus");
+    fs::create_dir(&corpus_dir).unwrap();
+    let file_path = write_sample_log(&corpus_dir);
+
+    let bad_script = dir.path().join("mock_gpu_sidecar_bad.py");
+    fs::write(
+        &bad_script,
+        "import json\nimport os\nimport sys\nsys.stdin.buffer.read()\nresponse = {\"stdout\": json.dumps({\"total_matches\": 1, \"total_files\": 1, \"matches\": \"not-a-list\"}) + '\\n', \"stderr\": \"\", \"exit_code\": 0, \"pid\": os.getpid()}\nsys.stdout.write(json.dumps(response))\n",
+    )
+    .unwrap();
+
+    let good_script = dir.path().join("mock_gpu_sidecar_good.py");
+    fs::write(
+        &good_script,
+        format!(
+            "import json\nimport os\nimport sys\nsys.stdin.buffer.read()\nresponse = {{\"stdout\": json.dumps({{\"total_matches\": 1, \"total_files\": 1, \"matches\": [{{\"file\": {:?}, \"line_number\": 2, \"text\": \"ERROR database failed\"}}]}}) + '\\n', \"stderr\": \"\", \"exit_code\": 0, \"pid\": os.getpid()}}\nsys.stdout.write(json.dumps(response))\n",
+            file_path.display().to_string()
+        ),
+    )
+    .unwrap();
+
+    let first_output = run_with_timeout(
+        {
+            let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+            tg.current_dir(repo_root())
+                .arg("search")
+                .arg("--gpu-device-ids")
+                .arg("0")
+                .arg("--json")
+                .arg("ERROR")
+                .arg(&corpus_dir)
+                .env("TG_SIDECAR_PYTHON", repo_python())
+                .env("TG_SIDECAR_SCRIPT", &bad_script);
+            tg
+        },
+        Duration::from_secs(5),
+    );
+
+    assert!(!first_output.status.success());
+    let first_stderr = String::from_utf8_lossy(&first_output.stderr);
+    assert!(first_stderr.contains("malformed"), "stderr={first_stderr}");
+
+    let second_output = run_with_timeout(
+        {
+            let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+            tg.current_dir(repo_root())
+                .arg("search")
+                .arg("--gpu-device-ids")
+                .arg("0")
+                .arg("--json")
+                .arg("ERROR")
+                .arg(&corpus_dir)
+                .env("TG_SIDECAR_PYTHON", repo_python())
+                .env("TG_SIDECAR_SCRIPT", &good_script);
+            tg
+        },
+        Duration::from_secs(5),
+    );
+
+    assert!(
+        second_output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        second_output.status.code(),
+        String::from_utf8_lossy(&second_output.stdout),
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+    let payload: serde_json::Value = serde_json::from_slice(&second_output.stdout).unwrap();
+    assert_eq!(payload["routing_backend"], "GpuSidecar");
+    assert_eq!(payload["routing_reason"], "gpu-device-ids-explicit");
+    assert_eq!(payload["sidecar_used"], true);
+    assert_eq!(payload["total_matches"], 1);
+}
+
 #[test]
 fn test_missing_python_reports_actionable_error() {
     let dir = tempdir().unwrap();

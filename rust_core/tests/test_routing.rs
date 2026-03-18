@@ -84,6 +84,10 @@ fn write_crossover_config(
     calibration_timestamp: u64,
 ) {
     let payload = serde_json::json!({
+        "version": 1,
+        "routing_backend": "Calibration",
+        "routing_reason": "manual-calibrate",
+        "sidecar_used": false,
         "corpus_size_breakpoint_bytes": breakpoint_bytes,
         "cpu_median_ms": cpu_median_ms,
         "gpu_median_ms": gpu_median_ms,
@@ -274,6 +278,10 @@ fn test_calibrate_writes_valid_crossover_config_from_mock_results() {
     );
 
     let stdout_payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(stdout_payload["version"], Value::from(1));
+    assert_eq!(stdout_payload["routing_backend"], Value::from("Calibration"));
+    assert_eq!(stdout_payload["routing_reason"], Value::from("manual-calibrate"));
+    assert_eq!(stdout_payload["sidecar_used"], Value::from(false));
     assert_eq!(
         stdout_payload["corpus_size_breakpoint_bytes"],
         Value::from(100_u64 * 1024 * 1024)
@@ -284,6 +292,63 @@ fn test_calibrate_writes_valid_crossover_config_from_mock_results() {
 
     let config_payload: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
     assert_eq!(config_payload, stdout_payload);
+}
+
+#[test]
+fn test_repeated_calibrate_overwrites_config_and_keeps_output_contract_stable() {
+    let dir = tempdir().unwrap();
+    let config_path = dir.path().join("crossover.json");
+
+    let gpu_positive = serde_json::json!({
+        "device_name": "Mock RTX 4070",
+        "measurements": [
+            {
+                "size_bytes": 100_u64 * 1024 * 1024,
+                "cpu_samples_ms": [50.0, 49.0, 51.0],
+                "gpu_samples_ms": [39.0, 40.0, 41.0]
+            }
+        ]
+    });
+    let cpu_always = serde_json::json!({
+        "device_name": "Mock RTX 4070",
+        "measurements": [
+            {
+                "size_bytes": 100_u64 * 1024 * 1024,
+                "cpu_samples_ms": [10.0, 11.0, 12.0],
+                "gpu_samples_ms": [20.0, 21.0, 22.0]
+            }
+        ]
+    });
+
+    for (mock_results, expected_recommendation) in [
+        (gpu_positive, Value::from("gpu_above_100mb")),
+        (cpu_always, Value::from("cpu_always")),
+    ] {
+        let output = tg()
+            .arg("calibrate")
+            .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+            .env("TG_TEST_CALIBRATION_RESULTS", mock_results.to_string())
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout_payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(stdout_payload["version"], Value::from(1));
+        assert_eq!(stdout_payload["routing_backend"], Value::from("Calibration"));
+        assert_eq!(stdout_payload["routing_reason"], Value::from("manual-calibrate"));
+        assert_eq!(stdout_payload["sidecar_used"], Value::from(false));
+        assert_eq!(stdout_payload["recommendation"], expected_recommendation);
+
+        let config_payload: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(config_payload, stdout_payload);
+    }
 }
 
 #[test]

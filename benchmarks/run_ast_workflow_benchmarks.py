@@ -199,6 +199,7 @@ def main() -> int:
     write_json(
         args.output or (artifacts_dir / "bench_run_ast_workflow_benchmarks.json"),
         {
+            "artifact": "bench_run_ast_workflow_benchmarks",
             "suite": "run_ast_workflow_benchmarks",
             "generated_at_epoch_s": time.time(),
             "environment": {

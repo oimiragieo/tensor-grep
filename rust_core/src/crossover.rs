@@ -24,6 +24,9 @@ const PROJECT_CONFIG_FILE: &str = ".tg_crossover";
 const DEFAULT_PATTERN: &str = "ERROR gpu calibration target";
 const DEFAULT_DEVICE_ID: i32 = 0;
 const GENERATED_FILE_COUNT: usize = 4;
+pub const CROSSOVER_CONFIG_VERSION: u32 = 1;
+pub const CROSSOVER_ROUTING_BACKEND: &str = "Calibration";
+pub const CROSSOVER_ROUTING_REASON: &str = "manual-calibrate";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CalibrationMeasurement {
@@ -36,6 +39,14 @@ pub struct CalibrationMeasurement {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CrossoverConfig {
+    #[serde(default = "crossover_config_version")]
+    pub version: u32,
+    #[serde(default = "crossover_routing_backend")]
+    pub routing_backend: String,
+    #[serde(default = "crossover_routing_reason")]
+    pub routing_reason: String,
+    #[serde(default)]
+    pub sidecar_used: bool,
     pub corpus_size_breakpoint_bytes: u64,
     pub cpu_median_ms: f64,
     pub gpu_median_ms: f64,
@@ -83,6 +94,18 @@ impl CrossoverConfig {
             CrossoverRoutingMode::BelowBreakpoint
         }
     }
+}
+
+fn crossover_config_version() -> u32 {
+    CROSSOVER_CONFIG_VERSION
+}
+
+fn crossover_routing_backend() -> String {
+    CROSSOVER_ROUTING_BACKEND.to_string()
+}
+
+fn crossover_routing_reason() -> String {
+    CROSSOVER_ROUTING_REASON.to_string()
 }
 
 pub fn current_timestamp() -> u64 {
@@ -232,6 +255,10 @@ fn summarize_measurements(
     };
 
     Ok(CrossoverConfig {
+        version: CROSSOVER_CONFIG_VERSION,
+        routing_backend: CROSSOVER_ROUTING_BACKEND.to_string(),
+        routing_reason: CROSSOVER_ROUTING_REASON.to_string(),
+        sidecar_used: false,
         corpus_size_breakpoint_bytes: representative.size_bytes,
         cpu_median_ms: representative.cpu_median_ms,
         gpu_median_ms: representative.gpu_median_ms,
