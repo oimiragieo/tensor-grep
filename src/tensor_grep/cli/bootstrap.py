@@ -17,6 +17,7 @@ _KNOWN_COMMANDS = {
     "lsp",
     "mcp",
     "upgrade",
+    "update",
 }
 
 _TG_ONLY_SEARCH_FLAGS = {

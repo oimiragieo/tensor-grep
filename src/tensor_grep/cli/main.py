@@ -1899,6 +1899,12 @@ def upgrade() -> None:
         sys.exit(1)
 
 
+@app.command("update")
+def update() -> None:
+    """Alias for upgrade."""
+    upgrade()
+
+
 def main_entry() -> None:
     import sys
 
@@ -1937,6 +1943,7 @@ def main_entry() -> None:
         "lsp",
         "mcp",
         "upgrade",
+        "update",
     }
 
     if len(sys.argv) > 1:
