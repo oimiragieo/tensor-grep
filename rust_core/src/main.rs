@@ -9,6 +9,7 @@ use std::env;
 use std::ffi::OsString;
 #[cfg(feature = "cuda")]
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -1560,8 +1561,7 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     }
 
     let pattern = run_pattern(&args)?;
-
-    let matches = backend.search(pattern, &args.lang, path)?;
+    let matches = backend.search_for_cli(pattern, &args.lang, path)?;
 
     if args.json {
         return emit_json_search_results(
@@ -1570,12 +1570,18 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
             path,
             matches
                 .into_iter()
-                .map(|matched| SearchMatchJson {
-                    file: matched.file.to_string_lossy().into_owned(),
-                    line: matched.line,
-                    text: matched.matched_text,
-                    pattern_id: None,
-                    pattern_text: None,
+                .flat_map(|file_matches| {
+                    let file = file_matches.file.to_string_lossy().into_owned();
+                    file_matches
+                        .matches
+                        .into_iter()
+                        .map(move |matched| SearchMatchJson {
+                            file: file.clone(),
+                            line: matched.line,
+                            text: matched.matched_text,
+                            pattern_id: None,
+                            pattern_text: None,
+                        })
                 })
                 .collect(),
         );
@@ -1585,8 +1591,18 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
         emit_verbose_metadata(RoutingDecision::ast());
     }
 
-    for matched in matches {
-        println!("{}", matched.format_for_cli());
+    let stdout = io::stdout();
+    let mut stdout = io::BufWriter::new(stdout.lock());
+    for file_matches in matches {
+        for matched in file_matches.matches {
+            writeln!(
+                stdout,
+                "{}:{}:{}",
+                file_matches.file.display(),
+                matched.line,
+                matched.matched_text
+            )?;
+        }
     }
 
     Ok(())

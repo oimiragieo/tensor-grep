@@ -55,6 +55,18 @@ impl AstMatch {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstCliMatch {
+    pub line: usize,
+    pub matched_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstCliFileMatches {
+    pub file: PathBuf,
+    pub matches: Vec<AstCliMatch>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RewriteEdit {
     pub id: String,
@@ -289,6 +301,17 @@ impl AstBackend {
             Path::new(path),
             prefilter_enabled,
         )
+    }
+
+    pub fn search_for_cli(
+        &self,
+        pattern: &str,
+        lang: &str,
+        path: &str,
+    ) -> Result<Vec<AstCliFileMatches>> {
+        let language = resolve_language(lang)?;
+        let compiled_pattern = compile_ast_pattern(pattern, language)?;
+        search_path_for_cli(&compiled_pattern, language, Path::new(path), true)
     }
 
     pub fn plan_rewrites(
@@ -593,6 +616,34 @@ impl AstBackend {
 
         Ok(matches)
     }
+
+    fn search_file_for_cli_static(
+        pattern: &Pattern,
+        lang: SupportLang,
+        prefilter_literal: Option<&str>,
+        file: &Path,
+    ) -> Result<Vec<AstCliMatch>> {
+        let Some(source) = load_search_source(file)? else {
+            return Ok(Vec::new());
+        };
+        if prefilter_literal.is_some_and(|literal| !source.contains(literal)) {
+            return Ok(Vec::new());
+        }
+
+        let ast = lang.ast_grep(&source);
+        let mut line_starts: Option<Vec<usize>> = None;
+        let mut matches = Vec::new();
+
+        for matched in ast.root().find_all(pattern.clone()) {
+            let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+            matches.push(AstCliMatch {
+                line: line_number_for_byte(ls, matched.range().start),
+                matched_text: matched.text().to_string(),
+            });
+        }
+
+        Ok(matches)
+    }
 }
 
 fn build_match<'tree>(
@@ -642,10 +693,7 @@ fn search_path_with_prefilter(
         .flatten();
 
     if path.is_file() {
-        let mut matches =
-            AstBackend::search_file_static(pattern, lang, prefilter_literal.as_deref(), path)?;
-        matches.sort_unstable_by(compare_ast_matches);
-        return Ok(matches);
+        return AstBackend::search_file_static(pattern, lang, prefilter_literal.as_deref(), path);
     }
 
     let files = collect_ast_search_files(path, lang)?;
@@ -656,9 +704,63 @@ fn search_path_with_prefilter(
         })
         .collect();
 
-    let mut matches = per_file_matches?.into_iter().flatten().collect::<Vec<_>>();
-    matches.sort_unstable_by(compare_ast_matches);
+    let mut matches = Vec::new();
+    for file_matches in per_file_matches? {
+        matches.extend(file_matches);
+    }
     Ok(matches)
+}
+
+fn search_path_for_cli(
+    pattern: &Pattern,
+    lang: SupportLang,
+    path: &Path,
+    prefilter_enabled: bool,
+) -> Result<Vec<AstCliFileMatches>> {
+    if !path.exists() {
+        anyhow::bail!("Path not found: {}", path.display());
+    }
+
+    let prefilter_literal = prefilter_enabled
+        .then(|| extract_prefilter_literal(pattern))
+        .flatten();
+
+    if path.is_file() {
+        let matches = AstBackend::search_file_for_cli_static(
+            pattern,
+            lang,
+            prefilter_literal.as_deref(),
+            path,
+        )?;
+        if matches.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Ok(vec![AstCliFileMatches {
+            file: path.to_path_buf(),
+            matches,
+        }]);
+    }
+
+    let files = collect_ast_search_files(path, lang)?;
+    let per_file_matches: Result<Vec<Vec<AstCliMatch>>> = files
+        .par_iter()
+        .map(|file| {
+            AstBackend::search_file_for_cli_static(
+                pattern,
+                lang,
+                prefilter_literal.as_deref(),
+                file,
+            )
+        })
+        .collect();
+
+    Ok(files
+        .into_iter()
+        .zip(per_file_matches?)
+        .filter_map(|(file, matches)| {
+            (!matches.is_empty()).then_some(AstCliFileMatches { file, matches })
+        })
+        .collect())
 }
 
 /// Collects AST candidate files with ignore/type filters before parallel parsing.
@@ -1290,19 +1392,6 @@ fn line_number_for_byte(line_starts: &[usize], byte_offset: usize) -> usize {
     line_starts.partition_point(|start| *start <= byte_offset)
 }
 
-fn compare_ast_matches(left: &AstMatch, right: &AstMatch) -> std::cmp::Ordering {
-    left.file
-        .cmp(&right.file)
-        .then(left.line.cmp(&right.line))
-        .then(
-            left.candidate
-                .byte_range
-                .start
-                .cmp(&right.candidate.byte_range.start),
-        )
-        .then(left.matched_text.cmp(&right.matched_text))
-}
-
 fn extract_metavar_env(
     source: &str,
     env: &ast_grep_core::meta_var::MetaVarEnv<'_, ast_grep_core::tree_sitter::StrDoc<SupportLang>>,
@@ -1555,6 +1644,52 @@ mod tests {
 
         assert_eq!(with_prefilter, without_prefilter);
         assert!(!with_prefilter.is_empty());
+    }
+
+    #[test]
+    fn search_for_cli_matches_backend_search_projection() {
+        let dir = tempdir().unwrap();
+        let alpha = write_search_fixture(
+            dir.path(),
+            "alpha.py",
+            "def keep(x): return x\ndef also_keep(y): return y\n",
+        );
+        let beta = write_search_fixture(dir.path(), "beta.py", "def beta(z): return z\n");
+
+        let backend = AstBackend::new();
+        let full_matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+        let cli_matches = backend
+            .search_for_cli(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        let projected_full: Vec<(PathBuf, usize, String)> = full_matches
+            .into_iter()
+            .map(|matched| (matched.file, matched.line, matched.matched_text))
+            .collect();
+        let projected_cli: Vec<(PathBuf, usize, String)> = cli_matches
+            .into_iter()
+            .flat_map(|file_matches| {
+                let file = file_matches.file;
+                file_matches
+                    .matches
+                    .into_iter()
+                    .map(move |matched| (file.clone(), matched.line, matched.matched_text))
+            })
+            .collect();
+
+        assert_eq!(projected_cli, projected_full);
+        assert_eq!(projected_cli[0].0, alpha);
+        assert_eq!(projected_cli[2].0, beta);
     }
 
     #[test]
