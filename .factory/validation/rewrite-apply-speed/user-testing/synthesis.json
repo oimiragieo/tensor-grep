@@ -1,0 +1,40 @@
+{
+  "milestone": "rewrite-apply-speed",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 23,
+    "passed": 23,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-RW-017",
+    "VAL-RW-011",
+    "VAL-RW-002",
+    "VAL-RW-015",
+    "VAL-CROSS-004",
+    "VAL-RW-021",
+    "VAL-RW-019",
+    "VAL-RW-004",
+    "VAL-RW-018",
+    "VAL-RW-020",
+    "VAL-RW-012",
+    "VAL-RW-003",
+    "VAL-RW-008",
+    "VAL-RW-013",
+    "VAL-RW-010",
+    "VAL-RW-016",
+    "VAL-RW-005",
+    "VAL-RW-001",
+    "VAL-RW-007",
+    "VAL-CROSS-003",
+    "VAL-RW-009",
+    "VAL-RW-006",
+    "VAL-RW-014"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}
