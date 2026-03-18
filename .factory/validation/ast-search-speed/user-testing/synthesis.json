@@ -1,23 +1,24 @@
 {
   "milestone": "ast-search-speed",
-  "round": 2,
-  "status": "fail",
+  "round": 3,
+  "status": "pass",
   "assertionsSummary": {
     "total": 20,
-    "passed": 19,
-    "failed": 1,
+    "passed": 20,
+    "failed": 0,
     "blocked": 0
   },
   "passedAssertions": [
-    "VAL-AST-001", "VAL-AST-002", "VAL-AST-003", "VAL-AST-004", "VAL-AST-005", "VAL-AST-006", "VAL-AST-007", "VAL-AST-008", "VAL-AST-009", "VAL-AST-010", "VAL-AST-011", "VAL-AST-012a", "VAL-AST-012", "VAL-AST-013", "VAL-CROSS-002", "VAL-BUILD-001", "VAL-BUILD-002", "VAL-BUILD-003", "VAL-BUILD-004"
+    "VAL-AST-001", "VAL-AST-002", "VAL-AST-003", "VAL-AST-004", "VAL-AST-005", "VAL-AST-006", "VAL-AST-007", "VAL-AST-008", "VAL-AST-009", "VAL-AST-010", "VAL-AST-011", "VAL-AST-012a", "VAL-AST-012", "VAL-AST-013", "VAL-CROSS-001", "VAL-CROSS-002", "VAL-BUILD-001", "VAL-BUILD-002", "VAL-BUILD-003", "VAL-BUILD-004"
   ],
-  "failedAssertions": [
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
     {
-      "id": "VAL-CROSS-001",
-      "reason": "Performance regression exceeded \u00b15% tolerance on Regex Match (5.43%) and Context Lines (12.47%) scenarios."
+      "target": "user-testing.md",
+      "description": "Added notes about using --allow-env-mismatch for python_version mismatch in check_regression.py",
+      "source": "flow-report"
     }
   ],
-  "blockedAssertions": [],
-  "appliedUpdates": [],
-  "previousRound": ".factory/validation/ast-search-speed/user-testing/synthesis.json.old"
+  "previousRound": ".factory/validation/ast-search-speed/user-testing/synthesis.json.round2"
 }

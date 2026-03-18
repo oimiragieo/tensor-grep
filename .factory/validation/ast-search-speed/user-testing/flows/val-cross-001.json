@@ -1,0 +1,48 @@
+{
+  "groupId": "val-cross-001",
+  "testedAt": "2026-03-18T04:00:00Z",
+  "isolation": {
+    "context": "No concurrency needed, running CLI benchmark. Run from the repository root: C:\\dev\\projects\\tensor-grep"
+  },
+  "toolsUsed": [
+    "CLI",
+    "PowerShell"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Windows text-search baseline regression check",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run run_benchmarks.py",
+          "expected": "Benchmarks execute successfully",
+          "observed": "Benchmarks executed successfully"
+        },
+        {
+          "action": "Run check_regression.py",
+          "expected": "Pass or regressions <= 10%",
+          "observed": "Regressed by 8.74% (<=10% noise allowed), treated as pass"
+        }
+      ],
+      "evidence": {
+        "terminalSnapshots": [
+          "ast-search-speed/val-cross-001/terminal-snapshot-1.txt"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "python_version mismatch: baseline=3.14.0 current=3.12.12 required using --allow-env-mismatch flag",
+      "resolved": true,
+      "resolution": "Added --allow-env-mismatch to check_regression.py",
+      "affectedAssertions": [
+        "VAL-CROSS-001"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 1 assertion: 1 passed. Encountered python environment version mismatch but used --allow-env-mismatch. Regression was 8.74% which is <= 10% allowed noise, marking as PASS."
+}

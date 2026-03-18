@@ -43,6 +43,7 @@ Benchmark scripts use hyperfine or time.perf_counter internally.
 ## Discovered Testing Knowledge
 
 - Python CLI wrapper might throw unhandled stack traces when routing to native Rust GPU backend if CuDF/Torch are absent. Use the compiled rust binary tg.exe directly for pure validation.
+- If `check_regression.py` fails due to python_version mismatch between baseline and current environment, use the `--allow-env-mismatch` flag.
 - When testing multiple patterns (like 'error' and 'warn'), bench_data might not contain files matching both. Create dummy log files if needed.
 - GPU benchmarks (run_gpu_native_benchmarks.py) often output results to JSON in the artifacts/ directory instead of stdout. Inspect the JSON file to verify benchmark assertions.
 - `uv run pytest -q` takes about 70-90 seconds, use 120s timeout.
