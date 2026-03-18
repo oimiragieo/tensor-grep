@@ -1,0 +1,15 @@
+{
+  "groupId": "group-functional",
+  "status": "pass",
+  "testedAssertions": [
+    "VAL-AST-001", "VAL-AST-002", "VAL-AST-003", "VAL-AST-004", "VAL-AST-005", "VAL-AST-006", "VAL-AST-007", "VAL-AST-008", "VAL-AST-009", "VAL-AST-010", "VAL-AST-011", "VAL-AST-012a", "VAL-BUILD-001", "VAL-BUILD-002", "VAL-BUILD-003", "VAL-BUILD-004"
+  ],
+  "passedAssertions": [
+    "VAL-AST-001", "VAL-AST-002", "VAL-AST-003", "VAL-AST-004", "VAL-AST-005", "VAL-AST-006", "VAL-AST-007", "VAL-AST-008", "VAL-AST-009", "VAL-AST-010", "VAL-AST-011", "VAL-AST-012a", "VAL-BUILD-001", "VAL-BUILD-002", "VAL-BUILD-003", "VAL-BUILD-004"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["Execute"]
+}

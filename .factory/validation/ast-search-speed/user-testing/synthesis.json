@@ -1,0 +1,29 @@
+{
+  "milestone": "ast-search-speed",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 20,
+    "passed": 19,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-AST-001", "VAL-AST-002", "VAL-AST-003", "VAL-AST-004", "VAL-AST-005", "VAL-AST-006", "VAL-AST-007", "VAL-AST-008", "VAL-AST-009", "VAL-AST-010", "VAL-AST-011", "VAL-AST-012a", "VAL-AST-012", "VAL-AST-013", "VAL-CROSS-002", "VAL-BUILD-001", "VAL-BUILD-002", "VAL-BUILD-003", "VAL-BUILD-004"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "reason": "Text-search throughput regression detected by check_regression.py. Scenarios like Simple String Match regressed by ~26%, Max Count Limit by ~47%. Requirement is within +/-5%."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added flow validator guidance for CLI surface, instructing subagents to execute tests sequentially to avoid benchmark noise.",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}

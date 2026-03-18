@@ -46,3 +46,11 @@ Benchmark scripts use hyperfine or time.perf_counter internally.
 - When testing multiple patterns (like 'error' and 'warn'), bench_data might not contain files matching both. Create dummy log files if needed.
 - GPU benchmarks (run_gpu_native_benchmarks.py) often output results to JSON in the artifacts/ directory instead of stdout. Inspect the JSON file to verify benchmark assertions.
 - `uv run pytest -q` takes about 70-90 seconds, use 120s timeout.
+
+## Flow Validator Guidance: CLI surface
+This surface relies exclusively on the CLI tools in the repository and benchmark scripts.
+- Ensure all commands are run from the repository root `C:\dev\projects\tensor-grep`.
+- Functional tests (`cargo test`, `pytest`, `cargo build`) can be run normally.
+- Performance tests (benchmarks) MUST be run sequentially without any other CPU-intensive processes running in parallel to prevent noise.
+- Do NOT use agent-browser or tuistory.
+
