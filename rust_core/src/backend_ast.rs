@@ -3,7 +3,10 @@ use ast_grep_core::{
     matcher::NodeMatch, meta_var::MetaVariable, tree_sitter::LanguageExt, Pattern,
 };
 use ast_grep_language::SupportLang;
-use ignore::WalkBuilder;
+use ignore::{
+    types::{Types, TypesBuilder},
+    WalkBuilder, WalkState,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -14,6 +17,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -268,26 +272,24 @@ impl AstBackend {
     }
 
     pub fn search(&self, pattern: &str, lang: &str, path: &str) -> Result<Vec<AstMatch>> {
+        self.search_with_prefilter(pattern, lang, path, true)
+    }
+
+    fn search_with_prefilter(
+        &self,
+        pattern: &str,
+        lang: &str,
+        path: &str,
+        prefilter_enabled: bool,
+    ) -> Result<Vec<AstMatch>> {
         let language = resolve_language(lang)?;
-        let compiled_pattern = Pattern::try_new(pattern, language)
-            .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
-        if compiled_pattern.has_error() {
-            anyhow::bail!("Invalid pattern: parse error");
-        }
-        let files = collect_source_files(Path::new(path), language)?;
-
-        let file_results: Vec<Result<Vec<AstMatch>>> = files
-            .par_iter()
-            .map(|file| Self::search_file_static(&compiled_pattern, language, file))
-            .collect();
-
-        let mut matches = Vec::new();
-        for result in file_results {
-            matches.extend(result?);
-        }
-
-        matches.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
-        Ok(matches)
+        let compiled_pattern = compile_ast_pattern(pattern, language)?;
+        search_path_with_prefilter(
+            &compiled_pattern,
+            language,
+            Path::new(path),
+            prefilter_enabled,
+        )
     }
 
     pub fn plan_rewrites(
@@ -570,15 +572,16 @@ impl AstBackend {
     fn search_file_static(
         pattern: &Pattern,
         lang: SupportLang,
+        prefilter_literal: Option<&str>,
         file: &Path,
     ) -> Result<Vec<AstMatch>> {
-        let bytes = std::fs::read(file)
-            .with_context(|| format!("failed to read source file {}", file.display()))?;
-        if bytes.is_empty() {
+        let Some(source) = load_search_source(file)? else {
+            return Ok(Vec::new());
+        };
+        if prefilter_literal.is_some_and(|literal| !source.contains(literal)) {
             return Ok(Vec::new());
         }
-        let source = String::from_utf8(bytes)
-            .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
+
         let ast = lang.ast_grep(&source);
         let file_owned = file.to_path_buf();
         let mut line_starts: Option<Vec<usize>> = None;
@@ -614,6 +617,171 @@ fn build_match<'tree>(
         matched_text,
         candidate,
     }
+}
+
+fn compile_ast_pattern(pattern: &str, language: SupportLang) -> Result<Pattern> {
+    let compiled_pattern = Pattern::try_new(pattern, language)
+        .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
+    if compiled_pattern.has_error() {
+        anyhow::bail!("Invalid pattern: parse error");
+    }
+    Ok(compiled_pattern)
+}
+
+fn search_path_with_prefilter(
+    pattern: &Pattern,
+    lang: SupportLang,
+    path: &Path,
+    prefilter_enabled: bool,
+) -> Result<Vec<AstMatch>> {
+    if !path.exists() {
+        anyhow::bail!("Path not found: {}", path.display());
+    }
+
+    let prefilter_literal = prefilter_enabled
+        .then(|| extract_prefilter_literal(pattern))
+        .flatten();
+
+    if path.is_file() {
+        let mut matches =
+            AstBackend::search_file_static(pattern, lang, prefilter_literal.as_deref(), path)?;
+        matches.sort_unstable_by(compare_ast_matches);
+        return Ok(matches);
+    }
+
+    let walker = build_ast_search_walk_builder(path, lang)?;
+    let (tx, rx) = mpsc::channel::<std::result::Result<Vec<AstMatch>, String>>();
+
+    walker.build_parallel().run(|| {
+        let tx = tx.clone();
+        let pattern = pattern.clone();
+        let prefilter_literal = prefilter_literal.clone();
+        Box::new(move |entry| {
+            let Ok(entry) = entry else {
+                return WalkState::Continue;
+            };
+            if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+                return WalkState::Continue;
+            }
+
+            match AstBackend::search_file_static(
+                &pattern,
+                lang,
+                prefilter_literal.as_deref(),
+                entry.path(),
+            ) {
+                Ok(file_matches) => {
+                    if !file_matches.is_empty() {
+                        let _ = tx.send(Ok(file_matches));
+                    }
+                    WalkState::Continue
+                }
+                Err(err) => {
+                    let _ = tx.send(Err(err.to_string()));
+                    WalkState::Quit
+                }
+            }
+        })
+    });
+    drop(tx);
+
+    let mut matches = Vec::new();
+    for message in rx {
+        matches.extend(message.map_err(anyhow::Error::msg)?);
+    }
+    matches.sort_unstable_by(compare_ast_matches);
+    Ok(matches)
+}
+
+fn build_ast_search_walk_builder(path: &Path, lang: SupportLang) -> Result<WalkBuilder> {
+    let mut builder = WalkBuilder::new(path);
+    builder.hidden(true);
+    builder.git_ignore(true);
+    builder.threads(ast_search_walk_threads());
+    builder.types(build_ast_search_types(lang)?);
+
+    for ignore_name in [".ignore", ".gitignore", ".rgignore"] {
+        let ignore_path = path.join(ignore_name);
+        if ignore_path.is_file() {
+            builder.add_ignore(ignore_path);
+        }
+    }
+
+    Ok(builder)
+}
+
+fn build_ast_search_types(lang: SupportLang) -> Result<Types> {
+    let mut builder = TypesBuilder::new();
+    let (type_name, globs): (&str, &[&str]) = match lang {
+        SupportLang::Python => (
+            "tgpythonast",
+            &[
+                "*.py", "*.PY", "*.py3", "*.PY3", "*.pyi", "*.PYI", "*.pyw", "*.PYW", "*.bzl",
+                "*.BZL",
+            ],
+        ),
+        SupportLang::JavaScript => (
+            "tgjavascriptast",
+            &[
+                "*.js", "*.JS", "*.jsx", "*.JSX", "*.cjs", "*.CJS", "*.mjs", "*.MJS",
+            ],
+        ),
+        SupportLang::TypeScript => (
+            "tgtypescriptast",
+            &[
+                "*.ts", "*.TS", "*.tsx", "*.TSX", "*.cts", "*.CTS", "*.mts", "*.MTS",
+            ],
+        ),
+        SupportLang::Rust => ("tgrustast", &["*.rs", "*.RS"]),
+        _ => anyhow::bail!("Unsupported language type filter"),
+    };
+
+    for glob in globs {
+        builder
+            .add(type_name, glob)
+            .with_context(|| format!("failed to register AST file type glob '{glob}'"))?;
+    }
+    builder.select(type_name);
+    builder
+        .build()
+        .context("failed to build AST file type filter")
+}
+
+fn ast_search_walk_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|count| count.get().min(12))
+        .unwrap_or(1)
+}
+
+fn extract_prefilter_literal(pattern: &Pattern) -> Option<String> {
+    let fixed = pattern.fixed_string();
+    let candidate = fixed.trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    if !candidate
+        .chars()
+        .any(|ch| ch.is_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    Some(candidate.to_string())
+}
+
+fn load_search_source(file: &Path) -> Result<Option<String>> {
+    let bytes = std::fs::read(file)
+        .with_context(|| format!("failed to read source file {}", file.display()))?;
+    if bytes.is_empty() || has_binary_bytes(&bytes) {
+        return Ok(None);
+    }
+
+    let source = String::from_utf8(bytes)
+        .map_err(|e| anyhow::anyhow!("invalid UTF-8 in {}: {e}", file.display()))?;
+    Ok(Some(source))
+}
+
+fn has_binary_bytes(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(BINARY_SCAN_BYTES)].contains(&0)
 }
 
 fn load_rewrite_source(file: &Path) -> Result<Option<RewriteSource>> {
@@ -1135,6 +1303,19 @@ fn line_number_for_byte(line_starts: &[usize], byte_offset: usize) -> usize {
     line_starts.partition_point(|start| *start <= byte_offset)
 }
 
+fn compare_ast_matches(left: &AstMatch, right: &AstMatch) -> std::cmp::Ordering {
+    left.file
+        .cmp(&right.file)
+        .then(left.line.cmp(&right.line))
+        .then(
+            left.candidate
+                .byte_range
+                .start
+                .cmp(&right.candidate.byte_range.start),
+        )
+        .then(left.matched_text.cmp(&right.matched_text))
+}
+
 fn extract_metavar_env(
     source: &str,
     env: &ast_grep_core::meta_var::MetaVarEnv<'_, ast_grep_core::tree_sitter::StrDoc<SupportLang>>,
@@ -1168,6 +1349,7 @@ fn extract_metavar_env(
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     fn temp_entries(dir: &Path) -> Vec<String> {
@@ -1216,6 +1398,282 @@ mod tests {
                 .all(|entry| !entry.starts_with(".tg_tmp_")),
             "temporary files should be removed after failure"
         );
+    }
+
+    fn write_search_fixture(
+        dir: &std::path::Path,
+        relative_path: &str,
+        contents: impl AsRef<[u8]>,
+    ) -> PathBuf {
+        let path = dir.join(relative_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    fn matched_files(matches: &[AstMatch]) -> Vec<PathBuf> {
+        matches.iter().map(|entry| entry.file.clone()).collect()
+    }
+
+    fn search_type_matches(path: &std::path::Path, lang: SupportLang) -> bool {
+        build_ast_search_types(lang)
+            .unwrap()
+            .matched(path, false)
+            .is_whitelist()
+    }
+
+    #[test]
+    fn search_prefilter_false_negative_three_category() {
+        let dir = tempdir().unwrap();
+        let matching = write_search_fixture(dir.path(), "matching.py", "def keep(x): return x\n");
+        write_search_fixture(
+            dir.path(),
+            "literal_only.py",
+            "def keep(x):\n    value = return_value(x)\n    return_value = x\n",
+        );
+        write_search_fixture(dir.path(), "neither.py", "print('nothing to see here')\n");
+
+        let backend = AstBackend::new();
+        let matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(matched_files(&matches), vec![matching]);
+    }
+
+    #[test]
+    fn search_respects_gitignore_for_parallel_walk() {
+        let dir = tempdir().unwrap();
+        write_search_fixture(dir.path(), ".gitignore", "*.generated.py\n");
+        let visible = write_search_fixture(dir.path(), "visible.py", "def keep(x): return x\n");
+        write_search_fixture(
+            dir.path(),
+            "ignored.generated.py",
+            "def ignored(x): return x\n",
+        );
+
+        let backend = AstBackend::new();
+        let matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(matched_files(&matches), vec![visible]);
+    }
+
+    #[test]
+    fn search_type_filter_handles_python_edge_cases() {
+        let dir = tempdir().unwrap();
+        let uppercase = write_search_fixture(dir.path(), "UPPER.PY", "def upper(x): return x\n");
+        let pyw = write_search_fixture(dir.path(), "window.pyw", "def gui(x): return x\n");
+        write_search_fixture(dir.path(), "no_extension", "def plain(x): return x\n");
+        write_search_fixture(dir.path(), "notes.txt", "def text(x): return x\n");
+
+        let backend = AstBackend::new();
+        let matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(matched_files(&matches), vec![uppercase, pyw]);
+        assert!(!search_type_matches(
+            std::path::Path::new(""),
+            SupportLang::Python
+        ));
+    }
+
+    #[test]
+    fn search_prefilter_matches_results_without_prefilter() {
+        let dir = tempdir().unwrap();
+        write_search_fixture(dir.path(), "keep.py", "def keep(x): return x\n");
+        write_search_fixture(
+            dir.path(),
+            "literal_only.py",
+            "def literal_only(x):\n    return_value = x\n    return return_value\n",
+        );
+        write_search_fixture(dir.path(), "skip.py", "print('no return literal here')\n");
+
+        let backend = AstBackend::new();
+        let with_prefilter = backend
+            .search_with_prefilter(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+                true,
+            )
+            .unwrap();
+        let without_prefilter = backend
+            .search_with_prefilter(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+                false,
+            )
+            .unwrap();
+
+        assert_eq!(with_prefilter, without_prefilter);
+    }
+
+    #[test]
+    fn search_prefilter_falls_back_for_wildcard_only_patterns() {
+        let pattern = compile_ast_pattern("$F($$$ARGS)", SupportLang::Python).unwrap();
+        assert_eq!(extract_prefilter_literal(&pattern), None);
+
+        let dir = tempdir().unwrap();
+        write_search_fixture(dir.path(), "calls.py", "first(a)\nsecond(b, c)\n");
+
+        let backend = AstBackend::new();
+        let with_prefilter = backend
+            .search_with_prefilter("$F($$$ARGS)", "python", dir.path().to_str().unwrap(), true)
+            .unwrap();
+        let without_prefilter = backend
+            .search_with_prefilter("$F($$$ARGS)", "python", dir.path().to_str().unwrap(), false)
+            .unwrap();
+
+        assert_eq!(with_prefilter, without_prefilter);
+        assert!(!with_prefilter.is_empty());
+    }
+
+    #[test]
+    fn search_skips_binary_files_without_error() {
+        let dir = tempdir().unwrap();
+        write_search_fixture(
+            dir.path(),
+            "binary.py",
+            b"def hidden(x): return x\0garbage\n",
+        );
+        let text = write_search_fixture(dir.path(), "text.py", "def shown(x): return x\n");
+
+        let backend = AstBackend::new();
+        let matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(matched_files(&matches), vec![text]);
+    }
+
+    #[test]
+    fn search_handles_empty_dir_and_no_matching_files() {
+        let empty_dir = tempdir().unwrap();
+        let no_match_dir = tempdir().unwrap();
+        write_search_fixture(no_match_dir.path(), "notes.txt", "def text(x): return x\n");
+
+        let backend = AstBackend::new();
+        let empty_matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                empty_dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+        let no_match_results = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                no_match_dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert!(empty_matches.is_empty());
+        assert!(no_match_results.is_empty());
+    }
+
+    #[test]
+    fn search_handles_utf8_bom_prefixed_python_files() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bom.py");
+        let mut bytes = UTF8_BOM.to_vec();
+        bytes.extend_from_slice(b"def bom(x): return x\n");
+        fs::write(&path, bytes).unwrap();
+
+        let backend = AstBackend::new();
+        let matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].file, path);
+        assert_eq!(matches[0].line, 1);
+        assert_eq!(matches[0].candidate.byte_range.start, UTF8_BOM.len());
+    }
+
+    #[test]
+    fn search_handles_large_python_files() {
+        let dir = tempdir().unwrap();
+        let large_file = dir.path().join("large.py");
+        let mut source = String::from("def target(x): return x\n");
+        while source.len() <= 11 * 1024 * 1024 {
+            source.push_str("print('filler line to keep the parser busy')\n");
+        }
+        fs::write(&large_file, source).unwrap();
+
+        let backend = AstBackend::new();
+        let matches = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].file, large_file);
+    }
+
+    #[test]
+    fn search_results_are_sorted_deterministically() {
+        let dir = tempdir().unwrap();
+        let a_path = write_search_fixture(
+            dir.path(),
+            "a.py",
+            "def first(x): return x\ndef second(y): return y\n",
+        );
+        let z_path = write_search_fixture(dir.path(), "z.py", "def last(z): return z\n");
+
+        let backend = AstBackend::new();
+        let first = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+        let second = backend
+            .search(
+                "def $F($$$ARGS): return $EXPR",
+                "python",
+                dir.path().to_str().unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[0].file, a_path);
+        assert_eq!(first[0].line, 1);
+        assert_eq!(first[1].file, a_path);
+        assert_eq!(first[1].line, 2);
+        assert_eq!(first[2].file, z_path);
+        assert_eq!(first[2].line, 1);
     }
 
     #[test]
