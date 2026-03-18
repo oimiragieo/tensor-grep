@@ -24,14 +24,22 @@ if TYPE_CHECKING:
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 app = typer.Typer(
-    help="""tensor-grep (tg) - The GPU-Accelerated Semantic Log Parsing CLI
+    help="""tensor-grep (tg) - Fast text, AST, indexed, and GPU-aware search CLI
 
-Combines raw regex speed with semantic understanding (cyBERT) while maintaining ripgrep parity.
+Search code and large datasets with ripgrep-compatible text search, native AST search/rewrite,
+persisted repeated-query acceleration, and optional GPU routing.
 
-**IMPORTANT: To see all 70+ ripgrep-compatible flags, run:**
-`tg search --help`
+**Common usage**
+- `tg PATTERN [PATH ...]`
+- `tg search [OPTIONS] PATTERN [PATH ...]`
+- `tg run PATTERN [PATH]`
+- `tg scan --config sgconfig.yml`
+- `tg mcp`
 
-(Note: `tg` operates primarily through the `search` subcommand. For drop-in `rg` compatibility, use aliases or `tg search PATTERN PATH`.)""",
+**Notes**
+- Bare patterns are treated as `tg search`.
+- Use `tg search --help` for ripgrep-compatible flags.
+- Use `tg run --help` for AST rewrite flags.""",
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="markdown",
@@ -1486,6 +1494,7 @@ def devices(
 def classify(
     file_path: str, format_type: str = typer.Option("json", "--format", help="Output format")
 ) -> None:
+    """Run semantic log classification via cyBERT."""
     import json
     import re
 
@@ -1529,7 +1538,7 @@ def run(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
     ),
 ) -> None:
-    """Run one time search or rewrite in command line (ast-grep parity)"""
+    """Run one-time AST search or rewrite in command line."""
     if not path:
         path = "."
 
@@ -1577,7 +1586,7 @@ def scan(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
     ),
 ) -> None:
-    """Scan and rewrite code by configuration (ast-grep parity)"""
+    """Scan and rewrite code by configuration."""
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -1651,7 +1660,7 @@ def test(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
     ),
 ) -> None:
-    """Test ast-grep rules (ast-grep parity)"""
+    """Test structural rules by configuration."""
     from tensor_grep.core.config import SearchConfig
 
     try:
@@ -1796,7 +1805,7 @@ def test(
 
 @app.command()
 def new() -> None:
-    """Create new ast-grep project or items like rules/tests (ast-grep parity)"""
+    """Create a new structural search project or rules/tests scaffold."""
     import os
 
     import yaml
@@ -1823,7 +1832,7 @@ def new() -> None:
 
 @app.command()
 def lsp() -> None:
-    """Start language server (ast-grep parity)"""
+    """Start the structural search language server."""
     from tensor_grep.cli.lsp_server import run_lsp
 
     run_lsp()

@@ -1836,8 +1836,12 @@ def test_app_help_should_list_upgrade_and_update_commands():
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
+    assert "Fast text, AST, indexed, and GPU-aware search CLI" in result.stdout
+    assert "Use tg search --help for ripgrep-compatible flags." in result.stdout
+    assert "Bare patterns are treated as tg search." in result.stdout
     assert "upgrade" in result.stdout
     assert "update" in result.stdout
+    assert "Run semantic log classification via cyBERT." in result.stdout
 
 
 def test_calibrate_command_delegates_to_native_tg(monkeypatch):
