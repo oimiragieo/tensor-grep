@@ -112,6 +112,28 @@ fn python_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
     }
 }
 
+fn python_passthrough_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
+    if cfg!(windows) {
+        write_wrapper_script(
+            dir,
+            "python-passthrough-wrapper.cmd",
+            &format!(
+                "@echo off\r\necho python-passthrough>>\"{}\"\r\nexit /b 0\r\n",
+                marker.display()
+            ),
+        )
+    } else {
+        write_wrapper_script(
+            dir,
+            "python-passthrough-wrapper.sh",
+            &format!(
+                "#!/bin/sh\nprintf 'python-passthrough\\n' >> '{}'\nexit 0\n",
+                marker.display()
+            ),
+        )
+    }
+}
+
 fn rg_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
     if cfg!(windows) {
         write_wrapper_script(
@@ -173,6 +195,60 @@ fn test_tg_classify_uses_tg_sidecar_python_override() {
     assert!(
         marker.exists(),
         "expected override wrapper marker at {}",
+        marker.display()
+    );
+}
+
+#[test]
+fn test_tg_upgrade_uses_python_passthrough_override() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("python-upgrade-marker.txt");
+    let python_wrapper = python_passthrough_wrapper_script(dir.path(), &marker);
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("upgrade")
+        .env("TG_SIDECAR_PYTHON", &python_wrapper);
+
+    let output = run_with_timeout(tg, Duration::from_secs(10));
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        marker.exists(),
+        "expected passthrough override marker at {}",
+        marker.display()
+    );
+}
+
+#[test]
+fn test_tg_update_alias_uses_python_passthrough_override() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("python-update-marker.txt");
+    let python_wrapper = python_passthrough_wrapper_script(dir.path(), &marker);
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("update")
+        .env("TG_SIDECAR_PYTHON", &python_wrapper);
+
+    let output = run_with_timeout(tg, Duration::from_secs(10));
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        marker.exists(),
+        "expected passthrough override marker at {}",
         marker.display()
     );
 }

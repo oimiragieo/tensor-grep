@@ -226,6 +226,9 @@ pub enum Commands {
     Search(SearchArgs),
     /// Measure CPU vs GPU crossover thresholds and persist smart-routing calibration
     Calibrate(CalibrateArgs),
+    /// Upgrade tensor-grep via the managed Python package path
+    #[command(alias = "update")]
+    Upgrade,
     /// Start the AI-assistant Model Context Protocol (MCP) server
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
@@ -374,6 +377,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Search(args) => handle_ripgrep_search(args),
         Commands::Calibrate(args) => handle_calibrate_command(args),
+        Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
         Commands::Run(args) => handle_ast_run(args),
@@ -576,6 +580,8 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
     const SUBCOMMANDS: &[&str] = &[
         "search",
         "calibrate",
+        "upgrade",
+        "update",
         "mcp",
         "classify",
         "run",
