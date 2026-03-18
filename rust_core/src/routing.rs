@@ -145,7 +145,11 @@ impl RoutingDecision {
     }
 
     pub const fn native_gpu_auto() -> Self {
-        Self::new(BackendSelection::NativeGpu, "gpu-auto-size-threshold", false)
+        Self::new(
+            BackendSelection::NativeGpu,
+            "gpu-auto-size-threshold",
+            false,
+        )
     }
 
     pub const fn ripgrep() -> Self {
@@ -153,7 +157,11 @@ impl RoutingDecision {
     }
 
     pub const fn gpu_sidecar() -> Self {
-        Self::new(BackendSelection::GpuSidecar, "gpu-device-ids-explicit", false)
+        Self::new(
+            BackendSelection::GpuSidecar,
+            "gpu-device-ids-explicit",
+            false,
+        )
     }
 }
 
@@ -196,13 +204,10 @@ pub const fn route_search(
             return RoutingDecision::native_gpu_auto();
         }
 
-        return RoutingDecision::native_cpu_gpu_fallback(
-            config.rg_available,
-            structured_output,
-        );
+        return RoutingDecision::native_cpu_gpu_fallback(config.rg_available, structured_output);
     }
 
-    if config.prefer_rg_passthrough && config.rg_available {
+    if config.rg_available && (config.prefer_rg_passthrough || !structured_output) {
         return RoutingDecision::ripgrep();
     }
 
@@ -210,9 +215,9 @@ pub const fn route_search(
         return RoutingDecision::native_cpu_json(config.rg_available);
     }
 
-    if config.rg_available {
-        RoutingDecision::native_cpu_auto(true, false)
-    } else {
+    if !config.rg_available {
         RoutingDecision::native_cpu_rg_unavailable()
+    } else {
+        RoutingDecision::native_cpu_auto(true, false)
     }
 }

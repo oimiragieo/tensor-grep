@@ -1,6 +1,6 @@
 use tensor_grep_rs::routing::{
-    route_search, BackendSelection, IndexRoutingState, SearchRoutingConfig,
-    SearchRoutingCalibration,
+    route_search, BackendSelection, IndexRoutingState, SearchRoutingCalibration,
+    SearchRoutingConfig,
 };
 
 fn base_config() -> SearchRoutingConfig {
@@ -185,7 +185,7 @@ fn test_route_search_auto_routes_to_gpu_only_with_positive_calibration_above_thr
     assert_eq!(positive.reason, "gpu-auto-size-threshold");
 
     let missing = route_search(&config, None, IndexRoutingState::default(), true);
-    assert_eq!(missing.selection, BackendSelection::NativeCpu);
+    assert_eq!(missing.selection, BackendSelection::Ripgrep);
 
     let negative = route_search(
         &config,
@@ -196,7 +196,7 @@ fn test_route_search_auto_routes_to_gpu_only_with_positive_calibration_above_thr
         IndexRoutingState::default(),
         true,
     );
-    assert_eq!(negative.selection, BackendSelection::NativeCpu);
+    assert_eq!(negative.selection, BackendSelection::Ripgrep);
 
     let below_threshold = route_search(
         &SearchRoutingConfig {
@@ -210,7 +210,7 @@ fn test_route_search_auto_routes_to_gpu_only_with_positive_calibration_above_thr
         IndexRoutingState::default(),
         true,
     );
-    assert_eq!(below_threshold.selection, BackendSelection::NativeCpu);
+    assert_eq!(below_threshold.selection, BackendSelection::Ripgrep);
 
     let unavailable = route_search(
         &config,
@@ -254,10 +254,10 @@ fn test_route_search_can_prefer_ripgrep_passthrough_as_final_fallback() {
 }
 
 #[test]
-fn test_route_search_defaults_to_native_cpu_with_rg_fallback() {
+fn test_route_search_defaults_to_ripgrep_for_cold_text_search() {
     let decision = route_search(&base_config(), None, IndexRoutingState::default(), false);
 
-    assert_eq!(decision.selection, BackendSelection::NativeCpu);
-    assert_eq!(decision.reason, "cpu-auto-size-threshold");
-    assert!(decision.allow_rg_fallback);
+    assert_eq!(decision.selection, BackendSelection::Ripgrep);
+    assert_eq!(decision.reason, "rg_passthrough");
+    assert!(!decision.allow_rg_fallback);
 }

@@ -74,31 +74,31 @@ uv run python benchmarks/run_gpu_benchmarks.py
 
 Notes:
 - `cyBERT` benchmarking also requires a reachable Triton inference endpoint; when Triton is unavailable, the script now records `cybert_backend` as `SKIP` instead of failing the whole benchmark run.
-- On this host, the current Windows local CLI run failed `benchmarks/check_regression.py --baseline auto` against `benchmarks/baselines/run_benchmarks.windows.json`. Treat the text benchmark line below as the current measured state, not as an accepted speedup claim.
+- On this host, the current Windows local CLI run passed `benchmarks/check_regression.py --baseline auto` against `benchmarks/baselines/run_benchmarks.windows.json` after restoring `rg` as the default cold-path backend for generic text search.
 
 ### ripgrep vs tensor-grep (`run_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.266s | 0.405s | Regression check FAIL |
-| Case-Insensitive Match | 0.231s | 0.483s | Regression check FAIL |
-| Regex Match | 0.259s | 0.498s | Regression check FAIL |
-| Invert Match | 0.526s | 0.791s | Regression check FAIL |
-| Count Matches | 0.212s | 0.390s | Regression check FAIL |
-| Context Lines (`-C2`) | 0.378s | 0.745s | Regression check FAIL |
-| Max Count (`-m 5`) | 0.112s | 0.308s | Regression check FAIL |
-| File Glob Filtering | 0.272s | 0.437s | Regression check FAIL |
-| Word Boundary | 0.206s | 0.418s | Regression check FAIL |
-| Fixed Strings (`-F`) | 0.240s | 0.394s | Regression check FAIL |
+| Simple String Match | 0.196s | 0.207s | Regression check PASS |
+| Case-Insensitive Match | 0.284s | 0.226s | Regression check PASS |
+| Regex Match | 0.253s | 0.247s | Regression check PASS |
+| Invert Match | 0.416s | 0.370s | Regression check PASS |
+| Count Matches | 0.155s | 0.168s | Regression check PASS |
+| Context Lines (`-C2`) | 0.358s | 0.393s | Regression check PASS |
+| Max Count (`-m 5`) | 0.115s | 0.128s | Regression check PASS |
+| File Glob Filtering | 0.201s | 0.207s | Regression check PASS |
+| Word Boundary | 0.204s | 0.239s | Regression check PASS |
+| Fixed Strings (`-F`) | 0.188s | 0.218s | Regression check PASS |
 
 ### Native CPU large-file / many-file (`run_native_cpu_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep native CPU | Ratio | Result |
 | --- | --- | --- | --- | --- |
-| cold_standard_corpus | 0.341s | 0.631s | 1.848x | FAIL |
-| large_file_200mb | 0.290s | 0.449s | 1.546x | FAIL |
-| large_file_200mb_count | 0.374s | 0.338s | 0.903x | PASS |
-| many_file_directory | 0.223s | 0.410s | 1.841x | FAIL |
+| cold_standard_corpus | 0.201s | 0.131s | 0.654x | PASS |
+| large_file_200mb | 0.231s | 0.117s | 0.509x | PASS |
+| large_file_200mb_count | 0.239s | 0.058s | 0.242x | PASS |
+| many_file_directory | 0.210s | 0.055s | 0.264x | PASS |
 
 ### ast-grep vs tensor-grep AST mode (`run_ast_benchmarks.py`)
 

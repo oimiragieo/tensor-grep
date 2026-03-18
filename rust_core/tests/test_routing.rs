@@ -36,11 +36,7 @@ fn write_text_corpus(dir: &Path) {
         "hello world\nfoo bar baz\ngoodbye world\n",
     )
     .unwrap();
-    fs::write(
-        dir.join("b.txt"),
-        "nothing here\nhello again friend\nend\n",
-    )
-    .unwrap();
+    fs::write(dir.join("b.txt"), "nothing here\nhello again friend\nend\n").unwrap();
     fs::write(dir.join("notes.md"), "hello from markdown\n").unwrap();
 }
 
@@ -62,7 +58,11 @@ fn write_sized_routing_corpus(dir: &Path, target_bytes: usize) -> PathBuf {
             break;
         }
         let end = ((index + 1) * chunk_size).min(bytes.len());
-        fs::write(corpus.join(format!("chunk-{index}.log")), &bytes[start..end]).unwrap();
+        fs::write(
+            corpus.join(format!("chunk-{index}.log")),
+            &bytes[start..end],
+        )
+        .unwrap();
     }
 
     corpus
@@ -171,8 +171,14 @@ fn write_mock_gpu_sidecar_script(dir: &Path, matched_file: &Path, marker: &Path)
 }
 
 fn assert_verbose_routing(stderr: &str, backend: &str, reason: &str, sidecar_used: bool) {
-    assert!(stderr.contains(&format!("routing_backend={backend}")), "stderr={stderr}");
-    assert!(stderr.contains(&format!("routing_reason={reason}")), "stderr={stderr}");
+    assert!(
+        stderr.contains(&format!("routing_backend={backend}")),
+        "stderr={stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("routing_reason={reason}")),
+        "stderr={stderr}"
+    );
     assert!(
         stderr.contains(&format!("sidecar_used={sidecar_used}")),
         "stderr={stderr}"
@@ -279,14 +285,23 @@ fn test_calibrate_writes_valid_crossover_config_from_mock_results() {
 
     let stdout_payload: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(stdout_payload["version"], Value::from(1));
-    assert_eq!(stdout_payload["routing_backend"], Value::from("Calibration"));
-    assert_eq!(stdout_payload["routing_reason"], Value::from("manual-calibrate"));
+    assert_eq!(
+        stdout_payload["routing_backend"],
+        Value::from("Calibration")
+    );
+    assert_eq!(
+        stdout_payload["routing_reason"],
+        Value::from("manual-calibrate")
+    );
     assert_eq!(stdout_payload["sidecar_used"], Value::from(false));
     assert_eq!(
         stdout_payload["corpus_size_breakpoint_bytes"],
         Value::from(100_u64 * 1024 * 1024)
     );
-    assert_eq!(stdout_payload["recommendation"], Value::from("gpu_above_100mb"));
+    assert_eq!(
+        stdout_payload["recommendation"],
+        Value::from("gpu_above_100mb")
+    );
     assert_eq!(stdout_payload["device_name"], Value::from("Mock RTX 4070"));
     assert_eq!(stdout_payload["measurements"].as_array().unwrap().len(), 5);
 
@@ -341,18 +356,25 @@ fn test_repeated_calibrate_overwrites_config_and_keeps_output_contract_stable() 
 
         let stdout_payload: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(stdout_payload["version"], Value::from(1));
-        assert_eq!(stdout_payload["routing_backend"], Value::from("Calibration"));
-        assert_eq!(stdout_payload["routing_reason"], Value::from("manual-calibrate"));
+        assert_eq!(
+            stdout_payload["routing_backend"],
+            Value::from("Calibration")
+        );
+        assert_eq!(
+            stdout_payload["routing_reason"],
+            Value::from("manual-calibrate")
+        );
         assert_eq!(stdout_payload["sidecar_used"], Value::from(false));
         assert_eq!(stdout_payload["recommendation"], expected_recommendation);
 
-        let config_payload: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        let config_payload: Value =
+            serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
         assert_eq!(config_payload, stdout_payload);
     }
 }
 
 #[test]
-fn test_routing_default_search_uses_native_cpu_auto_route() {
+fn test_routing_default_search_prefers_ripgrep_cold_path() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
 
@@ -364,13 +386,17 @@ fn test_routing_default_search_uses_native_cpu_auto_route() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
-fn test_routing_small_corpus_stays_on_native_cpu() {
+fn test_routing_small_corpus_prefers_ripgrep_without_calibration() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 10 * 1024 * 1024);
 
@@ -384,10 +410,14 @@ fn test_routing_small_corpus_stays_on_native_cpu() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[cfg(feature = "cuda")]
@@ -421,14 +451,23 @@ fn test_routing_large_corpus_auto_routes_to_gpu_native() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeGpuBackend", "gpu-auto-size-threshold", false);
+    assert_verbose_routing(
+        &stderr,
+        "NativeGpuBackend",
+        "gpu-auto-size-threshold",
+        false,
+    );
 }
 
 #[test]
-fn test_routing_large_corpus_without_calibration_routes_to_native_cpu() {
+fn test_routing_large_corpus_without_calibration_prefers_ripgrep() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
     let config_path = dir.path().join("missing-crossover.json");
@@ -444,13 +483,17 @@ fn test_routing_large_corpus_without_calibration_routes_to_native_cpu() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
-fn test_routing_stale_crossover_config_falls_back_to_native_cpu() {
+fn test_routing_stale_crossover_config_falls_back_to_ripgrep() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
     let config_path = dir.path().join("stale-crossover.json");
@@ -474,13 +517,17 @@ fn test_routing_stale_crossover_config_falls_back_to_native_cpu() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
-fn test_routing_cpu_always_crossover_config_never_auto_routes_to_gpu() {
+fn test_routing_cpu_always_crossover_config_prefers_ripgrep() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
     let config_path = dir.path().join("cpu-always-crossover.json");
@@ -504,9 +551,13 @@ fn test_routing_cpu_always_crossover_config_never_auto_routes_to_gpu() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[cfg(feature = "cuda")]
@@ -540,9 +591,18 @@ fn test_routing_fresh_crossover_config_uses_calibrated_gpu_breakpoint() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeGpuBackend", "gpu-auto-size-threshold", false);
+    assert_verbose_routing(
+        &stderr,
+        "NativeGpuBackend",
+        "gpu-auto-size-threshold",
+        false,
+    );
 }
 
 #[cfg(feature = "cuda")]
@@ -571,7 +631,11 @@ fn test_routing_large_corpus_falls_back_to_cpu_when_cuda_is_unavailable() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(payload["routing_backend"], "NativeCpuBackend");
@@ -606,15 +670,30 @@ fn test_routing_large_corpus_gpu_init_failure_is_user_facing() {
         .arg("ERROR gpu auto route")
         .arg(&corpus)
         .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
-        .env("TG_TEST_CUDA_BEHAVIOR", "init-failure:driver version is too old")
+        .env(
+            "TG_TEST_CUDA_BEHAVIOR",
+            "init-failure:driver version is too old",
+        )
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(2), "stdout={} stderr={}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("CUDA initialization failed"), "stderr={stderr}");
-    assert!(stderr.contains("driver version is too old"), "stderr={stderr}");
+    assert!(
+        stderr.contains("CUDA initialization failed"),
+        "stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("driver version is too old"),
+        "stderr={stderr}"
+    );
     assert!(!stderr.contains("CUDA_ERROR"), "stderr={stderr}");
     assert!(!stderr.contains("DriverError"), "stderr={stderr}");
 }
@@ -626,21 +705,36 @@ fn test_routing_cpu_failure_falls_back_to_ripgrep_passthrough() {
 
     let output = tg()
         .arg("search")
+        .arg("--cpu")
         .arg("--fixed-strings")
         .arg("--count")
         .arg("--verbose")
         .arg("ERROR gpu auto route")
         .arg(&corpus)
-        .env("TG_TEST_NATIVE_SEARCH_FORCE_ERROR", "synthetic native CPU failure")
+        .env(
+            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
+            "synthetic native CPU failure",
+        )
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("native CPU search failed"), "stderr={stderr}");
+    assert!(
+        stderr.contains("native CPU search failed"),
+        "stderr={stderr}"
+    );
     assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
-    assert!(!String::from_utf8_lossy(&output.stdout).trim().is_empty(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }
 
 #[test]
@@ -700,7 +794,6 @@ fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
     expected.sort();
 
     assert_eq!(actual, expected);
-
 }
 
 #[test]
@@ -722,7 +815,12 @@ fn test_search_ndjson_keeps_stdout_json_when_binary_warning_is_emitted() {
         .unwrap();
 
     let payloads = assert_ndjson_routing(&output, "NativeCpuBackend", "force_cpu", false);
-    assert_eq!(payloads.len(), 1, "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert_eq!(
+        payloads.len(),
+        1,
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     assert_eq!(payloads[0]["file"], text_path.display().to_string());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -754,10 +852,17 @@ fn test_search_single_binary_file_emits_stderr_warning_and_exit_zero() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stdout.is_empty(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        output.stdout.is_empty(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(stderr.trim(), format!("Binary file {} matches", binary_path.display()));
+    assert_eq!(
+        stderr.trim(),
+        format!("Binary file {} matches", binary_path.display())
+    );
 }
 
 #[test]
@@ -819,7 +924,13 @@ fn test_routing_falls_back_to_native_when_ripgrep_is_unavailable() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "status={:?}\nstdout={}\nstderr={}", output.status.code(), String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -843,7 +954,11 @@ fn test_search_json_and_ndjson_are_mutually_exclusive() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--json"), "stderr={stderr}");
@@ -904,9 +1019,13 @@ fn test_routing_warm_index_is_bypassed_by_invert_match() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
@@ -926,7 +1045,11 @@ fn test_routing_warm_index_is_bypassed_by_context_lines() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
@@ -953,9 +1076,17 @@ fn test_routing_explicit_gpu_device_ids_use_gpu_sidecar() {
         .unwrap();
 
     if cfg!(feature = "cuda") {
-        let payload = assert_json_routing(&output, "NativeGpuBackend", "gpu-device-ids-explicit-native", false);
+        let payload = assert_json_routing(
+            &output,
+            "NativeGpuBackend",
+            "gpu-device-ids-explicit-native",
+            false,
+        );
         assert_eq!(payload["total_matches"], 4);
-        assert!(!marker.exists(), "native GPU routing should not invoke the Python sidecar");
+        assert!(
+            !marker.exists(),
+            "native GPU routing should not invoke the Python sidecar"
+        );
     } else {
         let payload = assert_json_routing(&output, "GpuSidecar", "gpu-device-ids-explicit", true);
         assert_eq!(payload["total_matches"], 1);
@@ -999,12 +1130,18 @@ fn test_tg_run_rewrite_rejects_ndjson_without_python() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success(), "stdout={}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("--ndjson"), "stderr={stderr}");
     assert!(
-        stderr.contains("unexpected") || stderr.contains("unknown") || stderr.contains("found argument"),
+        stderr.contains("unexpected")
+            || stderr.contains("unknown")
+            || stderr.contains("found argument"),
         "stderr={stderr}"
     );
 }
@@ -1024,9 +1161,13 @@ fn test_routing_warm_index_is_bypassed_by_short_pattern() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
@@ -1045,9 +1186,13 @@ fn test_routing_warm_index_is_bypassed_by_word_regexp() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
@@ -1067,9 +1212,13 @@ fn test_routing_warm_index_is_bypassed_by_glob_filter() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
@@ -1089,9 +1238,13 @@ fn test_routing_warm_index_is_bypassed_by_max_count() {
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
 }
 
 #[test]
@@ -1121,10 +1274,16 @@ fn test_routing_stale_index_with_explicit_index_rebuilds() {
     assert_eq!(payload["total_matches"], 4);
 
     let after = index_path.metadata().unwrap().modified().unwrap();
-    assert!(after > before, "expected stale index rebuild to update mtime");
+    assert!(
+        after > before,
+        "expected stale index rebuild to update mtime"
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("stale") || stderr.contains("rebuilding"), "stderr={stderr}");
+    assert!(
+        stderr.contains("stale") || stderr.contains("rebuilding"),
+        "stderr={stderr}"
+    );
 }
 
 #[test]
@@ -1181,9 +1340,17 @@ fn test_routing_explicit_gpu_device_ids_override_warm_index() {
         .unwrap();
 
     if cfg!(feature = "cuda") {
-        let payload = assert_json_routing(&output, "NativeGpuBackend", "gpu-device-ids-explicit-native", false);
+        let payload = assert_json_routing(
+            &output,
+            "NativeGpuBackend",
+            "gpu-device-ids-explicit-native",
+            false,
+        );
         assert_eq!(payload["total_matches"], 3);
-        assert!(!marker.exists(), "native GPU routing should bypass the Python sidecar");
+        assert!(
+            !marker.exists(),
+            "native GPU routing should bypass the Python sidecar"
+        );
     } else {
         let payload = assert_json_routing(&output, "GpuSidecar", "gpu-device-ids-explicit", true);
         assert_eq!(payload["total_matches"], 1);
