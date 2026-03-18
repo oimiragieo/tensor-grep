@@ -1,6 +1,6 @@
 {
   "milestone": "ast-search-speed",
-  "round": 1,
+  "round": 2,
   "status": "fail",
   "assertionsSummary": {
     "total": 20,
@@ -14,16 +14,10 @@
   "failedAssertions": [
     {
       "id": "VAL-CROSS-001",
-      "reason": "Text-search throughput regression detected by check_regression.py. Scenarios like Simple String Match regressed by ~26%, Max Count Limit by ~47%. Requirement is within +/-5%."
+      "reason": "Performance regression exceeded \u00b15% tolerance on Regex Match (5.43%) and Context Lines (12.47%) scenarios."
     }
   ],
   "blockedAssertions": [],
-  "appliedUpdates": [
-    {
-      "target": "user-testing.md",
-      "description": "Added flow validator guidance for CLI surface, instructing subagents to execute tests sequentially to avoid benchmark noise.",
-      "source": "setup"
-    }
-  ],
-  "previousRound": null
+  "appliedUpdates": [],
+  "previousRound": ".factory/validation/ast-search-speed/user-testing/synthesis.json.old"
 }
