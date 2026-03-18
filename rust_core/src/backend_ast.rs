@@ -451,7 +451,8 @@ impl AstBackend {
             })
             .collect();
 
-        let (mut valid_edits, mut rejected_overlaps) = collect_per_file_rewrite_outcomes(file_results)?;
+        let (mut valid_edits, mut rejected_overlaps) =
+            collect_per_file_rewrite_outcomes(file_results)?;
         sort_rewrite_edits(&mut valid_edits);
         sort_overlap_rejections(&mut rejected_overlaps);
         assign_edit_ids(&mut valid_edits);
@@ -529,9 +530,7 @@ impl AstBackend {
 
         let file_results: Vec<Result<Option<PreparedRewriteFile>>> = files
             .par_iter()
-            .map(|file| {
-                Self::plan_file_rewrites_prepared(pattern, replacement, lang, file)
-            })
+            .map(|file| Self::plan_file_rewrites_prepared(pattern, replacement, lang, file))
             .collect();
 
         let mut prepared_files = Vec::new();
@@ -577,12 +576,20 @@ impl AstBackend {
         lang: SupportLang,
         file: &Path,
     ) -> Result<Option<PerFileRewriteOutcome>> {
-        let Some(mut prepared) = Self::plan_file_rewrites_prepared(pattern, replacement, lang, file)? else {
+        let Some(mut prepared) =
+            Self::plan_file_rewrites_prepared(pattern, replacement, lang, file)?
+        else {
             return Ok(None);
         };
         sort_rewrite_edits(&mut prepared.edits);
         let (valid_edits, rejected_overlaps) = validate_no_overlaps(prepared.edits);
-        apply_prepared_rewrite_file(prepared.file, prepared.original_source, valid_edits, rejected_overlaps)
+        apply_prepared_rewrite_file(
+            prepared.file,
+            prepared.original_source,
+            valid_edits,
+            rejected_overlaps,
+            &direct_write_file,
+        )
     }
 
     fn plan_and_apply_single_batch_rewrite(
@@ -590,12 +597,19 @@ impl AstBackend {
         lang: SupportLang,
         file: &Path,
     ) -> Result<Option<PerFileRewriteOutcome>> {
-        let Some(mut prepared) = Self::plan_file_batch_rewrites_prepared(rewrites, lang, file)? else {
+        let Some(mut prepared) = Self::plan_file_batch_rewrites_prepared(rewrites, lang, file)?
+        else {
             return Ok(None);
         };
         sort_rewrite_edits(&mut prepared.edits);
         let (valid_edits, rejected_overlaps) = validate_batch_no_overlaps(prepared.edits);
-        apply_prepared_rewrite_file(prepared.file, prepared.original_source, valid_edits, rejected_overlaps)
+        apply_prepared_rewrite_file(
+            prepared.file,
+            prepared.original_source,
+            valid_edits,
+            rejected_overlaps,
+            &direct_write_file,
+        )
     }
 
     fn plan_file_rewrites_prepared(
@@ -1054,7 +1068,11 @@ fn ensure_valid_utf8_range(source: &str, file: &Path, byte_range: &Range<usize>)
     Ok(())
 }
 
-fn rewrite_source_with_edits(file: &Path, original: &str, edits: &[&RewriteEdit]) -> Result<String> {
+fn rewrite_source_with_edits(
+    file: &Path,
+    original: &str,
+    edits: &[&RewriteEdit],
+) -> Result<String> {
     let mut result = String::with_capacity(original.len());
     let mut cursor = 0usize;
     for edit in edits {
@@ -1263,6 +1281,19 @@ fn atomic_write_file(file: &Path, contents: &[u8]) -> Result<()> {
     atomic_write_file_with_hook(file, contents, |_| Ok(()))
 }
 
+/// Overwrite a file directly for the one-shot plan+apply fast path.
+fn direct_write_file(file: &Path, contents: &[u8]) -> Result<()> {
+    // The one-shot plan_and_apply path prioritizes sg-parity throughput over the temp-file rename
+    // contract used by explicit plan+apply. We still reject stale files before writing, but once a
+    // file has been planned from its current on-disk contents we overwrite it directly so Windows
+    // rewrite apply is dominated by actual rewrite work instead of temp-file creation + rename.
+    // On NTFS, in-place overwrites are journaled at the filesystem level, so after a crash readers
+    // observe either the previous committed bytes or the completed overwrite rather than a half-
+    // renamed temp file sequence. That trade-off matches sg's std::fs::write() behavior.
+    std::fs::write(file, contents)
+        .with_context(|| format!("failed to overwrite {}", file.display()))
+}
+
 fn atomic_write_file_with_hook<F>(file: &Path, contents: &[u8], before_rename: F) -> Result<()>
 where
     F: FnOnce(&Path) -> Result<()>,
@@ -1461,12 +1492,16 @@ where
     write_file(file, rewritten.as_bytes())
 }
 
-fn apply_prepared_rewrite_file(
+fn apply_prepared_rewrite_file<W>(
     file: PathBuf,
     original_source: String,
     valid_edits: Vec<RewriteEdit>,
     rejected_overlaps: Vec<OverlapRejection>,
-) -> Result<Option<PerFileRewriteOutcome>> {
+    write_file: &W,
+) -> Result<Option<PerFileRewriteOutcome>>
+where
+    W: Fn(&Path, &[u8]) -> Result<()> + Sync,
+{
     if valid_edits.is_empty() && rejected_overlaps.is_empty() {
         return Ok(None);
     }
@@ -1478,7 +1513,7 @@ fn apply_prepared_rewrite_file(
             &file,
             &file_edits,
             Some(original_source.as_str()),
-            &atomic_write_file,
+            write_file,
         )?;
     }
 
@@ -1721,6 +1756,23 @@ mod tests {
     }
 
     #[test]
+    fn direct_write_overwrites_target_without_creating_temp_files() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("fixture.py");
+        fs::write(&file_path, "before\n").unwrap();
+
+        direct_write_file(&file_path, b"after\n").unwrap();
+
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "after\n");
+        assert!(
+            temp_entries(dir.path())
+                .into_iter()
+                .all(|entry| !entry.starts_with(".tg_tmp_")),
+            "direct-write path should not leave temporary files behind"
+        );
+    }
+
+    #[test]
     fn apply_edit_set_stops_after_injected_failure_and_leaves_remaining_files_unmodified() {
         let dir = tempdir().unwrap();
         let first_file = dir.path().join("a.py");
@@ -1760,8 +1812,14 @@ mod tests {
             "unexpected error: {message}"
         );
         assert_eq!(fs::read_to_string(&first_file).unwrap(), "lambda x: x\n");
-        assert_eq!(fs::read_to_string(&second_file).unwrap(), "def b(y): return y\n");
-        assert_eq!(fs::read_to_string(&third_file).unwrap(), "def c(z): return z\n");
+        assert_eq!(
+            fs::read_to_string(&second_file).unwrap(),
+            "def b(y): return y\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&third_file).unwrap(),
+            "def c(z): return z\n"
+        );
         assert!(
             temp_entries(dir.path())
                 .into_iter()

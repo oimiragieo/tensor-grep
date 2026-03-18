@@ -851,7 +851,10 @@ fn test_batch_plan_and_apply_verify_succeeds() {
     assert!(verification.mismatches.is_empty());
 
     assert_eq!(fs::read_to_string(&first_file).unwrap(), "lambda x: x\n");
-    assert_eq!(fs::read_to_string(&second_file).unwrap(), "result = add(1)\n");
+    assert_eq!(
+        fs::read_to_string(&second_file).unwrap(),
+        "result = add(1)\n"
+    );
 }
 
 #[test]
