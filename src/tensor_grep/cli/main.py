@@ -669,10 +669,13 @@ def _select_ast_backend_for_pattern(
 Supports almost all ripgrep (rg) flags for drop-in compatibility.
 
 **Other Available Subcommands:**
+- `tg calibrate`: Measure CPU vs GPU crossover thresholds
+- `tg devices`: Print routable GPU device IDs and VRAM inventory
 - `tg mcp`: Start the AI-assistant Model Context Protocol (MCP) server
 - `tg classify`: Run semantic NLP threat classification on logs via cyBERT
 - `tg run`: Run GPU-accelerated AST structural queries (ast-grep parity)
 - `tg scan` / `tg test` / `tg lsp`: Auxiliary AST-GNN workflows
+- `tg upgrade` / `tg update`: Upgrade tensor-grep in place
 """,
 )
 def search_command(
@@ -1948,12 +1951,10 @@ def main_entry() -> None:
 
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]
-        if first_arg in ("--help", "-h"):
+        if first_arg not in ("--help", "-h") and first_arg not in known_commands and not first_arg.startswith(
+            "--typer-"
+        ):
             sys.argv.insert(1, "search")
-        elif first_arg not in known_commands and not first_arg.startswith("--typer-"):
-            sys.argv.insert(1, "search")
-    elif len(sys.argv) == 1:
-        sys.argv.extend(["search", "--help"])
 
     app()
 

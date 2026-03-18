@@ -1798,6 +1798,48 @@ def test_main_entry_should_not_rewrite_calibrate_subcommand(monkeypatch):
     assert seen["argv"] == ["tg", "calibrate"]
 
 
+def test_main_entry_should_not_rewrite_top_level_help(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "--help"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "--help"]
+
+
+def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg"]
+
+
+def test_app_help_should_list_upgrade_and_update_commands():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "upgrade" in result.stdout
+    assert "update" in result.stdout
+
+
 def test_calibrate_command_delegates_to_native_tg(monkeypatch):
     from tensor_grep.cli import main as cli_main
 
