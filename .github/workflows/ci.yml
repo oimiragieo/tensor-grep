@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  schedule:
+    - cron: "17 6 * * 1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -298,6 +300,63 @@ jobs:
         working-directory: rust_core
         run: cargo test --test test_search_golden
 
+  native-build-smoke:
+    name: native-build-smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python for PyO3 Linker
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create venv for PyO3
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "$GITHUB_WORKSPACE\\.venv\\Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Build native release binary
+        working-directory: rust_core
+        run: cargo build --release --no-default-features
+
+      - name: Smoke-test native release binary (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="rust_core/target/release/tg"
+          "$BIN" --version
+          "$BIN" --help
+          workdir="$(mktemp -d)"
+          printf 'ERROR one\nINFO two\n' > "$workdir/sample.log"
+          "$BIN" search ERROR "$workdir/sample.log"
+
+      - name: Smoke-test native release binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "rust_core\\target\\release\\tg.exe"
+          & $bin --version
+          & $bin --help
+          $workdir = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "tg-native-smoke") -Force
+          Set-Content -Path (Join-Path $workdir.FullName "sample.log") -Value "ERROR one`nINFO two"
+          & $bin search ERROR (Join-Path $workdir.FullName "sample.log")
+
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
     runs-on: ubuntu-latest
@@ -405,7 +464,7 @@ jobs:
 
   release:
     name: Semantic Release
-    needs: [release-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, test-gpu-linux, benchmark-regression]
+    needs: [release-readiness, package-manager-readiness, static-analysis, test-python, test-rust-core, search-golden-parity, native-build-smoke, test-gpu-linux, benchmark-regression]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(github.event.head_commit.message, 'skip release')
     runs-on: ubuntu-latest
     outputs:

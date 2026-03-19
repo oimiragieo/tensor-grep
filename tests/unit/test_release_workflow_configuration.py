@@ -67,6 +67,22 @@ def test_ci_workflow_should_run_windows_search_golden_parity_job() -> None:
     assert "cargo test --test test_search_golden" in workflow
 
 
+def test_ci_workflow_should_run_on_a_schedule() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "schedule:" in workflow
+    assert "cron:" in workflow
+
+
+def test_ci_workflow_should_include_native_build_smoke_matrix() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "native-build-smoke" in workflow
+    assert "cargo build --release" in workflow
+    assert "--version" in workflow
+    assert "--help" in workflow
+    assert "sample.log" in workflow
+    assert "target/release/tg" in workflow or "target\\release\\tg.exe" in workflow
+
+
 def test_release_workflow_should_smoke_test_package_manager_bundle_before_publish() -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "Smoke-test package-manager bundle contracts" in workflow
