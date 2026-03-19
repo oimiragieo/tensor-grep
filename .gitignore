@@ -58,3 +58,6 @@ gpu_bench_data/
 
 # Local profiling artifacts
 src/tensor_grep/core/profile_stats
+
+# Local agent validation artifacts
+.factory/validation/
