@@ -377,12 +377,14 @@ fn test_repeated_calibrate_overwrites_config_and_keeps_output_contract_stable() 
 fn test_routing_default_search_prefers_ripgrep_cold_path() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -399,6 +401,7 @@ fn test_routing_default_search_prefers_ripgrep_cold_path() {
 fn test_routing_small_corpus_prefers_ripgrep_without_calibration() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 10 * 1024 * 1024);
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -407,6 +410,7 @@ fn test_routing_small_corpus_prefers_ripgrep_without_calibration() {
         .arg("--verbose")
         .arg("ERROR gpu auto route")
         .arg(&corpus)
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -471,6 +475,7 @@ fn test_routing_large_corpus_without_calibration_prefers_ripgrep() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
     let config_path = dir.path().join("missing-crossover.json");
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -480,6 +485,7 @@ fn test_routing_large_corpus_without_calibration_prefers_ripgrep() {
         .arg("ERROR gpu auto route")
         .arg(&corpus)
         .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -497,6 +503,7 @@ fn test_routing_stale_crossover_config_falls_back_to_ripgrep() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
     let config_path = dir.path().join("stale-crossover.json");
+    let rg_wrapper = write_rg_wrapper(dir.path());
     write_crossover_config(
         &config_path,
         10 * 1024 * 1024,
@@ -514,6 +521,7 @@ fn test_routing_stale_crossover_config_falls_back_to_ripgrep() {
         .arg("ERROR gpu auto route")
         .arg(&corpus)
         .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -531,6 +539,7 @@ fn test_routing_cpu_always_crossover_config_prefers_ripgrep() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 60 * 1024 * 1024);
     let config_path = dir.path().join("cpu-always-crossover.json");
+    let rg_wrapper = write_rg_wrapper(dir.path());
     write_crossover_config(
         &config_path,
         1024 * 1024 * 1024,
@@ -548,6 +557,7 @@ fn test_routing_cpu_always_crossover_config_prefers_ripgrep() {
         .arg("ERROR gpu auto route")
         .arg(&corpus)
         .env("TG_CROSSOVER_CONFIG_PATH", &config_path)
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -702,6 +712,7 @@ fn test_routing_large_corpus_gpu_init_failure_is_user_facing() {
 fn test_routing_cpu_failure_falls_back_to_ripgrep_passthrough() {
     let dir = tempdir().unwrap();
     let corpus = write_sized_routing_corpus(dir.path(), 10 * 1024 * 1024);
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -715,6 +726,7 @@ fn test_routing_cpu_failure_falls_back_to_ripgrep_passthrough() {
             "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
             "synthetic native CPU failure",
         )
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -1008,6 +1020,7 @@ fn test_routing_warm_index_is_bypassed_by_invert_match() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -1016,6 +1029,7 @@ fn test_routing_warm_index_is_bypassed_by_invert_match() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -1033,6 +1047,7 @@ fn test_routing_warm_index_is_bypassed_by_context_lines() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -1042,6 +1057,7 @@ fn test_routing_warm_index_is_bypassed_by_context_lines() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -1151,6 +1167,7 @@ fn test_routing_warm_index_is_bypassed_by_short_pattern() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -1158,6 +1175,7 @@ fn test_routing_warm_index_is_bypassed_by_short_pattern() {
         .arg("--verbose")
         .arg("he")
         .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -1175,6 +1193,7 @@ fn test_routing_warm_index_is_bypassed_by_word_regexp() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -1183,6 +1202,7 @@ fn test_routing_warm_index_is_bypassed_by_word_regexp() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -1200,6 +1220,7 @@ fn test_routing_warm_index_is_bypassed_by_glob_filter() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -1209,6 +1230,7 @@ fn test_routing_warm_index_is_bypassed_by_glob_filter() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 
@@ -1226,6 +1248,7 @@ fn test_routing_warm_index_is_bypassed_by_max_count() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
     build_index(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
 
     let output = tg()
         .arg("search")
@@ -1235,6 +1258,7 @@ fn test_routing_warm_index_is_bypassed_by_max_count() {
         .arg("--verbose")
         .arg("hello")
         .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
 

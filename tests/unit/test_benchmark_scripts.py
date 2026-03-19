@@ -110,6 +110,7 @@ def test_run_benchmarks_should_include_large_file_and_many_file_scenarios(tmp_pa
         many_file_dir=Path("many_files"),
         force_cpu=True,
         binary=tg_binary,
+        rg_binary="rg",
     )
 
     names = [scenario["name"] for scenario in scenarios]
