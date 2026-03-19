@@ -10,9 +10,39 @@ from tensor_grep.backends.rust_backend import RustCoreBackend
 from tensor_grep.backends.stringzilla_backend import StringZillaBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.memory_manager import MemoryManager
+from tensor_grep.core.query_analyzer import QueryAnalyzer, QueryType
+
+
+class ConfigurationError(RuntimeError):
+    """Raised when explicit user routing intent cannot be satisfied."""
 
 
 class Pipeline:
+    @staticmethod
+    def _raise_explicit_gpu_configuration_error(
+        config: SearchConfig | None,
+        detail: str,
+        cause: Exception | None = None,
+    ) -> None:
+        requested_ids = list(config.gpu_device_ids or []) if config is not None else []
+        message = (
+            "Explicit GPU device selection "
+            f"{requested_ids} could not initialize a GPU backend: {detail}"
+        )
+        if cause is not None:
+            raise ConfigurationError(message) from cause
+        raise ConfigurationError(message)
+
+    @staticmethod
+    def _raise_explicit_ast_configuration_error(
+        detail: str,
+        cause: Exception | None = None,
+    ) -> None:
+        message = f"Explicit AST search requires AST dependencies: {detail}"
+        if cause is not None:
+            raise ConfigurationError(message) from cause
+        raise ConfigurationError(message)
+
     @staticmethod
     def _supports_native_ast_pattern(config: SearchConfig | None) -> bool:
         if config is None:
@@ -96,6 +126,12 @@ class Pipeline:
             return False
         return True
 
+    @staticmethod
+    def _detect_query_type(config: SearchConfig | None) -> QueryType:
+        if config is None or not config.query_pattern:
+            return QueryType.FAST
+        return QueryAnalyzer().analyze(config.query_pattern).query_type
+
     def __init__(self, force_cpu: bool = False, config: SearchConfig | None = None):
         self.backend: ComputeBackend
         self.config = config
@@ -132,6 +168,7 @@ class Pipeline:
             needs_python_cpu = self._needs_python_cpu(config)
             should_try_gpu = self._should_try_gpu(config, needs_python_cpu)
             explicit_gpu_requested = self._should_honor_explicit_gpu_ids(config, needs_python_cpu)
+            query_type = self._detect_query_type(config)
             rg_available = rg_backend.is_available()
             rust_available = rust_backend.is_available()
 
@@ -170,11 +207,24 @@ class Pipeline:
                         self.backend = ast_backend
                         selected_backend_reason = "ast_backend_available_fallback"
                     else:
-                        self.backend = fallback_backend
-                        selected_backend_reason = "ast_backends_unavailable_fallback"
-                except ImportError:
+                        self._raise_explicit_ast_configuration_error(
+                            "no AST backend is available"
+                        )
+                except ImportError as exc:
+                    self._raise_explicit_ast_configuration_error(
+                        "backend imports failed",
+                        cause=exc,
+                    )
+            elif query_type is QueryType.NLP:
+                from tensor_grep.backends.cybert_backend import CybertBackend
+
+                cybert_backend = CybertBackend()
+                if cybert_backend.is_available():
+                    self.backend = cybert_backend
+                    selected_backend_reason = "nlp_cybert"
+                else:
                     self.backend = fallback_backend
-                    selected_backend_reason = "ast_import_error_fallback"
+                    selected_backend_reason = "nlp_backend_unavailable_fallback"
             elif config and config.count and rust_available:
                 # For pure counting, our Rust backend beats rg and everything else
                 self.backend = rust_backend
@@ -217,8 +267,10 @@ class Pipeline:
 
                 # If no chunk sizes were returned but we didn't force CPU, something is wrong with CUDA, fallback
                 if not chunk_sizes:
-                    self.backend = fallback_backend
-                    selected_backend_reason = "gpu_explicit_ids_no_chunk_sizes_fallback"
+                    self._raise_explicit_gpu_configuration_error(
+                        config,
+                        "no routable GPU chunk plan was available",
+                    )
                 else:
                     cudf_backend = CuDFBackend(chunk_sizes_mb=chunk_sizes, device_ids=device_ids)
                     if cudf_backend.is_available():
@@ -238,11 +290,16 @@ class Pipeline:
                                 selected_backend_reason = "gpu_explicit_ids_torch"
                                 selected_gpu_device_ids = list(device_ids)
                             else:
-                                self.backend = fallback_backend
-                                selected_backend_reason = "gpu_explicit_ids_no_gpu_backend_fallback"
-                        except ImportError:
-                            self.backend = fallback_backend
-                            selected_backend_reason = "gpu_explicit_ids_torch_import_error_fallback"
+                                self._raise_explicit_gpu_configuration_error(
+                                    config,
+                                    "CuDF and Torch GPU backends were unavailable",
+                                )
+                        except ImportError as exc:
+                            self._raise_explicit_gpu_configuration_error(
+                                config,
+                                "Torch backend imports failed after CuDF was unavailable",
+                                cause=exc,
+                            )
             elif rg_available:
                 # Default search path: always delegate to native rg for best end-to-end CLI speed.
                 self.backend = rg_backend

@@ -1,0 +1,140 @@
+{
+  "groupId": "benchmark-scripts",
+  "testedAt": "2026-03-16T00:00:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "artifactsDir": "C:\\dev\\projects\\tensor-grep\\artifacts",
+    "accessMode": "read-only"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-BENCH-004",
+      "title": "Multi-language AST benchmark runs successfully",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read and parse artifacts/bench_ast_multilang.json",
+          "expected": "Valid JSON with rows for python, javascript, typescript, rust",
+          "observed": "Valid JSON with 4 rows for all required languages"
+        },
+        {
+          "action": "Check each row has language, tg_median_s, sg_median_s, ratio fields",
+          "expected": "All 4 rows contain required fields",
+          "observed": "All 4 rows contain language, tg_median_s, sg_median_s, and ratio fields"
+        },
+        {
+          "action": "Check Python ratio <= 3.0",
+          "expected": "Python ratio <= 3.0",
+          "observed": "Python ratio = 1.122885 (well within threshold)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalOutput": "benchmark-expansion/benchmark-scripts/validation-output.txt",
+        "details": "Languages: python(ratio=1.122885), javascript(ratio=1.026472), typescript(ratio=0.985641), rust(ratio=1.292126). All have required fields. Python ratio 1.12 <= 3.0 gate passed."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-005",
+      "title": "Large-scale rewrite benchmark operates on 5k+ files",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read and parse artifacts/bench_rewrite_5k.json",
+          "expected": "Valid JSON with file_count >= 5000",
+          "observed": "file_count = 5000"
+        },
+        {
+          "action": "Check all three phases (plan, diff, apply) present with positive timings",
+          "expected": "phase_timings_s has plan, diff, apply with median > 0",
+          "observed": "plan=2.316s, diff=3.353s, apply=7.594s — all positive floats"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalOutput": "benchmark-expansion/benchmark-scripts/validation-output.txt",
+        "details": "file_count=5000 (>= 5000). Phases: plan median=2.316s, diff median=3.353s, apply median=7.594s. All positive floats. total_rewrites=250000, total_loc=250000."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-006",
+      "title": "Harness loop benchmark completes full agent cycle",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read and parse artifacts/bench_harness_loop.json",
+          "expected": "iterations >= 5 and all_passed: true",
+          "observed": "iterations=5, all_passed=true"
+        },
+        {
+          "action": "Verify each iteration row has remaining_matches=0 and passed=true",
+          "expected": "All 5 rows show 0 remaining matches and passed",
+          "observed": "All 5 iteration rows have remaining_matches=0 and passed=true"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalOutput": "benchmark-expansion/benchmark-scripts/validation-output.txt",
+        "details": "iterations=5 (>= 5). all_passed=true. Each of 5 rows: search->plan->apply->verify cycle completed with remaining_matches=0. Phase medians: search=0.092s, plan=0.097s, apply=0.159s, verify=0.041s."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-009",
+      "title": "All benchmark scripts produce valid JSON artifacts",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Parse all 5 benchmark artifacts with json.load()",
+          "expected": "All parse successfully as valid JSON",
+          "observed": "All 5 artifacts parse as valid JSON"
+        },
+        {
+          "action": "Check each artifact has 'suite' and 'generated_at_epoch_s' fields",
+          "expected": "All 5 artifacts contain both required fields",
+          "observed": "All 5 artifacts contain suite and generated_at_epoch_s"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalOutput": "benchmark-expansion/benchmark-scripts/validation-output.txt",
+        "details": "bench_ast_multilang.json: suite=run_ast_multilang_benchmarks, epoch=1773637214.43. bench_rewrite_5k.json: suite=run_ast_rewrite_benchmarks, epoch=1773638326.48. bench_harness_loop.json: suite=run_harness_loop_benchmark, epoch=1773639441.87. bench_index_scaling.json: suite=run_index_scaling_benchmark, epoch=1773640164.65. bench_run_ast_benchmarks.json: suite=ast_search_benchmark_gate, epoch=1773590522.08."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-010",
+      "title": "No regression in existing AST benchmark baseline",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read artifacts/bench_run_ast_benchmarks.json and check ratio",
+          "expected": "AST ratio <= 3.0",
+          "observed": "ratio = 2.688092 (<= 3.0)"
+        },
+        {
+          "action": "Check passed field",
+          "expected": "passed: true",
+          "observed": "passed: true"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "terminalOutput": "benchmark-expansion/benchmark-scripts/validation-output.txt",
+        "details": "AST benchmark ratio=2.688092 (threshold 3.0). tg_median=0.822317s, sg_median=0.305911s. passed=true. No regression detected."
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 5 assertions: all 5 passed. VAL-BENCH-004 (multi-lang AST) confirmed 4 languages with Python ratio 1.12. VAL-BENCH-005 (rewrite 5k) confirmed 5000 files with 3 phases. VAL-BENCH-006 (harness loop) confirmed 5 iterations all passed. VAL-BENCH-009 (valid JSON) confirmed all 5 artifacts have suite and epoch fields. VAL-BENCH-010 (no regression) confirmed AST ratio 2.69 <= 3.0."
+}

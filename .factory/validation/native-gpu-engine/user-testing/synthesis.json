@@ -1,0 +1,50 @@
+{
+  "milestone": "native-gpu-engine",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 20,
+    "passed": 18,
+    "failed": 2,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-BUILD-001",
+    "VAL-BUILD-002",
+    "VAL-GPU-001",
+    "VAL-GPU-002",
+    "VAL-GPU-003",
+    "VAL-GPU-004",
+    "VAL-GPU-025",
+    "VAL-GPU-026",
+    "VAL-GPU-005",
+    "VAL-GPU-006",
+    "VAL-GPU-007",
+    "VAL-GPU-010",
+    "VAL-GPU-011",
+    "VAL-GPU-008",
+    "VAL-GPU-020",
+    "VAL-GPU-022",
+    "VAL-GPU-023",
+    "VAL-GPU-024"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-GPU-009",
+      "reason": "Benchmark crossover.exists is false. GPU is slower than rg at all measured scales (best ratio 4.89x slower at 10MB)."
+    },
+    {
+      "id": "VAL-GPU-021",
+      "reason": "Not tested. No OOM simulation or massive corpus test is implemented in run_gpu_native_benchmarks.py."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Noted that python CLI wrapper may throw unhandled stack traces routing to native Rust GPU backend if CuDF/Torch absent. Rust binary works fine.",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}

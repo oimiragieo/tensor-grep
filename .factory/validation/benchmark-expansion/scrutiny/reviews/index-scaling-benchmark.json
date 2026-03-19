@@ -1,0 +1,50 @@
+{
+  "featureId": "index-scaling-benchmark",
+  "reviewedAt": "2026-03-16T05:56:00.000Z",
+  "commitId": "8eed3532e598f4dcc19a4102ed61425631eca478",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Clean, well-structured implementation of an index-scaling benchmark that generates deterministic log corpora at 1k/5k/10k file scales, measures cold index build time and warm query latency via hyperfine, records index file size, and emits a JSON artifact with all required fields. The hot-query benchmark was also updated to include the missing `generated_at_epoch_s` and `suite` fields in its JSON output. Tests cover the new benchmark's output structure, default directory resolution, and a parametrized source-level check ensuring all `run_*.py` benchmark scripts declare `suite` and `generated_at_epoch_s`. The implementation correctly reuses shared infrastructure (`build_command_string`, `resolve_hyperfine_binary`, `resolve_tg_binary`, `write_json`) and follows existing benchmark script patterns throughout.",
+    "issues": [
+      {
+        "file": "benchmarks/run_index_scaling_benchmark.py",
+        "line": 166,
+        "severity": "non_blocking",
+        "description": "The `build_remove_index_command` constructs a Python `-c` script using `r'''...'''` to embed the index path. This is creative but fragile for paths containing triple-quote sequences (extremely unlikely in practice but technically possible). Consider using `repr()` or base64 encoding for defensive path embedding."
+      },
+      {
+        "file": "benchmarks/run_index_scaling_benchmark.py",
+        "line": 336,
+        "severity": "non_blocking",
+        "description": "`build_base_payload` hardcodes `DEFAULT_QUERY_PATTERNS` rather than accepting patterns from `args`. The query patterns are not configurable via CLI. This is consistent with other benchmarks but limits flexibility."
+      },
+      {
+        "file": "tests/unit/test_benchmark_scripts.py",
+        "line": 9,
+        "severity": "non_blocking",
+        "description": "The `BENCHMARK_JSON_SCRIPTS` list is manually maintained. If a new `run_*.py` benchmark script is added without updating this list, the parametrized source-level check won't cover it. Consider auto-discovering scripts via `glob('benchmarks/run_*.py')` to prevent drift."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "The worker correctly added `benchmark_index_scaling` to `.factory/services.yaml` commands. No gaps here.",
+      "evidence": "services.yaml contains: benchmark_index_scaling: python benchmarks/run_index_scaling_benchmark.py --output artifacts/bench_index_scaling.json"
+    },
+    {
+      "area": "conventions",
+      "observation": "The benchmark-conventions.md library file does not mention index-scaling benchmarks or that `hyperfine` must be installed (only reachable via cargo install or HYPERFINE_BINARY env var). Workers discovering this benchmark for the first time may not realize hyperfine is a hard dependency.",
+      "evidence": ".factory/library/benchmark-conventions.md discusses regression gates and Windows timing variance but doesn't mention hyperfine as a prerequisite or list the index-scaling benchmark command."
+    },
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md benchmarks section lists `benchmarks/run_hot_query_benchmarks.py` for index but doesn't mention the new `run_index_scaling_benchmark.py`. Future workers may not know which benchmark to use for index scaling work.",
+      "evidence": "Mission AGENTS.md line: 'Use benchmarks/run_hot_query_benchmarks.py for index' — no mention of run_index_scaling_benchmark.py"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The index-scaling benchmark implementation is correct, well-tested, and satisfies all three validation assertions (VAL-BENCH-007, VAL-BENCH-008, VAL-BENCH-009). The script generates corpora at 3 scales (1k, 5k, 10k), measures build time and warm query latency using hyperfine, records index file size, emits >= 3 query patterns per scale, and produces valid JSON with suite/generated_at_epoch_s fields. The hot-query benchmark was also fixed to include the required envelope fields. The parametrized test ensures all benchmark scripts declare the required JSON metadata. Three non-blocking issues noted: fragile path embedding in prepare command, non-configurable query patterns, and manually maintained script list in tests."
+}

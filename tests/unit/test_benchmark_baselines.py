@@ -23,6 +23,23 @@ def test_benchmark_baselines_should_exist_and_use_expected_schema():
             assert "rg_time_s" in row
 
 
+def test_milestone_one_baseline_should_exist_and_use_expected_schema():
+    root = Path(__file__).resolve().parents[2]
+    baseline_path = root / "benchmarks" / "baseline_m1.json"
+
+    assert baseline_path.exists(), f"Missing benchmark baseline: {baseline_path}"
+
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert payload.get("suite") == "run_benchmarks"
+    assert payload.get("milestone") == "m1"
+    environment = payload.get("environment")
+    assert isinstance(environment, dict)
+    assert environment.get("platform")
+    assert environment.get("machine")
+    rows = payload.get("rows")
+    assert isinstance(rows, list) and len(rows) >= 8
+
+
 def test_benchmark_baselines_should_not_be_identical_across_operating_systems():
     root = Path(__file__).resolve().parents[2]
     ubuntu = json.loads(

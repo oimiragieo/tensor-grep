@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "routing_backend": "AstBackend",
+  "routing_reason": "ast-native",
+  "sidecar_used": false,
+  "diff": "--- a/C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py\n+++ b/C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py\n@@ -1,2 +1,2 @@\n-def add(x, y): return x + y\n-def mul(a, b): return a * b\n+lambda x, y: x + y\n+lambda a, b: a * b\n"
+}

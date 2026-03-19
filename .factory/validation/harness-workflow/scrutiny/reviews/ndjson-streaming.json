@@ -1,0 +1,33 @@
+{
+  "featureId": "ndjson-streaming",
+  "milestone": "harness-workflow",
+  "reviewer": "scrutiny-feature-reviewer",
+  "verdict": "pass",
+  "codeQualityIssues": [
+    {
+      "severity": "suggestion",
+      "description": "The NDJSON search-then-emit block is duplicated nearly identically across run_positional_cli (line 331) and handle_ripgrep_search (line 511). A shared helper could reduce duplication. However, this mirrors the existing --json duplication pattern, so it is consistent with project convention.",
+      "file": "rust_core/src/main.rs",
+      "line": 331
+    },
+    {
+      "severity": "non_blocking",
+      "description": "emit_ndjson_search_results uses println! for each NDJSON line. In a future multi-threaded context, interleaved writes could corrupt output. Current code is single-threaded so this is not a bug today, but worth noting for future parallelism work.",
+      "file": "rust_core/src/main.rs",
+      "line": 1285
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "target": "library",
+      "observation": "Worker correctly added .factory/library/ndjson-streaming.md documenting the NDJSON contract, GPU sidecar normalization strategy, and field schema. No gap.",
+      "action": "add"
+    },
+    {
+      "target": "skills",
+      "observation": "rust-worker SKILL.md already lists 'NDJSON streaming output' in its 'When to Use' section and step 4 documents the unified JSON envelope requirement. Skill appears up-to-date for this feature. No gap.",
+      "action": "update"
+    }
+  ],
+  "summary": "Clean pass. The implementation adds --ndjson to both PositionalCli and SearchArgs with clap conflicts_with for mutual exclusivity with --json. RunArgs deliberately omits --ndjson, so tg run --rewrite --ndjson fails at CLI parsing without entering Python. NDJSON emission is handled across all four search paths (positional CPU, explicit search CPU, trigram index, GPU sidecar). GPU sidecar correctly requests JSON internally and normalizes to per-line NDJSON in Rust. Existing --json behavior is fully preserved—only a conflicts_with annotation was added. Three new integration tests cover: per-line parseability with correct fields (3 matches), mutual exclusion error, and tg run --rewrite --ndjson rejection. All local gates (cargo test, clippy, ruff, mypy, pytest) passed. No blocking issues found."
+}

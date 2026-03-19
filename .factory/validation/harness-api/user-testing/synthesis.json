@@ -1,0 +1,33 @@
+{
+  "milestone": "harness-api",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 16,
+    "passed": 16,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-API-001",
+    "VAL-API-002",
+    "VAL-API-003",
+    "VAL-API-004",
+    "VAL-API-005",
+    "VAL-API-006",
+    "VAL-API-007",
+    "VAL-API-008",
+    "VAL-API-009",
+    "VAL-API-010",
+    "VAL-API-011",
+    "VAL-API-012",
+    "VAL-API-013",
+    "VAL-API-014",
+    "VAL-API-015",
+    "VAL-API-016"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}

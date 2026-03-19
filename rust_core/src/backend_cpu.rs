@@ -1,13 +1,25 @@
 use memchr::memmem;
-use memmap2::MmapOptions;
+use memmap2::{MmapMut, MmapOptions};
 use rayon::prelude::*;
 use regex::bytes::RegexBuilder;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 pub struct CpuBackend;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CpuMatch {
+    pub file: PathBuf,
+    pub line: usize,
+    pub text: String,
+}
+
+struct ReplacementOp {
+    start: usize,
+    end: usize,
+    bytes: Vec<u8>,
+}
 
 impl Default for CpuBackend {
     fn default() -> Self {
@@ -20,14 +32,14 @@ impl CpuBackend {
         Self
     }
 
-    pub fn search(
+    pub fn search_with_paths(
         &self,
         pattern: &str,
         path: &str,
         ignore_case: bool,
         fixed_strings: bool,
         invert_match: bool,
-    ) -> anyhow::Result<Vec<(usize, String)>> {
+    ) -> anyhow::Result<Vec<CpuMatch>> {
         let path_obj = Path::new(path);
         let mut results = Vec::new();
 
@@ -86,12 +98,27 @@ impl CpuBackend {
         Ok(results)
     }
 
+    pub fn search(
+        &self,
+        pattern: &str,
+        path: &str,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+    ) -> anyhow::Result<Vec<(usize, String)>> {
+        Ok(self
+            .search_with_paths(pattern, path, ignore_case, fixed_strings, invert_match)?
+            .into_iter()
+            .map(|result| (result.line, result.text))
+            .collect())
+    }
+
     fn search_file_memmem(
         &self,
         pattern: &[u8],
         path: &PathBuf,
         invert_match: bool,
-    ) -> anyhow::Result<Vec<(usize, String)>> {
+    ) -> anyhow::Result<Vec<CpuMatch>> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
@@ -106,8 +133,11 @@ impl CpuBackend {
                 let should_include = if invert_match { !is_match } else { is_match };
 
                 if should_include && !line_bytes.is_empty() {
-                    let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                    results.push((line_num, line_str));
+                    results.push(CpuMatch {
+                        file: path.clone(),
+                        line: line_num,
+                        text: String::from_utf8_lossy(line_bytes).into_owned(),
+                    });
                 }
                 start = i + 1;
                 line_num += 1;
@@ -120,8 +150,11 @@ impl CpuBackend {
             let should_include = if invert_match { !is_match } else { is_match };
 
             if should_include && !line_bytes.is_empty() {
-                let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                results.push((line_num, line_str));
+                results.push(CpuMatch {
+                    file: path.clone(),
+                    line: line_num,
+                    text: String::from_utf8_lossy(line_bytes).into_owned(),
+                });
             }
         }
 
@@ -133,7 +166,7 @@ impl CpuBackend {
         re: &regex::bytes::Regex,
         path: &PathBuf,
         invert_match: bool,
-    ) -> anyhow::Result<Vec<(usize, String)>> {
+    ) -> anyhow::Result<Vec<CpuMatch>> {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
@@ -148,8 +181,11 @@ impl CpuBackend {
                 let should_include = if invert_match { !is_match } else { is_match };
 
                 if should_include && !line_bytes.is_empty() {
-                    let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                    results.push((line_num, line_str));
+                    results.push(CpuMatch {
+                        file: path.clone(),
+                        line: line_num,
+                        text: String::from_utf8_lossy(line_bytes).into_owned(),
+                    });
                 }
                 start = i + 1;
                 line_num += 1;
@@ -162,8 +198,11 @@ impl CpuBackend {
             let should_include = if invert_match { !is_match } else { is_match };
 
             if should_include && !line_bytes.is_empty() {
-                let line_str = String::from_utf8_lossy(line_bytes).into_owned();
-                results.push((line_num, line_str));
+                results.push(CpuMatch {
+                    file: path.clone(),
+                    line: line_num,
+                    text: String::from_utf8_lossy(line_bytes).into_owned(),
+                });
             }
         }
 
@@ -179,6 +218,28 @@ impl CpuBackend {
         fixed_strings: bool,
     ) -> anyhow::Result<()> {
         let path_obj = Path::new(path);
+
+        if fixed_strings && !ignore_case && !pattern.is_empty() {
+            if path_obj.is_file() {
+                self.replace_file_literal(
+                    pattern.as_bytes(),
+                    replacement.as_bytes(),
+                    &path_obj.to_path_buf(),
+                )?;
+            } else if path_obj.is_dir() {
+                for entry in WalkDir::new(path_obj).into_iter().filter_map(|e| e.ok()) {
+                    if entry.file_type().is_file() {
+                        let _ = self.replace_file_literal(
+                            pattern.as_bytes(),
+                            replacement.as_bytes(),
+                            &entry.path().to_path_buf(),
+                        );
+                    }
+                }
+            }
+
+            return Ok(());
+        }
 
         let re = if fixed_strings {
             RegexBuilder::new(&regex::escape(pattern))
@@ -203,24 +264,184 @@ impl CpuBackend {
         Ok(())
     }
 
+    fn replace_file_literal(
+        &self,
+        pattern: &[u8],
+        replacement: &[u8],
+        path: &PathBuf,
+    ) -> anyhow::Result<()> {
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
+
+        let source = unsafe { MmapOptions::new().map(&file)? };
+        let original_len = source.len();
+        if original_len == 0 {
+            return Ok(());
+        }
+
+        let match_starts: Vec<usize> = memmem::find_iter(&source[..], pattern).collect();
+        if match_starts.is_empty() {
+            return Ok(());
+        }
+
+        if replacement.len() == pattern.len() {
+            drop(source);
+            let mut mmap = unsafe { MmapOptions::new().map_mut(&file)? };
+            for start in match_starts {
+                let end = start + replacement.len();
+                mmap[start..end].copy_from_slice(replacement);
+            }
+            mmap.flush()?;
+            return Ok(());
+        }
+
+        let replacements: Vec<ReplacementOp> = match_starts
+            .into_iter()
+            .map(|start| ReplacementOp {
+                start,
+                end: start + pattern.len(),
+                bytes: replacement.to_vec(),
+            })
+            .collect();
+
+        drop(source);
+
+        self.write_replacements_with_mmap(&file, original_len, &replacements)
+    }
+
     fn replace_file_regex(
         &self,
         re: &regex::bytes::Regex,
         replacement: &str,
         path: &PathBuf,
     ) -> anyhow::Result<()> {
-        let content = std::fs::read(path)?;
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
 
-        // If there are no matches, don't touch the file
-        if !re.is_match(&content) {
+        let source = unsafe { MmapOptions::new().map(&file)? };
+        let original_len = source.len();
+        if original_len == 0 {
             return Ok(());
         }
 
-        let replaced = re.replace_all(&content, replacement.as_bytes());
+        let replacements = self.collect_replacements(re, replacement, &source[..])?;
+        if replacements.is_empty() {
+            return Ok(());
+        }
 
-        let mut file = OpenOptions::new().write(true).truncate(true).open(path)?;
+        drop(source);
 
-        file.write_all(&replaced)?;
+        self.write_replacements_with_mmap(&file, original_len, &replacements)
+    }
+
+    fn write_replacements_with_mmap(
+        &self,
+        file: &File,
+        original_len: usize,
+        replacements: &[ReplacementOp],
+    ) -> anyhow::Result<()> {
+        let (new_len, max_extra_growth) = self.plan_replacements(original_len, replacements)?;
+
+        let required_len = original_len + max_extra_growth;
+        if required_len > original_len {
+            file.set_len(required_len as u64)?;
+        }
+
+        {
+            let mut mmap = unsafe { MmapOptions::new().map_mut(file)? };
+            self.apply_replacements_in_place(&mut mmap, original_len, replacements)?;
+        }
+
+        if new_len < required_len {
+            file.set_len(new_len as u64)?;
+        }
+
+        Ok(())
+    }
+
+    fn collect_replacements(
+        &self,
+        re: &regex::bytes::Regex,
+        replacement: &str,
+        source: &[u8],
+    ) -> anyhow::Result<Vec<ReplacementOp>> {
+        let mut replacements = Vec::new();
+
+        for captures in re.captures_iter(source) {
+            let matched = captures
+                .get(0)
+                .ok_or_else(|| anyhow::anyhow!("regex capture missing full match"))?;
+
+            let mut expanded = Vec::new();
+            captures.expand(replacement.as_bytes(), &mut expanded);
+
+            replacements.push(ReplacementOp {
+                start: matched.start(),
+                end: matched.end(),
+                bytes: expanded,
+            });
+        }
+
+        Ok(replacements)
+    }
+
+    fn plan_replacements(
+        &self,
+        original_len: usize,
+        replacements: &[ReplacementOp],
+    ) -> anyhow::Result<(usize, usize)> {
+        let mut final_len = original_len;
+        let mut running_delta: isize = 0;
+        let mut max_extra_growth = 0usize;
+
+        for replacement in replacements {
+            final_len = final_len
+                .checked_sub(replacement.end - replacement.start)
+                .ok_or_else(|| anyhow::anyhow!("replacement length underflow"))?;
+            final_len = final_len
+                .checked_add(replacement.bytes.len())
+                .ok_or_else(|| anyhow::anyhow!("replacement length overflow"))?;
+
+            let replacement_delta =
+                replacement.bytes.len() as isize - (replacement.end - replacement.start) as isize;
+            running_delta += replacement_delta;
+            max_extra_growth = max_extra_growth.max(running_delta.max(0) as usize);
+        }
+
+        Ok((final_len, max_extra_growth))
+    }
+
+    fn apply_replacements_in_place(
+        &self,
+        mmap: &mut MmapMut,
+        original_len: usize,
+        replacements: &[ReplacementOp],
+    ) -> anyhow::Result<()> {
+        let mut current_len = original_len;
+        let mut delta: isize = 0;
+
+        for replacement in replacements {
+            let start = (replacement.start as isize + delta) as usize;
+            let end = (replacement.end as isize + delta) as usize;
+            let old_match_len = end - start;
+            let new_match_len = replacement.bytes.len();
+            let tail_start = end;
+
+            if new_match_len > old_match_len {
+                let grow_by = new_match_len - old_match_len;
+                mmap.copy_within(tail_start..current_len, tail_start + grow_by);
+                current_len += grow_by;
+                delta += grow_by as isize;
+            } else if new_match_len < old_match_len {
+                let shrink_by = old_match_len - new_match_len;
+                mmap.copy_within(tail_start..current_len, tail_start - shrink_by);
+                current_len -= shrink_by;
+                delta -= shrink_by as isize;
+            }
+
+            let write_end = start + new_match_len;
+            mmap[start..write_end].copy_from_slice(&replacement.bytes);
+        }
+
+        mmap.flush()?;
         Ok(())
     }
 

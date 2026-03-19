@@ -1,0 +1,28 @@
+{
+  "featureId": "routing-regression-tests",
+  "reviewedAt": "2026-03-16T07:03:00.000Z",
+  "commitId": "f8ef2f2",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly fixes the routing priority bug (warm-index auto-routing was checked before explicit --gpu-device-ids) by reordering the two code blocks in handle_ripgrep_search. The resulting order is: (1) explicit --index, (2) explicit --gpu-device-ids, (3) warm-index auto-routing, (4) CPU/rg fallback. The test file contains 14 well-structured integration tests covering all 13 required routing decisions plus the GPU-vs-warm-index priority regression. Tests use proper isolation (tempdir), mock rg wrappers via TG_RG_PATH, mock GPU sidecar scripts via TG_SIDECAR_PYTHON/TG_SIDECAR_SCRIPT, and assert routing metadata (routing_backend, routing_reason, sidecar_used) through both --json and --verbose output paths. Helper functions (assert_json_routing, assert_verbose_routing, assert_rg_passthrough) reduce duplication effectively. The diff is minimal: 38 lines moved in main.rs, 464 lines of new tests. No production logic was altered beyond the reorder.",
+    "issues": [
+      {
+        "file": "rust_core/tests/test_routing.rs",
+        "line": 312,
+        "severity": "non_blocking",
+        "description": "test_routing_stale_index_with_explicit_index_rebuilds uses thread::sleep(Duration::from_millis(50)) to guarantee mtime advancement. On NTFS (100ns resolution) this is safe, but on FAT32 (2s resolution) or network filesystems this could be flaky. Consider using a longer sleep or an explicit mtime manipulation if CI ever moves to a non-NTFS environment."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md 'Known Pre-Existing Issues' section documents the warm-index-vs-GPU priority bug and explicitly states the routing-regression-tests feature should fix it. This has been fixed by commit f8ef2f2. The known issue entry should be removed or marked resolved to avoid confusion for future workers.",
+      "evidence": "Mission AGENTS.md section 'Known Pre-Existing Issues' second bullet: 'Warm index routing precedes GPU routing...The routing-regression-tests feature should fix this.' Commit f8ef2f2 reorders the checks in main.rs lines 410-450."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature passes review. The main.rs routing priority fix is correct and minimal — the warm-index auto-routing block was moved below the explicit --gpu-device-ids check, ensuring GPU requests are never diverted to a warm index. The test suite provides 14 integration tests covering all 13 required routing decisions plus the priority regression, with proper isolation, mock infrastructure, and routing metadata assertions. All local gates (cargo test, clippy, ruff, mypy, pytest) passed. One non-blocking observation: the 50ms sleep in the stale-index test could theoretically be flaky on non-NTFS filesystems."
+}

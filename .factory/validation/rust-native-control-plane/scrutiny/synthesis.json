@@ -1,0 +1,86 @@
+{
+  "milestone": "rust-native-control-plane",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "uv run pytest -q",
+      "exitCode": 0,
+      "detail": "492 passed, 14 skipped in 79.24s"
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "uv run mypy src/tensor_grep",
+      "exitCode": 0,
+      "detail": "Success: no issues found in 44 source files"
+    },
+    "lint": {
+      "passed": true,
+      "command": "uv run ruff check .",
+      "exitCode": 0,
+      "detail": "All checks passed!"
+    },
+    "rust_test": {
+      "passed": true,
+      "command": "C:\\Users\\oimir\\.cargo\\bin\\cargo.exe test --manifest-path rust_core/Cargo.toml",
+      "exitCode": 0,
+      "detail": "22 tests passed (1 lib, 3 python_bootstrap, 10 replace, 3 search, 1 golden, 4 sidecar_ipc)"
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Broaden the Off-Limits exception for src/tensor_grep/ to explicitly permit package entrypoint files like __main__.py alongside sidecar.py additions. Current wording only mentions 'adding sidecar.py for IPC' but __main__.py was a required companion for the `python -m tensor_grep` invocation path.",
+      "evidence": "Feature python-sidecar-ipc-protocol added src/tensor_grep/__main__.py (commit 6599078). Two reviewers flagged this as technically outside the stated exception.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Broaden the Off-Limits exception for .github/workflows/ to include cases where a feature description explicitly requires a new CI job. Current wording says 'do not modify unless a build artifact path changes' but the rust-control-plane-routing feature correctly added a golden-parity CI job as specified in its feature description.",
+      "evidence": "Feature rust-control-plane-routing modified .github/workflows/ci.yml to add a search-golden-parity job (commit 1dbdda6). The feature description explicitly required this, and the worker correctly added it.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a convention note: unrelated lint/clippy fixes found during feature work should be committed separately from the feature commit when practical, to keep feature diffs focused. If the fix is small and blocks CI, bundling is acceptable but should be noted in the commit message.",
+      "evidence": "Feature remove-pyo3-auto-init bundled a Clippy needless_borrow fix in backend_cpu.rs that was unrelated to the PyO3 auto-initialize removal. Not a problem in this case but could cause confusion in larger diffs.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Document that `env!(\"CARGO_MANIFEST_DIR\")` is used in python_sidecar.rs and rg_passthrough.rs for compile-time repo root resolution. This is a development-only pattern that will break in distributed binaries. Before release/distribution, a runtime resolution strategy (or mandatory TG_SIDECAR_PYTHON / TG_RG_PATH env vars) must replace it. Workers should not add more CARGO_MANIFEST_DIR-based paths without flagging the distribution concern.",
+      "evidence": "Two features (python-sidecar-ipc-protocol and rust-control-plane-routing) both introduced CARGO_MANIFEST_DIR usage. python_sidecar.rs uses it for .venv discovery, rg_passthrough.rs for bundled ripgrep discovery. Both have env-var fallbacks but the pattern is spreading.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "In the rust-worker skill, make the note about benchmarks/run_benchmarks.py measuring the Python bootstrap (not tg.exe) more prominent — consider moving it to a top-level 'Common Pitfalls' section or adding a warning box. The current placement under an IMPORTANT note is easily missed.",
+      "evidence": "Feature remove-pyo3-auto-init worker initially ran check_regression.py with the Python benchmark output before realizing it measured the wrong entrypoint. The guidance exists in the skill but was not prominent enough.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Library note .factory/library/python-sidecar-ipc.md was added by sidecar worker and documents protocol well",
+      "reason": "already-documented — positive observation, no action needed. Library note already exists and is comprehensive."
+    },
+    {
+      "observation": "Worker followed rust-worker skill procedure faithfully for rust-control-plane-routing",
+      "reason": "duplicate — positive observation recorded in review, not actionable for shared state changes."
+    },
+    {
+      "observation": "services.yaml benchmark_rust_cold_start entry registered by routing worker",
+      "reason": "already-documented — the entry was correctly added by the worker during feature implementation. No further action needed."
+    }
+  ],
+  "previousRound": null
+}

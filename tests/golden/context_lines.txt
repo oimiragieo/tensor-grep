@@ -1,0 +1,11 @@
+tests/golden/fixture_data\server_0.log-ERROR database timeout
+tests/golden/fixture_data\server_0.log-DEBUG recoverable timeout marker
+tests/golden/fixture_data\server_0.log:CRITICAL disk full
+tests/golden/fixture_data\server_0.log-TRACE after critical 1
+tests/golden/fixture_data\server_0.log-ERROR socket timeout
+--
+tests/golden/fixture_data\server_1.log-DEBUG misc
+tests/golden/fixture_data\server_1.log-ERROR broken pipe
+tests/golden/fixture_data\server_1.log:CRITICAL power lost
+tests/golden/fixture_data\server_1.log-NOTICE continue
+tests/golden/fixture_data\server_1.log-ERROR timeout while syncing

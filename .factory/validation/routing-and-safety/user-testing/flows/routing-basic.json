@@ -1,0 +1,135 @@
+{
+  "groupId": "routing-basic",
+  "testedAt": "2026-03-16T03:30:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "rgBinary": "C:\\dev\\projects\\tensor-grep\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+    "testData": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-routing-basic",
+    "tempDir": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-routing-basic"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-ROUTE-001",
+      "title": "Routing policy documentation exists",
+      "status": "pass",
+      "steps": [
+        { "action": "Check docs/routing_policy.md exists", "expected": "File exists", "observed": "File exists at C:\\dev\\projects\\tensor-grep\\docs\\routing_policy.md" },
+        { "action": "Cross-reference all 4 backends against main.rs", "expected": "CpuBackend, AstBackend, TrigramIndex, GpuSidecar all documented and in code", "observed": "All 4 backends present in both routing_policy.md and main.rs (CpuBackend:6, AstBackend:6, TrigramIndex:8, GpuSidecar:1 occurrences)" },
+        { "action": "Verify decision tree documentation", "expected": "Priority order documented", "observed": "Document describes full priority: --index > --gpu-device-ids > warm-index > --json CPU > cold rg passthrough" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-001-cross-reference.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-002",
+      "title": "Default text search routes to ripgrep",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search --verbose \"hello\" <dir> without index/gpu/json flags", "expected": "stderr shows CpuBackend", "observed": "[routing] routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false" },
+        { "action": "Compare tg output with rg output", "expected": "Same matches", "observed": "Both tg and rg returned identical lines (2 matches in test_ast.py)" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-002-default-search.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-003",
+      "title": "Explicit --index routes to TrigramIndex",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search --index --json \"hello\" <dir>", "expected": "JSON output shows routing_backend: TrigramIndex", "observed": "JSON output: {\"version\":1,\"routing_backend\":\"TrigramIndex\",\"routing_reason\":\"index-accelerated\",...}" },
+        { "action": "Verify .tg_index was built", "expected": "Index file created", "observed": ".tg_index created in test directory" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-003-index-json.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-004",
+      "title": "Warm index auto-routing activates on compatible queries",
+      "status": "pass",
+      "steps": [
+        { "action": "Verify .tg_index present from prior --index build", "expected": "Index file exists", "observed": "Index exists: True" },
+        { "action": "Run tg search --verbose \"hello\" <dir> (no --index flag, pattern >= 3 chars)", "expected": "stderr shows index-accelerated", "observed": "[routing] warm index found (2 files), using index-accelerated path; [routing] routing_backend=TrigramIndex routing_reason=index-accelerated sidecar_used=false" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-004-warm-index.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-005",
+      "title": "Invert-match bypasses warm index",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search -v --verbose \"hello\" <dir> with warm index present", "expected": "stderr shows CpuBackend, not TrigramIndex", "observed": "[routing] routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-005-invert-bypass.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-006",
+      "title": "Context lines bypass warm index",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search -C 3 --verbose \"hello\" <dir> with warm index present", "expected": "stderr shows CpuBackend, not TrigramIndex", "observed": "[routing] routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-006-context-bypass.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-ROUTE-007",
+      "title": "GPU sidecar routes on --gpu-device-ids",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search --gpu-device-ids 0 --verbose \"hello\" <dir>", "expected": "stderr shows GpuSidecar", "observed": "[routing] routing_backend=GpuSidecar routing_reason=gpu-device-ids-explicit sidecar_used=true" },
+        { "action": "Verify GPU routing takes priority over warm index", "expected": "GpuSidecar selected even with .tg_index present", "observed": "After rebuilding binary with routing fix (f8ef2f2), GPU correctly takes priority over warm index" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-007-gpu-routing.txt"],
+        "consoleErrors": "GPU backend unavailable: 'CuDF and Torch GPU backends were unavailable' (expected — routing is correct, GPU hardware/software not set up)",
+        "network": "none"
+      },
+      "issues": "GPU backend itself is unavailable (no CuDF/Torch), but routing correctly selects GpuSidecar. Per assertion instructions, this is PASS because routing is correct."
+    },
+    {
+      "id": "VAL-ROUTE-008",
+      "title": "AST run routes to AstBackend",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg run --verbose 'def $FN(): $$$BODY' <dir>", "expected": "stderr shows AstBackend", "observed": "[routing] routing_backend=AstBackend routing_reason=ast-native sidecar_used=false" }
+      ],
+      "evidence": {
+        "logs": ["routing-and-safety/routing-basic/VAL-ROUTE-008-ast-routing.txt"],
+        "consoleErrors": "none"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "tg.exe binary was stale (built before commit f8ef2f2 'fix(routing): prioritize explicit gpu routing'). VAL-ROUTE-007 initially failed with warm index intercepting --gpu-device-ids. Had to rebuild binary with 'cargo build --release' before GPU routing test could pass.",
+      "resolved": true,
+      "resolution": "Rebuilt tg.exe via 'cargo build --release' in rust_core/. After rebuild, --gpu-device-ids correctly takes priority over warm index.",
+      "affectedAssertions": ["VAL-ROUTE-007"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 8 assertions: all 8 passed. VAL-ROUTE-001 confirmed routing_policy.md exists with all 4 backends cross-referenced against main.rs. VAL-ROUTE-002 through 006 confirmed correct CpuBackend/TrigramIndex routing decisions including warm index bypasses. VAL-ROUTE-007 confirmed GpuSidecar routing (GPU backend unavailable but routing correct). VAL-ROUTE-008 confirmed AstBackend for tg run. One friction: binary was stale and needed rebuild for VAL-ROUTE-007 to pass."
+}

@@ -1,0 +1,25 @@
+{
+  "milestone": "rust-native-control-plane",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CTRL-NEW-004",
+    "VAL-CTRL-001",
+    "VAL-CTRL-002",
+    "VAL-CTRL-003",
+    "VAL-CTRL-004",
+    "VAL-CTRL-NEW-001",
+    "VAL-CTRL-NEW-002",
+    "VAL-CTRL-NEW-003"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}

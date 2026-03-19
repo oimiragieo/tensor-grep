@@ -1,0 +1,45 @@
+{
+  "featureId": "routing-policy-docs",
+  "reviewedAt": "2026-03-16T07:06:00.000Z",
+  "commitId": "d55fef346cf13548e7163347ebd963581fc6193a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The docs/routing_policy.md created at commit d55fef3 accurately documented the routing decision tree as it existed at that commit. The document covers all four backends (CpuBackend, AstBackend, TrigramIndex, GpuSidecar), their reason strings, the tg search decision tree, the tg run decision tree, positional CLI routing, and a source cross-reference table with approximate line ranges. The test file test_routing_policy_docs.py enforces keyword/phrase presence as a contract guard. However, the very next commit (f8ef2f2 'fix(routing): prioritize explicit gpu routing') reordered the routing in handle_ripgrep_search so that explicit --gpu-device-ids is now checked BEFORE warm index auto-routing. This makes the doc's steps 2/3 ordering and the 'caveat' about warm index preempting GPU stale. The doc was correct at its commit time, so this is not a failure of the feature's implementation, but the doc now needs updating to match current code.",
+    "issues": [
+      {
+        "file": "docs/routing_policy.md",
+        "line": 24,
+        "severity": "non_blocking",
+        "description": "Doc step 2 describes warm index auto-routing as 'the next branch' after explicit --index. After commit f8ef2f2, explicit GPU routing (--gpu-device-ids) is now checked before warm index auto-routing. The documented order (index -> warm-index -> GPU -> JSON -> cold) should be updated to (index -> GPU -> warm-index -> JSON -> cold)."
+      },
+      {
+        "file": "docs/routing_policy.md",
+        "line": 39,
+        "severity": "non_blocking",
+        "description": "The 'Current code-order caveat' states 'warm index auto-routing is evaluated before the explicit --gpu-device-ids branch, so a compatible warm index can preempt a GPU request.' This is no longer true after commit f8ef2f2 which fixed this exact issue. The caveat should be removed or replaced with a note that GPU now takes priority."
+      },
+      {
+        "file": "tests/unit/test_routing_policy_docs.py",
+        "line": 38,
+        "severity": "non_blocking",
+        "description": "The test asserts the presence of the phrase 'warm index auto-routing is evaluated before the explicit --gpu-device-ids branch' which is now factually incorrect per the current code. When the doc is updated to reflect the new order, this assertion will need to change too. The test only checks substring presence, not semantic correctness, so ordering inaccuracies pass silently."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md documents 'Warm index routing precedes GPU routing' as a known pre-existing issue under 'Known Pre-Existing Issues' and states the routing-regression-tests feature should fix it. Commit f8ef2f2 did fix it, but the routing-policy-docs were written against the pre-fix code. When documentation features depend on code that is being concurrently modified by other features in the same milestone, the docs can go stale immediately. A convention note about re-validating docs against HEAD (not just the feature's own commit) after adjacent routing changes would prevent this.",
+      "evidence": "Mission AGENTS.md 'Known Pre-Existing Issues' section mentions the warm-index-before-GPU issue. Commit f8ef2f2 (routing-regression-tests feature) reordered handle_ripgrep_search to put GPU before warm-index, invalidating the doc created in d55fef3."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The worker correctly cross-referenced all main.rs function names and line ranges, and documented the routing reason strings and bypass flags accurately. The worker followed the skill procedure (step 6: cross-reference documentation against actual code) faithfully. The only gap is that the doc was not re-validated after the concurrent routing fix landed.",
+      "evidence": "Transcript shows worker read main.rs at multiple offsets, grep'd for function names and routing-related identifiers, and verified the doc test passed. All function references in the doc match the actual codebase."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The routing-policy-docs feature PASSES review. The doc was accurate at commit time (d55fef3) and covers all four backends, their selection conditions, bypass flags, AST/rewrite routing, GPU policy, and source cross-references as required. The test contract guards keyword presence. Two non-blocking issues noted: the subsequent commit f8ef2f2 reordered GPU-vs-warm-index priority in handle_ripgrep_search, making the doc's step ordering and 'caveat' stale. The doc and its test assertion need a follow-up update to reflect the current code where explicit --gpu-device-ids is checked before warm index auto-routing."
+}

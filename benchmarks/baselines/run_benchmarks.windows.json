@@ -1,72 +1,176 @@
 {
-  "generated_at_epoch_s": 1772714915.311119,
+  "artifact": "bench_run_benchmarks",
   "environment": {
     "machine": "amd64",
     "platform": "windows",
-    "python_version": "3.12"
+    "python_version": "3.14.0"
   },
+  "generated_at_epoch_s": 1773820450.0835218,
+  "native_cpu_forced": false,
+  "native_cpu_mode": "default_binary",
   "parity_failures": 0,
   "rows": [
     {
       "name": "1. Simple String Match",
       "parity": "PASS",
-      "rg_time_s": 0.466952,
-      "tg_time_s": 0.808985
+      "rg_samples_s": [
+        0.174593,
+        0.179654,
+        0.168399
+      ],
+      "rg_time_s": 0.174593,
+      "tg_samples_s": [
+        0.445113,
+        0.429971,
+        0.45839
+      ],
+      "tg_time_s": 0.445113
     },
     {
       "name": "2. Case-Insensitive Match",
       "parity": "PASS",
-      "rg_time_s": 0.493609,
-      "tg_time_s": 0.84172
+      "rg_samples_s": [
+        0.26537,
+        0.204906,
+        0.198683
+      ],
+      "rg_time_s": 0.204906,
+      "tg_samples_s": [
+        0.450438,
+        0.524486,
+        0.462616
+      ],
+      "tg_time_s": 0.462616
     },
     {
       "name": "3. Regex Match",
       "parity": "PASS",
-      "rg_time_s": 0.529452,
-      "tg_time_s": 0.785956
+      "rg_samples_s": [
+        0.208282,
+        0.220238,
+        0.222768
+      ],
+      "rg_time_s": 0.220238,
+      "tg_samples_s": [
+        0.451519,
+        0.514592,
+        0.524844
+      ],
+      "tg_time_s": 0.514592
     },
     {
       "name": "4. Invert Match",
       "parity": "PASS",
-      "rg_time_s": 1.178367,
-      "tg_time_s": 1.428415
+      "rg_samples_s": [
+        0.297008,
+        0.334267,
+        0.283415
+      ],
+      "rg_time_s": 0.297008,
+      "tg_samples_s": [
+        0.572279,
+        0.54487,
+        0.607993
+      ],
+      "tg_time_s": 0.572279
     },
     {
       "name": "5. Count Matches",
       "parity": "PASS",
-      "rg_time_s": 0.162038,
-      "tg_time_s": 0.102002
+      "rg_samples_s": [
+        0.169519,
+        0.141715,
+        0.147393
+      ],
+      "rg_time_s": 0.147393,
+      "tg_samples_s": [
+        0.388621,
+        0.486576,
+        0.408944
+      ],
+      "tg_time_s": 0.408944
     },
     {
       "name": "6. Context Lines (Before & After)",
       "parity": "PASS",
-      "rg_time_s": 1.770283,
-      "tg_time_s": 2.053775
+      "rg_samples_s": [
+        0.348186,
+        0.444507,
+        0.333993
+      ],
+      "rg_time_s": 0.348186,
+      "tg_samples_s": [
+        0.63184,
+        0.605222,
+        0.666232
+      ],
+      "tg_time_s": 0.63184
     },
     {
       "name": "7. Max Count Limit",
       "parity": "PASS",
-      "rg_time_s": 0.123245,
-      "tg_time_s": 0.38882
+      "rg_samples_s": [
+        0.103062,
+        0.114702,
+        0.10296
+      ],
+      "rg_time_s": 0.103062,
+      "tg_samples_s": [
+        0.35537,
+        0.365866,
+        0.354933
+      ],
+      "tg_time_s": 0.35537
     },
     {
       "name": "8. File Glob Filtering",
       "parity": "PASS",
-      "rg_time_s": 0.467835,
-      "tg_time_s": 0.713173
+      "rg_samples_s": [
+        0.175064,
+        0.194534,
+        0.183265
+      ],
+      "rg_time_s": 0.183265,
+      "tg_samples_s": [
+        0.589695,
+        0.462208,
+        0.52233
+      ],
+      "tg_time_s": 0.52233
     },
     {
       "name": "9. Word Boundary",
       "parity": "PASS",
-      "rg_time_s": 0.476316,
-      "tg_time_s": 0.802721
+      "rg_samples_s": [
+        0.23015,
+        0.198104,
+        0.216758
+      ],
+      "rg_time_s": 0.216758,
+      "tg_samples_s": [
+        0.537089,
+        0.460638,
+        0.551703
+      ],
+      "tg_time_s": 0.537089
     },
     {
       "name": "10. Fixed Strings",
       "parity": "PASS",
-      "rg_time_s": 0.475861,
-      "tg_time_s": 0.778942
+      "rg_samples_s": [
+        0.194657,
+        0.240395,
+        0.222358
+      ],
+      "rg_time_s": 0.222358,
+      "tg_samples_s": [
+        0.428028,
+        0.458962,
+        0.451817
+      ],
+      "tg_time_s": 0.451817
     }
   ],
-  "suite": "run_benchmarks"
+  "suite": "run_benchmarks",
+  "timing_samples_per_scenario": 3
 }

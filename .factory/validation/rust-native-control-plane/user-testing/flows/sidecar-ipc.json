@@ -1,0 +1,143 @@
+{
+  "groupId": "sidecar-ipc",
+  "testedAt": "2026-03-15T12:00:00Z",
+  "isolation": {
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "benchData": "C:\\dev\\projects\\tensor-grep\\bench_data\\",
+    "rustSource": "C:\\dev\\projects\\tensor-grep\\rust_core\\src\\",
+    "pythonVenv": "C:\\dev\\projects\\tensor-grep\\.venv\\Scripts\\python.exe",
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep"
+  },
+  "toolsUsed": ["Execute (PowerShell CLI)", "cargo test"],
+  "assertions": [
+    {
+      "id": "VAL-CTRL-002",
+      "title": "Python sidecar IPC protocol — subcommands dispatch correctly",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run `tg.exe classify --help` to verify subcommand exists",
+          "expected": "Help text for classify subcommand displayed",
+          "observed": "Help text displayed: 'Run semantic NLP threat classification on logs via cyBERT'. Exit code 0."
+        },
+        {
+          "action": "Create sample log file with INFO/ERROR/WARN lines",
+          "expected": "Sample log written to bench_data/sample_test.log",
+          "observed": "File created with 4 log lines"
+        },
+        {
+          "action": "Run `tg.exe classify sample_test.log` and capture stdout/stderr/exit",
+          "expected": "JSON classification output on stdout",
+          "observed": "stdout: {\"classifications\": [{\"label\": \"info\", \"confidence\": 0.7}, {\"label\": \"error\", \"confidence\": 0.9}, {\"label\": \"warn\", \"confidence\": 0.8}, {\"label\": \"info\", \"confidence\": 0.7}]}. Exit code 0."
+        },
+        {
+          "action": "Run `python -m tensor_grep classify sample_test.log` and capture stdout/stderr/exit",
+          "expected": "Same JSON classification output as tg.exe",
+          "observed": "stdout matches tg.exe byte-for-byte. stderr matches (PyTorch warning). Exit code 0."
+        },
+        {
+          "action": "Compare tg.exe vs python outputs",
+          "expected": "Stdout, stderr, and exit codes all match",
+          "observed": "STDOUT: MATCH. STDERR: MATCH. EXIT CODES: tg=0 py=0 match=True"
+        },
+        {
+          "action": "Run cargo test --release --test test_sidecar_ipc (4 integration tests)",
+          "expected": "All 4 tests pass including stdout equality, large payload stress, crash handling, missing python",
+          "observed": "test_tg_classify_stdout_matches_python_module ... ok; test_sidecar_protocol_handles_large_payload_and_large_stdout ... ok; test_sidecar_crash_reports_error_without_hanging ... ok; test_missing_python_reports_actionable_error ... ok. 4 passed, 0 failed."
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": [
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-002-tg-stdout.txt",
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-002-tg-stderr.txt",
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-002-py-stdout.txt",
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-002-py-stderr.txt",
+          "rust-native-control-plane/sidecar-ipc/cargo-test-sidecar-ipc.txt"
+        ],
+        "consoleErrors": "none (PyTorch import warning is expected — not an error)",
+        "network": "N/A — CLI tool, no network requests"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CTRL-NEW-002",
+      "title": "Sidecar crash produces clean error — no hang",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create mock crash sidecar script that writes partial JSON then exits 1",
+          "expected": "Script created at temp location",
+          "observed": "mock_sidecar_crash.py created — writes partial JSON '{\"stdout\":' then raises SystemExit(1)"
+        },
+        {
+          "action": "Run `tg.exe classify` with TG_SIDECAR_SCRIPT pointing to crash script",
+          "expected": "tg.exe exits non-zero within 5s with human-readable error in stderr",
+          "observed": "Exit code: 1. Completed in 0.13 seconds (well under 30s). stderr: 'Python sidecar exited with code 1 before returning valid JSON: EOF while parsing a value at line 1 column 10'"
+        },
+        {
+          "action": "Verify no hang, no panic, no exit 0",
+          "expected": "Non-zero exit, no Rust panic trace, completes quickly",
+          "observed": "Exit code 1 (non-zero). No panic trace. Completed in 0.13s. Human-readable error message."
+        },
+        {
+          "action": "Verify cargo test test_sidecar_crash_reports_error_without_hanging passes",
+          "expected": "Integration test passes",
+          "observed": "test_sidecar_crash_reports_error_without_hanging ... ok (from cargo test --test test_sidecar_ipc run)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": [
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-NEW-002-stdout.txt",
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-NEW-002-stderr.txt",
+          "rust-native-control-plane/sidecar-ipc/cargo-test-sidecar-ipc.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "N/A"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CTRL-NEW-003",
+      "title": "Missing Python sidecar produces actionable error message",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Copy tg.exe to isolated temp directory (away from .venv)",
+          "expected": "Isolated binary with no .venv discovery",
+          "observed": "tg.exe copied to %TEMP%\\tg_isolated_test\\tg.exe"
+        },
+        {
+          "action": "Run isolated tg.exe classify with PATH='C:\\Windows\\system32;C:\\Windows' (no Python)",
+          "expected": "Exit code 2, stderr contains 'Python sidecar not found', no Rust panic",
+          "observed": "Exit code: 2. stderr: 'Python sidecar not found. Tried `python`. Set TG_SIDECAR_PYTHON to an interpreter path or create `.venv` with `uv pip install -e \".[dev,ast,nlp]\"`.' No Rust panic trace. No raw OS error."
+        },
+        {
+          "action": "Verify error message is user-friendly and actionable",
+          "expected": "Message identifies problem and provides fix instructions",
+          "observed": "Message states 'Python sidecar not found', names the attempted interpreter ('python'), and provides two fix options: set TG_SIDECAR_PYTHON env var or create .venv."
+        },
+        {
+          "action": "Verify cargo test test_missing_python_reports_actionable_error passes",
+          "expected": "Integration test passes",
+          "observed": "test_missing_python_reports_actionable_error ... ok (from cargo test --test test_sidecar_ipc run)"
+        }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "terminalCaptures": [
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-NEW-003-stdout.txt",
+          "rust-native-control-plane/sidecar-ipc/VAL-CTRL-NEW-003-stderr.txt",
+          "rust-native-control-plane/sidecar-ipc/cargo-test-sidecar-ipc.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "N/A"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: 3 passed, 0 failed, 0 blocked. VAL-CTRL-002: tg.exe classify output matches python -m tensor_grep classify byte-for-byte (stdout, stderr, exit code). All 4 cargo sidecar integration tests pass including 2MB stress test. VAL-CTRL-NEW-002: Crashing sidecar produces clean error 'sidecar exited with code 1 before returning valid JSON' within 0.13s, exit code 1, no hang. VAL-CTRL-NEW-003: With sanitized PATH (no Python), tg.exe exits with code 2 and stderr message 'Python sidecar not found' with actionable fix instructions, no Rust panic."
+}

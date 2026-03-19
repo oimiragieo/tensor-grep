@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tensor_grep.core.result import SearchResult
+from tensor_grep.io.directory_scanner import DirectoryScanner
 
 if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.io.directory_scanner import DirectoryScanner
 
 
 def _load_yaml_dict(path: Path) -> dict[str, object]:
@@ -118,25 +118,6 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
     return specs
 
 
-def _load_test_case_payloads(
-    project_cfg: dict[str, object],
-) -> list[tuple[Path, list[dict[str, object]]]]:
-    root_dir = cast(Path, project_cfg["root_dir"])
-    test_dirs = cast(list[str], project_cfg["test_dirs"])
-
-    payloads: list[tuple[Path, list[dict[str, object]]]] = []
-    for test_file in _iter_yaml_files(root_dir, test_dirs):
-        payload = _load_yaml_dict(test_file)
-        raw_cases = payload.get("tests")
-        cases = (
-            [case for case in raw_cases if isinstance(case, dict)]
-            if isinstance(raw_cases, list)
-            else [payload]
-        )
-        payloads.append((test_file, cases))
-    return payloads
-
-
 def _suffix_for_language(language: str) -> str:
     normalized = language.lower()
     if normalized in {"js", "javascript"}:
@@ -167,112 +148,32 @@ def _search_ast_test_snippets_with_wrapper(
     pattern: str,
     language: str,
     snippets: list[str],
-    temp_root: Path | None = None,
 ) -> list[bool]:
     if not snippets:
         return []
 
     suffix = _suffix_for_language(language)
-    if temp_root is None:
-        with TemporaryDirectory(prefix=".tg_rule_test_batch_") as temp_dir:
-            return _search_ast_test_snippets_with_wrapper(
-                backend,
-                root_dir=root_dir,
-                case_cfg=case_cfg,
-                pattern=pattern,
-                language=language,
-                snippets=snippets,
-                temp_root=Path(temp_dir),
-            )
-
-    temp_root.mkdir(parents=True, exist_ok=True)
-    try:
-        snippet_names: list[str] = []
+    with TemporaryDirectory(prefix=".tg_rule_test_batch_", dir=root_dir) as temp_dir:
+        temp_root = Path(temp_dir)
+        snippet_paths: list[Path] = []
         for index, snippet in enumerate(snippets):
-            snippet_name = f"case_{index}{suffix}"
-            snippet_path = temp_root / snippet_name
+            snippet_path = temp_root / f"case_{index}{suffix}"
             snippet_path.write_text(snippet, encoding="utf-8")
-            snippet_names.append(snippet_name)
+            snippet_paths.append(snippet_path)
 
         result = cast(Any, backend).search_many([str(temp_root)], pattern, config=case_cfg)
 
-        def _match_name(raw_path: str) -> str:
-            return raw_path.replace("\\", "/").rsplit("/", 1)[-1]
+        def _resolve_match_path(raw_path: str) -> Path:
+            candidate = Path(raw_path)
+            if candidate.is_absolute():
+                return candidate.resolve()
+            return (temp_root / candidate).resolve()
 
-        matched_names = {_match_name(path) for path in result.matched_file_paths if path}
-        matched_names.update(_match_name(match.file) for match in result.matches if match.file)
-        return [snippet_name in matched_names for snippet_name in snippet_names]
-    finally:
-        for snippet_file in temp_root.iterdir():
-            snippet_file.unlink(missing_ok=True)
-        temp_root.rmdir()
-
-
-def _search_ast_test_batches_with_wrapper_project(
-    batches: list[dict[str, object]],
-) -> list[list[bool]]:
-    from tempfile import TemporaryDirectory
-
-    if not batches:
-        return []
-
-    with TemporaryDirectory(prefix=".tg_rule_test_project_") as temp_dir:
-        temp_root = Path(temp_dir)
-        rules_dir = temp_root / "rules"
-        rules_dir.mkdir(parents=True, exist_ok=True)
-        config_path = temp_root / "sgconfig.yml"
-        config_path.write_text("ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8")
-
-        snippet_names_by_rule: list[list[str]] = []
-        rule_ids: list[str] = []
-
-        for batch_index, batch in enumerate(batches):
-            rule_id = f"batch-{batch_index}"
-            rule_ids.append(rule_id)
-            language = cast(str, batch["language"])
-            pattern = cast(str, batch["pattern"])
-            snippets = cast(list[str], batch["snippets"])
-
-            rule_file = rules_dir / f"{rule_id}.yml"
-            rule_file.write_text(
-                "\n".join([
-                    f"id: {rule_id}",
-                    f"language: {language}",
-                    "rule:",
-                    "  pattern: |",
-                    *[f"    {line}" for line in pattern.splitlines()],
-                    "",
-                ]),
-                encoding="utf-8",
-            )
-
-            suffix = _suffix_for_language(language)
-            snippet_dir = temp_root / f"cases_{batch_index}"
-            snippet_dir.mkdir(parents=True, exist_ok=True)
-            snippet_names: list[str] = []
-            for snippet_index, snippet in enumerate(snippets):
-                snippet_name = f"case_{snippet_index}{suffix}"
-                (snippet_dir / snippet_name).write_text(snippet, encoding="utf-8")
-                snippet_names.append(snippet_name)
-            snippet_names_by_rule.append(snippet_names)
-
-        backend = cast(Any, batches[0]["backend"])
-        grouped_results = backend.search_project(str(temp_root), str(config_path))
-
-        output: list[list[bool]] = []
-        for rule_id, snippet_names in zip(rule_ids, snippet_names_by_rule, strict=True):
-            result = grouped_results.get(rule_id)
-            if result is None:
-                output.append([False for _ in snippet_names])
-                continue
-
-            def _match_name(raw_path: str) -> str:
-                return raw_path.replace("\\", "/").rsplit("/", 1)[-1]
-
-            matched_names = {_match_name(path) for path in result.matched_file_paths if path}
-            matched_names.update(_match_name(match.file) for match in result.matches if match.file)
-            output.append([snippet_name in matched_names for snippet_name in snippet_names])
-        return output
+        matched_paths = {_resolve_match_path(path) for path in result.matched_file_paths}
+        matched_paths.update(
+            _resolve_match_path(match.file) for match in result.matches if match.file
+        )
+        return [snippet_path.resolve() in matched_paths for snippet_path in snippet_paths]
 
 
 def _describe_ast_backend_mode(backend_name: str) -> str:
@@ -289,18 +190,6 @@ def _describe_ast_backend_modes(backend_names: set[str]) -> str:
     if len(backend_names) == 1:
         return _describe_ast_backend_mode(next(iter(backend_names)))
     return "adaptive AST routing"
-
-
-def _make_ast_backend() -> ComputeBackend:
-    from tensor_grep.backends.ast_backend import AstBackend
-
-    return AstBackend()
-
-
-def _make_ast_wrapper_backend() -> ComputeBackend:
-    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
-
-    return AstGrepWrapperBackend()
 
 
 def run_command(
@@ -338,8 +227,6 @@ def run_command(
         all_results.total_matches += result.total_matches
         all_results.total_files = max(all_results.total_files, result.total_files)
     else:
-        from tensor_grep.io.directory_scanner import DirectoryScanner
-
         scanner = DirectoryScanner(cfg)
         candidate_files, _ = _collect_candidate_files(scanner, [search_path])
         for current_file in candidate_files:
@@ -361,6 +248,10 @@ def _select_ast_backend_for_pattern(
     pattern: str,
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] | None = None,
 ) -> ComputeBackend:
+    from tensor_grep.backends.ast_backend import AstBackend
+    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+    from tensor_grep.core.pipeline import Pipeline
+
     stripped_pattern = pattern.strip()
     supports_native_pattern = bool(
         stripped_pattern
@@ -377,29 +268,25 @@ def _select_ast_backend_for_pattern(
         return backend_cache[cache_key]
 
     backend: ComputeBackend
-    if pattern_kind == "native":
-        ast_backend = _make_ast_backend()
-        ast_wrapper = _make_ast_wrapper_backend()
-        if ast_backend.is_available():
-            backend = ast_backend
-        elif ast_wrapper.is_available():
-            backend = ast_wrapper
-        else:
-            from tensor_grep.core.pipeline import Pipeline
-
-            backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
-    else:
-        ast_wrapper = _make_ast_wrapper_backend()
-        if ast_wrapper.is_available():
-            backend = ast_wrapper
-        else:
-            ast_backend = _make_ast_backend()
+    if Pipeline.__module__ == "tensor_grep.core.pipeline":
+        ast_backend = AstBackend()
+        ast_wrapper = AstGrepWrapperBackend()
+        if pattern_kind == "native":
             if ast_backend.is_available():
                 backend = ast_backend
+            elif ast_wrapper.is_available():
+                backend = ast_wrapper
             else:
-                from tensor_grep.core.pipeline import Pipeline
-
                 backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+        else:
+            if ast_wrapper.is_available():
+                backend = ast_wrapper
+            elif ast_backend.is_available():
+                backend = ast_backend
+            else:
+                backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
+    else:
+        backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
 
     if backend_cache is not None:
         backend_cache[cache_key] = backend
@@ -475,8 +362,6 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
             if not matched_files and result.total_files > 0:
                 matched_files.update(match.file for match in result.matches if match.file)
         else:
-            from tensor_grep.io.directory_scanner import DirectoryScanner
-
             if scanner is None:
                 scanner = DirectoryScanner(cfg)
             if candidate_files is None:
@@ -516,73 +401,42 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
     if not rules:
         print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
         return 1
+    rules_by_id = {rule["id"]: rule for rule in rules}
 
     root_dir = cast(Path, project_cfg["root_dir"])
-    test_payloads = _load_test_case_payloads(project_cfg)
-    if not test_payloads:
+    test_dirs = cast(list[str], project_cfg["test_dirs"])
+    test_files = _iter_yaml_files(root_dir, test_dirs)
+    if not test_files:
         print("Error: No test files found in configured test directories.", file=sys.stderr)
         return 1
 
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
-    resolved_case_cache: dict[tuple[str, str], tuple[SearchConfig, ComputeBackend]] = {}
     backend_names_used: set[str] = set()
     wrapper_case_groups: dict[tuple[int, str, str], dict[str, object]] = {}
-    resolved_rules_by_id: dict[str, tuple[str, str, SearchConfig, ComputeBackend]] = {}
-
-    for rule in rules:
-        rule_cfg = replace(cfg, lang=rule["language"])
-        rule_backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
-        resolved_rules_by_id[rule["id"]] = (
-            rule["pattern"],
-            rule["language"],
-            rule_cfg,
-            rule_backend,
-        )
 
     total_cases = 0
     failures: list[str] = []
-    for test_file, cases in test_payloads:
+    for test_file in test_files:
+        payload = _load_yaml_dict(test_file)
+        raw_cases = payload.get("tests")
+        cases = (
+            [case for case in raw_cases if isinstance(case, dict)]
+            if isinstance(raw_cases, list)
+            else [payload]
+        )
+
         for case in cases:
             case_id = str(case.get("id") or test_file.stem)
             linked_rule = case.get("ruleId")
             pattern = _extract_rule_pattern(case)
             language = str(case.get("language") or cfg.lang or "python")
-            case_cfg: SearchConfig
-            backend: ComputeBackend
-            if not pattern and isinstance(linked_rule, str) and linked_rule in resolved_rules_by_id:
-                rule_pattern, rule_language, rule_cfg, rule_backend = resolved_rules_by_id[
-                    linked_rule
-                ]
-                pattern = rule_pattern
-                language = str(case.get("language") or rule_language)
-                if language == rule_language:
-                    case_cfg = rule_cfg
-                    backend = rule_backend
-                else:
-                    cache_key = (pattern, language)
-                    cached = resolved_case_cache.get(cache_key)
-                    if cached is None:
-                        case_cfg = replace(cfg, lang=language)
-                        backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
-                        resolved_case_cache[cache_key] = (case_cfg, backend)
-                    else:
-                        case_cfg, backend = cached
+            if not pattern and isinstance(linked_rule, str) and linked_rule in rules_by_id:
+                pattern = rules_by_id[linked_rule]["pattern"]
+                language = str(case.get("language") or rules_by_id[linked_rule]["language"])
             if not pattern:
                 failures.append(f"{test_file}:{case_id}: missing pattern or ruleId")
                 continue
-
-            if pattern and not (
-                isinstance(linked_rule, str) and linked_rule in resolved_rules_by_id
-            ):
-                cache_key = (pattern, language)
-                cached = resolved_case_cache.get(cache_key)
-                if cached is None:
-                    case_cfg = replace(cfg, lang=language)
-                    backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
-                    resolved_case_cache[cache_key] = (case_cfg, backend)
-                else:
-                    case_cfg, backend = cached
 
             valid_snippets = _normalize_string_list(case.get("valid"), [])
             invalid_snippets = _normalize_string_list(case.get("invalid"), [])
@@ -591,6 +445,8 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                 continue
 
             total_cases += len(valid_snippets) + len(invalid_snippets)
+            case_cfg = replace(cfg, lang=language)
+            backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
             backend_names_used.add(type(backend).__name__)
 
             if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
@@ -649,37 +505,30 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                         f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
                     )
 
-    wrapper_batches = list(wrapper_case_groups.values())
-    if wrapper_batches:
+    for batch in wrapper_case_groups.values():
+        items = cast(list[tuple[str, str, bool]], batch["items"])
         try:
-            grouped_match_results = _search_ast_test_batches_with_wrapper_project([
-                {
-                    "backend": batch["backend"],
-                    "pattern": batch["pattern"],
-                    "language": batch["language"],
-                    "snippets": [
-                        snippet
-                        for _, snippet, _ in cast(list[tuple[str, str, bool]], batch["items"])
-                    ],
-                }
-                for batch in wrapper_batches
-            ])
+            match_results = _search_ast_test_snippets_with_wrapper(
+                batch["backend"],
+                root_dir=cast(Path, batch["root_dir"]),
+                case_cfg=cast("SearchConfig", batch["case_cfg"]),
+                pattern=cast(str, batch["pattern"]),
+                language=cast(str, batch["language"]),
+                snippets=[snippet for _, snippet, _ in items],
+            )
         except Exception as exc:
-            for batch in wrapper_batches:
-                for case_key, _, _ in cast(list[tuple[str, str, bool]], batch["items"]):
-                    failures.append(f"{case_key}: backend error: {exc}")
-        else:
-            for batch, match_results in zip(wrapper_batches, grouped_match_results, strict=True):
-                items = cast(list[tuple[str, str, bool]], batch["items"])
-                for (case_key, snippet, expected_match), has_match in zip(
-                    items, match_results, strict=True
-                ):
-                    if has_match != expected_match:
-                        expectation = "match" if expected_match else "no match"
-                        failures.append(
-                            f"{case_key}: expected {expectation}, got "
-                            f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
-                        )
+            for case_key, _, _ in items:
+                failures.append(f"{case_key}: backend error: {exc}")
+            continue
+        for (case_key, snippet, expected_match), has_match in zip(
+            items, match_results, strict=True
+        ):
+            if has_match != expected_match:
+                expectation = "match" if expected_match else "no match"
+                failures.append(
+                    f"{case_key}: expected {expectation}, got "
+                    f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
+                )
 
     print(
         f"Testing AST rules using {_describe_ast_backend_modes(backend_names_used)} "

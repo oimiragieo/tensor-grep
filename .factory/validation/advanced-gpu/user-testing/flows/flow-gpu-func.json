@@ -1,0 +1,99 @@
+{
+  "groupId": "flow-gpu-func",
+  "testedAt": "2026-03-17T03:00:00Z",
+  "isolation": {
+    "directory": "C:\\dev\\projects\\tensor-grep"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-GPU-009",
+      "title": "GPU beats CPU at crossover and achieves >=10x throughput over rg at 100MB+",
+      "status": "pass",
+      "steps": [
+        { "action": "Run python benchmarks/run_gpu_native_benchmarks.py --advanced", "expected": "Benchmark completes successfully", "observed": "Completed successfully" },
+        { "action": "Verify JSON output for throughput_target", "expected": "met: true, speedup >= 10x", "observed": "met: true, reached 74.95x speedup at 100MB" }
+      ],
+      "evidence": {
+        "terminal": ["artifacts/bench_run_gpu_native_benchmarks.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-018",
+      "title": "GPU large scale throughput",
+      "status": "pass",
+      "steps": [
+        { "action": "Run python benchmarks/run_gpu_native_benchmarks.py --advanced", "expected": "Benchmark completes", "observed": "Completed successfully" }
+      ],
+      "evidence": {
+        "terminal": ["artifacts/bench_run_gpu_native_benchmarks.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-019",
+      "title": "Multi-GPU throughput exceeds single GPU",
+      "status": "pass",
+      "steps": [
+        { "action": "Verify advanced multi_gpu status in benchmark JSON", "expected": "status: PASS, improvement > 15%", "observed": "status: PASS, improvement: 46.78%" }
+      ],
+      "evidence": {
+        "terminal": ["artifacts/bench_run_gpu_native_benchmarks.json"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-014",
+      "title": "Multiple patterns work on GPU",
+      "status": "pass",
+      "steps": [
+        { "action": "Run cargo run --release --features cuda -- search --gpu-device-ids 0 -e error -e warn bench_data/test_error_warn.txt", "expected": "Matches for both error and warn", "observed": "Output lines containing both patterns returned" }
+      ],
+      "evidence": {
+        "terminal": ["advanced-gpu/flow-gpu-func/VAL-GPU-014-multiple-patterns.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-015",
+      "title": "Both devices used in multi-GPU search",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg.exe __gpu-native-stats --pattern ERROR --path ../bench_data --gpu-device-ids 0,1 --no-ignore --summary-only", "expected": "Stats show searched files on both devices", "observed": "Stats show device 0 searched 2 files, device 1 searched 6 files" }
+      ],
+      "evidence": {
+        "terminal": ["advanced-gpu/flow-gpu-func/VAL-GPU-015-multi-gpu.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-021",
+      "title": "OOM handling is graceful",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg.exe __gpu-oom-probe --device-id 0 --bytes 13958643712", "expected": "Graceful error, no panic", "observed": "CUDA out of memory while allocating 13.00 GiB... with exit code 1" }
+      ],
+      "evidence": {
+        "terminal": ["advanced-gpu/flow-gpu-func/VAL-GPU-021-oom.txt"]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Standard benchmark script command generated no console output; needed to inspect output JSON.",
+      "resolved": true,
+      "resolution": "Read artifacts/bench_run_gpu_native_benchmarks.json",
+      "affectedAssertions": ["VAL-GPU-009", "VAL-GPU-018", "VAL-GPU-019"]
+    },
+    {
+      "description": "No matches for 'error' and 'warn' in bench_data log files, resulting in silent failure exit code 1. Had to create a dummy log to verify matches.",
+      "resolved": true,
+      "resolution": "Created test_error_warn.txt with patterns to verify output.",
+      "affectedAssertions": ["VAL-GPU-014"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 6 assertions: 6 passed, 0 failed."
+}

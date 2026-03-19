@@ -1,0 +1,52 @@
+{
+  "milestone": "misc-fixes",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "uv run pytest -q",
+      "exitCode": 0,
+      "details": "465 passed, 14 skipped in 83.67s"
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "uv run mypy src/tensor_grep",
+      "exitCode": 0,
+      "details": "Success: no issues found in 42 source files"
+    },
+    "lint": {
+      "passed": true,
+      "command": "uv run ruff check . --exclude .git",
+      "exitCode": 0,
+      "details": "All checks passed. Note: bare 'uv run ruff check .' fails with F811 in .git/replay-ast-push/ because pyproject.toml [tool.ruff] exclude overrides defaults (dropping .git). This is a pre-existing config issue, not introduced by this milestone."
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add .git to the ruff exclude list in pyproject.toml, or switch to extend-exclude so defaults (including .git) are preserved. Currently [tool.ruff] exclude overrides defaults, causing ruff to scan .git/replay-ast-push/ worktrees and report false positives.",
+      "evidence": "Running 'uv run ruff check .' fails with F811 in .git/replay-ast-push/tests/unit/test_cli_bootstrap.py. The workaround is 'uv run ruff check . --exclude .git' but this should be fixed in config.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Worker couldn't execute .factory/init.sh on Windows - known issue documented in mission AGENTS.md.",
+      "reason": "already-documented"
+    },
+    {
+      "observation": "services.yaml could document rg.zip auto-extraction behavior in benchmark_text command description.",
+      "reason": "ambiguous - the auto-extraction is transparent and requires no manual setup; adding it to services.yaml would add noise since it's not a separate service or command."
+    }
+  ],
+  "previousRound": null
+}

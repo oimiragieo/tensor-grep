@@ -1,0 +1,62 @@
+{
+  "groupId": "cli-tests",
+  "testedAt": "2026-03-16T21:32:53.782093+00:00",
+  "isolation": {
+    "context": "CLI execution, standard env"
+  },
+  "toolsUsed": [
+    "Execute (CLI)"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CPU-010",
+      "title": "--ndjson output with native engine produces valid NDJSON",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run tg search --ndjson",
+          "expected": "JSON lines output",
+          "observed": "Valid JSON lines"
+        },
+        {
+          "action": "Count matches",
+          "expected": "3 matches",
+          "observed": "3 matches"
+        }
+      ],
+      "evidence": {
+        "output": [
+          "native-cpu-engine/cli-tests/VAL-CPU-010-output.ndjson"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-026",
+      "title": "Binary file detection matches rg behavior",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run tg search without --text on directory with binary file",
+          "expected": "Text found, Binary skipped or warned",
+          "observed": "Text found: True, Binary in output: False, Warned: False"
+        },
+        {
+          "action": "Run tg search with --text",
+          "expected": "Binary file searched",
+          "observed": "Binary file searched"
+        }
+      ],
+      "evidence": {
+        "output": [
+          "native-cpu-engine/cli-tests/VAL-CPU-026-default.txt",
+          "native-cpu-engine/cli-tests/VAL-CPU-026-text.txt"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 2 assertions: 2 passed, 0 failed"
+}

@@ -1,0 +1,46 @@
+{
+  "featureId": "benchmark-harness-stability",
+  "reviewedAt": "2026-03-15T03:30:00.000Z",
+  "commitId": "4049c1a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "verdict": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly addresses both stated objectives: (1) run_benchmarks.py now collects median-of-3 timing samples per scenario with timing-only subprocess runs separated from parity capture, and (2) detect_environment_mismatch() now rejects python_version drift. The changes are well-structured, follow existing code patterns, and include comprehensive test coverage. All validators (ruff, mypy, pytest full suite) passed. Baselines already include python_version from the prerequisite refresh-python-benchmark-baseline feature.",
+    "issues": [
+      {
+        "file": "benchmarks/run_benchmarks.py",
+        "line": 157,
+        "severity": "non_blocking",
+        "description": "run_cmd_timing() duplicates the PYTHONPATH env setup logic from run_cmd_capture(). Could be refactored into a shared helper to reduce maintenance surface, but both functions work correctly as-is."
+      },
+      {
+        "file": "benchmarks/run_benchmarks.py",
+        "line": 191,
+        "severity": "non_blocking",
+        "description": "scenario_timing_warmup_runs() and scenario_timing_should_capture_stdout() use string matching on scenario names ('Max Count Limit'). If scenario names are renamed, the specialized warmup/capture behavior silently falls back to defaults. This is consistent with other string-matching patterns in the file (e.g. 'Count Matches') so it is not a regression in style."
+      }
+    ]
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "severity": "non_blocking",
+      "description": "run_cmd_timing() duplicates PYTHONPATH env setup from run_cmd_capture(). Could be refactored into a shared helper."
+    },
+    {
+      "severity": "non_blocking",
+      "description": "Scenario-specific warmup/capture functions use string matching on scenario names, which could silently degrade if names change."
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The benchmark harness now has two separate subprocess invocation patterns: run_cmd_capture (with stdout text capture) and run_cmd_timing (timing-only, DEVNULL or PIPE). Both independently set up PYTHONPATH. This design decision is not documented in AGENTS.md but is a reasonable benchmark architecture choice.",
+      "evidence": "benchmarks/run_benchmarks.py lines 138-175: run_cmd_capture() and run_cmd_timing() each construct env with PYTHONPATH independently."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. Both feature objectives are fully implemented: (1) run_benchmarks.py records median-of-3 timing samples per scenario with timing separated from parity capture, emitting rg_samples_s/tg_samples_s arrays and timing_samples_per_scenario in the JSON artifact; (2) detect_environment_mismatch() now checks python_version alongside platform and machine. Tests are comprehensive, all validators passed (491 tests, 14 skipped), and baselines already include python_version from the prerequisite feature. Two non-blocking code style observations noted (duplicated env setup, string-based scenario matching)."
+}

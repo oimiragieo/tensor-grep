@@ -1,5 +1,14 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use std::sync::Once;
+
+static PYTHON_INIT: Once = Once::new();
+
+pub fn ensure_python_initialized() {
+    PYTHON_INIT.call_once(|| {
+        pyo3::prepare_freethreaded_python();
+    });
+}
 
 // Struct mirrored from main binary so the library can use it
 pub struct CliFlags {
@@ -11,6 +20,8 @@ pub struct CliFlags {
 
 /// Evaluates if the current system has an NVIDIA GPU available and capable of cuDF acceleration
 pub fn should_use_gpu_pipeline() -> bool {
+    ensure_python_initialized();
+
     Python::with_gil(|py| -> PyResult<bool> {
         // Attempt to import tensor_grep's existing device detector
         let sys = py.import("sys")?;
@@ -35,6 +46,8 @@ pub fn should_use_gpu_pipeline() -> bool {
 
 /// Fallback mechanism to invoke specific Python Typer subcommands directly from Rust
 pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyhow::Result<()> {
+    ensure_python_initialized();
+
     Python::with_gil(|py| -> PyResult<()> {
         let sys = py.import("sys")?;
 
@@ -53,6 +66,8 @@ pub fn execute_python_module_fallback(command: &str, args: Vec<String>) -> anyho
 
 /// Executes the cuDF Python Pipeline dynamically from Rust!
 pub fn execute_gpu_pipeline(pattern: &str, path: &str, config: &CliFlags) -> anyhow::Result<()> {
+    ensure_python_initialized();
+
     Python::with_gil(|py| -> PyResult<()> {
         let pipeline_module = py.import("tensor_grep.core.pipeline")?;
         let pipeline_class = pipeline_module.getattr("Pipeline")?;

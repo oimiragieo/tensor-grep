@@ -1,0 +1,139 @@
+{
+  "groupId": "envelope-schema",
+  "testedAt": "2026-03-16T00:30:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "benchDataDirectory": "C:\\dev\\projects\\tensor-grep\\bench_data",
+    "note": "Read-only checks on example artifacts and live CLI output"
+  },
+  "toolsUsed": ["Execute (PowerShell)", "Python json.loads()", "cargo test"],
+  "assertions": [
+    {
+      "id": "VAL-API-004",
+      "title": "All JSON outputs include version field",
+      "status": "pass",
+      "steps": [
+        { "action": "Parse each docs/examples/*.json file", "expected": "result['version'] is an integer", "observed": "All 5 files have version=1 (int)" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/artifact-validation-output.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-005",
+      "title": "All JSON outputs include routing_backend field",
+      "status": "pass",
+      "steps": [
+        { "action": "Parse each docs/examples/*.json file", "expected": "routing_backend is a non-empty string", "observed": "All 5 files have non-empty routing_backend: CpuBackend, TrigramIndex, AstBackend (x2), GpuSidecar" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/artifact-validation-output.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-006",
+      "title": "All JSON outputs include routing_reason field",
+      "status": "pass",
+      "steps": [
+        { "action": "Parse each docs/examples/*.json file", "expected": "routing_reason is a non-empty string", "observed": "All 5 files have non-empty routing_reason: cpu-native, index-accelerated, ast-native (x2), gpu-device-ids-explicit" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/artifact-validation-output.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-010",
+      "title": "SearchResultJson includes sidecar_used field",
+      "status": "pass",
+      "steps": [
+        { "action": "Parse docs/examples/index_search.json", "expected": "sidecar_used exists and is boolean", "observed": "sidecar_used=false, type=bool" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/artifact-validation-output.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-015",
+      "title": "GPU sidecar JSON includes unified envelope",
+      "status": "pass",
+      "steps": [
+        { "action": "Parse docs/examples/gpu_sidecar_search.json", "expected": "version, routing_backend, routing_reason, sidecar_used all present", "observed": "All four fields present: version=1, routing_backend=GpuSidecar, routing_reason=gpu-device-ids-explicit, sidecar_used=true" },
+        { "action": "Run tg.exe search --gpu-device-ids 0 --json ERROR bench_data", "expected": "GPU error is expected (known issue)", "observed": "Exit code 1: 'CuDF and Torch GPU backends were unavailable' - expected per known issue. Artifact validates the contract." }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/artifact-validation-output.txt", "harness-api/envelope-schema/live-cli-single-json.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-011",
+      "title": "Schema compatibility test exists and passes",
+      "status": "pass",
+      "steps": [
+        { "action": "Run cargo test --test test_schema_compat in rust_core/", "expected": "Test exists and passes", "observed": "1 test found (test_docs_examples_match_v1_schema), passed. Uses serde(deny_unknown_fields) for strict validation of all 5 example JSON shapes." }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/cargo-test-schema-compat.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-012",
+      "title": "Schema compat test validates all example artifacts",
+      "status": "pass",
+      "steps": [
+        { "action": "Inspect test_schema_compat.rs source code", "expected": "Test covers all 5 JSON examples", "observed": "EXPECTED_EXAMPLES constant lists all 5 files. Test asserts actual files match expected set, then validates each against typed struct with deny_unknown_fields." },
+        { "action": "Run cargo test --test test_schema_compat", "expected": "All 5 artifacts parsed and validated", "observed": "1 passed, 0 failed. All 5 example artifacts validated: search.json, index_search.json, rewrite_plan.json, rewrite_apply_verify.json, gpu_sidecar_search.json" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/cargo-test-schema-compat.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-API-014",
+      "title": "No concatenated JSON objects in any output",
+      "status": "pass",
+      "steps": [
+        { "action": "Parse each docs/examples/*.json with json.loads()", "expected": "Single parse succeeds for each file", "observed": "All 5 files parsed successfully as single JSON documents" },
+        { "action": "Run tg.exe search --json ERROR bench_data\\sample_test.log", "expected": "Single JSON document in stdout", "observed": "Exit code 0, stdout=258 bytes, json.loads() succeeds as single parse, total_matches=1, all envelope keys present" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "logs": ["harness-api/envelope-schema/artifact-validation-output.txt", "harness-api/envelope-schema/live-cli-single-json.txt"]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 8 assertions: all 8 passed. All 5 example JSON artifacts (search, index_search, rewrite_plan, rewrite_apply_verify, gpu_sidecar_search) contain version (int), routing_backend (non-empty string), routing_reason (non-empty string), and sidecar_used (bool) fields. Schema compat Rust test exists and validates all artifacts with strict deny_unknown_fields deserialization. Live CLI produces single-document JSON. GPU sidecar unavailable at runtime (known issue) but artifact validates the contract."
+}

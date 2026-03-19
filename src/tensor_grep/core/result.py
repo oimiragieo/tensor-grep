@@ -15,6 +15,7 @@ class SearchResult:
     match_counts_by_file: dict[str, int] = field(default_factory=dict)
     total_files: int = 0
     total_matches: int = 0
+    sidecar_used: bool = False
     routing_backend: str | None = None
     routing_reason: str | None = None
     routing_gpu_device_ids: list[int] = field(default_factory=list)

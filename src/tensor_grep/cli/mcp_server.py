@@ -1,3 +1,9 @@
+import json
+import os
+import re
+import subprocess
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -10,6 +16,298 @@ from tensor_grep.io.directory_scanner import DirectoryScanner
 
 # Initialize the FastMCP server
 mcp = FastMCP("tensor-grep")
+
+_REWRITE_ROUTING_BACKEND = "AstBackend"
+_REWRITE_ROUTING_REASON = "ast-native"
+_INDEX_ROUTING_BACKEND = "TrigramIndex"
+_INDEX_ROUTING_REASON = "index-accelerated"
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+@lru_cache(maxsize=1)
+def _json_output_version() -> int:
+    main_rs = _repo_root() / "rust_core" / "src" / "main.rs"
+    try:
+        match = re.search(
+            r"const\s+JSON_OUTPUT_VERSION\s*:\s*u32\s*=\s*(\d+)\s*;",
+            main_rs.read_text(encoding="utf-8"),
+        )
+    except OSError:
+        match = None
+    return int(match.group(1)) if match else 1
+
+
+def _rewrite_envelope() -> dict[str, Any]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": _REWRITE_ROUTING_BACKEND,
+        "routing_reason": _REWRITE_ROUTING_REASON,
+        "sidecar_used": False,
+    }
+
+
+def _rewrite_error(message: str, *, code: str) -> str:
+    payload = _rewrite_envelope()
+    payload["error"] = {"code": code, "message": message}
+    return json.dumps(payload, indent=2)
+
+
+def _index_search_envelope() -> dict[str, Any]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": _INDEX_ROUTING_BACKEND,
+        "routing_reason": _INDEX_ROUTING_REASON,
+        "sidecar_used": False,
+    }
+
+
+def _index_search_error(message: str, *, code: str, pattern: str, path: str) -> str:
+    payload = _index_search_envelope()
+    payload["query"] = pattern
+    payload["path"] = path
+    payload["error"] = {"code": code, "message": message}
+    return json.dumps(payload, indent=2)
+
+
+def _normalize_rewrite_json_payload(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return _rewrite_error("Rewrite command returned non-object JSON.", code="invalid_output")
+    normalized = dict(payload)
+    for key, value in _rewrite_envelope().items():
+        normalized.setdefault(key, value)
+    return json.dumps(normalized, indent=2)
+
+
+def _normalize_index_search_json_payload(payload: object, *, pattern: str, path: str) -> str:
+    if not isinstance(payload, dict):
+        return _index_search_error(
+            "Index search command returned non-object JSON.",
+            code="invalid_output",
+            pattern=pattern,
+            path=path,
+        )
+    normalized = dict(payload)
+    for key, value in _index_search_envelope().items():
+        normalized.setdefault(key, value)
+    return json.dumps(normalized, indent=2)
+
+
+def _extract_rewrite_error_message(stderr: str, fallback: str) -> str:
+    for raw_line in stderr.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("Traceback"):
+            continue
+        return line
+    return fallback
+
+
+@lru_cache(maxsize=1)
+def _resolve_native_tg_binary() -> Path:
+    repo_root = _repo_root()
+    binary_name = "tg.exe" if os.name == "nt" else "tg"
+    env_override = os.environ.get("TG_MCP_TG_BINARY")
+
+    candidates = []
+    if env_override:
+        candidates.append(Path(env_override).expanduser())
+    candidates.extend(
+        [
+            repo_root / "rust_core" / "target" / "release" / binary_name,
+            repo_root / "benchmarks" / binary_name,
+            repo_root / "benchmarks" / "tg_rust.exe",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+
+    raise FileNotFoundError(
+        "Native tg binary not found. Build rust_core/target/release/tg with cargo build --release."
+    )
+
+
+def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
+    if not pattern.strip():
+        return "Pattern must not be empty."
+    if not lang.strip():
+        return "Language must not be empty."
+    if not path.strip():
+        return "Path must not be empty."
+    if not Path(path).expanduser().exists():
+        return f"Path not found: {path}"
+    return None
+
+
+def _validate_index_search_inputs(pattern: str, path: str) -> str | None:
+    if not pattern.strip():
+        return "Pattern must not be empty."
+    if not path.strip():
+        return "Path must not be empty."
+    if not Path(path).expanduser().exists():
+        return f"Path not found: {path}"
+    return None
+
+
+def _build_rewrite_command(
+    *,
+    pattern: str,
+    replacement: str,
+    lang: str,
+    path: str,
+    mode: str,
+    verify: bool = False,
+) -> list[str]:
+    command = [
+        str(_resolve_native_tg_binary()),
+        "run",
+        "--lang",
+        lang,
+        "--rewrite",
+        replacement,
+    ]
+
+    if mode == "plan":
+        command.append("--json")
+    elif mode == "apply":
+        command.append("--apply")
+        if verify:
+            command.append("--verify")
+        command.append("--json")
+    elif mode == "diff":
+        command.append("--diff")
+    else:
+        raise ValueError(f"Unsupported rewrite mode: {mode}")
+
+    command.extend([pattern, path])
+    return command
+
+
+def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
+    return [
+        str(_resolve_native_tg_binary()),
+        "search",
+        "--index",
+        "--json",
+        pattern,
+        path,
+    ]
+
+
+def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+def _execute_rewrite_json_command(command: list[str]) -> str:
+    try:
+        completed = _run_rewrite_subprocess(command)
+    except FileNotFoundError as exc:
+        return _rewrite_error(str(exc), code="unavailable")
+    except OSError as exc:
+        return _rewrite_error(f"Failed to execute rewrite command: {exc}", code="execution_failed")
+
+    if completed.returncode != 0:
+        return _rewrite_error(
+            _extract_rewrite_error_message(
+                completed.stderr or "",
+                f"Rewrite command failed with exit code {completed.returncode}.",
+            ),
+            code="invalid_input",
+        )
+
+    stdout = (completed.stdout or "").strip()
+    if not stdout:
+        return _rewrite_error("Rewrite command produced no JSON output.", code="invalid_output")
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return _rewrite_error("Rewrite command produced invalid JSON output.", code="invalid_output")
+
+    return _normalize_rewrite_json_payload(payload)
+
+
+def _execute_rewrite_diff_command(command: list[str]) -> str:
+    try:
+        completed = _run_rewrite_subprocess(command)
+    except FileNotFoundError as exc:
+        return _rewrite_error(str(exc), code="unavailable")
+    except OSError as exc:
+        return _rewrite_error(f"Failed to execute rewrite diff command: {exc}", code="execution_failed")
+
+    if completed.returncode != 0:
+        return _rewrite_error(
+            _extract_rewrite_error_message(
+                completed.stderr or "",
+                f"Rewrite diff command failed with exit code {completed.returncode}.",
+            ),
+            code="invalid_input",
+        )
+
+    diff_preview = completed.stdout or ""
+    if not diff_preview.strip():
+        return _rewrite_error("Rewrite diff command produced no diff output.", code="invalid_output")
+
+    payload = _rewrite_envelope()
+    payload["diff"] = diff_preview
+    return json.dumps(payload, indent=2)
+
+
+def _execute_index_search_command(command: list[str], *, pattern: str, path: str) -> str:
+    try:
+        completed = _run_rewrite_subprocess(command)
+    except FileNotFoundError as exc:
+        return _index_search_error(str(exc), code="unavailable", pattern=pattern, path=path)
+    except OSError as exc:
+        return _index_search_error(
+            f"Failed to execute index search command: {exc}",
+            code="execution_failed",
+            pattern=pattern,
+            path=path,
+        )
+
+    if completed.returncode != 0:
+        return _index_search_error(
+            _extract_rewrite_error_message(
+                completed.stderr or "",
+                f"Index search command failed with exit code {completed.returncode}.",
+            ),
+            code="invalid_input",
+            pattern=pattern,
+            path=path,
+        )
+
+    stdout = (completed.stdout or "").strip()
+    if not stdout:
+        return _index_search_error(
+            "Index search command produced no JSON output.",
+            code="invalid_output",
+            pattern=pattern,
+            path=path,
+        )
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return _index_search_error(
+            "Index search command produced invalid JSON output.",
+            code="invalid_output",
+            pattern=pattern,
+            path=path,
+        )
+
+    return _normalize_index_search_json_payload(payload, pattern=pattern, path=path)
 
 
 def _routing_summary(result: SearchResult) -> str:
@@ -384,6 +682,111 @@ def tg_devices(json_output: bool = False) -> str:
     for device in inventory.devices:
         lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
     return "\n".join(lines)
+
+
+@mcp.tool()  # type: ignore
+def tg_index_search(pattern: str, path: str = ".") -> str:
+    """
+    Search files via the native trigram index path and return machine-readable JSON.
+
+    Args:
+        pattern: Regex or literal search pattern.
+        path: File or directory to search.
+    """
+    validation_error = _validate_index_search_inputs(pattern, path)
+    if validation_error:
+        return _index_search_error(
+            validation_error,
+            code="invalid_input",
+            pattern=pattern,
+            path=path,
+        )
+
+    command = _build_index_search_command(pattern=pattern, path=path)
+    return _execute_index_search_command(command, pattern=pattern, path=path)
+
+
+@mcp.tool()  # type: ignore
+def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") -> str:
+    """
+    Return the native AST rewrite plan JSON for the requested pattern and replacement.
+
+    Args:
+        pattern: AST pattern to rewrite.
+        replacement: Rewrite template.
+        lang: Tree-sitter language name.
+        path: File or directory to scan.
+    """
+    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    if validation_error:
+        return _rewrite_error(validation_error, code="invalid_input")
+
+    command = _build_rewrite_command(
+        pattern=pattern,
+        replacement=replacement,
+        lang=lang,
+        path=path,
+        mode="plan",
+    )
+    return _execute_rewrite_json_command(command)
+
+
+@mcp.tool()  # type: ignore
+def tg_rewrite_apply(
+    pattern: str,
+    replacement: str,
+    lang: str,
+    path: str = ".",
+    verify: bool = False,
+) -> str:
+    """
+    Apply native AST rewrites and optionally verify the written bytes.
+
+    Args:
+        pattern: AST pattern to rewrite.
+        replacement: Rewrite template.
+        lang: Tree-sitter language name.
+        path: File or directory to scan.
+        verify: When true, request post-apply verification from the native CLI.
+    """
+    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    if validation_error:
+        return _rewrite_error(validation_error, code="invalid_input")
+
+    command = _build_rewrite_command(
+        pattern=pattern,
+        replacement=replacement,
+        lang=lang,
+        path=path,
+        mode="apply",
+        verify=verify,
+    )
+    return _execute_rewrite_json_command(command)
+
+
+@mcp.tool()  # type: ignore
+def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") -> str:
+    """
+    Return a unified diff preview for native AST rewrites without modifying files.
+
+    Args:
+        pattern: AST pattern to rewrite.
+        replacement: Rewrite template.
+        lang: Tree-sitter language name.
+        path: File or directory to scan.
+    """
+    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    if validation_error:
+        return _rewrite_error(validation_error, code="invalid_input")
+
+    command = _build_rewrite_command(
+        pattern=pattern,
+        replacement=replacement,
+        lang=lang,
+        path=path,
+        mode="diff",
+    )
+    return _execute_rewrite_diff_command(command)
 
 
 def run_mcp_server() -> None:

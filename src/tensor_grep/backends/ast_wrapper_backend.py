@@ -17,29 +17,25 @@ class AstGrepWrapperBackend(ComputeBackend):
     This bypasses the heavy PyTorch Geometric setup for simple, fast structural searches.
     """
 
-    _cached_binary_name: str | None = None
-    _binary_name_resolved = False
-
     def is_available(self) -> bool:
-        return self._get_binary_name() != "ast-grep"
+        import shutil
+
+        return (
+            shutil.which("ast-grep") is not None
+            or shutil.which("ast-grep.exe") is not None
+            or shutil.which("sg") is not None
+        )
 
     def _get_binary_name(self) -> str:
         import shutil
 
-        if type(self)._binary_name_resolved:
-            return type(self)._cached_binary_name or "ast-grep"
-
         if ast_grep_path := shutil.which("ast-grep"):
-            binary_name = ast_grep_path
-        elif ast_grep_exe_path := shutil.which("ast-grep.exe"):
-            binary_name = ast_grep_exe_path
-        elif sg_path := shutil.which("sg"):
-            binary_name = sg_path
-        else:
-            binary_name = "ast-grep"
-        type(self)._cached_binary_name = binary_name
-        type(self)._binary_name_resolved = True
-        return binary_name
+            return ast_grep_path
+        if ast_grep_exe_path := shutil.which("ast-grep.exe"):
+            return ast_grep_exe_path
+        if sg_path := shutil.which("sg"):
+            return sg_path
+        return "ast-grep"
 
     def _build_command(
         self, pattern: str, paths: list[str], config: SearchConfig | None = None
@@ -57,14 +53,16 @@ class AstGrepWrapperBackend(ComputeBackend):
         rule_file = temp_dir / "inline_rule.yml"
         lang_value = lang or "python"
         rule_file.write_text(
-            "\n".join([
-                "id: inline-rule",
-                f"language: {lang_value}",
-                "rule:",
-                "  pattern: |",
-                *[f"    {line}" for line in pattern.splitlines()],
-                "",
-            ]),
+            "\n".join(
+                [
+                    "id: inline-rule",
+                    f"language: {lang_value}",
+                    "rule:",
+                    "  pattern: |",
+                    *[f"    {line}" for line in pattern.splitlines()],
+                    "",
+                ]
+            ),
             encoding="utf-8",
         )
         cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), *paths]

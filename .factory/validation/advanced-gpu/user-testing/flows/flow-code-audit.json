@@ -1,0 +1,74 @@
+{
+  "groupId": "flow-code-audit",
+  "testedAt": "2026-03-17T00:00:00Z",
+  "isolation": {
+    "run": "sequential",
+    "missionDir": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee"
+  },
+  "toolsUsed": ["Grep"],
+  "assertions": [
+    {
+      "id": "VAL-GPU-012",
+      "title": "Check if CUDA streams are created and used for overlap",
+      "status": "pass",
+      "steps": [
+        { "action": "Search for CUDA stream usage in rust_core/src/gpu_native.rs", "expected": "CUDA streams are created and used", "observed": "Found usage of context.new_stream() and overlapping logic (overlapped_batches, stream_count > 1)." }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "none",
+        "snippets": ["let stream = runtime.context.new_stream().context(\"failed to create CUDA stream for graph benchmark search\")?;", "overlapped_batches: dispatch_plans.len().saturating_sub(active_stream_count),"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-013",
+      "title": "Check if pinned memory is used for transfers",
+      "status": "pass",
+      "steps": [
+        { "action": "Search for pinned memory allocation in rust_core/src/gpu_native.rs", "expected": "Pinned memory is allocated for transfers", "observed": "Found context.alloc_pinned, RawPinnedHostBuffer, and alloc_zeros usage." }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "none",
+        "snippets": ["let mut match_count_host = unsafe { runtime.context.alloc_pinned::<u32>(1) }", "let mut host_buffer = RawPinnedHostBuffer::new(&runtime.context, slot_capacity)"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-016",
+      "title": "Check if warp-parallel search is implemented for long lines",
+      "status": "pass",
+      "steps": [
+        { "action": "Search for warp parallel search in rust_core/src/gpu_native.rs", "expected": "Warp-level parallelism used for searching", "observed": "Found WARP_LINE_SEARCH_KERNEL_NAME, launch_warp_line_search_kernel, and adaptive dispatch with medium/long lines." }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "none",
+        "snippets": ["const WARP_LINE_SEARCH_KERNEL_NAME: &str = \"gpu_text_search_warp_lines\";", "fn launch_warp_line_search_kernel("]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-017",
+      "title": "Check if CUDA graphs are used for batch execution",
+      "status": "pass",
+      "steps": [
+        { "action": "Search for CUDA graph usage in rust_core/src/gpu_native.rs", "expected": "CUDA graphs are used to optimize execution", "observed": "Found stream.begin_capture, stream.end_capture, and cuda_result::graph::launch." }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "none",
+        "snippets": ["stream.begin_capture(sys::CUstreamCaptureMode::CU_STREAM_CAPTURE_MODE_RELAXED)", "unsafe { cuda_result::graph::launch(self.graph_exec, self.stream.cu_stream()) }"]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assertions via code audit: 4 passed. All GPU optimizations are present in gpu_native.rs."
+}

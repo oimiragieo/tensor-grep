@@ -1,0 +1,100 @@
+{
+  "groupId": "group-2",
+  "testedAt": "2026-03-16T19:45:00Z",
+  "isolation": {
+    "surface": "CLI",
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "missionDir": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee"
+  },
+  "toolsUsed": ["CLI", "Python", "Rust"],
+  "assertions": [
+    {
+      "id": "VAL-GPU-005",
+      "title": "GPU auto-routing activates for large corpus",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg.exe search without --gpu-device-ids on 100MB file", "expected": "Routes to gpu_native", "observed": "Routed to gpu_native (routing_backend=gpu_native)" },
+        { "action": "Run tg.exe search without --gpu-device-ids on 10MB file", "expected": "Stays on CPU", "observed": "Stayed on CPU (routing_backend=NativeCpuBackend)" }
+      ],
+      "evidence": {
+        "terminal": ["native-gpu-engine/group-2/100mb_tg_verbose.txt", "native-gpu-engine/group-2/10mb_tg_verbose.txt"],
+        "consoleErrors": "none",
+        "network": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-006",
+      "title": "GPU falls back to CPU when no CUDA available",
+      "status": "pass",
+      "steps": [
+        { "action": "Set CUDA_VISIBLE_DEVICES='99' to simulate no CUDA and run tg.exe search --gpu-device-ids 0", "expected": "Falls back to CPU or exits with clear error", "observed": "Exited with clear error message (CUDA initialization failed)" }
+      ],
+      "evidence": {
+        "terminal": ["native-gpu-engine/group-2/val_gpu_006_99.txt", "native-gpu-engine/group-2/val_gpu_006_nodevice.txt"],
+        "consoleErrors": "none",
+        "network": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-007",
+      "title": "GPU falls back on init failure",
+      "status": "pass",
+      "steps": [
+        { "action": "Trigger CUDA init failure using invalid CUDA_VISIBLE_DEVICES", "expected": "Non-zero exit, clear error message. No panic.", "observed": "Exited with code 1, error message 'CUDA initialization failed: the CUDA runtime reported an initialization error', no panic." }
+      ],
+      "evidence": {
+        "terminal": ["native-gpu-engine/group-2/val_gpu_006_99.txt", "native-gpu-engine/group-2/val_gpu_006_nodevice.txt"],
+        "consoleErrors": "none",
+        "network": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-010",
+      "title": "Host-to-device transfer uses bulk copy",
+      "status": "pass",
+      "steps": [
+        { "action": "Examine gpu_native.rs and verbose output", "expected": "Batched copy of file data, not per-line.", "observed": "Code uses build_batched_file_buffer and clone_htod. Verbose shows single transfer for 100MB buffer." }
+      ],
+      "evidence": {
+        "terminal": ["native-gpu-engine/group-2/100mb_tg_verbose.txt"],
+        "code_audit": "C:/dev/projects/tensor-grep/rust_core/src/gpu_native.rs",
+        "consoleErrors": "none",
+        "network": "none"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-011",
+      "title": "GPU results include routing metadata",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg.exe search with --json on 100MB file", "expected": "JSON includes routing_backend='gpu_native' and non-empty routing_reason", "observed": "JSON output matches expectations exactly." }
+      ],
+      "evidence": {
+        "terminal": ["native-gpu-engine/group-2/val_gpu_011.json"],
+        "consoleErrors": "none",
+        "network": "none"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Python CLI via `uv run` failed with an unhandled exception stack trace when explicit GPU was requested but CuDF/Torch weren't available, rather than delegating to native Rust CUDA backend. Had to use compiled Rust binary directly.",
+      "resolved": true,
+      "resolution": "Used compiled Rust binary `rust_core/target/release/tg.exe` which worked flawlessly.",
+      "affectedAssertions": ["VAL-GPU-005", "VAL-GPU-006", "VAL-GPU-007"]
+    },
+    {
+      "description": "Cargo was not available in path, despite instructions mentioning `cargo build`.",
+      "resolved": true,
+      "resolution": "Used pre-compiled binary in target/release.",
+      "affectedAssertions": ["VAL-GPU-005", "VAL-GPU-006"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 5 assertions: 5 passed. Used compiled Rust binary tg.exe instead of python uv run due to Python wrapper throwing configuration errors and not routing correctly to the native backend."
+}

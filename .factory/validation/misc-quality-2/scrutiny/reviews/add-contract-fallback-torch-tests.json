@@ -1,0 +1,22 @@
+{
+  "featureId": "add-contract-fallback-torch-tests",
+  "reviewedAt": "2026-03-13T14:03:00.000Z",
+  "commitId": "781d4dca9dddaa659494afb51a4755ee98177301",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Two well-structured regression tests added to tests/unit/test_pipeline.py covering the strict fallback contract paths. Test 1 verifies ConfigurationError when explicit gpu_device_ids are provided, CuDF is unavailable, and TorchBackend raises ImportError (via side_effect on the patched class). Test 2 verifies ConfigurationError when ast=True is explicit but both AstBackend and AstGrepWrapperBackend report is_available()=False. Both tests follow existing patterns (decorator-based @patch, pytest.raises with match), use descriptive names consistent with the file's conventions, and correctly exercise the intended pipeline code paths. The diff is minimal (50 insertions, 0 deletions) and test-only—no production code was changed.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker deviated from the TDD-first step in backend-worker skill because this was a coverage-only feature where the implementation already existed from the prerequisite 'contract-fallback-hardening' feature. The tests passed immediately. Worker's suggestion to clarify that test-only coverage features may validate existing behavior directly is reasonable.",
+      "evidence": "handoff.skillFeedback.followedProcedure=false, deviation on step '1. TDD FIRST': 'Added the two missing regression tests and observed them pass immediately against the existing pipeline implementation.'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "issues": [],
+  "summary": "Pass. Both requested tests are correctly implemented and exercise the described contract paths: (1) explicit GPU pinning when CuDF is unavailable and TorchBackend import fails raises ConfigurationError, (2) explicit AST mode when both AST backends are unavailable raises ConfigurationError. The implementation is clean, follows existing test conventions, and all validators (ruff, mypy, pytest) passed with 477 tests passing and 2 new tests accounted for."
+}

@@ -1,0 +1,55 @@
+{
+  "groupId": "group-1",
+  "testedAt": "2026-03-16T19:41:09.102073Z",
+  "isolation": "CLI surface",
+  "toolsUsed": [
+    "cli",
+    "python",
+    "cargo"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-BUILD-001",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-BUILD-001-build-output.txt"
+    },
+    {
+      "id": "VAL-BUILD-002",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-BUILD-002-test-output.txt"
+    },
+    {
+      "id": "VAL-GPU-001",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-GPU-001-diff.txt"
+    },
+    {
+      "id": "VAL-GPU-002",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-GPU-002-gpu.txt"
+    },
+    {
+      "id": "VAL-GPU-003",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-GPU-003-verbose.txt"
+    },
+    {
+      "id": "VAL-GPU-004",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-GPU-004-dev1.txt"
+    },
+    {
+      "id": "VAL-GPU-025",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-GPU-025-comparison.txt"
+    },
+    {
+      "id": "VAL-GPU-026",
+      "status": "pass",
+      "evidencePath": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee\\evidence\\native-gpu-engine\\group-1\\VAL-GPU-026-comparison.txt"
+    }
+  ],
+  "frictions": "Initially attempted --debug flag before consulting help menu to discover --verbose.",
+  "blockers": "None",
+  "summary": "All 8 assertions passed successfully. The native GPU engine correctly executes batched searches across multiple files, matches CPU outputs byte-for-byte, handles edge cases such as multi-byte characters and batch boundaries effectively, and accurately supports explicit GPU device selection."
+}

@@ -1,0 +1,39 @@
+{
+  "milestone": "worker-safety",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
+    "lint": { "passed": true, "command": "uv run ruff check . --exclude .git", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added .factory/library/cuda-worker-isolation.md documenting the Windows CUDA worker isolation pattern: set CUDA_VISIBLE_DEVICES before importing cudf/rmm/torch in spawned workers, use max_tasks_per_child=1, return logical device 0 after pinning.",
+      "sourceFeature": "cuda-worker-isolation"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "The backend-worker skill requires strict TDD ordering (write failing test first, see it fail, then implement). In practice, workers apply production code and test code patches together. Consider clarifying in the skill that simultaneous code+test patches are acceptable when the test is structurally sound and verifiably correct, as long as the test is run and observed passing after implementation.",
+      "evidence": "cuda-worker-isolation worker (session 32edca22) applied source and test patches sequentially without first observing the test fail. The handoff skillFeedback.followedProcedure was false but only documented environment deviations, not the TDD ordering deviation.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "AGENTS.md coverage is adequate for worker-safety milestone — worker correctly used the PYTHONPATH workaround and init.sh Windows limitation documented in mission AGENTS.md.",
+      "reason": "No action needed — confirms existing documentation is complete, not a gap."
+    }
+  ],
+  "previousRound": null
+}

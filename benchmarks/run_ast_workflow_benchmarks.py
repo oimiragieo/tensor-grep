@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import platform
 import subprocess
@@ -7,6 +9,17 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+
+def default_binary_path() -> Path:
+    binary_name = "tg.exe" if os.name == "nt" else "tg"
+    return ROOT_DIR / "rust_core" / "target" / "release" / binary_name
+
+
+def resolve_tg_binary(binary: str | None = None) -> Path:
+    return Path(binary).expanduser().resolve() if binary else default_binary_path()
 
 
 def resolve_ast_workflow_bench_dir() -> Path:
@@ -16,7 +29,13 @@ def resolve_ast_workflow_bench_dir() -> Path:
     return ROOT_DIR / "artifacts" / "bench_ast_workflow"
 
 
-def build_tg_ast_workflow_cmd(args: list[str]) -> list[str]:
+def build_tg_ast_workflow_cmd(args: list[str], binary: Path | None = None) -> list[str]:
+    """Build command for native tg binary (used for ``run``)."""
+    return [str(binary or resolve_tg_binary()), *args]
+
+
+def build_sidecar_ast_workflow_cmd(args: list[str]) -> list[str]:
+    """Build command for Python bootstrap (used for ``scan``/``test`` which are sidecar-only)."""
     return [sys.executable, "-m", "tensor_grep.cli.bootstrap", *args]
 
 
@@ -54,14 +73,16 @@ def _write_tests(tests_dir: Path, rule_count: int) -> None:
 def _write_source_files(root: Path, file_count: int) -> None:
     for idx in range(file_count):
         (root / f"module_{idx:03d}.py").write_text(
-            "\n".join([
-                "class SampleClass:",
-                "    def __init__(self):",
-                "        pass",
-                "",
-                "def sample_function():",
-                "    return 1",
-            ])
+            "\n".join(
+                [
+                    "class SampleClass:",
+                    "    def __init__(self):",
+                    "        pass",
+                    "",
+                    "def sample_function():",
+                    "    return 1",
+                ]
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -101,19 +122,50 @@ def run_cmd_capture(cmd: list[str], cwd: Path) -> tuple[float, int]:
     return time.perf_counter() - start, result.returncode
 
 
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Benchmark AST workflow startup for tg run/scan/test."
+    )
+    parser.add_argument(
+        "--binary",
+        default=str(default_binary_path()),
+        help="Path to tg binary. Defaults to rust_core/target/release/tg.exe.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional JSON output path. Defaults to artifacts/bench_run_ast_workflow_benchmarks.json",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
     from tensor_grep.perf_guard import ensure_artifacts_dir, write_json
+
+    args = parse_args()
+    tg_binary = resolve_tg_binary(args.binary)
 
     bench_root = resolve_ast_workflow_bench_dir()
     bench_dir = bench_root / f"run_{int(time.time() * 1000)}"
     generate_ast_workflow_project(bench_dir)
 
-    run_cmd = build_tg_ast_workflow_cmd(["run", "def $FUNC():\n    $$$BODY", "."])
-    scan_cmd = build_tg_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
-    test_cmd = build_tg_ast_workflow_cmd(["test", "--config", "sgconfig.yml"])
+    # `run` is native Rust — benchmark the native binary.
+    run_cmd = build_tg_ast_workflow_cmd(
+        ["run", "--lang", "python", "def $FUNC():\n    $$$BODY", "."], binary=tg_binary
+    )
+    # `scan` and `test` are sidecar-backed — the native Rust CLI currently
+    # accepts no args for these subcommands and forwards them to Python.
+    # Benchmark through the Python bootstrap which is what the sidecar
+    # dispatches to.
+    scan_cmd = build_sidecar_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
+    test_cmd = build_sidecar_ast_workflow_cmd(["test", "--config", "sgconfig.yml"])
 
     scan_project = bench_dir / "scan_project"
 
+    # Warmup
     run_cmd_capture(run_cmd, scan_project)
     run_cmd_capture(scan_cmd, scan_project)
     run_cmd_capture(test_cmd, scan_project)
@@ -125,16 +177,19 @@ def main() -> int:
     rows = [
         {
             "name": "ast_run_workflow",
+            "backend": "native",
             "tg_time_s": round(run_time_s, 6),
             "exit_code": run_exit,
         },
         {
             "name": "ast_scan_workflow",
+            "backend": "sidecar",
             "tg_time_s": round(scan_time_s, 6),
             "exit_code": scan_exit,
         },
         {
             "name": "ast_test_workflow",
+            "backend": "sidecar",
             "tg_time_s": round(test_time_s, 6),
             "exit_code": test_exit,
         },
@@ -142,8 +197,9 @@ def main() -> int:
 
     artifacts_dir = ensure_artifacts_dir(ROOT_DIR)
     write_json(
-        artifacts_dir / "bench_run_ast_workflow_benchmarks.json",
+        args.output or (artifacts_dir / "bench_run_ast_workflow_benchmarks.json"),
         {
+            "artifact": "bench_run_ast_workflow_benchmarks",
             "suite": "run_ast_workflow_benchmarks",
             "generated_at_epoch_s": time.time(),
             "environment": {

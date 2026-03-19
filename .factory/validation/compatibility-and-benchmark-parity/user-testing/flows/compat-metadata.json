@@ -1,0 +1,18 @@
+{
+  "groupId": "compat-metadata",
+  "assertions": {
+    "VAL-COMPAT-001": {
+      "status": "pass",
+      "evidence": "compat_report.json shows all 8 scenarios PASS with zero divergent lines. Scenarios: (1) Simple String Match, (2) Case-Insensitive Match, (3) Regex Match, (4) Invert Match, (5) Count Matches (rg_count=800002, tg_count=800002), (6) Context Lines, (7) Max Count Limit, (8) File Glob Filtering. All exit codes match. Path separator normalization (backslash to forward slash) applied via normalize_lines(). sorted-set comparison used for line-based scenarios; exact integer equality for --count.",
+      "details": "run_compat_checks.py executed from repo root. All 8 benchmark scenarios produced PASS with zero missing_lines and zero extra_lines. Count scenario confirmed exact integer equality (800002 == 800002). Exit codes matched between rg and tg for all scenarios. Script normalizes path separators to '/' before sorted-set comparison. Full report at artifacts/compat_report.json. pytest gate: 503 passed, 14 skipped."
+    },
+    "VAL-COMPAT-002": {
+      "status": "pass",
+      "evidence": "tg.exe --json ERROR bench_data emits valid JSON: {\"routing_backend\":\"CpuBackend\",\"routing_reason\":\"cpu-native\",\"sidecar_used\":false,\"query\":\"ERROR\",\"path\":\"...\",\"total_matches\":800002}. tg.exe --verbose emits '[routing] routing_backend=CpuBackend routing_reason=cpu-native sidecar_used=false' on stderr. JSON validates against tests/schemas/tg_output.schema.json schema (jsonschema.validate() passes). Schema requires routing_backend, routing_reason, sidecar_used, query, path, total_matches with enum constraints.",
+      "details": "JSON output from tg.exe --json contains all required fields: routing_backend='CpuBackend', routing_reason='cpu-native', sidecar_used=false, query='ERROR', path=bench_data, total_matches=800002. Schema validation passed (jsonschema library). Verbose output emits structured routing metadata on stderr. Schema file committed at tests/schemas/tg_output.schema.json with additionalProperties:false and enum constraints on routing_backend and routing_reason."
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["Execute"]
+}

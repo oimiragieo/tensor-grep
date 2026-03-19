@@ -1,0 +1,17 @@
+{
+  "assertions": {
+    "VAL-CUDA-001": {
+      "status": "pass",
+      "evidence": [
+        "2 worker isolation tests passed: test_worker_isolation_sets_cuda_visible_devices_before_worker_imports and test_worker_isolation_uses_fresh_process_pool_children_on_windows",
+        "All 18 cudf_backend tests passed with zero regressions",
+        "Code structure verified: _configure_cuda_worker_environment() sets CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER before cudf/rmm imports in _process_chunk_on_device()",
+        "_create_process_pool() uses max_tasks_per_child=1 on Windows to prevent worker reuse contamination"
+      ],
+      "reason": "Worker processes correctly pin CUDA_VISIBLE_DEVICES before importing heavyweight CUDA libraries (cudf, rmm). The test_worker_isolation_sets_cuda_visible_devices_before_worker_imports test uses a custom __import__ hook to verify that at the exact moment cudf and rmm are imported, CUDA_VISIBLE_DEVICES is already set to the target device ID. ProcessPoolExecutor is created with max_tasks_per_child=1 on Windows to force fresh child processes and prevent cross-device CUDA context contamination."
+    }
+  },
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["pytest"]
+}

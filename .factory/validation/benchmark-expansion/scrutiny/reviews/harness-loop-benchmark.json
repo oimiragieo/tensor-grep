@@ -1,0 +1,45 @@
+{
+  "featureId": "harness-loop-benchmark",
+  "reviewedAt": "2026-03-16T06:00:00.000Z",
+  "commitId": "8531aac1da89ae7889e16c25a9dd91ef1efd4a80",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Well-structured benchmark script (384 lines) that implements the full agent-style AST cycle: search -> plan -> apply -> verify, with corpus restoration between iterations. Follows existing benchmark conventions (suite/generated_at_epoch_s fields, write_json, argparse, gen_corpus integration). Two focused unit tests validate the per-iteration flow and the JSON artifact contract. All local gates passed (ruff, mypy, pytest 524 passed). E2E run confirmed 5 iterations with all_passed: true and zero remaining matches each round.",
+    "issues": [
+      {
+        "file": "benchmarks/run_harness_loop_benchmark.py",
+        "line": 336,
+        "severity": "non_blocking",
+        "description": "Lines 336-341 contain a defensive recalculation of phase_medians_s/phase_totals_s if they aren't dicts, but run_harness_loop_benchmark() always returns them as dicts. This is effectively dead code. Not harmful, but adds unnecessary complexity."
+      },
+      {
+        "file": "tests/unit/test_benchmark_scripts.py",
+        "line": 468,
+        "severity": "non_blocking",
+        "description": "No test covers the failure path where remaining_matches > 0 after apply (i.e. a failed iteration). The test only mocks the happy path. A test verifying that 'passed' is False when remaining_matches > 0 would strengthen coverage."
+      },
+      {
+        "file": "tests/unit/test_benchmark_scripts.py",
+        "line": 509,
+        "severity": "non_blocking",
+        "description": "test_run_harness_loop_benchmark_should_emit_iteration_breakdown mocks out run_harness_loop_benchmark entirely, so the corpus copy/restore loop and run_harness_loop_iteration are not exercised in this test. The real cycle was verified E2E via the actual benchmark run, but no unit test covers copy_corpus cleanup or iteration error propagation."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "services",
+      "observation": "services.yaml already includes benchmark_harness_loop command pointing to the new script. No gap here — the worker or a prior feature already added it.",
+      "evidence": "services.yaml contains: benchmark_harness_loop: python benchmarks/run_harness_loop_benchmark.py --output artifacts/bench_harness_loop.json"
+    },
+    {
+      "area": "skills",
+      "observation": "Could not find .factory/skills/backend-worker/SKILL.md to compare against the worker's transcript. The skill file may not exist in the repository, or it may be located elsewhere. Unable to assess skill adherence gap.",
+      "evidence": "Glob for C:\\dev\\projects\\tensor-grep\\.factory\\skills\\**\\SKILL.md returned no results. Handoff reports followedProcedure: true with no deviations."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The harness-loop-benchmark feature is a clean, well-implemented benchmark script that fulfills VAL-BENCH-006. It correctly executes the full agent-style cycle (search -> plan -> apply -> verify) repeated 5 times with corpus restoration, produces JSON output with iterations count, all_passed boolean, and per-iteration timing breakdown (search_s, plan_s, apply_s, verify_s). All validation gates passed. Three non-blocking issues noted: dead defensive code in main(), missing failure-path unit test, and the main integration loop being mocked out in the artifact test. None are blocking."
+}

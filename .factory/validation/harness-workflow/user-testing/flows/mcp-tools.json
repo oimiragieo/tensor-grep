@@ -1,0 +1,160 @@
+{
+  "groupId": "mcp-tools",
+  "testedAt": "2026-03-16T07:38:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tempDirectory": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-hw-mcp",
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "python": "uv run python",
+    "mcpServer": "src/tensor_grep/cli/mcp_server.py"
+  },
+  "toolsUsed": ["Execute", "uv run python", "uv run pytest"],
+  "assertions": [
+    {
+      "id": "VAL-WORK-001",
+      "title": "MCP rewrite_plan tool returns valid plan",
+      "status": "pass",
+      "steps": [
+        { "action": "Run existing MCP unit tests", "expected": "All 16 tests pass", "observed": "16/16 passed" },
+        { "action": "Create sample.py with 3 Python functions using return statements", "expected": "File created", "observed": "File created at artifacts/val-hw-mcp/sample.py" },
+        { "action": "Invoke tg_rewrite_plan with pattern='def $F($$$ARGS): return $EXPR', replacement='lambda $$$ARGS: $EXPR', lang='python'", "expected": "JSON with version, routing_backend, routing_reason, total_edits, edits[]", "observed": "JSON returned with all required fields: version=1, routing_backend=AstBackend, routing_reason=ast-native, total_edits=3, edits[3]" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A - direct function invocation",
+        "files": ["harness-workflow/mcp-tools/VAL-WORK-001-rewrite-plan-output.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-002",
+      "title": "MCP rewrite_apply tool applies rewrites",
+      "status": "pass",
+      "steps": [
+        { "action": "Copy sample.py to sample_apply.py for isolated apply test", "expected": "Copy created", "observed": "Copy created" },
+        { "action": "Invoke tg_rewrite_apply with pattern/replacement/lang/path and verify=true", "expected": "JSON with plan and verification sub-objects including routing metadata", "observed": "JSON returned with plan (contains edits), verification (verified=3, mismatches=[]), routing_backend=AstBackend, routing_reason=ast-native" },
+        { "action": "Verify file content changed", "expected": "File content modified by rewrite", "observed": "File content changed - functions replaced with lambdas" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A - direct function invocation via subprocess to tg.exe",
+        "files": ["harness-workflow/mcp-tools/VAL-WORK-002-rewrite-apply-output.txt", "harness-workflow/mcp-tools/VAL-WORK-002-file-after-apply.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-003",
+      "title": "MCP rewrite_diff tool returns unified diff",
+      "status": "pass",
+      "steps": [
+        { "action": "Record file mtime before invoking diff", "expected": "Mtime recorded", "observed": "Mtime recorded" },
+        { "action": "Invoke tg_rewrite_diff with pattern/replacement/lang/path", "expected": "JSON with diff field containing unified diff format", "observed": "JSON returned with diff field containing --- a/, +++ b/, @@ markers" },
+        { "action": "Verify file mtime unchanged after diff", "expected": "File not modified", "observed": "File mtime identical before and after" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A - direct function invocation via subprocess to tg.exe",
+        "files": ["harness-workflow/mcp-tools/VAL-WORK-003-rewrite-diff-output.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-004",
+      "title": "MCP index_search tool returns results via index",
+      "status": "pass",
+      "steps": [
+        { "action": "Invoke tg_index_search with pattern='ERROR' on bench_data directory", "expected": "JSON with routing_backend='TrigramIndex'", "observed": "JSON returned: version=1, routing_backend=TrigramIndex, routing_reason=index-accelerated, total_matches=0" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A - direct function invocation via subprocess to tg.exe",
+        "files": ["harness-workflow/mcp-tools/VAL-WORK-004-index-search-output.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-009",
+      "title": "All MCP tools include routing metadata",
+      "status": "pass",
+      "steps": [
+        { "action": "Invoke tg_rewrite_plan and check for routing_backend/routing_reason", "expected": "Both fields present", "observed": "routing_backend=AstBackend, routing_reason=ast-native" },
+        { "action": "Invoke tg_rewrite_diff and check for routing_backend/routing_reason", "expected": "Both fields present", "observed": "routing_backend=AstBackend, routing_reason=ast-native" },
+        { "action": "Invoke tg_index_search and check for routing_backend/routing_reason", "expected": "Both fields present", "observed": "routing_backend=TrigramIndex, routing_reason=index-accelerated" },
+        { "action": "Invoke tg_search (mocked) and check for routing info in text output", "expected": "Routing: backend=... reason=... present", "observed": "Routing: backend=CpuBackend reason=text-search present in output" },
+        { "action": "Invoke tg_ast_search (mocked) and check for routing info in text output", "expected": "Routing: backend=... reason=... present", "observed": "Routing: backend=AstGrepWrapperBackend reason=ast-search present in output" },
+        { "action": "Invoke tg_devices and check JSON output", "expected": "Valid JSON returned", "observed": "Valid JSON with device inventory schema (platform, devices)" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["harness-workflow/mcp-tools/VAL-WORK-009-routing-metadata-check.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-010",
+      "title": "Existing MCP tools still work",
+      "status": "pass",
+      "steps": [
+        { "action": "Run all 16 existing MCP unit tests", "expected": "All pass", "observed": "16/16 passed" },
+        { "action": "Invoke tg_search with mocked backend", "expected": "Returns match results with routing info", "observed": "Found 1 matches across 1 files with routing summary" },
+        { "action": "Invoke tg_ast_search with mocked backend", "expected": "Returns AST match results with routing info", "observed": "Found 1 structural AST matches with routing summary" },
+        { "action": "Invoke tg_classify_logs", "expected": "Function callable (CyBERT may not be available)", "observed": "Function invoked, CyBERT unavailable (no GPU/connection) but function didn't crash" },
+        { "action": "Invoke tg_devices with mocked inventory", "expected": "Returns device info", "observed": "Returns 'No routable GPUs detected.'" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "PyTorch warning (expected - not installed for GPU), CyBERT inference connection refused (expected - no GPU server)",
+        "network": "HuggingFace model HEAD requests (200 OK for tokenizer config)",
+        "files": ["harness-workflow/mcp-tools/VAL-WORK-010-existing-tools-check.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-WORK-013",
+      "title": "MCP tools return structured errors",
+      "status": "pass",
+      "steps": [
+        { "action": "Invoke tg_rewrite_plan with non-existent path", "expected": "Structured JSON error, no traceback", "observed": "JSON with error.code=invalid_input, error.message='Path not found: ...', no Traceback" },
+        { "action": "Invoke tg_rewrite_apply with non-existent path", "expected": "Structured JSON error", "observed": "JSON with error.code=invalid_input, error.message='Path not found: ...'" },
+        { "action": "Invoke tg_rewrite_diff with non-existent path", "expected": "Structured JSON error", "observed": "JSON with error.code=invalid_input, error.message='Path not found: ...'" },
+        { "action": "Invoke tg_index_search with non-existent path", "expected": "Structured JSON error", "observed": "JSON with error.code=invalid_input, error.message='Path not found: ...'" },
+        { "action": "Invoke tg_rewrite_plan with empty pattern", "expected": "Structured JSON error", "observed": "JSON with error.code=invalid_input, error.message='Pattern must not be empty.'" },
+        { "action": "Invoke tg_index_search with empty pattern", "expected": "Structured JSON error", "observed": "JSON with error.code=invalid_input, error.message='Pattern must not be empty.'" },
+        { "action": "Invoke tg_rewrite_plan with valid input after errors", "expected": "Tool works normally (server didn't crash)", "observed": "Valid rewrite plan returned successfully" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["harness-workflow/mcp-tools/VAL-WORK-013-structured-errors.txt", "harness-workflow/mcp-tools/VAL-WORK-013-post-error-recovery.txt"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "Unified JSON shapes used by M5 MCP tools",
+      "status": "pass",
+      "steps": [
+        { "action": "Invoke tg_rewrite_plan and validate v1 schema fields (version:int, routing_backend:str, routing_reason:str)", "expected": "All v1 fields present with correct types", "observed": "version=1 (int), routing_backend='AstBackend' (str), routing_reason='ast-native' (str) - all present" },
+        { "action": "Invoke tg_rewrite_diff and validate v1 schema fields", "expected": "All v1 fields present with correct types", "observed": "version=1 (int), routing_backend='AstBackend' (str), routing_reason='ast-native' (str) - all present" },
+        { "action": "Invoke tg_index_search and validate v1 schema fields", "expected": "All v1 fields present with correct types", "observed": "version=1 (int), routing_backend='TrigramIndex' (str), routing_reason='index-accelerated' (str) - all present" }
+      ],
+      "evidence": {
+        "screenshots": [],
+        "consoleErrors": "none",
+        "network": "N/A",
+        "files": ["harness-workflow/mcp-tools/VAL-CROSS-002-v1-schema-validation.txt"]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 8 assertions: 8 passed, 0 failed, 0 blocked. All MCP tools (rewrite_plan, rewrite_apply, rewrite_diff, index_search) return valid v1 JSON with routing metadata. Existing tools (tg_search, tg_ast_search, tg_classify_logs, tg_devices) continue working. Structured error handling confirmed for invalid paths and empty patterns. Post-error recovery confirmed."
+}

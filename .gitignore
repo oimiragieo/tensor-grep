@@ -42,10 +42,16 @@ npm/node_modules/
 *.log
 *.patch
 *.txt
+stream_test.py
+test_group2.py
 artifacts/
 benchmarks/corpus/
 ripgrep-*/
 gpu_bench_data/
+
+!tests/golden/
+!tests/golden/**/*.txt
+!tests/golden/**/*.log
 
 # Tests
 .hypothesis/

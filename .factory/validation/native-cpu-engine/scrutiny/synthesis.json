@@ -1,0 +1,56 @@
+{
+  "milestone": "native-cpu-engine",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "uv run pytest -q",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "uv run mypy src/tensor_grep",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "uv run ruff check .",
+      "exitCode": 0
+    },
+    "rust_test": {
+      "passed": true,
+      "command": "C:\\Users\\oimir\\.cargo\\bin\\cargo.exe test --manifest-path rust_core/Cargo.toml",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 6,
+    "passed": 6,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Documented TG_DISABLE_RG environment variable in .factory/library/tg-disable-rg.md",
+      "sourceFeature": "wire-native-engine-routing"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Update the scrutiny validator skill or orchestrator expectations regarding timeouts. The feature description assumed .factory/services.yaml has a timeout schema, but it does not.",
+      "evidence": "Feature fix-scrutiny-failures noted that .factory/services.yaml lacks a timeout field, so the worker updated AGENTS.md instead.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "ignore::WalkBuilder requires explicit add_ignore calls for .gitignore outside repo root.",
+      "reason": "already-documented in .factory/library/native-cpu-engine.md"
+    }
+  ],
+  "previousRound": ".factory/validation/native-cpu-engine/scrutiny/synthesis.json"
+}

@@ -1,0 +1,45 @@
+{
+  "featureId": "ast-bounded-cache",
+  "reviewedAt": "2026-03-13T12:41:00.000Z",
+  "commitId": "13123cd9019f929521f004dbf5f4a955ae1f13cf",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid implementation of byte-bounded LRU eviction for _shared_parsed_source_cache using OrderedDict with explicit byte accounting. The worker correctly avoided a naive lru_cache wrapper, instead building a bespoke bounded cache with per-entry size tracking, oversized-entry rejection, LRU promotion on access, and configurable byte limits via TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES (default 64MB). File identity invalidation was strengthened by expanding the signature from (mtime_ns, size) to (dev, ino, mtime_ns, ctime_ns, size), catching file replacements that preserve timestamps. Line splitting was normalized from .split('\\n') to .splitlines() for Windows CRLF correctness. Three well-targeted tests cover LRU eviction, oversized entry bypass, and identity-based invalidation. All local gates (ruff, mypy, pytest, AST benchmarks) passed in the isolated worktree.",
+    "issues": [
+      {
+        "file": "src/tensor_grep/backends/ast_backend.py",
+        "line": 106,
+        "severity": "non_blocking",
+        "description": "_estimate_parsed_source_cache_entry_size only counts len(source_bytes), ignoring the memory footprint of the decoded lines list, the tree-sitter AST object, and tuple overhead. Actual memory usage per entry is likely 2-4x the tracked bytes. The byte limit is still a useful ceiling on entry count, but the docstring or comment should note this is a conservative lower-bound estimate."
+      },
+      {
+        "file": "src/tensor_grep/backends/ast_backend.py",
+        "line": 118,
+        "severity": "non_blocking",
+        "description": "_get_cached_parsed_source_entry calls _build_file_signature (os.stat) on every cache lookup, including from _get_cached_lines in the node-type-index fast path. This is correct for invalidation but adds a stat syscall per cache hit. The prior code had the same behavior, so this is not a regression—just an observation for future optimization."
+      },
+      {
+        "file": "src/tensor_grep/backends/ast_backend.py",
+        "line": 89,
+        "severity": "non_blocking",
+        "description": "On Windows with certain filesystems, st_ino may be 0, reducing the expanded file signature's ability to detect file replacements. The test test_should_invalidate_parsed_source_cache_when_file_identity_changes_without_mtime_or_size_change may not reliably trigger inode changes on all Windows configurations. The signature expansion is still strictly better than before (adding dev+ctime), so this is a platform limitation rather than a bug."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "New environment variable TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES was introduced for configuring the AST cache byte limit. This is not documented in services.yaml, AGENTS.md, or any library knowledge file. Future workers may not know about this tuning knob.",
+      "evidence": "src/tensor_grep/backends/ast_backend.py:99 — _get_parsed_source_cache_limit_bytes reads os.environ.get('TENSOR_GREP_AST_PARSED_SOURCE_CACHE_MAX_BYTES'). No corresponding entry in .factory/services.yaml or .factory/library/."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker deviated from the backend-worker skill's 'Final Step: Merge to Main' procedure, leaving the commit on branch worker/ast-bounded-cache without merging to main. The deviation was justified: the primary checkout had unrelated uncommitted changes on the same AST files, making a direct merge risky. The skill's worktree merge guidance covers the normal case but doesn't address when the primary checkout has conflicting uncommitted edits on the same files the feature modifies.",
+      "evidence": "Handoff skillFeedback.deviations[1]: 'The primary checkout had unrelated local modifications on the same AST files, so merging there risked clobbering existing work.' Skill SKILL.md says to merge via 'git -C ... merge <feature-branch> --no-edit' but notes stashing as a fallback — stashing wouldn't help when the conflicts are on the same files being modified by the feature."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The ast-bounded-cache implementation is well-executed. It correctly replaces the unbounded dict with a byte-budgeted OrderedDict-based LRU cache, avoids the naive lru_cache trap, strengthens file identity invalidation with inode/ctime metadata, and normalizes line splitting for CRLF correctness. Three new tests adequately cover eviction boundaries, oversized entry rejection, and identity-based invalidation. All gates and AST benchmarks passed. No blocking issues found. Three non-blocking observations noted: underestimated entry size (source bytes only), stat-per-lookup cost, and Windows inode limitations."
+}

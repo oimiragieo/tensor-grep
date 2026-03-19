@@ -272,6 +272,32 @@ jobs:
         working-directory: rust_core
         run: cargo test --verbose --no-default-features
 
+  search-golden-parity:
+    name: search-golden-parity (windows-latest)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python for PyO3 Linker
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create venv for PyO3
+        shell: bash
+        run: |
+          python -m venv .venv
+          echo "$GITHUB_WORKSPACE\.venv\Scripts" >> $GITHUB_PATH
+
+      - name: Run search golden parity test
+        working-directory: rust_core
+        run: cargo test --test test_search_golden
+
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
     runs-on: ubuntu-latest

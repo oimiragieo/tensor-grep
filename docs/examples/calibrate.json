@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "routing_backend": "Calibration",
+  "routing_reason": "manual-calibrate",
+  "sidecar_used": false,
+  "corpus_size_breakpoint_bytes": 104857600,
+  "cpu_median_ms": 50.0,
+  "gpu_median_ms": 40.0,
+  "recommendation": "gpu_above_100mb",
+  "calibration_timestamp": 1742179200,
+  "device_name": "Mock RTX 4070",
+  "measurements": [
+    {
+      "size_bytes": 1048576,
+      "cpu_median_ms": 5.5,
+      "gpu_median_ms": 20.0,
+      "cpu_samples_ms": [5.0, 5.5, 6.0],
+      "gpu_samples_ms": [19.0, 20.0, 21.0]
+    },
+    {
+      "size_bytes": 10485760,
+      "cpu_median_ms": 12.0,
+      "gpu_median_ms": 14.0,
+      "cpu_samples_ms": [11.5, 12.0, 12.5],
+      "gpu_samples_ms": [13.5, 14.0, 14.5]
+    },
+    {
+      "size_bytes": 104857600,
+      "cpu_median_ms": 50.0,
+      "gpu_median_ms": 40.0,
+      "cpu_samples_ms": [49.0, 50.0, 51.0],
+      "gpu_samples_ms": [39.0, 40.0, 41.0]
+    }
+  ]
+}

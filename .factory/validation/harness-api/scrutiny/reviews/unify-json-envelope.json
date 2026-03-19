@@ -1,0 +1,45 @@
+{
+  "featureId": "unify-json-envelope",
+  "reviewedAt": "2026-03-16T04:23:00Z",
+  "commitId": "31c03a8413255dd569ca3732998ff374cf1a1fae",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly adds all four unified envelope fields (version, routing_backend, routing_reason, sidecar_used) to every JSON output path in the Rust binary. Changes span main.rs (RoutingMetadata, SearchResultJson, new ApplyVerifyJson struct, normalize_gpu_sidecar_json function, emit_json_metadata), backend_ast.rs (RewritePlan struct with new fields), and index.rs (clippy fix + type alias). Test coverage is thorough across all JSON output paths: CPU search, index search, AST search, rewrite plan, apply+verify, and GPU sidecar. The worker followed TDD correctly (wrote failing test first), ran all local gates (cargo test, clippy, ruff, mypy, pytest), and verified the release binary against real data.",
+    "issues": [
+      {
+        "file": "rust_core/src/backend_ast.rs",
+        "line": 340,
+        "severity": "non_blocking",
+        "description": "Version field hardcoded as `version: 1` in plan_rewrites() instead of using the JSON_OUTPUT_VERSION constant defined in main.rs. Same issue at line 411 in plan_and_apply(). If the version constant is bumped in main.rs, backend_ast.rs would be stale. Consider exporting the constant from a shared location or passing it as a parameter."
+      },
+      {
+        "file": "rust_core/src/main.rs",
+        "line": 870,
+        "severity": "non_blocking",
+        "description": "normalize_gpu_sidecar_json inserts envelope fields at the end of the serde_json::Map, while typed structs (SearchResultJson, ApplyVerifyJson) serialize envelope fields first. This produces inconsistent field ordering across JSON output paths. Cosmetic only — JSON spec does not define object key ordering — but may confuse consumers that naively compare outputs."
+      },
+      {
+        "file": "rust_core/src/index.rs",
+        "line": 11,
+        "severity": "non_blocking",
+        "description": "The FileTrigramHits type alias and .is_some_and() clippy fixes are unrelated to the envelope feature but bundled in the same commit. These are correct and helpful but would ideally be in a separate commit for traceability."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The AGENTS.md 'User Preferences' section mentions 'Unified JSON envelope: every machine-readable output must include version, routing_backend, routing_reason' but omits sidecar_used from the list. The implementation correctly includes all four fields, but AGENTS.md should list sidecar_used explicitly to prevent future workers from omitting it.",
+      "evidence": "AGENTS.md last line: 'Unified JSON envelope: every machine-readable output must include version, routing_backend, routing_reason' — missing sidecar_used. Compare to architecture.md which correctly lists all four: 'version (u32), routing_backend (string), routing_reason (string), sidecar_used (bool)'."
+    },
+    {
+      "area": "conventions",
+      "observation": "The JSON_OUTPUT_VERSION constant lives in main.rs but backend_ast.rs hardcodes `version: 1` without referencing it. If version is ever bumped, there is no compile-time safeguard to keep backend_ast.rs in sync. Consider documenting this coupling risk or moving the constant to a shared module.",
+      "evidence": "rust_core/src/main.rs:16 defines `const JSON_OUTPUT_VERSION: u32 = 1;`. rust_core/src/backend_ast.rs:340 and :411 both use `version: 1` literal."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The unify-json-envelope feature passes review. All four envelope fields (version, routing_backend, routing_reason, sidecar_used) are correctly added to every JSON output path: CPU/AST search metadata, index search JSON, rewrite plan, apply+verify wrapper, and GPU sidecar output. The implementation is clean, test coverage is comprehensive across all paths, and the worker followed TDD and ran all required local gates. Three non-blocking issues were noted: hardcoded version in backend_ast.rs (maintenance risk), inconsistent field ordering in GPU sidecar JSON, and unrelated clippy fixes bundled in the same commit."
+}

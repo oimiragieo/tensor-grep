@@ -1,0 +1,62 @@
+{
+  "featureId": "rust-control-plane-routing",
+  "reviewedAt": "2026-03-15T04:35:00.000Z",
+  "commitId": "1dbdda6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation correctly routes all non-GPU subcommands away from execute_python_module_fallback and with_gil. Plain text search (both positional CLI and new `search` subcommand) delegates to bundled ripgrep via rg_passthrough.rs, keeping the hot path completely Python-free. Subcommands `run`, `scan`, `test`, `new` route through sidecar IPC (python_sidecar.rs subprocess protocol, not embedded PyO3). `mcp` and `lsp` use python passthrough (subprocess, still no PyO3). Golden-file parity tests cover 8 search scenarios with sorted-line comparison and a Windows-only CI job. Hyperfine cold-start benchmark gate (check_rust_cold_start.py) verified 683.5ms improvement vs baseline (0.252s vs 0.935s). All verification commands passed: cargo test, cargo clippy -D warnings, ruff, mypy, pytest (492 passed, 14 skipped).",
+    "issues": [
+      {
+        "file": "rust_core/tests/test_search_golden.rs",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "Golden test is gated with #![cfg(windows)]. If cross-platform golden parity is eventually needed, the golden files contain Windows path separators (backslash in fixture paths like `fixture_data\\server_0.log`) and the normalize_for_compare function does not normalize path separators. This is fine for the current Windows-only CI job but would need adjustment for Linux/macOS runners."
+      },
+      {
+        "file": "rust_core/src/main.rs",
+        "line": 265,
+        "severity": "non_blocking",
+        "description": "Behavioral asymmetry: `handle_ripgrep_search` (search subcommand) passes line_number=false while `run_positional_cli` passes line_number=true. This means `tg search ERROR bench_data` produces no explicit -n flag (ripgrep default: line numbers only on TTY), while `tg ERROR bench_data` always forces -n. This is not a bug for golden-file comparison (tests use piped output where rg omits line numbers by default anyway) but could surprise users expecting identical behavior between the two invocation forms."
+      },
+      {
+        "file": "rust_core/src/rg_passthrough.rs",
+        "line": 6,
+        "severity": "non_blocking",
+        "description": "WINDOWS_RG_DIRNAME is hardcoded to 'ripgrep-14.1.0-x86_64-pc-windows-msvc'. If the bundled ripgrep version changes, this constant must be updated. The PATH-based fallback mitigates this — it only affects environments where rg is not on PATH and the bundled directory name has changed."
+      },
+      {
+        "file": "rust_core/src/rg_passthrough.rs",
+        "line": 82,
+        "severity": "non_blocking",
+        "description": "repo_root() uses env!(\"CARGO_MANIFEST_DIR\") which bakes the build-time path into the binary. For development/CI this is fine (bundled rg resolves correctly), but a deployed/redistributed binary would have a stale path. The PATH fallback covers this case, so it's not a blocking issue."
+      },
+      {
+        "file": "tests/golden/case_insensitive_match.txt",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "VAL-CTRL-004 mentions all core flags including -F (fixed strings) and --replace, but the 8 golden scenarios do not include a -F or --replace test. The --replace path uses CpuBackend (not ripgrep passthrough) and is tested separately in test_replace.rs and test_python_bootstrap.rs. The -F flag is supported by the SearchArgs struct and forwarded to rg but lacks dedicated golden coverage. These are covered by other existing tests so not blocking."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md says '.github/workflows/ — do not modify unless a build artifact path changes' but this feature correctly modified ci.yml to add a search-golden-parity job as explicitly required by the feature description. The AGENTS.md language could be broadened to say 'do not modify unless a build artifact path changes or a feature explicitly requires a new CI job'.",
+      "evidence": "AGENTS.md Off-Limits section vs feature description item (4): 'CI job added to run diff against golden files on every PR'. The worker correctly identified this was a required change per the feature spec."
+    },
+    {
+      "area": "skills",
+      "observation": "Worker followed the rust-worker skill procedure faithfully: test-first development, cargo test + clippy, Python gates (ruff/mypy/pytest), hyperfine benchmark verification, and correct merge to main. skillFeedback.followedProcedure is true with no deviations.",
+      "evidence": "Handoff verification section shows all required commands executed with exit code 0. Transcript skeleton confirms skill invocation sequence."
+    },
+    {
+      "area": "services",
+      "observation": "Worker correctly registered benchmark_rust_cold_start in .factory/services.yaml. No undocumented services or ports were started.",
+      "evidence": ".factory/services.yaml diff shows +benchmark_rust_cold_start entry."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The rust-control-plane-routing feature correctly implements all four validation assertions (VAL-CTRL-001, VAL-CTRL-003, VAL-CTRL-004, VAL-CTRL-NEW-001). Plain text search is fully Python-free via ripgrep passthrough. Non-GPU subcommands (run/scan/test/new) route through sidecar IPC, not embedded PyO3. Cold-start improves by 683.5ms (well above the 50ms threshold). 8 golden-file scenarios are committed with a Windows CI parity job. Five non-blocking observations noted: Windows-only golden test gating, line_number behavioral asymmetry between search subcommand and positional CLI, hardcoded rg directory name, CARGO_MANIFEST_DIR baked path, and missing golden scenarios for -F/--replace (covered by other test suites)."
+}

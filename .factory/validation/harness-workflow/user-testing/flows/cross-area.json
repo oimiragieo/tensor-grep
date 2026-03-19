@@ -1,0 +1,174 @@
+{
+  "groupId": "cross-area",
+  "testedAt": "2026-03-16T11:40:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tempDirectory": "C:\\dev\\projects\\tensor-grep\\artifacts\\val-hw-cross",
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "shell": "PowerShell"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Schema compat test passes after all milestones",
+      "status": "pass",
+      "steps": [
+        { "action": "Run cargo test in rust_core/", "expected": "All tests pass including schema compat", "observed": "145 tests passed, 0 failed. test_docs_examples_match_v1_schema passed." }
+      ],
+      "evidence": {
+        "terminalOutput": "harness-workflow/cross-area/VAL-CROSS-001-cargo-test.txt",
+        "keyResult": "145 passed; 0 failed; 0 ignored; test_docs_examples_match_v1_schema ... ok"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "title": "tg run never spawns Python",
+      "status": "pass",
+      "steps": [
+        { "action": "Set PYTHONHOME=C:\\nonexistent_python and TG_SIDECAR_PYTHON=C:\\nonexistent\\python.exe", "expected": "Python env completely invalid", "observed": "Python env set to nonexistent paths" },
+        { "action": "Run tg run --lang python with AST pattern on test file", "expected": "Succeeds without Python", "observed": "Exit code 0, found 3 matches" },
+        { "action": "Run tg run --verbose to check routing", "expected": "AstBackend, sidecar_used=false", "observed": "routing_backend=AstBackend routing_reason=ast-native sidecar_used=false" }
+      ],
+      "evidence": {
+        "terminalOutput": "harness-workflow/cross-area/VAL-CROSS-004-no-python.txt",
+        "keyResult": "tg run succeeds with invalid Python; routing shows sidecar_used=false"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "title": "Dry-run rewrite never modifies files",
+      "status": "pass",
+      "steps": [
+        { "action": "Record mtime of test_simple.py before dry-run", "expected": "Mtime captured", "observed": "Mtime: 03/16/2026 11:37:03" },
+        { "action": "Run single rewrite dry-run (no --apply)", "expected": "JSON plan emitted, file unchanged", "observed": "Plan with 3 edits emitted. Mtime unchanged: True. Content preserved: True." },
+        { "action": "Run batch rewrite dry-run (no --apply)", "expected": "JSON plan emitted, file unchanged", "observed": "Batch plan with 3 edits emitted. Mtime unchanged: True. Content preserved: True." }
+      ],
+      "evidence": {
+        "terminalOutput": "harness-workflow/cross-area/VAL-CROSS-005-dryrun.txt",
+        "keyResult": "Both single and batch dry-run produce plans without modifying files"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-006",
+      "title": "Overlap validation before write after all milestones",
+      "status": "pass",
+      "steps": [
+        { "action": "Create batch config with overlapping patterns", "expected": "Config created", "observed": "Config with two patterns that produce overlapping edits on test_overlap.py" },
+        { "action": "Run batch rewrite with --apply --json", "expected": "rejected_overlaps in output, file unchanged", "observed": "3 overlapping edits rejected. rejected_overlaps array has 3 entries. File unchanged." }
+      ],
+      "evidence": {
+        "terminalOutput": "harness-workflow/cross-area/VAL-CROSS-006-overlap.txt",
+        "keyResult": "rejected_overlaps present with 3 entries; file mtime and content unchanged"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "title": "Atomic writes used by batch rewrite",
+      "status": "pass",
+      "steps": [
+        { "action": "Check for .tg_tmp_* files before batch apply", "expected": "No temp files", "observed": "0 temp files" },
+        { "action": "Run batch rewrite with --apply on test_atomic.py", "expected": "Edit applied, no temp files remain", "observed": "1 edit applied. File contains 'Earth'. No .tg_tmp_* files after." },
+        { "action": "Verify code: apply_edits_to_file calls atomic_write_file", "expected": "Batch rewrite delegates to atomic write", "observed": "apply_edits_to_file (line 632) calls atomic_write_file (line 652). Batch path calls apply_edits_to_file (line 665)." }
+      ],
+      "evidence": {
+        "codeInspection": "rust_core/src/backend_ast.rs: apply_edits_to_file->atomic_write_file delegation confirmed at lines 632-665",
+        "keyResult": "Batch rewrite uses atomic write path; no temp files left after successful apply"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-008",
+      "title": "Encoding safety preserved in batch rewrite",
+      "status": "pass",
+      "steps": [
+        { "action": "Create BOM file (EF BB BF prefix), CRLF file, binary file with NUL", "expected": "Test corpus created", "observed": "3 files created with correct encodings" },
+        { "action": "Run batch rewrite --apply on directory", "expected": "BOM preserved, CRLF preserved, binary skipped", "observed": "2 edits applied (BOM + CRLF files). total_files_scanned=3." },
+        { "action": "Verify BOM first 3 bytes after rewrite", "expected": "EF BB BF", "observed": "BOM preserved: True" },
+        { "action": "Verify CRLF line endings preserved", "expected": "\\r\\n present in unedited lines", "observed": "CRLF preserved: True" },
+        { "action": "Verify binary file unchanged", "expected": "Byte-identical to original", "observed": "Binary file unchanged (skipped): True" }
+      ],
+      "evidence": {
+        "keyResult": "BOM preserved, CRLF preserved, binary file skipped — all encoding guarantees upheld in batch rewrite"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-009",
+      "title": "Stale-file detection in batch rewrite",
+      "status": "pass",
+      "steps": [
+        { "action": "Run cargo test for stale-file detection tests", "expected": "Both single and batch stale-file tests pass", "observed": "test_apply_rewrites_rejects_stale_file_without_writing_other_files ... ok; test_batch_rewrite_apply_rejects_stale_file_without_writing_other_files ... ok" },
+        { "action": "Verify ensure_file_not_stale called in apply_edits_to_file", "expected": "Stale check at start of apply", "observed": "apply_edits_to_file line 633: ensure_file_not_stale(file, edits)?" }
+      ],
+      "evidence": {
+        "cargoTest": "Both test_apply_rewrites_rejects_stale_file and test_batch_rewrite_apply_rejects_stale_file passed in cargo test",
+        "codeInspection": "ensure_file_not_stale called at line 633 of apply_edits_to_file, shared by both single and batch paths",
+        "keyResult": "Stale-file detection works for both single and batch rewrite via cargo tests and code inspection"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-010",
+      "title": "E2E agent workflow uses unified JSON",
+      "status": "pass",
+      "steps": [
+        { "action": "Step 1: Search with --json", "expected": "JSON with version, routing_backend, routing_reason", "observed": "version=1, routing_backend=AstBackend, routing_reason=ast-native, total_matches=3" },
+        { "action": "Step 2: Plan rewrite (dry-run)", "expected": "JSON with version, routing_backend, routing_reason", "observed": "version=1, routing_backend=AstBackend, routing_reason=ast-native, total_edits=3" },
+        { "action": "Step 3: Apply + Verify with --json", "expected": "JSON with version, routing_backend, routing_reason, plan and verification sub-objects", "observed": "version=1, routing_backend=AstBackend, plan.version=1, plan.routing_backend=AstBackend, verification present" },
+        { "action": "Validate all steps have unified v1 fields", "expected": "All have version=1, routing_backend, routing_reason", "observed": "All steps have version=1: True, All have routing_backend: True, All have routing_reason: True" }
+      ],
+      "evidence": {
+        "terminalOutput": "harness-workflow/cross-area/VAL-CROSS-010-e2e.txt",
+        "keyResult": "Complete search->plan->apply->verify workflow uses unified v1 JSON at every step"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-012",
+      "title": "All test suites pass after every milestone",
+      "status": "pass",
+      "steps": [
+        { "action": "Run cargo test in rust_core/", "expected": ">= 95 tests passed", "observed": "145 tests passed, 0 failed" },
+        { "action": "Run uv run pytest -q", "expected": ">= 510 tests passed", "observed": "549 passed, 14 skipped" },
+        { "action": "Run uv run ruff check .", "expected": "Clean (no issues)", "observed": "All checks passed!" },
+        { "action": "Run uv run mypy src/tensor_grep", "expected": "Clean (no issues)", "observed": "Success: no issues found in 44 source files" }
+      ],
+      "evidence": {
+        "cargoTest": "145 passed, 0 failed (>= 95 required)",
+        "pytest": "549 passed, 14 skipped (>= 510 required)",
+        "ruff": "All checks passed!",
+        "mypy": "Success: no issues found in 44 source files",
+        "keyResult": "All four test suites pass with counts exceeding minimums"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-GPU-006",
+      "title": "GPU search correctness parity with CPU",
+      "status": "pass",
+      "steps": [
+        { "action": "Attempt live GPU search", "expected": "GPU unavailable (known pre-existing issue)", "observed": "GPU backends unavailable: CuDF and Torch GPU backends were unavailable" },
+        { "action": "Read bench_gpu_scale.json correctness_checks", "expected": "Historical evidence for >= 3 patterns", "observed": "3 correctness checks, all PASS with matches_equal=true and files_equal=true" },
+        { "action": "Verify pattern correctness details", "expected": "Match counts and file sets identical", "observed": "Pattern 1: rg=2, gpu=2; Pattern 2: rg=16, gpu=16; Pattern 3: rg=8, gpu=8. All files identical." }
+      ],
+      "evidence": {
+        "artifact": "artifacts/bench_gpu_scale.json",
+        "correctnessChecks": [
+          { "pattern": "gpu benchmark sentinel", "rg_matches": 2, "gpu_matches": 2, "matches_equal": true, "files_equal": true },
+          { "pattern": "WARN retry budget exhausted", "rg_matches": 16, "gpu_matches": 16, "matches_equal": true, "files_equal": true },
+          { "pattern": "Database connection timeout", "rg_matches": 8, "gpu_matches": 8, "matches_equal": true, "files_equal": true }
+        ],
+        "keyResult": "GPU correctness parity verified via historical benchmark: 3 patterns, all match counts and file sets identical"
+      },
+      "issues": "GPU Python backends currently unavailable; validated via historical bench_gpu_scale.json evidence per deferred-gpu-correctness-validation guidance"
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 10 assertions: 10 passed. All cross-area invariants verified: schema compat (145 cargo tests), Python-free AST backend, dry-run safety, overlap validation, atomic writes, encoding safety (BOM/CRLF/binary), stale-file detection, E2E unified JSON workflow, full test suites (145 Rust + 549 Python + ruff + mypy). GPU correctness validated via historical benchmark evidence (3 patterns, all match counts identical)."
+}

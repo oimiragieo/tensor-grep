@@ -1,0 +1,47 @@
+{
+  "milestone": "routing-and-safety",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 24,
+    "passed": 24,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-ROUTE-001",
+    "VAL-ROUTE-002",
+    "VAL-ROUTE-003",
+    "VAL-ROUTE-004",
+    "VAL-ROUTE-005",
+    "VAL-ROUTE-006",
+    "VAL-ROUTE-007",
+    "VAL-ROUTE-008",
+    "VAL-ROUTE-009",
+    "VAL-ROUTE-010",
+    "VAL-ROUTE-011",
+    "VAL-ROUTE-012",
+    "VAL-ROUTE-013",
+    "VAL-SAFE-001",
+    "VAL-SAFE-002",
+    "VAL-SAFE-003",
+    "VAL-SAFE-004",
+    "VAL-SAFE-005",
+    "VAL-SAFE-006",
+    "VAL-SAFE-007",
+    "VAL-SAFE-008",
+    "VAL-SAFE-009",
+    "VAL-SAFE-010",
+    "VAL-CROSS-013"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added routing-and-safety flow validator guidance section with detailed testing instructions for routing and safety assertions",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}

@@ -1,0 +1,20 @@
+{
+  "groupId": "group-performance",
+  "status": "fail",
+  "testedAssertions": [
+    "VAL-AST-012", "VAL-AST-013", "VAL-CROSS-001", "VAL-CROSS-002"
+  ],
+  "passedAssertions": [
+    "VAL-AST-012", "VAL-AST-013", "VAL-CROSS-002"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CROSS-001",
+      "reason": "check_regression.py reported text search regressions between 6% to 47% in various scenarios (e.g. Simple String Match regressed by 26.81%, Max Count Limit regressed by 47.79%), failing the +/-5% requirement."
+    }
+  ],
+  "blockedAssertions": [],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["Execute"]
+}

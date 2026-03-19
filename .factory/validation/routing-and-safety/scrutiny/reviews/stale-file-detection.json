@@ -1,0 +1,45 @@
+{
+  "featureId": "stale-file-detection",
+  "reviewedAt": "2026-03-16T07:07:00.000Z",
+  "commitId": "174df2fb71284cab3e17efd7a5316143ac873591",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid implementation. Adds planned_mtime_ns (u64) to RewriteEdit, captured via file_mtime_ns() during plan_file_rewrites(). apply_rewrites() and plan_and_apply() both call ensure_files_not_stale() as a batch preflight before any parallel writes begin, and apply_edits_to_file() additionally calls ensure_file_not_stale() per-file as defense-in-depth. Stale errors include file path plus planned vs current mtime nanoseconds. Plan JSON correctly serializes the field via Serialize derive. system_time_to_unix_nanos() properly converts SystemTime to u64 with error handling for pre-epoch and overflow. Schema compat test updated with Option<u64> + serde(default) to tolerate old fixtures without the field. Two new integration tests cover mtime capture in plan JSON and all-or-nothing rejection when a file changes after planning. All expected behaviors from the feature spec are met.",
+    "issues": [
+      {
+        "file": "rust_core/src/backend_ast.rs",
+        "line": 8,
+        "severity": "non_blocking",
+        "description": "Redundant import: `use std::convert::TryFrom;` is already in the Rust 2021 edition prelude (Cargo.toml specifies edition = \"2021\"). Harmless but unnecessary."
+      },
+      {
+        "file": "docs/examples/rewrite_plan.json",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "Example fixture was not updated to include the new `planned_mtime_ns` field in edit objects. The schema compat test handles this gracefully via Option<u64> + #[serde(default)], so no test breakage, but the reference example is now incomplete relative to current output. A future worker regenerating this fixture will fix it naturally."
+      },
+      {
+        "file": "rust_core/src/backend_ast.rs",
+        "line": 367,
+        "severity": "non_blocking",
+        "description": "Inherent TOCTOU gap: ensure_files_not_stale() batch preflight passes, then parallel writes begin. In apply_rewrites(), results are collected via .map().collect() meaning ALL parallel writes complete before errors are checked. If an external process modifies a file in the narrow window after the batch check, the per-file ensure_file_not_stale() in apply_edits_to_file() catches it — but other files may have already been written. This partially violates 'no edits written if any file fails staleness check' under extreme race conditions. This is an inherent limitation of any lock-free approach and acceptable for the use case, but worth documenting."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The rewrite pipeline now has a two-layer staleness defense pattern: batch preflight (ensure_files_not_stale) before any parallel writes, plus per-file check (ensure_file_not_stale) inside apply_edits_to_file. This defense-in-depth pattern is not documented in AGENTS.md but future workers modifying the rewrite pipeline should be aware of it to avoid accidentally removing one layer.",
+      "evidence": "rust_core/src/backend_ast.rs:367 (batch preflight in apply_rewrites), rust_core/src/backend_ast.rs:524 (per-file check in apply_edits_to_file)"
+    },
+    {
+      "area": "knowledge",
+      "observation": "architecture.md in .factory/library/ already documents 'Stale-file detection: mtime check between plan and apply' under Rewrite Safety. This was presumably updated by a prior worker or this worker's session. Good shared state hygiene.",
+      "evidence": ".factory/library/architecture.md — Rewrite Safety section"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature stale-file-detection is correctly implemented. RewriteEdit stores planned_mtime_ns captured during plan_file_rewrites(). Both apply_rewrites() and plan_and_apply() perform batch staleness preflight before parallel writes, with per-file defense-in-depth in apply_edits_to_file(). Error messages include 'stale' keyword and file path. Plan JSON output includes the field. Two well-designed integration tests verify mtime capture and all-or-nothing rejection. Three non-blocking observations: redundant TryFrom import (2021 edition prelude), example JSON fixture not updated (handled by schema compat), and inherent TOCTOU gap in parallel write pattern (acceptable for lock-free design). All verification commands passed. PASS."
+}

@@ -1,0 +1,166 @@
+{
+  "groupId": "group1",
+  "testedAt": "2026-03-16T16:21:00Z",
+  "isolation": {
+    "directory": "C:\\dev\\projects\\tensor-grep",
+    "missionDir": "C:\\Users\\oimir\\.factory\\missions\\5b1405db-2877-4f44-bc66-0143d658a2ee"
+  },
+  "toolsUsed": ["execute"],
+  "assertions": [
+    {
+      "id": "VAL-CPU-001",
+      "title": "Cold literal search on single file returns correct matches",
+      "status": "fail",
+      "steps": [
+        { "action": "Run tg search 'ERROR' on single file", "expected": "Output matches rg exactly", "observed": "tg printed filename and line numbers even when piped, whereas rg dropped them" }
+      ],
+      "evidence": {
+        "diff": "native-cpu-engine/group1/VAL-CPU-001-tg.txt vs VAL-CPU-001-rg.txt"
+      },
+      "issues": "tg does not replicate rg's implicit is_tty() formatting behavior for single files"
+    },
+    {
+      "id": "VAL-CPU-002",
+      "title": "Cold literal search across multiple files returns correct matches",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search on directory", "expected": "Matches rg exactly", "observed": "Byte-identical to rg output" }
+      ],
+      "evidence": {
+        "diff": "native-cpu-engine/group1/VAL-CPU-002-tg.txt vs VAL-CPU-002-rg.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-003",
+      "title": "Regex search returns correct matches",
+      "status": "pass",
+      "steps": [
+        { "action": "Test 3 regex patterns across directory", "expected": "Matches rg exactly", "observed": "Byte-identical to rg output for all 3 patterns" }
+      ],
+      "evidence": {
+        "diffs": ["native-cpu-engine/group1/VAL-CPU-003-p1", "native-cpu-engine/group1/VAL-CPU-003-p2", "native-cpu-engine/group1/VAL-CPU-003-p3"]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-008",
+      "title": "--count flag returns per-file match counts",
+      "status": "fail",
+      "steps": [
+        { "action": "Run tg search -c on directory", "expected": "<filepath>:<count> per file", "observed": "Outputted only the total sum across all files instead of per-file counts" }
+      ],
+      "evidence": {
+        "output": "native-cpu-engine/group1/VAL-CPU-008-tg.txt"
+      },
+      "issues": "tg -c aggregated counts globally rather than per-file when searching a directory"
+    },
+    {
+      "id": "VAL-CPU-011",
+      "title": "--force-cpu selects native CPU engine",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search --cpu --debug", "expected": "Debug output shows RustCoreBackend", "observed": "routing.backend=RustCoreBackend reason=force_cpu_rust" }
+      ],
+      "evidence": {
+        "output": "native-cpu-engine/group1/VAL-CPU-011-tg.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-012",
+      "title": "Default routing selects appropriate backend",
+      "status": "pass",
+      "steps": [
+        { "action": "Run tg search --debug with rg in PATH", "expected": "RipgrepBackend selected", "observed": "routing.backend=RipgrepBackend reason=rg_passthrough_cli_fast_path" },
+        { "action": "Run tg search --debug with rg renamed", "expected": "RustCoreBackend selected", "observed": "routing.backend=RustCoreBackend reason=rust_secondary_fast_path" }
+      ],
+      "evidence": {
+        "output": "native-cpu-engine/group1/VAL-CPU-012-without-rg.txt"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-013",
+      "title": "rg fallback still works when available",
+      "status": "pass",
+      "steps": [
+        { "action": "Run normal tg search", "expected": "Delegates to RipgrepBackend", "observed": "Delegates to RipgrepBackend successfully" }
+      ],
+      "evidence": {
+        "output": "Tested via VAL-CPU-012"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CPU-018",
+      "title": "Comprehensive text parity with rg",
+      "status": "fail",
+      "steps": [
+        { "action": "Run python parity test across 20 patterns", "expected": "identical sorted output vs rg", "observed": "Massive count differences because tg searched binary files and gitignored directories (like __pycache__)" }
+      ],
+      "evidence": {
+        "json": "native-cpu-engine/group1/VAL-CPU-018-parity.json"
+      },
+      "issues": "Python directory scanner passes everything to RustCoreBackend, bypassing ignore::WalkParallel"
+    },
+    {
+      "id": "VAL-CPU-021",
+      "title": "Non-existent path produces clear error",
+      "status": "fail",
+      "steps": [
+        { "action": "tg search on nonexistent path", "expected": "Non-zero exit, meaningful stderr", "observed": "Exit code 1, but completely blank stdout and stderr" }
+      ],
+      "evidence": {
+        "outputs": ["native-cpu-engine/group1/VAL-CPU-021-stdout.txt", "native-cpu-engine/group1/VAL-CPU-021-stderr.txt"]
+      },
+      "issues": "No error message is printed"
+    },
+    {
+      "id": "VAL-CPU-025",
+      "title": ".gitignore rules respected by native engine",
+      "status": "fail",
+      "steps": [
+        { "action": "Create .gitignore and test", "expected": "Ignored files omitted", "observed": "tg searches and prints matches from gitignored files" }
+      ],
+      "evidence": {
+        "output": "manual CLI test"
+      },
+      "issues": "Native engine ignores .gitignore because python scanner feeds explicit file list"
+    },
+    {
+      "id": "VAL-CPU-026",
+      "title": "Binary file detection matches rg behavior",
+      "status": "fail",
+      "steps": [
+        { "action": "Search directory containing binary file", "expected": "Binary files skipped or warned", "observed": "tg searched the binary file natively and printed matching lines containing NUL bytes" }
+      ],
+      "evidence": {
+        "output": "manual CLI test"
+      },
+      "issues": "Does not skip binary files"
+    },
+    {
+      "id": "VAL-CPU-027",
+      "title": "Exit code contract (0=match, 1=no-match, 2=error)",
+      "status": "fail",
+      "steps": [
+        { "action": "Search with invalid regex", "expected": "Exit code 2", "observed": "Exit code 1" }
+      ],
+      "evidence": {
+        "output": "native-cpu-engine/group1/VAL-CPU-027.txt"
+      },
+      "issues": "Returns 1 instead of 2 for invalid regex"
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Unicode encode errors crashed tg when stdout was piped under PowerShell default cp1252 encoding. Had to explicitly set PYTHONIOENCODING=utf-8.",
+      "resolved": true,
+      "resolution": "Set environment variable",
+      "affectedAssertions": ["VAL-CPU-003", "VAL-CPU-008", "VAL-CPU-018", "VAL-CPU-021", "VAL-CPU-025", "VAL-CPU-026"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 12 assertions: 4 passed, 8 failed. Native CPU engine correctly executes search with regex but fails significantly on system boundary behaviors: it searches binary files, ignores .gitignore, incorrectly aggregates --count, drops error messages entirely on missing paths, and returns the wrong exit code for syntax errors. This seems rooted in the Python directory scanner passing explicit file paths to Rust, bypassing Rust's ignore::WalkParallel logic."
+}

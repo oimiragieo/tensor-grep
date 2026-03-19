@@ -1,0 +1,29 @@
+commands:
+  install: uv pip install -e ".[dev,ast,nlp]"
+  typecheck: uv run mypy src/tensor_grep
+  lint: uv run ruff check .
+  test: uv run pytest -q
+  rust_test: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml
+  rust_build: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release
+  rust_build_cuda: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release --features cuda
+  rust_clippy: C:\Users\oimir\.cargo\bin\cargo.exe clippy --manifest-path rust_core/Cargo.toml -- -D warnings
+  rust_clippy_cuda: C:\Users\oimir\.cargo\bin\cargo.exe clippy --manifest-path rust_core/Cargo.toml --features cuda -- -D warnings
+  rust_check: C:\Users\oimir\.cargo\bin\cargo.exe check --manifest-path rust_core/Cargo.toml
+  rust_test_cuda: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml --features cuda
+  benchmark_text: python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.json
+  benchmark_hot: python benchmarks/run_hot_query_benchmarks.py --output artifacts/bench_hot_query_benchmarks.json
+  benchmark_ast: python benchmarks/run_ast_benchmarks.py --output artifacts/bench_run_ast_benchmarks.json
+  benchmark_ast_multilang: python benchmarks/run_ast_multilang_benchmarks.py --output artifacts/bench_ast_multilang.json
+  benchmark_ast_workflow: python benchmarks/run_ast_workflow_benchmarks.py --output artifacts/bench_run_ast_workflow_benchmarks.json
+  benchmark_rewrite: python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite.json
+  benchmark_parity: python benchmarks/run_ast_parity_check.py
+  rust_test_release: C:\Users\oimir\.cargo\bin\cargo.exe test --manifest-path rust_core/Cargo.toml --release
+  rust_build_release: C:\Users\oimir\.cargo\bin\cargo.exe build --manifest-path rust_core/Cargo.toml --release
+  benchmark_gpu: python benchmarks/run_gpu_benchmarks.py --output artifacts/bench_run_gpu_benchmarks.json
+  benchmark_harness_loop: python benchmarks/run_harness_loop_benchmark.py --output artifacts/bench_harness_loop.json
+  benchmark_index_scaling: python benchmarks/run_index_scaling_benchmark.py --output artifacts/bench_index_scaling.json
+  benchmark_compat: python benchmarks/run_compat_checks.py
+  benchmark_rust_cold_start: python benchmarks/check_rust_cold_start.py
+  check_regression: python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json
+
+services: {}

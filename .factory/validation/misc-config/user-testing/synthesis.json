@@ -1,0 +1,17 @@
+{
+  "milestone": "misc-config",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "notes": "No testable assertions found. All three implementation features in the misc-config milestone (fix-ruff-git-exclude, add-cuda-test-guards, rust-replace-robustness) have empty fulfills arrays, meaning no validation contract assertions are mapped to this milestone.",
+  "previousRound": null
+}

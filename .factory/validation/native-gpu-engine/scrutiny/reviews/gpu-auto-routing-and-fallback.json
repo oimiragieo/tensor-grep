@@ -1,0 +1,33 @@
+{
+  "featureId": "gpu-auto-routing-and-fallback",
+  "reviewedAt": "2026-03-16T19:35:00Z",
+  "commitId": "1bc450bef3d408f875d6c77661f058a9f64607a9",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly introduces a size-based threshold (50MB) for auto-routing queries to the GPU backend when available. It provides clean, user-facing error messages on initialization failures, falls back gracefully to CPU processing when CUDA is not found or when CPU engine fails, and verifies everything with robust unit and integration tests.",
+    "issues": [
+      {
+        "file": "rust_core/src/main.rs",
+        "line": 482,
+        "severity": "non_blocking",
+        "description": "count_search_corpus_bytes uses WalkBuilder to iterate over all files to sum their sizes. While WalkBuilder yields items efficiently, collecting them sequentially on the main thread via an iterator adds a full file tree traversal pass before search begins, which might increase cold-start latency on very large codebases."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Worker introduced TG_TEST_CUDA_BEHAVIOR and TG_TEST_NATIVE_SEARCH_FORCE_ERROR environment variables as test hooks to mock GPU initialization and CPU search failures. These variables should be documented in .factory/library/gpu-native-engine.md so future agents know how to test these paths.",
+      "evidence": "main.rs: `let value = env::var(\"TG_TEST_CUDA_BEHAVIOR\").ok()?;` and `if let Ok(message) = env::var(\"TG_TEST_NATIVE_SEARCH_FORCE_ERROR\")`"
+    },
+    {
+      "area": "conventions",
+      "observation": "Worker added a synchronous pre-search directory traversal to calculate corpus size for routing. AGENTS.md notes 'control-plane overhead matters more than backend cleverness' for cold generic text search, indicating that O(N) pre-search file tree walks might violate the latency convention, even though it's needed for the 50MB heuristic.",
+      "evidence": "rust_core/src/main.rs: `count_search_corpus_bytes` method loops over `builder.build()` iterator."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Code successfully implements GPU auto-routing and graceful fallbacks, meeting all functional requirements with thorough test coverage."
+}

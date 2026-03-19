@@ -1,0 +1,15 @@
+{
+  "featureId": "native-cpu-benchmarks",
+  "reviewedAt": "2026-03-16T19:50:00Z",
+  "commitId": "4a7e0c603c68ee821c005c003ca0d00418bbc69a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation correctly refactors the native directory search to happen concurrently within the `ignore::WalkParallel` callbacks. It eliminates the redundant `is_binary_file` pre-reads by wrapping `Sink` with `BinaryAwareSink` to catch binary detection via grep-searcher. State and searchers are correctly reused per-thread. The benchmark regression tests pass and confirm the performance gap is bridged.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the performance fix for many-file native CPU search. The worker effectively applied per-thread resource reuse and integrated search into the directory walk, closing the gap with rg."
+}

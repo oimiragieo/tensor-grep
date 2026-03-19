@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
 
 from tensor_grep.core.hardware.device_detect import DeviceInfo
@@ -291,3 +294,235 @@ def test_tg_devices_text_mode_returns_human_inventory_lines():
     assert "Detected 2 routable GPU(s):" in out
     assert "- gpu:7 vram_mb=12288" in out
     assert "- gpu:3 vram_mb=24576" in out
+
+
+def test_tg_rewrite_plan_returns_native_plan_json_shape():
+    from tensor_grep.cli import mcp_server
+
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "pattern": "def $F($$$ARGS): return $EXPR",
+        "replacement": "lambda $$$ARGS: $EXPR",
+        "lang": "python",
+        "total_files_scanned": 1,
+        "total_edits": 1,
+        "edits": [
+            {
+                "id": "e0000:file.py:0-27",
+                "file": "C:/tmp/file.py",
+                "planned_mtime_ns": 1,
+                "line": 1,
+                "byte_range": {"start": 0, "end": 27},
+                "original_text": "def add(x, y): return x + y",
+                "replacement_text": "lambda x, y: x + y",
+                "metavar_env": {"F": "add", "ARGS": "x, y", "EXPR": "x + y"},
+            }
+        ],
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_rewrite_plan(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+        )
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "run",
+        "--lang",
+        "python",
+        "--rewrite",
+        "lambda $$$ARGS: $EXPR",
+        "--json",
+        "def $F($$$ARGS): return $EXPR",
+        "src",
+    ]
+
+
+def test_tg_rewrite_apply_supports_optional_verify_flag():
+    from tensor_grep.cli import mcp_server
+
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "plan": {"total_edits": 1},
+        "verification": {"total_edits": 1, "verified": 1, "mismatches": []},
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            verify=True,
+        )
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "run",
+        "--lang",
+        "python",
+        "--rewrite",
+        "lambda $$$ARGS: $EXPR",
+        "--apply",
+        "--verify",
+        "--json",
+        "def $F($$$ARGS): return $EXPR",
+        "src",
+    ]
+
+
+def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
+    from tensor_grep.cli import mcp_server
+
+    diff_preview = "--- a/file.py\n+++ b/file.py\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=diff_preview,
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_rewrite_diff(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+        )
+
+    parsed = json.loads(out)
+    assert parsed["routing_backend"] == "AstBackend"
+    assert parsed["routing_reason"] == "ast-native"
+    assert parsed["sidecar_used"] is False
+    assert parsed["diff"] == diff_preview
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "run",
+        "--lang",
+        "python",
+        "--rewrite",
+        "lambda $$$ARGS: $EXPR",
+        "--diff",
+        "def $F($$$ARGS): return $EXPR",
+        "src",
+    ]
+
+
+def test_tg_rewrite_plan_returns_structured_error_for_missing_path():
+    from tensor_grep.cli import mcp_server
+
+    out = mcp_server.tg_rewrite_plan(
+        pattern="def $F($$$ARGS): return $EXPR",
+        replacement="lambda $$$ARGS: $EXPR",
+        lang="python",
+        path="C:/definitely-missing-for-mcp-server-tests",
+    )
+
+    parsed = json.loads(out)
+    assert parsed["routing_backend"] == "AstBackend"
+    assert parsed["routing_reason"] == "ast-native"
+    assert parsed["error"]["code"] == "invalid_input"
+    assert "Path not found" in parsed["error"]["message"]
+    assert "Traceback" not in parsed["error"]["message"]
+
+
+def test_tg_index_search_returns_native_index_search_json_shape():
+    from tensor_grep.cli import mcp_server
+
+    payload = {
+        "version": 1,
+        "routing_backend": "TrigramIndex",
+        "routing_reason": "index-accelerated",
+        "sidecar_used": False,
+        "query": "ERROR",
+        "path": "src",
+        "total_matches": 1,
+        "matches": [
+            {
+                "file": "C:/tmp/sample.log",
+                "line": 2,
+                "text": "ERROR database failed",
+            }
+        ],
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_index_search(pattern="ERROR", path="src")
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "search",
+        "--index",
+        "--json",
+        "ERROR",
+        "src",
+    ]
+
+
+def test_tg_index_search_returns_structured_error_for_missing_path():
+    from tensor_grep.cli import mcp_server
+
+    out = mcp_server.tg_index_search(
+        pattern="ERROR",
+        path="C:/definitely-missing-for-mcp-server-tests",
+    )
+
+    parsed = json.loads(out)
+    assert parsed["routing_backend"] == "TrigramIndex"
+    assert parsed["routing_reason"] == "index-accelerated"
+    assert parsed["error"]["code"] == "invalid_input"
+    assert "Path not found" in parsed["error"]["message"]
+    assert "Traceback" not in parsed["error"]["message"]

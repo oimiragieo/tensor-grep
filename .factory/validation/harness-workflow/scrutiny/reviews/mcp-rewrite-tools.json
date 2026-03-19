@@ -1,0 +1,50 @@
+{
+  "featureId": "mcp-rewrite-tools",
+  "milestone": "harness-workflow",
+  "reviewer": "scrutiny-feature-reviewer",
+  "reviewedAt": "2026-03-16T11:30:00.000Z",
+  "commitId": "7e946a3",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "verdict": "pass",
+  "codeQualityIssues": [
+    {
+      "severity": "non_blocking",
+      "description": "_run_rewrite_subprocess does not set a timeout parameter. A hung native tg binary could block the MCP server indefinitely. Consider adding timeout=60 or a configurable limit.",
+      "file": "src/tensor_grep/cli/mcp_server.py",
+      "line": 192
+    },
+    {
+      "severity": "non_blocking",
+      "description": "_resolve_native_tg_binary uses @lru_cache(maxsize=1), meaning a FileNotFoundError raised on first call is permanently cached for the process lifetime. If the binary is built after the MCP server starts, it will never be found without a restart. Acceptable for current usage but worth documenting.",
+      "file": "src/tensor_grep/cli/mcp_server.py",
+      "line": 107
+    },
+    {
+      "severity": "suggestion",
+      "description": "Tests cover the happy path for all three tools and one structured-error scenario (missing path), but lack coverage for: (a) empty pattern/lang validation, (b) subprocess non-zero exit code producing structured error, (c) tg_rewrite_apply with verify=False, (d) subprocess producing invalid JSON. These are edge cases well-handled in the implementation but unverified by tests.",
+      "file": "tests/unit/test_mcp_server.py",
+      "line": 297
+    },
+    {
+      "severity": "suggestion",
+      "description": "_build_rewrite_command raises a raw ValueError for unsupported mode values. While currently unreachable from public API, wrapping this in a structured error would be more defensive.",
+      "file": "src/tensor_grep/cli/mcp_server.py",
+      "line": 168
+    }
+  ],
+  "sharedStateObservations": [
+    {
+      "target": "library",
+      "observation": "The MCP server now has its own native binary resolution logic (_resolve_native_tg_binary) with TG_MCP_TG_BINARY env override, separate from the Rust-side runtime_paths.rs resolution. This parallel resolution pattern and the new env var should be documented in runtime-path-resolution.md to prevent future divergence.",
+      "action": "update"
+    },
+    {
+      "target": "library",
+      "observation": "The MCP server reads JSON_OUTPUT_VERSION from main.rs via regex to stay in sync with the Rust constant. This cross-language version coupling pattern is a potential fragility point that should be documented.",
+      "action": "add"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The mcp-rewrite-tools feature is well-implemented. Three MCP tools (tg_rewrite_plan, tg_rewrite_apply, tg_rewrite_diff) are properly registered, all include routing_backend/routing_reason metadata in the unified envelope, structured errors are returned instead of tracebacks, and input validation covers empty fields and missing paths. The implementation follows existing MCP tool patterns and the backend-worker skill procedure. Tests verify the core contract for all three tools and structured error handling. Non-blocking concerns: no subprocess timeout, lru_cache on binary resolution caches failures permanently, and test coverage could be broader on error paths. Overall: pass."
+}

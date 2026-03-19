@@ -1,0 +1,140 @@
+{
+  "groupId": "corpus-generators",
+  "testedAt": "2026-03-16T02:10:00Z",
+  "isolation": {
+    "workingDirectory": "C:\\dev\\projects\\tensor-grep",
+    "tempDirectory": "C:\\dev\\projects\\tensor-grep\\artifacts\\ut_corpus_val",
+    "genCorpusScript": "C:\\dev\\projects\\tensor-grep\\benchmarks\\gen_corpus.py",
+    "sgBinary": "C:\\Users\\oimir\\AppData\\Roaming\\npm\\sg.CMD",
+    "tgBinary": "C:\\dev\\projects\\tensor-grep\\rust_core\\target\\release\\tg.exe",
+    "python": "python 3.14.0"
+  },
+  "toolsUsed": ["Execute"],
+  "assertions": [
+    {
+      "id": "VAL-BENCH-001",
+      "title": "JS corpus generator produces valid JavaScript files",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Generate JS corpus: python benchmarks/gen_corpus.py --kind ast-bench --lang javascript --files 50 --loc 2500 --out artifacts\\ut_corpus_val\\js",
+          "expected": "50 .js files generated successfully",
+          "observed": "50 .js files generated, gen_corpus.py exit code 0, output JSON confirms file_count=50, total_loc=2500"
+        },
+        {
+          "action": "Validate with sg: sg run -l javascript -p 'function $F($$$ARGS) { return $EXPR; }' artifacts\\ut_corpus_val\\js",
+          "expected": "sg exits 0, finds matches in generated .js files",
+          "observed": "sg exit code 0, found 850 matches across 50 files (every 3rd line is a function definition, 50 files * 50 lines / 3 ~= 850)"
+        }
+      ],
+      "evidence": {
+        "generatorOutput": "{\"corpus_dir\": \"...\", \"file_count\": 50, \"total_loc\": 2500, \"seed\": 42, \"lang\": \"javascript\"}",
+        "sgExitCode": 0,
+        "sgMatchCount": 850,
+        "fileCount": 50,
+        "evidenceFiles": [
+          "benchmark-expansion/corpus-generators/VAL-BENCH-001-js-sg-output.txt",
+          "benchmark-expansion/corpus-generators/VAL-BENCH-001-js-file-listing.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-002",
+      "title": "TS corpus generator produces valid TypeScript files",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Generate TS corpus: python benchmarks/gen_corpus.py --kind ast-bench --lang typescript --files 50 --loc 2500 --out artifacts\\ut_corpus_val\\ts",
+          "expected": "50 .ts files generated successfully",
+          "observed": "50 .ts files generated, gen_corpus.py exit code 0, output JSON confirms file_count=50, total_loc=2500"
+        },
+        {
+          "action": "Validate with sg: sg run -l typescript -p 'function $F($$$ARGS): $T { return $EXPR; }' artifacts\\ut_corpus_val\\ts",
+          "expected": "sg exits 0, finds matches in generated .ts files",
+          "observed": "sg exit code 0, found 850 matches across 50 files"
+        }
+      ],
+      "evidence": {
+        "generatorOutput": "{\"corpus_dir\": \"...\", \"file_count\": 50, \"total_loc\": 2500, \"seed\": 42, \"lang\": \"typescript\"}",
+        "sgExitCode": 0,
+        "sgMatchCount": 850,
+        "fileCount": 50,
+        "evidenceFiles": [
+          "benchmark-expansion/corpus-generators/VAL-BENCH-002-ts-sg-output.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-003",
+      "title": "Rust corpus generator produces valid Rust files",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Generate Rust corpus: python benchmarks/gen_corpus.py --kind ast-bench --lang rust --files 50 --loc 2500 --out artifacts\\ut_corpus_val\\rs",
+          "expected": "50 .rs files generated successfully",
+          "observed": "50 .rs files generated, gen_corpus.py exit code 0, output JSON confirms file_count=50, total_loc=2500"
+        },
+        {
+          "action": "Validate with sg: sg run -l rust -p 'fn $F($$$ARGS) -> $RET { $BODY }' artifacts\\ut_corpus_val\\rs",
+          "expected": "sg exits 0, finds matches in generated .rs files",
+          "observed": "sg exit code 0, found 850 matches across 50 files"
+        }
+      ],
+      "evidence": {
+        "generatorOutput": "{\"corpus_dir\": \"...\", \"file_count\": 50, \"total_loc\": 2500, \"seed\": 42, \"lang\": \"rust\"}",
+        "sgExitCode": 0,
+        "sgMatchCount": 850,
+        "fileCount": 50,
+        "evidenceFiles": [
+          "benchmark-expansion/corpus-generators/VAL-BENCH-003-rs-sg-output.txt"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-BENCH-011",
+      "title": "Existing gen_corpus.py Python flavor unbroken",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Generate Python corpus: python benchmarks/gen_corpus.py --kind ast-bench --lang python --files 50 --loc 2500 --out artifacts\\ut_corpus_val\\py",
+          "expected": "50 .py files generated with same corpus structure as before multi-language expansion",
+          "observed": "50 .py files generated, gen_corpus.py exit code 0, output JSON confirms file_count=50, total_loc=2500, lang=python"
+        },
+        {
+          "action": "Validate with tg run: tg.exe run 'def $F($$$ARGS): return $EXPR' artifacts\\ut_corpus_val\\py",
+          "expected": "tg run produces matches against generated Python corpus",
+          "observed": "tg exit code 0, produced 2500 matches (all lines match the def pattern) across 50 .py files"
+        }
+      ],
+      "evidence": {
+        "generatorOutput": "{\"corpus_dir\": \"...\", \"file_count\": 50, \"total_loc\": 2500, \"seed\": 42, \"lang\": \"python\"}",
+        "tgExitCode": 0,
+        "tgMatchCount": 2500,
+        "fileCount": 50,
+        "evidenceFiles": [
+          "benchmark-expansion/corpus-generators/VAL-BENCH-011-py-tg-output.txt"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "PowerShell double-quotes interpolate $-prefixed ast-grep metavariables as PowerShell variables, causing empty pattern strings. Must use single quotes for all sg/tg patterns containing $ metavariables.",
+      "resolved": true,
+      "resolution": "Used single-quoted strings for all pattern arguments to sg and tg commands",
+      "affectedAssertions": ["VAL-BENCH-001", "VAL-BENCH-002", "VAL-BENCH-003", "VAL-BENCH-011"]
+    },
+    {
+      "description": "gen_corpus.py uses --out flag, not --output-dir as documented in the task prompt",
+      "resolved": true,
+      "resolution": "Used --out flag as defined in the actual script argparse",
+      "affectedAssertions": ["VAL-BENCH-001", "VAL-BENCH-002", "VAL-BENCH-003", "VAL-BENCH-011"]
+    }
+  ],
+  "blockers": [],
+  "summary": "Tested 4 assertions: all 4 passed. JS/TS/Rust corpus generators produce syntactically valid files parseable by ast-grep (850 matches each in 50-file corpora). Python default flavor remains unbroken with 2500 matches via tg run."
+}

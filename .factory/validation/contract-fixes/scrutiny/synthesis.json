@@ -1,0 +1,48 @@
+{
+  "milestone": "contract-fixes",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0, "summary": "475 passed, 14 skipped in 73.54s" },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0, "summary": "Success: no issues found in 42 source files" },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0, "summary": "All checks passed!" }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "failedFeatures": [],
+    "note": "Re-run (round 2): Round 1 had no failures and no new fix features were added. Prior reviews for contract-fallback-hardening and nlp-routing-audit remain valid. All validators confirmed passing."
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Update backend-worker skill to explicitly recommend creating clean detached worktrees when the primary checkout has unrelated dirty changes, rather than leaving workers to discover this workaround independently.",
+      "evidence": "Both contract-fallback-hardening (session 51a1b468) and nlp-routing-audit (sessions 45651c57, 38fd03b4) independently deviated from the skill procedure by creating clean worktrees. All three worker sessions reported followedProcedure=false for this reason.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Consider adding a convention that all search/compute backends should explicitly inherit from ComputeBackend base class rather than using duck-typing, for consistency and discoverability.",
+      "evidence": "CybertBackend implements search() and is_available() methods matching the backend protocol but does not inherit from ComputeBackend, unlike RustCoreBackend, CPUBackend, etc. This was noted in the nlp-routing-audit review.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Worker could not execute .factory/init.sh because the host is native Windows with no bash.",
+      "reason": "already-documented: AGENTS.md Known Pre-Existing Issues section already documents this and provides the workaround ('uv pip install -e \".[dev,ast,nlp]\"'). services.yaml also has the install command."
+    },
+    {
+      "observation": "Error message wording normalization between original commit and current pipeline.py state.",
+      "reason": "already-resolved: Historical observation about a subsequent refactoring that already happened. No action needed."
+    },
+    {
+      "observation": "benchmarks/run_benchmarks.py requires 'rg' (ripgrep) on PATH, which is not documented in services.yaml.",
+      "reason": "already-resolved: The auto-extract-rg-benchmark feature (misc-fixes milestone) teaches run_benchmarks.py to auto-extract benchmarks/rg.zip when rg is missing. This observation predates that fix."
+    }
+  ],
+  "previousRound": ".factory/validation/contract-fixes/scrutiny/synthesis.json (round 1)"
+}

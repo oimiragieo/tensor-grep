@@ -1,0 +1,50 @@
+{
+  "featureId": "benchmark-regression-gates",
+  "reviewedAt": "2026-03-15T07:00:00.000Z",
+  "commitId": "f416b2aa902865b2e7e36556e8b3775b733d4cfa",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid, well-tested implementation of milestone-aware benchmark regression gates. All four feature requirements are met: baseline_m1.json is committed with 10 scenarios (suite expanded from original 8), run_benchmarks.py and check_regression.py support per-milestone baseline comparison with --milestone flag, the default regression threshold is correctly set to 5%, and hot-query benchmarks now emit PASS/FAIL regression status. perf_guard.py correctly dispatches on suite-specific time keys (tg_time_s for run_benchmarks, first_s/second_s for run_hot_query_benchmarks). Test coverage is thorough with 7+ new/updated test cases covering milestone baseline schema, output/milestone args, hot-query regression status, 5% default threshold, hot-query suite comparison, auto milestone resolution, and standalone script execution.",
+    "issues": [
+      {
+        "file": "benchmarks/run_hot_query_benchmarks.py",
+        "line": 133,
+        "severity": "non_blocking",
+        "description": "evaluate_hot_query_row compares second_s (cached) against first_s * (1 + max_regression_pct/100), which is an intra-run comparison rather than a cross-run baseline comparison. This means the hot-query 'regression gate' checks that cached queries are not slower than cold queries within the same run, not that they haven't regressed vs a stored baseline. The check_regression.py path for hot-query suites (using SUITE_TIME_KEYS) provides the cross-run comparison, but no stored hot-query baseline was committed. Both mechanisms work, but they test different things."
+      },
+      {
+        "file": "benchmarks/check_regression.py",
+        "line": 22,
+        "severity": "non_blocking",
+        "description": "resolve_auto_baseline_path uses string manipulation (removeprefix/removesuffix) to derive baseline filenames for non-standard suites. This works for the two known suites but is fragile — a new suite like 'run_ast_benchmarks' would produce 'baseline_ast_m1.json' which may or may not match the expected convention. A mapping dict would be more explicit."
+      },
+      {
+        "file": "benchmarks/check_regression.py",
+        "line": 73,
+        "severity": "non_blocking",
+        "description": "min_baseline_time_s default changed from 0.2 to 0.1 without documentation. This is a stricter gate (more scenarios are subject to regression checks). The change is defensible but affects scenarios like '5. Count Matches' (tg_time_s=0.094s) which is right at the boundary."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The milestone baseline naming convention (baseline_{milestone}.json for run_benchmarks, baseline_{suite}_{milestone}.json for other suites) is not documented in AGENTS.md or any library entry. Future workers creating baselines for other milestones or suites would need to reverse-engineer this from resolve_auto_baseline_path.",
+      "evidence": "benchmarks/check_regression.py:18-23 — resolve_auto_baseline_path constructs paths like 'benchmarks/baseline_m1.json' and 'benchmarks/baseline_hot_query_m1.json' via string manipulation, but this convention is only in code."
+    },
+    {
+      "area": "services",
+      "observation": "services.yaml check_regression command does not document the new --milestone flag. The command is 'python benchmarks/check_regression.py --baseline auto' but milestone-aware usage requires '--baseline auto --milestone m1'.",
+      "evidence": ".factory/services.yaml:check_regression — missing --milestone documentation. Worker used 'python benchmarks/check_regression.py --baseline auto --milestone m1 --current artifacts/bench_m2.json' in verification."
+    },
+    {
+      "area": "knowledge",
+      "observation": "Worker discovered that Windows benchmark timing has noticeable run-to-run variance at the 5% gate, with first runs sometimes exceeding thresholds before repeat runs pass. This variance knowledge is not captured in library for future benchmark workers.",
+      "evidence": "Handoff discoveredIssues[1]: 'Windows benchmark timing still has noticeable run-to-run variance at a 5% gate; the first bench_m2 sample briefly exceeded the max-count threshold before a repeat run passed.'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature passes review. All four requirements are met: baseline_m1.json committed, milestone-aware baseline comparison in run_benchmarks.py and check_regression.py, 5% regression threshold enforced across all scenarios, and hot-query benchmark PASS/FAIL reporting added. Implementation is clean, well-tested (500 tests pass, 43 focused benchmark tests green), and follows project conventions including TDD, isolated worktree workflow, and comprehensive verification. Three non-blocking issues noted: (1) hot-query intra-run vs cross-run comparison distinction, (2) fragile string-manipulation-based baseline path resolution, (3) undocumented min_baseline_time_s default change. Three shared state observations logged for potential convention/service/knowledge updates."
+}

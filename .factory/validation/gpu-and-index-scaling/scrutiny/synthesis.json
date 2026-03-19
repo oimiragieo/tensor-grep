@@ -1,0 +1,73 @@
+{
+  "milestone": "gpu-and-index-scaling",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "uv run pytest -q", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "uv run mypy src/tensor_grep", "exitCode": 0 },
+    "lint": { "passed": true, "command": "uv run ruff check .", "exitCode": 0 },
+    "rust_test": { "passed": true, "command": "cargo test --manifest-path rust_core/Cargo.toml", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 6,
+    "passed": 6,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Updated .factory/library/index-compression.md to note that format version 2 was subsequently bumped to 3 by index-incremental-updates, preventing confusion for future workers.",
+      "sourceFeature": "index-compression"
+    },
+    {
+      "target": "library",
+      "description": "Created .factory/library/index-regex-prefilter.md documenting the regex prefiltering strategy: which patterns are safe for index acceleration, key constants (MAX_REGEX_CLASS_LITERALS=10, MAX_REGEX_PREFILTER_LITERALS=64), and the FullScan fallback behavior.",
+      "sourceFeature": "index-regex-improvements"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Update backend-worker skill step 4 (benchmark timing) to acknowledge time.perf_counter() as a valid alternative to hyperfine when structured per-invocation timing is needed for JSON output (e.g., GPU benchmarks with per-device rows).",
+      "evidence": "benchmarks/run_gpu_benchmarks.py uses time.perf_counter() because it needs per-device structured JSON that hyperfine cannot produce. The current skill says 'Uses hyperfine or Measure-Command for timing (not Python time.time)' which doesn't cover this case.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a note in the Architecture/Index section about the soft-delete file_id management pattern: deleted file entries remain in the files vec with deleted=true, file_ids are never reclaimed, and the file_trigrams reverse-map is rebuilt from postings on load. This is a significant design choice that future workers modifying the index should understand.",
+      "evidence": "index-incremental-updates (commit 8a004db) introduced soft-delete. Worker documented it in .factory/library/index-incremental-updates.md but it's an architectural decision that belongs in AGENTS.md's key invariants or a dedicated index architecture section.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills",
+      "suggestion": "Clarify the rust-worker skill step 2 (TDD: write a failing Rust test first) to allow Python failing-first tests for features that are Python benchmark tooling, not Rust code. Two separate worker sessions (50aef367 and 40dcd51f) for index-scaling-validation both reported the same deviation.",
+      "evidence": "index-scaling-validation workers both deviated from 'write a failing Rust test' because the feature was Python benchmark script work. skillFeedback.deviations[0] from both sessions: 'I wrote failing Python unit tests in tests/unit/test_benchmark_scripts.py before changing the benchmark script.'",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Worker correctly created .factory/library/gpu-benchmark-env.md documenting .venv_cuda environment (gpu-scale-benchmarks)",
+      "reason": "already-documented"
+    },
+    {
+      "observation": "Worker correctly documented TG_SIDECAR_TIMEOUT_MS in python-sidecar-ipc.md (gpu-error-hardening)",
+      "reason": "already-documented"
+    },
+    {
+      "observation": "Narrowed exception catch from except Exception to except ConfigurationError for pipeline creation in sidecar.py (gpu-error-hardening)",
+      "reason": "ambiguous — implementation-specific choice, not a systemic convention gap; non-ConfigurationError failures during pipeline creation are rare edge cases"
+    },
+    {
+      "observation": "INDEX_FORMAT_VERSION not tracked in AGENTS.md (index-incremental-updates)",
+      "reason": "duplicate — version changes too frequently to track in AGENTS.md; library notes already document version per feature"
+    },
+    {
+      "observation": "Backward-compatible 'matches' key alongside 'indexed_matches' in benchmark payload (index-scaling-validation)",
+      "reason": "ambiguous — minor implementation detail, not a systemic convention; insufficient evidence of cross-worker pattern"
+    }
+  ],
+  "previousRound": null
+}

@@ -175,6 +175,66 @@ def test_cli_should_fail_fast_on_invalid_gpu_device_ids(monkeypatch):
     assert "Invalid GPU device id 'foo'" in result.output
 
 
+def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        seen["check"] = check
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["search", "ERROR", ".", "--cpu", "-F", "-c", "-g", "*.log", "--no-ignore"],
+    )
+
+    assert result.exit_code == 0
+    assert seen["cmd"] == [
+        "tg.exe",
+        "search",
+        "--cpu",
+        "-F",
+        "-c",
+        "-g",
+        "*.log",
+        "--no-ignore",
+        "ERROR",
+        ".",
+    ]
+    assert seen["check"] is False
+
+
+def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_code(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--ndjson"])
+
+    assert result.exit_code == 2
+    assert seen["cmd"] == ["tg.exe", "search", "--cpu", "--ndjson", "ERROR", "."]
+
+
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.py", "b.py"]}
@@ -592,6 +652,8 @@ def test_cli_json_output_includes_routing_metadata_fields(monkeypatch):
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
+    assert payload["version"] == 1
+    assert payload["sidecar_used"] is False
     assert payload["routing_backend"] == "FakeBackend"
     assert payload["routing_reason"] == "unit_test_fake_pipeline"
     assert payload["routing_gpu_device_ids"] == [7, 3]
@@ -625,6 +687,8 @@ def test_cli_json_output_should_surface_distributed_worker_metadata_from_backend
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
+    assert payload["version"] == 1
+    assert payload["sidecar_used"] is False
     assert payload["routing_backend"] == "FakeBackend"
     assert payload["routing_reason"] == "unit_test_fake_pipeline"
     assert payload["routing_gpu_device_ids"] == [7, 3]
@@ -1716,6 +1780,90 @@ def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
     cli_main.main_entry()
 
     assert seen["argv"] == ["tg", "devices", "--json"]
+
+
+def test_main_entry_should_not_rewrite_calibrate_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "calibrate"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "calibrate"]
+
+
+def test_main_entry_should_not_rewrite_top_level_help(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "--help"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "--help"]
+
+
+def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg"]
+
+
+def test_app_help_should_list_upgrade_and_update_commands():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "Fast text, AST, indexed, and GPU-aware search CLI" in result.stdout
+    assert "Use tg search --help for ripgrep-compatible flags." in result.stdout
+    assert "Bare patterns are treated as tg search." in result.stdout
+    assert "upgrade" in result.stdout
+    assert "update" in result.stdout
+    assert "Run semantic log classification via cyBERT." in result.stdout
+
+
+def test_calibrate_command_delegates_to_native_tg(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, object] = {}
+
+    class _Completed:
+        returncode = 0
+
+    monkeypatch.setattr(cli_main, "_resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, check=False: (seen.update({"cmd": list(cmd), "check": check}) or _Completed()),
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["calibrate"])
+
+    assert result.exit_code == 0
+    assert seen == {"cmd": ["tg.exe", "calibrate"], "check": False}
 
 
 def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch):

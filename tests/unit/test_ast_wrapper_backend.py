@@ -6,8 +6,6 @@ from tensor_grep.core.config import SearchConfig
 
 def test_ast_wrapper_backend_should_use_resolved_binary_path():
     backend = AstGrepWrapperBackend()
-    AstGrepWrapperBackend._cached_binary_name = None
-    AstGrepWrapperBackend._binary_name_resolved = False
 
     with patch("shutil.which") as which:
         which.side_effect = lambda name: {
@@ -17,25 +15,6 @@ def test_ast_wrapper_backend_should_use_resolved_binary_path():
         }.get(name)
 
         assert backend._get_binary_name() == r"C:\Users\oimir\AppData\Roaming\npm\ast-grep.CMD"
-
-
-def test_ast_wrapper_backend_should_cache_binary_resolution():
-    first = AstGrepWrapperBackend()
-    second = AstGrepWrapperBackend()
-    AstGrepWrapperBackend._cached_binary_name = None
-    AstGrepWrapperBackend._binary_name_resolved = False
-
-    with patch("shutil.which") as which:
-        which.side_effect = lambda name: {
-            "ast-grep": None,
-            "ast-grep.exe": None,
-            "sg": "sg",
-        }.get(name)
-
-        assert first._get_binary_name() == "sg"
-        assert second._get_binary_name() == "sg"
-
-    assert which.call_count == 3
 
 
 def test_ast_wrapper_backend_should_emit_runtime_routing_metadata():

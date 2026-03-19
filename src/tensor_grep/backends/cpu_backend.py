@@ -69,62 +69,6 @@ class CPUBackend(ComputeBackend):
         return {trigram: sorted(line_numbers) for trigram, line_numbers in index.items()}
 
     @staticmethod
-    def _compress_line_indexes(line_indexes: list[int]) -> list[list[int]]:
-        if not line_indexes:
-            return []
-        ranges: list[list[int]] = []
-        start = prev = line_indexes[0]
-        for line_idx in line_indexes[1:]:
-            if line_idx == prev + 1:
-                prev = line_idx
-                continue
-            ranges.append([start, prev])
-            start = prev = line_idx
-        ranges.append([start, prev])
-        return ranges
-
-    @staticmethod
-    def _decompress_line_indexes(encoded_ranges: list[list[int]]) -> list[int] | None:
-        line_indexes: list[int] = []
-        for item in encoded_ranges:
-            if (
-                not isinstance(item, list)
-                or len(item) != 2
-                or not isinstance(item[0], int)
-                or not isinstance(item[1], int)
-            ):
-                return None
-            start, end = item
-            if end < start:
-                return None
-            line_indexes.extend(range(start, end + 1))
-        return line_indexes
-
-    @staticmethod
-    def _intersect_sorted_line_indexes(postings: list[list[int]]) -> list[int]:
-        if not postings:
-            return []
-        result = postings[0]
-        for current in postings[1:]:
-            merged: list[int] = []
-            left_idx = right_idx = 0
-            while left_idx < len(result) and right_idx < len(current):
-                left = result[left_idx]
-                right = current[right_idx]
-                if left == right:
-                    merged.append(left)
-                    left_idx += 1
-                    right_idx += 1
-                elif left < right:
-                    left_idx += 1
-                else:
-                    right_idx += 1
-            if not merged:
-                return []
-            result = merged
-        return result
-
-    @staticmethod
     def _extract_required_literal(pattern: str) -> str | None:
         if any(token in pattern for token in ("|", "(", ")", "[", "]", "{", "}", "?", "+", "\\")):
             return None
@@ -164,24 +108,16 @@ class CPUBackend(ComputeBackend):
             return None
         if payload.get("file_signature") != list(cache_signature):
             return None
+        raw_lines = payload.get("lines")
         raw_index = payload.get("trigram_index")
-        raw_compact_index = payload.get("trigram_index_ranges")
-        if not isinstance(raw_index, dict):
-            if not isinstance(raw_compact_index, dict):
-                return None
-            raw_index = raw_compact_index
-        lines = Path(file_path).read_text(encoding="utf-8", errors="replace").splitlines()
+        if not isinstance(raw_lines, list) or not isinstance(raw_index, dict):
+            return None
+        lines = [str(line) for line in raw_lines]
         trigram_index: dict[str, list[int]] = {}
         for trigram, values in raw_index.items():
             if not isinstance(trigram, str) or not isinstance(values, list):
                 return None
-            decoded = self._decompress_line_indexes(values)
-            if decoded is None:
-                try:
-                    decoded = [int(v) for v in values]
-                except (TypeError, ValueError):
-                    return None
-            trigram_index[trigram] = decoded
+            trigram_index[trigram] = [int(v) for v in values]
         self._shared_literal_index_cache[cache_key] = (cache_signature, lines, trigram_index)
         return lines, trigram_index
         return None
@@ -204,10 +140,8 @@ class CPUBackend(ComputeBackend):
         cache_path = self._get_prefilter_cache_path(file_path, ignore_case)
         payload = {
             "file_signature": list(cache_signature),
-            "trigram_index_ranges": {
-                trigram: self._compress_line_indexes(line_indexes)
-                for trigram, line_indexes in trigram_index.items()
-            },
+            "lines": lines,
+            "trigram_index": trigram_index,
         }
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,13 +154,13 @@ class CPUBackend(ComputeBackend):
         cls, trigram_index: dict[str, list[int]], literal: str
     ) -> list[int]:
         trigrams = [literal[i : i + 3] for i in range(len(literal) - 2)]
-        postings: list[list[int]] = []
+        candidate_sets = []
         for trigram in trigrams:
             line_numbers = trigram_index.get(trigram)
             if not line_numbers:
                 return []
-            postings.append(line_numbers)
-        return cls._intersect_sorted_line_indexes(sorted(postings, key=len))
+            candidate_sets.append(set(line_numbers))
+        return sorted(set.intersection(*candidate_sets)) if candidate_sets else []
 
     @staticmethod
     def _compile_regexes(
@@ -356,7 +290,7 @@ class CPUBackend(ComputeBackend):
         routing_reason = "cpu_python_regex"
         ignore_case = bool(config.ignore_case or (config.smart_case and pattern.islower()))
         source_lines: list[str] | None = None
-        candidate_line_indexes: list[int] | None = None
+        candidate_line_indexes: set[int] | None = None
         if not (
             config.fixed_strings
             or config.invert_match
@@ -382,7 +316,7 @@ class CPUBackend(ComputeBackend):
                     source_lines, trigram_index = cached_index
                     routing_reason = "cpu_python_regex_prefilter_cache"
                 literal = prefilter_literal.lower() if ignore_case else prefilter_literal
-                candidate_line_indexes = self._candidate_line_indexes(trigram_index, literal)
+                candidate_line_indexes = set(self._candidate_line_indexes(trigram_index, literal))
 
         total_matches_count = 0
         before_lines = getattr(config, "before_context", 0) or 0
@@ -397,16 +331,15 @@ class CPUBackend(ComputeBackend):
             before_queue: deque[tuple[int, str]] = deque(maxlen=before_lines)
             context_after_remaining = 0
             if source_lines is not None:
-                if candidate_line_indexes is not None:
-                    line_iter = (
-                        (line_idx + 1, f"{source_lines[line_idx]}\n".encode())
-                        for line_idx in candidate_line_indexes
-                    )
-                else:
-                    line_iter = (
-                        (idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines)
-                    )
+                line_iter = (
+                    (idx + 1, f"{line}\n".encode()) for idx, line in enumerate(source_lines)
+                )
                 for line_idx, line_bytes in line_iter:
+                    if (
+                        candidate_line_indexes is not None
+                        and (line_idx - 1) not in candidate_line_indexes
+                    ):
+                        continue
                     # Try using python regex to decode byte string, else try the decoded string
                     matched = False
                     try:

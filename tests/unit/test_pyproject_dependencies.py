@@ -4,9 +4,13 @@ import tomllib
 from pathlib import Path
 
 
-def _optional_dependencies() -> dict[str, list[str]]:
+def _pyproject_payload() -> dict[str, object]:
     root = Path(__file__).resolve().parents[2]
-    payload = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    return tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+
+
+def _optional_dependencies() -> dict[str, list[str]]:
+    payload = _pyproject_payload()
     return payload["project"]["optional-dependencies"]
 
 
@@ -15,3 +19,17 @@ def test_nlp_extra_should_use_http_triton_client_not_all() -> None:
     assert "transformers>=4.40" in deps
     assert "tritonclient[http]" in deps
     assert "tritonclient[all]" not in deps
+
+
+def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> None:
+    ruff_config = _pyproject_payload()["tool"]["ruff"]
+
+    assert "exclude" not in ruff_config
+    assert ruff_config["extend-exclude"] == [
+        "bench_data",
+        "bench_ast_data",
+        "gpu_bench_data",
+        "benchmarks/bench_data",
+        "benchmarks/bench_ast_data",
+        "benchmarks/gpu_bench_data",
+    ]

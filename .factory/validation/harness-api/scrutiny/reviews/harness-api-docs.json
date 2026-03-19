@@ -1,0 +1,45 @@
+{
+  "featureId": "harness-api-docs",
+  "reviewedAt": "2026-03-16T04:30:00.000Z",
+  "commitId": "9130166",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Solid documentation feature. docs/harness_api.md comprehensively covers all five JSON output shapes (search, index search, rewrite plan, apply+verify, GPU sidecar) with field/type tables and examples. The --diff output format is documented with a real excerpt. Rust-vs-Python field differences (line vs line_number) are clearly called out. All five docs/examples/*.json files are valid single-document JSON with non-trivial data (total_matches >= 2 or total_edits >= 2) and contain the unified envelope fields (version, routing_backend, routing_reason, sidecar_used). The test file (test_harness_api_docs.py) provides adequate coverage of doc sections, example presence, envelope fields, and non-trivial payloads. The GPU sidecar example was generated using TG_SIDECAR_SCRIPT mock since real GPU backends were unavailable — this is a reasonable workaround documented in the library note.",
+    "issues": [
+      {
+        "file": "docs/examples/search.json",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "Example references absolute Windows paths to temporary fixture directories (bench_data/harness_api_doc_inputs/search_cpu/) that were cleaned up after generation. The 'path' and 'matches[].file' fields contain machine-specific absolute paths. This is fine for demonstrating the shape but means the examples cannot be regenerated without recreating the fixtures. Not a blocking issue since the examples serve as shape references, not runnable fixtures."
+      },
+      {
+        "file": "docs/examples/index_search.json",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "index_search.json references a different temp directory name (harness_api_doc_inputs_regen) than the other examples (harness_api_doc_inputs), suggesting it was regenerated in a separate pass. The inconsistency in directory names is cosmetic but slightly jarring. Not blocking."
+      },
+      {
+        "file": "docs/examples/search.json",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "search.json and index_search.json are minified (single-line JSON) while rewrite_plan.json, rewrite_apply_verify.json, and gpu_sidecar_search.json are pretty-printed. Inconsistent formatting across example files. Non-blocking as all parse correctly."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Worker discovered that bench_data/*.log is ignored by default (repo ignore rules), requiring --no-ignore for search examples. Also discovered that TG_SIDECAR_SCRIPT can exercise the GPU sidecar envelope path when GPU backends are unavailable. Both were recorded in .factory/library/harness-api-docs.md, which is good practice.",
+      "evidence": ".factory/library/harness-api-docs.md contains 4 bullet points covering these discoveries."
+    },
+    {
+      "area": "conventions",
+      "observation": "The feature description says 'Generate examples by running actual tg commands on bench_data.' The worker created temporary fixture subdirectories under bench_data/ and cleaned them up afterward, which means the generation process is not reproducible from the committed state. The doc command summary section uses placeholders (<temp-search-dir>) rather than a reproducible script. A generation script would make future regeneration easier, but this is a documentation feature so it's acceptable.",
+      "evidence": "docs/harness_api.md 'Command summary' section shows template commands with <temp-*-dir> placeholders. Transcript shows temporary directories were created and removed."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The feature fully satisfies its description and expectedBehavior requirements. docs/harness_api.md documents all five JSON output shapes with field tables, types, and linked examples. docs/examples/ contains exactly 5 valid JSON files with realistic non-trivial data and unified envelope fields. The --diff output format is documented with a real code excerpt. Rust-vs-Python field differences are explicitly noted. A test file locks the contract. Minor non-blocking issues: inconsistent JSON formatting across examples, machine-specific paths in examples, and a cosmetic directory name inconsistency in index_search.json. All validators (ruff, mypy, pytest) passed. Worker followed the backend-worker skill procedure correctly."
+}
