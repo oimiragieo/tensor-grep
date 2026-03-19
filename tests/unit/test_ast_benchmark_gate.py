@@ -69,8 +69,11 @@ def test_run_ast_benchmarks_should_emit_m3_gate_artifact(monkeypatch, tmp_path):
 def test_run_ast_parity_check_should_fail_explicitly_when_sg_is_missing(monkeypatch, tmp_path):
     module = _load_script_module("run_ast_parity_missing_sg", "benchmarks/run_ast_parity_check.py")
     output_path = tmp_path / "ast_parity_report.json"
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
 
     monkeypatch.setattr("sys.argv", ["run_ast_parity_check.py", "--output", str(output_path)])
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
     monkeypatch.setattr(module, "resolve_ast_grep_binary", lambda: None)
     monkeypatch.setattr(
         module,
