@@ -609,8 +609,8 @@ fn assert_rewrite_plan_payload(path: &Path, plan: &RewritePlanExample) {
     for edit in &plan.edits {
         assert!(!edit.id.is_empty(), "{} edit missing id", path.display());
         assert!(
-            edit.file.is_absolute(),
-            "{} edit file should be absolute",
+            is_portable_absolute_path(&edit.file),
+            "{} edit file should be absolute or an absolute Windows path literal",
             path.display()
         );
         if let Some(planned_mtime_ns) = edit.planned_mtime_ns {
@@ -648,8 +648,8 @@ fn assert_rewrite_plan_payload(path: &Path, plan: &RewritePlanExample) {
     }
     for rejected in &plan.rejected_overlaps {
         assert!(
-            rejected.file.is_absolute(),
-            "{} overlap file should be absolute",
+            is_portable_absolute_path(&rejected.file),
+            "{} overlap file should be absolute or an absolute Windows path literal",
             path.display()
         );
         assert!(
@@ -697,6 +697,18 @@ where
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
     serde_json::from_str(&json)
         .unwrap_or_else(|error| panic!("{} failed schema validation: {error}", path.display()))
+}
+
+fn is_portable_absolute_path(path: &Path) -> bool {
+    path.is_absolute() || is_windows_absolute_path_literal(&path.to_string_lossy())
+}
+
+fn is_windows_absolute_path_literal(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 fn example_file_name(path: &Path) -> &str {

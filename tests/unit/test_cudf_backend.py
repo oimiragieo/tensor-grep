@@ -352,7 +352,10 @@ class TestCuDFBackend:
         )
 
         assert mock_pool.call_args.kwargs["max_workers"] == 2
-        assert mock_pool.call_args.kwargs["max_tasks_per_child"] == 1
+        if os.name == "nt":
+            assert mock_pool.call_args.kwargs["max_tasks_per_child"] == 1
+        else:
+            assert "max_tasks_per_child" not in mock_pool.call_args.kwargs
 
     @patch("tensor_grep.backends.cudf_backend._process_chunk_on_device")
     @patch("tensor_grep.backends.cudf_backend.ProcessPoolExecutor")
