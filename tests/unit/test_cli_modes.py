@@ -235,6 +235,25 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
     assert seen["cmd"] == ["tg.exe", "search", "--cpu", "--ndjson", "ERROR", "."]
 
 
+def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):
+    from tensor_grep.cli import main as cli_main
+
+    repo_root = tmp_path / "repo"
+    cli_path = repo_root / "src" / "tensor_grep" / "cli" / "main.py"
+    cli_path.parent.mkdir(parents=True, exist_ok=True)
+    cli_path.write_text("# stub\n", encoding="utf-8")
+
+    legacy_binary = repo_root / "benchmarks" / "tg_rust.exe"
+    legacy_binary.parent.mkdir(parents=True, exist_ok=True)
+    legacy_binary.write_text("legacy\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli_main, "__file__", str(cli_path))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    cli_main._resolve_native_tg_binary.cache_clear()
+
+    assert cli_main._resolve_native_tg_binary() is None
+
+
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.py", "b.py"]}
