@@ -246,11 +246,14 @@ def build_tg_benchmark_cmd(
     *,
     force_cpu: bool = False,
 ) -> list[str]:
-    cmd = [str(binary or resolve_tg_binary()), "search"]
+    resolved_binary = binary or resolve_tg_binary()
     if force_cpu:
         launcher = [str(binary)] if binary is not None else resolve_tg_cli_launcher()
-        cmd = [*launcher, "search"]
-        cmd.append("--cpu")
+        cmd = [*launcher, "search", "--cpu"]
+    elif resolved_binary.exists():
+        cmd = [str(resolved_binary), "search"]
+    else:
+        cmd = [*resolve_tg_cli_launcher(), "search"]
     cmd.append("--no-ignore")
     cmd.extend(tg_args)
     return cmd

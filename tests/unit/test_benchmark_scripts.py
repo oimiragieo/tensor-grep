@@ -66,6 +66,23 @@ def test_run_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
     assert cmd[1:] == ["search", "--no-ignore", "ERROR", "bench_data"]
 
 
+def test_run_benchmarks_should_fallback_to_cli_launcher_when_native_binary_is_missing(monkeypatch):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_cmd", "benchmarks/run_benchmarks.py"
+    )
+    missing_binary = Path("missing-tg.exe")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: missing_binary)
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_cli_launcher",
+        lambda *_args, **_kwargs: ["python", "-m", "tensor_grep"],
+    )
+
+    cmd = module.build_tg_benchmark_cmd(["ERROR", "bench_data"])
+
+    assert cmd == ["python", "-m", "tensor_grep", "search", "--no-ignore", "ERROR", "bench_data"]
+
+
 def test_run_benchmarks_should_force_cpu_when_native_flag_is_enabled(monkeypatch, tmp_path):
     module = _load_script_module("run_benchmarks_script_native_cmd", "benchmarks/run_benchmarks.py")
     tg_binary = tmp_path / "tg.exe"
@@ -80,17 +97,19 @@ def test_run_benchmarks_should_force_cpu_when_native_flag_is_enabled(monkeypatch
     assert cmd[1:] == ["search", "--cpu", "--no-ignore", "ERROR", "bench_data"]
 
 
-def test_run_benchmarks_should_include_large_file_and_many_file_scenarios():
+def test_run_benchmarks_should_include_large_file_and_many_file_scenarios(tmp_path):
     module = _load_script_module(
         "run_benchmarks_script_native_scenarios", "benchmarks/run_benchmarks.py"
     )
-    module.resolve_tg_binary = lambda *_args, **_kwargs: Path("native-tg.exe")
+    tg_binary = tmp_path / "native-tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
 
     scenarios = module.build_benchmark_scenarios(
         bench_dir=Path("bench_data"),
         large_file_path=Path("large_fixture.log"),
         many_file_dir=Path("many_files"),
         force_cpu=True,
+        binary=tg_binary,
     )
 
     names = [scenario["name"] for scenario in scenarios]
@@ -99,9 +118,9 @@ def test_run_benchmarks_should_include_large_file_and_many_file_scenarios():
 
     large_scenario = next(s for s in scenarios if s["name"] == "11. Native Large File Search")
     many_scenario = next(s for s in scenarios if s["name"] == "12. Native Many-File Search")
-    assert large_scenario["tg_cmd"][:3] == ["native-tg.exe", "search", "--no-ignore"]
+    assert large_scenario["tg_cmd"][:3] == [str(tg_binary), "search", "--no-ignore"]
     assert large_scenario["tg_cmd"][-1] == "large_fixture.log"
-    assert many_scenario["tg_cmd"][:3] == ["native-tg.exe", "search", "--no-ignore"]
+    assert many_scenario["tg_cmd"][:3] == [str(tg_binary), "search", "--no-ignore"]
     assert many_scenario["tg_cmd"][-1] == "many_files"
 
 
