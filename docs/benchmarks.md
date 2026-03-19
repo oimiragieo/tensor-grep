@@ -80,16 +80,16 @@ Notes:
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.196s | 0.207s | Regression check PASS |
-| Case-Insensitive Match | 0.284s | 0.226s | Regression check PASS |
-| Regex Match | 0.253s | 0.247s | Regression check PASS |
-| Invert Match | 0.416s | 0.370s | Regression check PASS |
-| Count Matches | 0.155s | 0.168s | Regression check PASS |
-| Context Lines (`-C2`) | 0.358s | 0.393s | Regression check PASS |
-| Max Count (`-m 5`) | 0.115s | 0.128s | Regression check PASS |
-| File Glob Filtering | 0.201s | 0.207s | Regression check PASS |
-| Word Boundary | 0.204s | 0.239s | Regression check PASS |
-| Fixed Strings (`-F`) | 0.188s | 0.218s | Regression check PASS |
+| Simple String Match | 0.222s | 0.234s | Regression check PASS |
+| Case-Insensitive Match | 0.235s | 0.232s | Regression check PASS |
+| Regex Match | 0.234s | 0.245s | Regression check PASS |
+| Invert Match | 0.334s | 0.373s | Regression check PASS |
+| Count Matches | 0.163s | 0.199s | Regression check PASS |
+| Context Lines (`-C2`) | 0.421s | 0.473s | Regression check PASS |
+| Max Count (`-m 5`) | 0.114s | 0.132s | Regression check PASS |
+| File Glob Filtering | 0.202s | 0.201s | Regression check PASS |
+| Word Boundary | 0.269s | 0.228s | Regression check PASS |
+| Fixed Strings (`-F`) | 0.206s | 0.219s | Regression check PASS |
 
 ### Native CPU large-file / many-file (`run_native_cpu_benchmarks.py`)
 
