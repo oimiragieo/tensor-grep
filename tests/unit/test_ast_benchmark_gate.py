@@ -75,7 +75,10 @@ def test_run_ast_parity_check_should_fail_explicitly_when_sg_is_missing(monkeypa
     monkeypatch.setattr(
         module,
         "ensure_ast_parity_corpus",
-        lambda *_args, **_kwargs: {"corpus_dir": tmp_path / "ast_parity", "manifest_path": tmp_path / "ast_parity.manifest.sha256"},
+        lambda *_args, **_kwargs: {
+            "corpus_dir": tmp_path / "ast_parity",
+            "manifest_path": tmp_path / "ast_parity.manifest.sha256",
+        },
     )
 
     exit_code = module.main()
@@ -103,9 +106,14 @@ def test_run_ast_parity_check_should_report_40_passing_cases(monkeypatch, tmp_pa
     monkeypatch.setattr(
         module,
         "ensure_ast_parity_corpus",
-        lambda *_args, **_kwargs: {"corpus_dir": tmp_path / "ast_parity", "manifest_path": tmp_path / "ast_parity.manifest.sha256"},
+        lambda *_args, **_kwargs: {
+            "corpus_dir": tmp_path / "ast_parity",
+            "manifest_path": tmp_path / "ast_parity.manifest.sha256",
+        },
     )
-    monkeypatch.setattr(module, "run_parity_case", lambda *_args, **_kwargs: {"passed": True, "divergence": []})
+    monkeypatch.setattr(
+        module, "run_parity_case", lambda *_args, **_kwargs: {"passed": True, "divergence": []}
+    )
 
     exit_code = module.main()
 

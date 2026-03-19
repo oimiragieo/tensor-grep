@@ -566,7 +566,9 @@ class TestAstBackend:
         assert parser_two.parse_calls == 0
         assert parser_two.language.query_calls == 0
 
-    def test_should_apply_calibrated_multiplier_when_estimating_parsed_source_cache_entry_size(self):
+    def test_should_apply_calibrated_multiplier_when_estimating_parsed_source_cache_entry_size(
+        self,
+    ):
         from tensor_grep.backends.ast_backend import AstBackend
 
         backend = AstBackend()

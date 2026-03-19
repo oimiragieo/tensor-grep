@@ -84,19 +84,15 @@ def resolve_gpu_sidecar_python(raw: str | None = None) -> Path | None:
 
     candidates = []
     if os.name == "nt":
-        candidates.extend(
-            [
-                ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
-                ROOT_DIR / ".venv" / "Scripts" / "python.exe",
-            ]
-        )
+        candidates.extend([
+            ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
+            ROOT_DIR / ".venv" / "Scripts" / "python.exe",
+        ])
     else:
-        candidates.extend(
-            [
-                ROOT_DIR / ".venv_cuda" / "bin" / "python",
-                ROOT_DIR / ".venv" / "bin" / "python",
-            ]
-        )
+        candidates.extend([
+            ROOT_DIR / ".venv_cuda" / "bin" / "python",
+            ROOT_DIR / ".venv" / "bin" / "python",
+        ])
 
     for candidate in candidates:
         if candidate.exists():
@@ -483,14 +479,12 @@ def analyze_gpu_auto_recommendation(rows: list[dict[str, object]]) -> dict[str, 
             speedup_vs_rg_pct = round((rg_median - gpu_median) / rg_median * 100.0, 2)
             gpu_result["speedup_vs_rg_pct"] = speedup_vs_rg_pct
             if speedup_vs_rg_pct >= 20.0:
-                winners.append(
-                    {
-                        "device_id": gpu_result.get("device_id"),
-                        "size_label": row.get("size_label"),
-                        "size_bytes": row.get("size_bytes"),
-                        "speedup_vs_rg_pct": speedup_vs_rg_pct,
-                    }
-                )
+                winners.append({
+                    "device_id": gpu_result.get("device_id"),
+                    "size_label": row.get("size_label"),
+                    "size_bytes": row.get("size_bytes"),
+                    "speedup_vs_rg_pct": speedup_vs_rg_pct,
+                })
 
     if not winners:
         return {
@@ -521,7 +515,9 @@ def run_gpu_scale_benchmarks(
 ) -> dict[str, object]:
     probe = probe_gpu_devices(sidecar_python)
     devices = list(probe.get("devices", [])) if isinstance(probe.get("devices", []), list) else []
-    warnings = list(probe.get("warnings", [])) if isinstance(probe.get("warnings", []), list) else []
+    warnings = (
+        list(probe.get("warnings", [])) if isinstance(probe.get("warnings", []), list) else []
+    )
     errors: list[str] = []
     if probe.get("error"):
         warnings.append(str(probe["error"]))
@@ -562,14 +558,12 @@ def run_gpu_scale_benchmarks(
                 "capability": device.get("capability"),
             }
             if not device.get("operational", False):
-                entry.update(
-                    {
-                        "status": "UNSUPPORTED",
-                        "median_s": None,
-                        "samples_s": [],
-                        "stderr": device.get("error", "device probe failed"),
-                    }
-                )
+                entry.update({
+                    "status": "UNSUPPORTED",
+                    "median_s": None,
+                    "samples_s": [],
+                    "stderr": device.get("error", "device probe failed"),
+                })
             else:
                 result = benchmark_search_command(
                     build_tg_gpu_search_command(
@@ -601,7 +595,11 @@ def run_gpu_scale_benchmarks(
         tg_cpu_median = tg_cpu_result.get("median_s") if isinstance(tg_cpu_result, dict) else None
         for gpu_result in gpu_results:
             gpu_median = gpu_result.get("median_s")
-            if isinstance(gpu_median, (int, float)) and isinstance(rg_median, (int, float)) and rg_median > 0:
+            if (
+                isinstance(gpu_median, (int, float))
+                and isinstance(rg_median, (int, float))
+                and rg_median > 0
+            ):
                 gpu_result["speedup_vs_rg_pct"] = round(
                     (rg_median - gpu_median) / rg_median * 100.0,
                     2,
@@ -651,7 +649,8 @@ def run_gpu_scale_benchmarks(
     return {
         "bench_dir": str(bench_dir),
         "corpus_sizes": [
-            {"label": _format_size_label(size_bytes), "bytes": size_bytes} for size_bytes in corpus_sizes
+            {"label": _format_size_label(size_bytes), "bytes": size_bytes}
+            for size_bytes in corpus_sizes
         ],
         "devices": devices,
         "rows": rows,
@@ -691,7 +690,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CORPUS_SIZES,
         help="Comma-separated corpus sizes such as 1MB,10MB,100MB,1GB.",
     )
-    parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Benchmark samples per command.")
+    parser.add_argument(
+        "--runs", type=int, default=DEFAULT_RUNS, help="Benchmark samples per command."
+    )
     parser.add_argument(
         "--warmup",
         type=int,

@@ -336,7 +336,9 @@ def generate_python_ast_bench_corpus(
         generated_loc += len(lines)
         file_path.write_text("".join(lines), encoding="utf-8")
 
-    manifest_path = write_manifest(output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256")
+    manifest_path = write_manifest(
+        output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256"
+    )
     return {
         "corpus_dir": output_dir,
         "manifest_path": manifest_path,
@@ -346,7 +348,9 @@ def generate_python_ast_bench_corpus(
     }
 
 
-def _generate_javascript_ast_bench_line(file_index: int, line_index: int, *, rng: random.Random) -> str:
+def _generate_javascript_ast_bench_line(
+    file_index: int, line_index: int, *, rng: random.Random
+) -> str:
     salt = rng.randint(1000, 9999)
     if line_index % 3 == 0:
         return (
@@ -361,7 +365,9 @@ def _generate_javascript_ast_bench_line(file_index: int, line_index: int, *, rng
     return f"const result_{file_index}_{line_index}_{salt} = {line_index};\n"
 
 
-def _generate_typescript_ast_bench_line(file_index: int, line_index: int, *, rng: random.Random) -> str:
+def _generate_typescript_ast_bench_line(
+    file_index: int, line_index: int, *, rng: random.Random
+) -> str:
     salt = rng.randint(1000, 9999)
     if line_index % 3 == 0:
         return (
@@ -405,11 +411,15 @@ def _generate_structured_ast_bench_corpus(
     for file_index in range(file_count):
         current_lines = lines_per_file + (1 if file_index < extra_lines else 0)
         file_path = output_dir / f"module_{file_index:04d}{extension}"
-        lines = [line_factory(file_index, line_index, rng=rng) for line_index in range(current_lines)]
+        lines = [
+            line_factory(file_index, line_index, rng=rng) for line_index in range(current_lines)
+        ]
         generated_loc += len(lines)
         file_path.write_text("".join(lines), encoding="utf-8")
 
-    manifest_path = write_manifest(output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256")
+    manifest_path = write_manifest(
+        output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256"
+    )
     return {
         "corpus_dir": output_dir,
         "manifest_path": manifest_path,
@@ -520,7 +530,9 @@ def generate_ast_parity_corpus(output_dir: Path) -> dict[str, object]:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(case["source"], encoding="utf-8")
 
-    manifest_path = write_manifest(output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256")
+    manifest_path = write_manifest(
+        output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256"
+    )
     return {
         "corpus_dir": output_dir,
         "manifest_path": manifest_path,
@@ -540,7 +552,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", required=True, help="Output directory for generated files.")
     parser.add_argument("--files", type=int, default=1000, help="File count for ast-bench corpus.")
     parser.add_argument("--loc", type=int, default=50000, help="Total LOC for ast-bench corpus.")
-    parser.add_argument("--seed", type=int, default=42, help="Deterministic seed for ast-bench corpus.")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Deterministic seed for ast-bench corpus."
+    )
     parser.add_argument(
         "--lang",
         choices=AST_BENCH_LANGUAGES,

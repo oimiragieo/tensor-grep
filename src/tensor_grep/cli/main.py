@@ -160,14 +160,12 @@ def _resolve_native_tg_binary() -> Path | None:
     candidates = []
     if env_override:
         candidates.append(Path(env_override).expanduser())
-    candidates.extend(
-        [
-            repo_root / "rust_core" / "target" / "release" / binary_name,
-            repo_root / "rust_core" / "target" / "debug" / binary_name,
-            repo_root / "benchmarks" / binary_name,
-            repo_root / "benchmarks" / "tg_rust.exe",
-        ]
-    )
+    candidates.extend([
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "rust_core" / "target" / "debug" / binary_name,
+        repo_root / "benchmarks" / binary_name,
+        repo_root / "benchmarks" / "tg_rust.exe",
+    ])
 
     existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
     if not existing:
@@ -456,27 +454,23 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+        })
 
     return specs
 
@@ -1759,18 +1753,16 @@ def test(
                         temp_name.write_text(snippet, encoding="utf-8")
                         try:
                             result = backend.search(str(temp_name), pattern, config=case_cfg)
-                            evaluated_snippets.append(
-                                (
-                                    f"{test_file}:{case_id}",
-                                    snippet,
-                                    expected_match,
-                                    bool(
-                                        result.total_files > 0
-                                        or result.total_matches > 0
-                                        or result.matched_file_paths
-                                    ),
-                                )
-                            )
+                            evaluated_snippets.append((
+                                f"{test_file}:{case_id}",
+                                snippet,
+                                expected_match,
+                                bool(
+                                    result.total_files > 0
+                                    or result.total_matches > 0
+                                    or result.matched_file_paths
+                                ),
+                            ))
                         finally:
                             temp_name.unlink(missing_ok=True)
             except Exception as exc:
@@ -1960,8 +1952,10 @@ def main_entry() -> None:
 
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]
-        if first_arg not in ("--help", "-h") and first_arg not in known_commands and not first_arg.startswith(
-            "--typer-"
+        if (
+            first_arg not in ("--help", "-h")
+            and first_arg not in known_commands
+            and not first_arg.startswith("--typer-")
         ):
             sys.argv.insert(1, "search")
 

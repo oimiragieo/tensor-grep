@@ -113,13 +113,11 @@ def _resolve_native_tg_binary() -> Path:
     candidates = []
     if env_override:
         candidates.append(Path(env_override).expanduser())
-    candidates.extend(
-        [
-            repo_root / "rust_core" / "target" / "release" / binary_name,
-            repo_root / "benchmarks" / binary_name,
-            repo_root / "benchmarks" / "tg_rust.exe",
-        ]
-    )
+    candidates.extend([
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "benchmarks" / binary_name,
+        repo_root / "benchmarks" / "tg_rust.exe",
+    ])
 
     for candidate in candidates:
         if candidate.is_file():
@@ -233,7 +231,9 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError:
-        return _rewrite_error("Rewrite command produced invalid JSON output.", code="invalid_output")
+        return _rewrite_error(
+            "Rewrite command produced invalid JSON output.", code="invalid_output"
+        )
 
     return _normalize_rewrite_json_payload(payload)
 
@@ -244,7 +244,9 @@ def _execute_rewrite_diff_command(command: list[str]) -> str:
     except FileNotFoundError as exc:
         return _rewrite_error(str(exc), code="unavailable")
     except OSError as exc:
-        return _rewrite_error(f"Failed to execute rewrite diff command: {exc}", code="execution_failed")
+        return _rewrite_error(
+            f"Failed to execute rewrite diff command: {exc}", code="execution_failed"
+        )
 
     if completed.returncode != 0:
         return _rewrite_error(
@@ -257,7 +259,9 @@ def _execute_rewrite_diff_command(command: list[str]) -> str:
 
     diff_preview = completed.stdout or ""
     if not diff_preview.strip():
-        return _rewrite_error("Rewrite diff command produced no diff output.", code="invalid_output")
+        return _rewrite_error(
+            "Rewrite diff command produced no diff output.", code="invalid_output"
+        )
 
     payload = _rewrite_envelope()
     payload["diff"] = diff_preview

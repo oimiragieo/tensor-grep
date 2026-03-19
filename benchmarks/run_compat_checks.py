@@ -288,9 +288,7 @@ def compare_scenario(
     report["missing_lines"] = sorted(line for line in rg_lines if line not in tg_lines)
     report["extra_lines"] = sorted(line for line in tg_lines if line not in rg_lines)
     report["status"] = (
-        "PASS"
-        if not report["missing_lines"] and not report["extra_lines"]
-        else "FAIL"
+        "PASS" if not report["missing_lines"] and not report["extra_lines"] else "FAIL"
     )
     if report["status"] == "FAIL":
         report["reason"] = "sorted-line-diff"
@@ -452,9 +450,7 @@ def main() -> int:
     )
 
     output_path = (
-        Path(args.output)
-        if args.output
-        else ensure_artifacts_dir(ROOT_DIR) / "compat_report.json"
+        Path(args.output) if args.output else ensure_artifacts_dir(ROOT_DIR) / "compat_report.json"
     )
     write_json(output_path, report)
 

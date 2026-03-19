@@ -134,7 +134,11 @@ def _run_cpu_hot_query(corpus_path: Path, cache_dir: Path, probe_script: Path) -
 def evaluate_hot_query_row(row: dict[str, object], max_regression_pct: float) -> dict[str, object]:
     first_s = row.get("first_s")
     second_s = row.get("second_s")
-    if not isinstance(first_s, (float, int)) or not isinstance(second_s, (float, int)) or first_s <= 0:
+    if (
+        not isinstance(first_s, (float, int))
+        or not isinstance(second_s, (float, int))
+        or first_s <= 0
+    ):
         return {**row, "status": "UNKNOWN"}
 
     improvement_pct = ((float(first_s) - float(second_s)) / float(first_s)) * 100.0

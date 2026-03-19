@@ -226,7 +226,9 @@ def run_harness_loop_iteration(
     }
 
 
-def build_phase_summaries(rows: list[dict[str, object]]) -> tuple[dict[str, float], dict[str, float]]:
+def build_phase_summaries(
+    rows: list[dict[str, object]],
+) -> tuple[dict[str, float], dict[str, float]]:
     phase_keys = ("search_s", "plan_s", "apply_s", "verify_s")
     medians: dict[str, float] = {}
     totals: dict[str, float] = {}
@@ -292,10 +294,14 @@ def build_base_payload(args: argparse.Namespace) -> dict[str, object]:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Benchmark the full AST search -> rewrite -> verify harness loop.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark the full AST search -> rewrite -> verify harness loop."
+    )
     parser.add_argument("--binary", default=str(default_binary_path()))
     parser.add_argument("--output", default=str(default_output_path()))
-    parser.add_argument("--iterations", type=int, default=5, help="Number of full harness-loop iterations.")
+    parser.add_argument(
+        "--iterations", type=int, default=5, help="Number of full harness-loop iterations."
+    )
     parser.add_argument("--files", type=int, default=250, help="Synthetic corpus file count.")
     parser.add_argument("--loc", type=int, default=12500, help="Synthetic corpus total LOC.")
     parser.add_argument("--seed", type=int, default=42, help="Deterministic corpus seed.")
@@ -323,7 +329,12 @@ def main() -> int:
         errors.append(f"tg binary not found: {tg_binary}")
 
     if errors:
-        payload.update({"passed": False, "all_passed": False, "error": " ".join(errors), "rows": []})
+        payload.update({
+            "passed": False,
+            "all_passed": False,
+            "error": " ".join(errors),
+            "rows": [],
+        })
         write_json(output_path, payload)
         for error in errors:
             print(error, file=sys.stderr)
@@ -350,16 +361,14 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    payload.update(
-        {
-            "tg_binary": str(tg_binary),
-            "corpus_dir": str(corpus_dir),
-            "manifest_path": str(corpus_info["manifest_path"]),
-            "file_count": corpus_info["file_count"],
-            "total_loc": corpus_info["total_loc"],
-            **results,
-        }
-    )
+    payload.update({
+        "tg_binary": str(tg_binary),
+        "corpus_dir": str(corpus_dir),
+        "manifest_path": str(corpus_info["manifest_path"]),
+        "file_count": corpus_info["file_count"],
+        "total_loc": corpus_info["total_loc"],
+        **results,
+    })
     if payload.get("rows") and (
         not isinstance(payload.get("phase_medians_s"), dict)
         or not isinstance(payload.get("phase_totals_s"), dict)

@@ -83,6 +83,27 @@ def test_detect_environment_mismatch_reports_python_version_difference():
     assert mismatch == "python_version mismatch: baseline=3.13.1 current=3.14.0"
 
 
+def test_detect_environment_mismatch_ignores_python_patch_difference():
+    baseline = {
+        "environment": {
+            "platform": "linux",
+            "machine": "x86_64",
+            "python_version": "3.12",
+        }
+    }
+    current = {
+        "environment": {
+            "platform": "linux",
+            "machine": "x86_64",
+            "python_version": "3.12.12",
+        }
+    }
+
+    mismatch = detect_environment_mismatch(baseline=baseline, current=current)
+
+    assert mismatch is None
+
+
 def test_detect_environment_mismatch_ignores_missing_metadata():
     baseline = {"rows": []}
     current = {"environment": {"platform": "linux"}}

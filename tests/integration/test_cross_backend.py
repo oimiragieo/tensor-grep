@@ -16,9 +16,7 @@ pytestmark = [pytest.mark.integration]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
-TG_BINARY = REPO_ROOT / "rust_core" / "target" / "release" / (
-    "tg.exe" if os.name == "nt" else "tg"
-)
+TG_BINARY = REPO_ROOT / "rust_core" / "target" / "release" / ("tg.exe" if os.name == "nt" else "tg")
 AST_PATTERN = "def $F($$$ARGS): $$$BODY"
 PATTERNS = [
     "alpha sentinel",
@@ -167,7 +165,9 @@ def _assert_success(result: subprocess.CompletedProcess[str], *, context: str) -
     )
 
 
-def _load_json_payload(result: subprocess.CompletedProcess[str], *, context: str) -> dict[str, object]:
+def _load_json_payload(
+    result: subprocess.CompletedProcess[str], *, context: str
+) -> dict[str, object]:
     _assert_success(result, context=context)
     return json.loads(result.stdout)
 
@@ -386,7 +386,13 @@ def test_cross_backend_should_report_user_facing_errors_for_missing_paths_and_in
             PATTERNS[0],
             str(missing_path),
         ],
-        "trigram_index": [str(native_tg_binary), "search", "--index", PATTERNS[0], str(missing_path)],
+        "trigram_index": [
+            str(native_tg_binary),
+            "search",
+            "--index",
+            PATTERNS[0],
+            str(missing_path),
+        ],
         "rg_passthrough": [
             sys.executable,
             "-m",

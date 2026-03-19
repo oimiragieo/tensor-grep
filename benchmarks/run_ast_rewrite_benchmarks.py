@@ -1,4 +1,5 @@
 """Benchmark AST rewrite phases on synthetic Python corpora."""
+
 from __future__ import annotations
 
 import argparse
@@ -115,7 +116,9 @@ def run_timed_command(command: list[str]) -> float:
     elapsed = time.perf_counter() - start
     if completed.returncode != 0:
         stderr = (completed.stderr or "").strip()
-        raise RuntimeError(f"command failed with exit code {completed.returncode}: {' '.join(command)}\n{stderr}")
+        raise RuntimeError(
+            f"command failed with exit code {completed.returncode}: {' '.join(command)}\n{stderr}"
+        )
     return elapsed
 
 
@@ -209,20 +212,18 @@ def benchmark_sg_apply_phase(
         work_dir = copy_corpus(corpus_dir)
         try:
             timings.append(
-                run_timed_command(
-                    [
-                        str(sg_binary),
-                        "run",
-                        "--lang",
-                        "python",
-                        "-p",
-                        pattern,
-                        "-r",
-                        replacement,
-                        "--update-all",
-                        str(work_dir),
-                    ]
-                )
+                run_timed_command([
+                    str(sg_binary),
+                    "run",
+                    "--lang",
+                    "python",
+                    "-p",
+                    pattern,
+                    "-r",
+                    replacement,
+                    "--update-all",
+                    str(work_dir),
+                ])
             )
         finally:
             shutil.rmtree(work_dir.parent, ignore_errors=True)
@@ -403,20 +404,19 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    payload.update(
-        {
-            "tg_binary": str(tg_binary),
-            "sg_binary": str(sg_binary) if sg_binary is not None else None,
-            "corpus_dir": str(corpus_dir),
-            "manifest_path": str(corpus_info["manifest_path"]),
-            "file_count": corpus_info["file_count"],
-            "total_loc": corpus_info["total_loc"],
-            "min_rewrites_per_file": corpus_info["min_rewrites_per_file"],
-            **results,
-        }
-    )
+    payload.update({
+        "tg_binary": str(tg_binary),
+        "sg_binary": str(sg_binary) if sg_binary is not None else None,
+        "corpus_dir": str(corpus_dir),
+        "manifest_path": str(corpus_info["manifest_path"]),
+        "file_count": corpus_info["file_count"],
+        "total_loc": corpus_info["total_loc"],
+        "min_rewrites_per_file": corpus_info["min_rewrites_per_file"],
+        **results,
+    })
     phase_timings_ok = all(
-        float(payload["phase_timings_s"][phase]["median"]) > 0 for phase in ("plan", "diff", "apply")
+        float(payload["phase_timings_s"][phase]["median"]) > 0
+        for phase in ("plan", "diff", "apply")
     )
     ratio_gate_passed = True
     if payload.get("ratio_tg_vs_sg") is not None:

@@ -116,7 +116,19 @@ def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkey
     monkeypatch.setattr(
         sys,
         "argv",
-        ["tg", "search", "--gpu-device-ids", "0", "-e", "error", "-e", "warn", "-e", "fatal", "bench_data"],
+        [
+            "tg",
+            "search",
+            "--gpu-device-ids",
+            "0",
+            "-e",
+            "error",
+            "-e",
+            "warn",
+            "-e",
+            "fatal",
+            "bench_data",
+        ],
     )
     monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
     monkeypatch.setattr(
@@ -134,7 +146,17 @@ def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkey
     assert excinfo.value.code == 0
     assert seen == {
         "binary_name": "tg.exe",
-        "search_args": ["--gpu-device-ids", "0", "-e", "error", "-e", "warn", "-e", "fatal", "bench_data"],
+        "search_args": [
+            "--gpu-device-ids",
+            "0",
+            "-e",
+            "error",
+            "-e",
+            "warn",
+            "-e",
+            "fatal",
+            "bench_data",
+        ],
     }
 
 

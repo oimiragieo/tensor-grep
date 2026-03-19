@@ -1856,7 +1856,7 @@ def test_calibrate_command_delegates_to_native_tg(monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, check=False: (seen.update({"cmd": list(cmd), "check": check}) or _Completed()),
+        lambda cmd, check=False: seen.update({"cmd": list(cmd), "check": check}) or _Completed(),
     )
 
     runner = CliRunner()

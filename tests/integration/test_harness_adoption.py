@@ -11,9 +11,7 @@ pytestmark = [pytest.mark.integration]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
-TG_BINARY = REPO_ROOT / "rust_core" / "target" / "release" / (
-    "tg.exe" if os.name == "nt" else "tg"
-)
+TG_BINARY = REPO_ROOT / "rust_core" / "target" / "release" / ("tg.exe" if os.name == "nt" else "tg")
 REWRITE_PATTERN = "def $F($$$ARGS): return $EXPR"
 REWRITE_REPLACEMENT = "lambda $$$ARGS: $EXPR"
 

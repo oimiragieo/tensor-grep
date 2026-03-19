@@ -209,7 +209,11 @@ def main() -> int:
         )
 
     if errors:
-        payload.update({"passed": False, "python_ratio_gate_passed": False, "error": " ".join(errors)})
+        payload.update({
+            "passed": False,
+            "python_ratio_gate_passed": False,
+            "error": " ".join(errors),
+        })
         write_json(output_path, payload)
         for error in errors:
             print(error, file=sys.stderr)
@@ -236,17 +240,15 @@ def main() -> int:
         for entry in LANGUAGE_BENCHMARKS
     ]
     python_row = next(row for row in rows if row["language"] == "python")
-    payload.update(
-        {
-            "tg_binary": str(tg_binary),
-            "sg_binary": str(sg_binary),
-            "hyperfine_binary": str(hyperfine_binary),
-            "bench_dir": str(bench_dir),
-            "rows": rows,
-            "python_ratio_gate_passed": python_row["passed"],
-            "passed": bool(python_row["passed"]),
-        }
-    )
+    payload.update({
+        "tg_binary": str(tg_binary),
+        "sg_binary": str(sg_binary),
+        "hyperfine_binary": str(hyperfine_binary),
+        "bench_dir": str(bench_dir),
+        "rows": rows,
+        "python_ratio_gate_passed": python_row["passed"],
+        "passed": bool(python_row["passed"]),
+    })
     write_json(output_path, payload)
 
     for row in rows:

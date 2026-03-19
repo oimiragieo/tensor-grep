@@ -380,7 +380,9 @@ class TestCuDFBackend:
     def test_worker_isolation_tests_are_guarded_for_windows_only(self):
         for test_name in WINDOWS_WORKER_ISOLATION_TESTS:
             test_func = getattr(type(self), test_name)
-            skipif_marks = [mark for mark in getattr(test_func, "pytestmark", []) if mark.name == "skipif"]
+            skipif_marks = [
+                mark for mark in getattr(test_func, "pytestmark", []) if mark.name == "skipif"
+            ]
 
             assert skipif_marks, f"{test_name} should skip on non-Windows platforms"
             assert any(mark.args == (os.name != "nt",) for mark in skipif_marks)
@@ -401,9 +403,7 @@ class TestCuDFBackend:
         assert os.environ["CUDA_DEVICE_ORDER"] == "existing-order"
 
     @WINDOWS_ONLY_WORKER_ISOLATION
-    def test_worker_isolation_sets_cuda_visible_devices_before_worker_imports(
-        self, monkeypatch
-    ):
+    def test_worker_isolation_sets_cuda_visible_devices_before_worker_imports(self, monkeypatch):
         from tensor_grep.backends import cudf_backend
 
         observed_env: dict[str, str | None] = {}

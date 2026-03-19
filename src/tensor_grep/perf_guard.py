@@ -95,7 +95,8 @@ def detect_environment_mismatch(baseline: dict[str, Any], current: dict[str, Any
     if (
         baseline_python_version
         and current_python_version
-        and baseline_python_version != current_python_version
+        and _normalize_python_version(str(baseline_python_version))
+        != _normalize_python_version(str(current_python_version))
     ):
         return (
             "python_version mismatch: "
@@ -103,3 +104,14 @@ def detect_environment_mismatch(baseline: dict[str, Any], current: dict[str, Any
         )
 
     return None
+
+
+def _normalize_python_version(version: str) -> tuple[int | str, ...]:
+    parts = version.split(".")
+    normalized: list[int | str] = []
+    for part in parts[:2]:
+        try:
+            normalized.append(int(part))
+        except ValueError:
+            normalized.append(part)
+    return tuple(normalized)

@@ -109,7 +109,9 @@ class TestCybertBackend:
 
         assert timeout_seconds == expected_timeout
 
-    @patch("tensor_grep.backends.cybert_backend._has_cybert_runtime_dependencies", return_value=False)
+    @patch(
+        "tensor_grep.backends.cybert_backend._has_cybert_runtime_dependencies", return_value=False
+    )
     def test_should_report_unavailable_when_runtime_dependencies_are_missing(self, _mock_has_deps):
         from tensor_grep.backends.cybert_backend import CybertBackend
 

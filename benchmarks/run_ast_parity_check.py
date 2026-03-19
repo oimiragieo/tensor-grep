@@ -94,13 +94,11 @@ def parse_tg_matches(stdout: str, corpus_dir: Path) -> list[dict[str, object]]:
         if not matched:
             raise ValueError(f"Unable to parse tg match line: {raw_line!r}")
         file_path = Path(matched.group("file"))
-        matches.append(
-            {
-                "file": _relative_to_corpus(file_path, corpus_dir),
-                "line": int(matched.group("line")),
-                "text": matched.group("text").rstrip("\r"),
-            }
-        )
+        matches.append({
+            "file": _relative_to_corpus(file_path, corpus_dir),
+            "line": int(matched.group("line")),
+            "text": matched.group("text").rstrip("\r"),
+        })
     return sorted(matches, key=lambda row: (row["file"], row["line"], row["text"]))
 
 
@@ -111,13 +109,11 @@ def parse_sg_matches(stdout: str, corpus_dir: Path) -> list[dict[str, object]]:
             continue
         payload = json.loads(raw_line)
         file_path = Path(payload["file"])
-        matches.append(
-            {
-                "file": _relative_to_corpus(file_path, corpus_dir),
-                "line": int(payload["range"]["start"]["line"]) + 1,
-                "text": payload["text"].rstrip("\r\n"),
-            }
-        )
+        matches.append({
+            "file": _relative_to_corpus(file_path, corpus_dir),
+            "line": int(payload["range"]["start"]["line"]) + 1,
+            "text": payload["text"].rstrip("\r\n"),
+        })
     return sorted(matches, key=lambda row: (row["file"], row["line"], row["text"]))
 
 
@@ -232,16 +228,14 @@ def main() -> int:
     ]
     passed_cases = sum(1 for case in cases if case["passed"])
     failed_cases = len(cases) - passed_cases
-    payload.update(
-        {
-            "tg_binary": str(tg_binary),
-            "sg_binary": str(sg_binary),
-            "passed_cases": passed_cases,
-            "failed_cases": failed_cases,
-            "status": "PASS" if failed_cases == 0 else "FAIL",
-            "cases": cases,
-        }
-    )
+    payload.update({
+        "tg_binary": str(tg_binary),
+        "sg_binary": str(sg_binary),
+        "passed_cases": passed_cases,
+        "failed_cases": failed_cases,
+        "status": "PASS" if failed_cases == 0 else "FAIL",
+        "cases": cases,
+    })
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     print(f"AST parity: {passed_cases}/{len(cases)} PASS")
     return 0 if failed_cases == 0 else 1

@@ -132,9 +132,7 @@ def _gpu_device_validation_error(
             f"{requested_text}: CUDA_VISIBLE_DEVICES is empty, so no GPUs are visible to the sidecar.\n"
         )
 
-    available_text = (
-        _format_gpu_device_ids(available_ids) if available_ids else "none"
-    )
+    available_text = _format_gpu_device_ids(available_ids) if available_ids else "none"
     return (
         f"Requested GPU device IDs {requested_text} are not available to the sidecar. "
         f"Available device IDs: {available_text}.\n"
@@ -207,7 +205,9 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         )
 
     available_gpu_device_ids = _detect_available_gpu_device_ids()
-    if any(device_id not in set(available_gpu_device_ids) for device_id in requested_gpu_device_ids):
+    if any(
+        device_id not in set(available_gpu_device_ids) for device_id in requested_gpu_device_ids
+    ):
         return (
             "",
             _gpu_device_validation_error(

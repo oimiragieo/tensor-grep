@@ -23,7 +23,9 @@ def _load_script_module(name: str, rel_path: str):
         ("rust", ".rs", ("fn generated_", "struct Generated_", "let result_")),
     ],
 )
-def test_gen_corpus_ast_bench_should_support_multilang(lang, suffix, expected_tokens, monkeypatch, tmp_path):
+def test_gen_corpus_ast_bench_should_support_multilang(
+    lang, suffix, expected_tokens, monkeypatch, tmp_path
+):
     module = _load_script_module(f"gen_corpus_{lang}", "benchmarks/gen_corpus.py")
     output_dir = tmp_path / lang
 

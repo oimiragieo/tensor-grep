@@ -207,9 +207,7 @@ class Pipeline:
                         self.backend = ast_backend
                         selected_backend_reason = "ast_backend_available_fallback"
                     else:
-                        self._raise_explicit_ast_configuration_error(
-                            "no AST backend is available"
-                        )
+                        self._raise_explicit_ast_configuration_error("no AST backend is available")
                 except ImportError as exc:
                     self._raise_explicit_ast_configuration_error(
                         "backend imports failed",

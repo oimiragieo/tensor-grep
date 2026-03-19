@@ -34,13 +34,11 @@ class AstBackend(ComputeBackend):
 
     _shared_parsers: ClassVar[dict[str, Any]] = {}
     _shared_queries: ClassVar[dict[tuple[str, str], Any]] = {}
-    _shared_parsed_source_cache: ClassVar[
-        OrderedDict[tuple[str, str], ParsedSourceCacheEntry]
-    ] = OrderedDict()
+    _shared_parsed_source_cache: ClassVar[OrderedDict[tuple[str, str], ParsedSourceCacheEntry]] = (
+        OrderedDict()
+    )
     _shared_parsed_source_cache_bytes: ClassVar[int] = 0
-    _shared_node_type_index_cache: ClassVar[
-        dict[tuple[str, str], NodeTypeIndexCacheEntry]
-    ] = {}
+    _shared_node_type_index_cache: ClassVar[dict[tuple[str, str], NodeTypeIndexCacheEntry]] = {}
 
     def __init__(self) -> None:
         self._parsers = self._shared_parsers

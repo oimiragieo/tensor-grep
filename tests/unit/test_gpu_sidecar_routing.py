@@ -10,7 +10,13 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
 def _default_tg_binary() -> Path:
-    return ROOT_DIR / "rust_core" / "target" / "release" / ("tg.exe" if __import__("os").name == "nt" else "tg")
+    return (
+        ROOT_DIR
+        / "rust_core"
+        / "target"
+        / "release"
+        / ("tg.exe" if __import__("os").name == "nt" else "tg")
+    )
 
 
 class TestGpuSidecarRouting:

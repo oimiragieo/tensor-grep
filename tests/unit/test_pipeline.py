@@ -194,7 +194,9 @@ class TestPipeline:
         ):
             Pipeline(force_cpu=False, config=config)
 
-    @patch("tensor_grep.backends.torch_backend.TorchBackend", side_effect=ImportError("torch missing"))
+    @patch(
+        "tensor_grep.backends.torch_backend.TorchBackend", side_effect=ImportError("torch missing")
+    )
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
     @patch("tensor_grep.core.pipeline.MemoryManager")

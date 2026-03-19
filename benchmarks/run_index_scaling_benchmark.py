@@ -58,7 +58,9 @@ def parse_scales(value: str) -> tuple[int, ...]:
     try:
         scales = tuple(int(part.strip()) for part in value.split(",") if part.strip())
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("scales must be a comma-separated list of integers") from exc
+        raise argparse.ArgumentTypeError(
+            "scales must be a comma-separated list of integers"
+        ) from exc
     if not scales:
         raise argparse.ArgumentTypeError("at least one file-count scale is required")
     if any(scale <= 0 for scale in scales):
@@ -116,7 +118,9 @@ def generate_index_scaling_corpus(
         total_lines += len(lines)
         file_path.write_text("".join(lines), encoding="utf-8")
 
-    manifest_path = write_manifest(output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256")
+    manifest_path = write_manifest(
+        output_dir, output_dir.parent / f"{output_dir.name}.manifest.sha256"
+    )
     return {
         "corpus_dir": output_dir,
         "manifest_path": manifest_path,
@@ -153,11 +157,7 @@ def build_tg_plain_search_cmd(*, tg_binary: Path, pattern: str, corpus_dir: Path
 
 
 def build_remove_index_command(index_path: Path) -> str:
-    script = (
-        "from pathlib import Path; "
-        f"p = Path(r'''{index_path}'''); "
-        "p.unlink(missing_ok=True)"
-    )
+    script = f"from pathlib import Path; p = Path(r'''{index_path}'''); p.unlink(missing_ok=True)"
     return build_command_string([sys.executable, "-c", script])
 
 
@@ -185,7 +185,9 @@ def run_hyperfine_benchmark(
         cmd.extend(commands)
         completed = subprocess.run(cmd, check=False)
         if completed.returncode != 0:
-            raise RuntimeError(f"hyperfine failed with exit code {completed.returncode}: {' '.join(commands)}")
+            raise RuntimeError(
+                f"hyperfine failed with exit code {completed.returncode}: {' '.join(commands)}"
+            )
         return json.loads(export_path.read_text(encoding="utf-8"))
 
 
@@ -271,18 +273,16 @@ def benchmark_scale(
         indexed_matches = run_count_command(command)
         plain_matches = run_count_command(plain_command)
         counts_match = indexed_matches == plain_matches
-        queries.append(
-            {
-                "pattern": pattern,
-                "median_s": median_s,
-                "matches": indexed_matches,
-                "indexed_matches": indexed_matches,
-                "plain_matches": plain_matches,
-                "counts_match": counts_match,
-                "command": build_command_string(command),
-                "plain_command": build_command_string(plain_command),
-            }
-        )
+        queries.append({
+            "pattern": pattern,
+            "median_s": median_s,
+            "matches": indexed_matches,
+            "indexed_matches": indexed_matches,
+            "plain_matches": plain_matches,
+            "counts_match": counts_match,
+            "command": build_command_string(command),
+            "plain_command": build_command_string(plain_command),
+        })
 
     query_median_s = round(statistics.median(query["median_s"] for query in queries), 6)
     build_within_threshold = build_time_s <= BUILD_TIME_THRESHOLD_S
@@ -400,7 +400,9 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated file-count scales to benchmark (default: 1000,5000,10000).",
     )
     parser.add_argument("--lines-per-file", type=int, default=DEFAULT_LINES_PER_FILE)
-    parser.add_argument("--runs", type=int, default=3, help="Number of hyperfine runs per build/query command.")
+    parser.add_argument(
+        "--runs", type=int, default=3, help="Number of hyperfine runs per build/query command."
+    )
     parser.add_argument("--warmup", type=int, default=1, help="Number of hyperfine warmup runs.")
     parser.add_argument("--seed", type=int, default=42, help="Deterministic corpus seed.")
     return parser.parse_args()
@@ -460,13 +462,11 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    payload.update(
-        {
-            "tg_binary": str(tg_binary),
-            "hyperfine_binary": str(hyperfine_binary),
-            **results,
-        }
-    )
+    payload.update({
+        "tg_binary": str(tg_binary),
+        "hyperfine_binary": str(hyperfine_binary),
+        **results,
+    })
     write_json(output_path, payload)
 
     for row in payload["rows"]:

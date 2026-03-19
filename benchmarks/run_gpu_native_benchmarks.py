@@ -336,7 +336,9 @@ def _run_json_command(
     if isinstance(result, subprocess.TimeoutExpired):
         raise RuntimeError(f"command timed out after {timeout_s}s: {_command_display(command)}")
     if result.returncode != 0:
-        raise RuntimeError((result.stderr or "").strip() or f"command failed: {_command_display(command)}")
+        raise RuntimeError(
+            (result.stderr or "").strip() or f"command failed: {_command_display(command)}"
+        )
     return _parse_json_payload(result.stdout or "{}")
 
 
@@ -457,7 +459,9 @@ def benchmark_command_group(
 ) -> dict[str, object]:
     for _ in range(warmup):
         for command in commands:
-            warmup_result = _run_command(command, env=env, capture_output=False, timeout_s=timeout_s)
+            warmup_result = _run_command(
+                command, env=env, capture_output=False, timeout_s=timeout_s
+            )
             if isinstance(warmup_result, subprocess.TimeoutExpired):
                 return {
                     "status": "FAIL",
@@ -604,9 +608,7 @@ def create_error_fixture(error_dir: Path) -> Path:
     )
     (error_dir / "empty.log").write_text("", encoding="utf-8")
     (error_dir / "binary.bin").write_bytes(b"\x00gpu benchmark sentinel\x00")
-    (error_dir / "invalid_utf8.log").write_bytes(
-        b"\xff\xfeERROR gpu benchmark sentinel\n"
-    )
+    (error_dir / "invalid_utf8.log").write_bytes(b"\xff\xfeERROR gpu benchmark sentinel\n")
     return error_dir
 
 
@@ -641,9 +643,9 @@ def run_gpu_error_tests(
             else "FAIL"
         )
 
-    nvrtc_env = _build_command_env(
-        {"TG_TEST_CUDA_BEHAVIOR": "nvrtc-failure:simulated NVRTC compile error"}
-    )
+    nvrtc_env = _build_command_env({
+        "TG_TEST_CUDA_BEHAVIOR": "nvrtc-failure:simulated NVRTC compile error"
+    })
     nvrtc_failure = _run_command(
         build_tg_gpu_search_command(tg_binary, pattern, corpus_dir, device_id),
         env=nvrtc_env,
@@ -664,9 +666,9 @@ def run_gpu_error_tests(
             else "FAIL"
         )
 
-    timeout_env = _build_command_env(
-        {"TG_TEST_CUDA_BEHAVIOR": f"timeout:{timeout_simulation_ms}ms"}
-    )
+    timeout_env = _build_command_env({
+        "TG_TEST_CUDA_BEHAVIOR": f"timeout:{timeout_simulation_ms}ms"
+    })
     timeout_result = _run_command(
         build_tg_gpu_search_command(tg_binary, pattern, corpus_dir, device_id),
         env=timeout_env,
@@ -899,9 +901,15 @@ def run_gpu_native_benchmarks(
             errors.append(f"GPU correctness mismatch at {size_label}.")
         correctness_checks.append(correctness)
 
-        for candidate, name in ((rg_result, "rg"), (tg_cpu_result, "tg_cpu"), (tg_gpu_result, "tg_gpu")):
+        for candidate, name in (
+            (rg_result, "rg"),
+            (tg_cpu_result, "tg_cpu"),
+            (tg_gpu_result, "tg_gpu"),
+        ):
             if candidate.get("status") != "PASS":
-                errors.append(f"{name} benchmark failed at {size_label}: {candidate.get('stderr', '')}")
+                errors.append(
+                    f"{name} benchmark failed at {size_label}: {candidate.get('stderr', '')}"
+                )
 
     error_tests = run_gpu_error_tests(
         tg_binary=tg_binary,
@@ -940,7 +948,8 @@ def run_gpu_native_benchmarks(
     return {
         "bench_dir": str(bench_dir),
         "corpus_sizes": [
-            {"label": _format_size_label(size_bytes), "bytes": size_bytes} for size_bytes in corpus_sizes
+            {"label": _format_size_label(size_bytes), "bytes": size_bytes}
+            for size_bytes in corpus_sizes
         ],
         "rows": rows,
         "correctness_checks": correctness_checks,
@@ -976,7 +985,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CORPUS_SIZES,
         help="Comma-separated corpus sizes such as 10MB,100MB,500MB,1GB.",
     )
-    parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="Benchmark samples per command.")
+    parser.add_argument(
+        "--runs", type=int, default=DEFAULT_RUNS, help="Benchmark samples per command."
+    )
     parser.add_argument(
         "--warmup",
         type=int,
@@ -1084,7 +1095,9 @@ def _build_long_line(target_len: int, pattern: str, seed: int) -> str:
     return f"{prefix}{'x' * filler_len}{suffix}\n"
 
 
-def create_long_line_corpus(output_dir: Path, *, target_bytes: int, pattern: str) -> dict[str, object]:
+def create_long_line_corpus(
+    output_dir: Path, *, target_bytes: int, pattern: str
+) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     file_path = output_dir / "long_lines.log"
     total_bytes = 0
@@ -1106,15 +1119,12 @@ def create_long_line_corpus(output_dir: Path, *, target_bytes: int, pattern: str
     }
 
 
-def create_cuda_graph_corpus(output_dir: Path, *, file_count: int, pattern: str) -> dict[str, object]:
+def create_cuda_graph_corpus(
+    output_dir: Path, *, file_count: int, pattern: str
+) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     repeated = "padding block for cuda graph batches " * 96
-    body = (
-        "INFO graph capture bootstrap\n"
-        f"{repeated}\n"
-        f"{pattern}\n"
-        "WARN graph replay footer\n"
-    )
+    body = f"INFO graph capture bootstrap\n{repeated}\n{pattern}\nWARN graph replay footer\n"
     total_bytes = 0
     for index in range(file_count):
         file_path = output_dir / f"batch-{index:03}.log"
@@ -1223,7 +1233,10 @@ def run_advanced_gpu_native_benchmarks(
         throughput_corpus = Path(throughput_info["corpus_dir"])
         actual_bytes = int(throughput_info["actual_bytes"])
         rg_group = benchmark_command_group(
-            [build_rg_search_command(rg_binary, pattern, throughput_corpus) for pattern in throughput_patterns],
+            [
+                build_rg_search_command(rg_binary, pattern, throughput_corpus)
+                for pattern in throughput_patterns
+            ],
             env=env,
             runs=runs,
             warmup=warmup,
@@ -1247,7 +1260,9 @@ def run_advanced_gpu_native_benchmarks(
             metric_path=("pipeline", "wall_time_ms"),
             metric_scale=0.001,
         )
-        gpu_stats = gpu_group.pop("payload", {}) if isinstance(gpu_group.get("payload"), dict) else {}
+        gpu_stats = (
+            gpu_group.pop("payload", {}) if isinstance(gpu_group.get("payload"), dict) else {}
+        )
         if (
             isinstance(rg_group.get("median_s"), (float, int))
             and isinstance(gpu_group.get("median_s"), (float, int))
@@ -1264,20 +1279,18 @@ def run_advanced_gpu_native_benchmarks(
         else:
             gpu_group["ratio_vs_rg"] = None
             gpu_group["speedup_vs_rg"] = None
-        throughput_rows.append(
-            {
-                "size_label": size_label,
-                "size_bytes": size_bytes,
-                "actual_bytes": actual_bytes,
-                "pattern_count": len(throughput_patterns),
-                "file_count": throughput_info["file_count"],
-                "total_lines": throughput_info["total_lines"],
-                "line_bytes": throughput_info["line_bytes"],
-                "rg": rg_group,
-                "tg_gpu": gpu_group,
-                "gpu_stats": gpu_stats,
-            }
-        )
+        throughput_rows.append({
+            "size_label": size_label,
+            "size_bytes": size_bytes,
+            "actual_bytes": actual_bytes,
+            "pattern_count": len(throughput_patterns),
+            "file_count": throughput_info["file_count"],
+            "total_lines": throughput_info["total_lines"],
+            "line_bytes": throughput_info["line_bytes"],
+            "rg": rg_group,
+            "tg_gpu": gpu_group,
+            "gpu_stats": gpu_stats,
+        })
 
     advanced["throughput_rows"] = throughput_rows
     advanced["throughput_workload"] = {
@@ -1288,7 +1301,9 @@ def run_advanced_gpu_native_benchmarks(
     }
 
     stream_stats = _run_json_command(
-        build_tg_gpu_native_stats_command(tg_binary, [DEFAULT_BENCHMARK_PATTERN], one_gib_corpus, [device_id]),
+        build_tg_gpu_native_stats_command(
+            tg_binary, [DEFAULT_BENCHMARK_PATTERN], one_gib_corpus, [device_id]
+        ),
         env=env,
         timeout_s=command_timeout_s,
     )
@@ -1369,7 +1384,10 @@ def run_advanced_gpu_native_benchmarks(
         metric_scale=0.001,
     )
     multi_pattern_cpu_benchmark = benchmark_command_group(
-        [build_tg_cpu_search_command(tg_binary, pattern, one_gib_corpus) for pattern in multi_patterns],
+        [
+            build_tg_cpu_search_command(tg_binary, pattern, one_gib_corpus)
+            for pattern in multi_patterns
+        ],
         env=env,
         runs=runs,
         warmup=warmup,
@@ -1413,7 +1431,9 @@ def run_advanced_gpu_native_benchmarks(
         errors.append("Multi-pattern GPU benchmark did not beat sequential CPU execution.")
 
     single_gpu_benchmark = benchmark_json_metric_command(
-        build_tg_gpu_native_stats_command(tg_binary, [DEFAULT_BENCHMARK_PATTERN], one_gib_corpus, [device_id]),
+        build_tg_gpu_native_stats_command(
+            tg_binary, [DEFAULT_BENCHMARK_PATTERN], one_gib_corpus, [device_id]
+        ),
         env=env,
         runs=runs,
         warmup=warmup,
@@ -1438,16 +1458,21 @@ def run_advanced_gpu_native_benchmarks(
         metric_scale=0.001,
     )
     multi_gpu_single_stats = (
-        single_gpu_benchmark.pop("payload", {}) if isinstance(single_gpu_benchmark.get("payload"), dict) else {}
+        single_gpu_benchmark.pop("payload", {})
+        if isinstance(single_gpu_benchmark.get("payload"), dict)
+        else {}
     )
     multi_gpu_stats = (
-        multi_gpu_benchmark.pop("payload", {}) if isinstance(multi_gpu_benchmark.get("payload"), dict) else {}
+        multi_gpu_benchmark.pop("payload", {})
+        if isinstance(multi_gpu_benchmark.get("payload"), dict)
+        else {}
     )
     single_gpu_median = single_gpu_benchmark.get("median_s")
     multi_gpu_median = multi_gpu_benchmark.get("median_s")
     multi_gpu_improvement_pct = (
         round(
-            ((float(single_gpu_median) - float(multi_gpu_median)) / float(single_gpu_median)) * 100.0,
+            ((float(single_gpu_median) - float(multi_gpu_median)) / float(single_gpu_median))
+            * 100.0,
             2,
         )
         if isinstance(single_gpu_median, (float, int))
@@ -1466,7 +1491,8 @@ def run_advanced_gpu_native_benchmarks(
         "PASS"
         if single_gpu_benchmark.get("status") == "PASS"
         and multi_gpu_benchmark.get("status") == "PASS"
-        and int(multi_gpu_stats.get("total_matches", -1)) == int(multi_gpu_single_stats.get("total_matches", -2))
+        and int(multi_gpu_stats.get("total_matches", -1))
+        == int(multi_gpu_single_stats.get("total_matches", -2))
         and len(multi_gpu_device_stats) >= 2
         and distribution_balanced
         and multi_gpu_improvement_pct is not None
@@ -1496,7 +1522,9 @@ def run_advanced_gpu_native_benchmarks(
     long_line_corpus = Path(long_line_info["corpus_dir"])
     long_line_actual_bytes = int(long_line_info["actual_bytes"])
     long_line_gpu_benchmark = benchmark_search_command(
-        build_tg_gpu_search_command(tg_binary, DEFAULT_ADVANCED_LONG_LINE_PATTERN, long_line_corpus, device_id),
+        build_tg_gpu_search_command(
+            tg_binary, DEFAULT_ADVANCED_LONG_LINE_PATTERN, long_line_corpus, device_id
+        ),
         env=env,
         runs=runs,
         warmup=warmup,
@@ -1504,7 +1532,9 @@ def run_advanced_gpu_native_benchmarks(
         corpus_bytes=long_line_actual_bytes,
     )
     long_line_cpu_benchmark = benchmark_search_command(
-        build_tg_cpu_search_command(tg_binary, DEFAULT_ADVANCED_LONG_LINE_PATTERN, long_line_corpus),
+        build_tg_cpu_search_command(
+            tg_binary, DEFAULT_ADVANCED_LONG_LINE_PATTERN, long_line_corpus
+        ),
         env=env,
         runs=runs,
         warmup=warmup,
@@ -1512,7 +1542,9 @@ def run_advanced_gpu_native_benchmarks(
         corpus_bytes=long_line_actual_bytes,
     )
     long_line_stats = _run_json_command(
-        build_tg_gpu_native_stats_command(tg_binary, [DEFAULT_ADVANCED_LONG_LINE_PATTERN], long_line_corpus, [device_id]),
+        build_tg_gpu_native_stats_command(
+            tg_binary, [DEFAULT_ADVANCED_LONG_LINE_PATTERN], long_line_corpus, [device_id]
+        ),
         env=env,
         timeout_s=command_timeout_s,
     )
@@ -1633,29 +1665,27 @@ def main() -> int:
     }
 
     if not tg_binary.exists():
-        payload.update(
-            {
-                "errors": [f"tg binary not found: {tg_binary}"],
-                "warnings": [],
-                "rows": [],
-                "correctness_checks": [],
-                "error_tests": {},
-                "corpus_sizes": [],
-                "throughput_target": {
-                    "met": False,
-                    "winning_rows": [],
-                    "best_attempt": None,
-                    "summary": "Benchmark did not run because the tg binary was missing.",
-                },
-                "advanced": {"enabled": args.advanced},
-                "crossover": {
-                    "exists": False,
-                    "first_gpu_faster_than_rg": None,
-                    "summary": "Benchmark did not run because the tg binary was missing.",
-                    "recommended_optimizations": GPU_TIMEOUT_OPTIMIZATIONS,
-                },
-            }
-        )
+        payload.update({
+            "errors": [f"tg binary not found: {tg_binary}"],
+            "warnings": [],
+            "rows": [],
+            "correctness_checks": [],
+            "error_tests": {},
+            "corpus_sizes": [],
+            "throughput_target": {
+                "met": False,
+                "winning_rows": [],
+                "best_attempt": None,
+                "summary": "Benchmark did not run because the tg binary was missing.",
+            },
+            "advanced": {"enabled": args.advanced},
+            "crossover": {
+                "exists": False,
+                "first_gpu_faster_than_rg": None,
+                "summary": "Benchmark did not run because the tg binary was missing.",
+                "recommended_optimizations": GPU_TIMEOUT_OPTIMIZATIONS,
+            },
+        })
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1
 

@@ -73,6 +73,42 @@ class StringZillaBackend(ComputeBackend):
                 index.setdefault(trigram, set()).add(line_idx)
         return {trigram: sorted(line_numbers) for trigram, line_numbers in index.items()}
 
+    @staticmethod
+    def _compress_line_indexes(line_indexes: list[int]) -> list[list[int]]:
+        if not line_indexes:
+            return []
+
+        ranges: list[list[int]] = []
+        start = line_indexes[0]
+        end = line_indexes[0]
+        for line_index in line_indexes[1:]:
+            if line_index == end + 1:
+                end = line_index
+                continue
+            ranges.append([start, end])
+            start = line_index
+            end = line_index
+        ranges.append([start, end])
+        return ranges
+
+    @staticmethod
+    def _decompress_line_indexes(encoded_ranges: list[list[int]]) -> list[int]:
+        line_indexes: list[int] = []
+        for start, end in encoded_ranges:
+            line_indexes.extend(range(start, end + 1))
+        return line_indexes
+
+    @staticmethod
+    def _intersect_sorted_line_indexes(postings: list[list[int]]) -> list[int]:
+        if not postings:
+            return []
+        shared = set(postings[0])
+        for posting in postings[1:]:
+            shared.intersection_update(posting)
+            if not shared:
+                return []
+        return sorted(shared)
+
     def _extract_trigrams(self, pattern: str) -> list[str]:
         return [pattern[i : i + 3] for i in range(len(pattern) - 2)]
 

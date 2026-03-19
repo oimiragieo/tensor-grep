@@ -132,7 +132,9 @@ def run_native_cpu_benchmark_case(
         tg_cmd = build_tg_cpu_count_command(tg_binary, pattern, target, fixed_strings=fixed_strings)
     else:
         rg_cmd = build_rg_search_command(rg_binary, pattern, target, fixed_strings=fixed_strings)
-        tg_cmd = build_tg_cpu_search_command(tg_binary, pattern, target, fixed_strings=fixed_strings)
+        tg_cmd = build_tg_cpu_search_command(
+            tg_binary, pattern, target, fixed_strings=fixed_strings
+        )
 
     for _ in range(warmup_runs):
         run_cmd_timing(rg_cmd)

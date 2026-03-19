@@ -269,31 +269,31 @@ def build_benchmark_scenarios(
     scenarios: list[dict[str, object]] = []
 
     for scenario in SCENARIOS:
-        rg_args = [str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]]
-        tg_args = [str(bench_dir) if arg == "bench_data" else arg for arg in scenario["tg_args"][2:]]
-        scenarios.append(
-            {
-                "name": scenario["name"],
-                "rg_cmd": [resolved_rg_binary, "--no-ignore", *rg_args],
-                "tg_cmd": build_tg_benchmark_cmd(tg_args, binary=binary, force_cpu=False),
-            }
-        )
+        rg_args = [
+            str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]
+        ]
+        tg_args = [
+            str(bench_dir) if arg == "bench_data" else arg for arg in scenario["tg_args"][2:]
+        ]
+        scenarios.append({
+            "name": scenario["name"],
+            "rg_cmd": [resolved_rg_binary, "--no-ignore", *rg_args],
+            "tg_cmd": build_tg_benchmark_cmd(tg_args, binary=binary, force_cpu=False),
+        })
 
     if force_cpu and large_file_path is not None and many_file_dir is not None:
         for extra in _extra_native_cpu_scenarios(large_file_path, many_file_dir):
             extra_tg_args = [extra["pattern"], extra["target"]]
             extra_rg_cmd = [resolved_rg_binary, "--no-ignore", extra["pattern"], extra["target"]]
-            scenarios.append(
-                {
-                    "name": extra["name"],
-                    "rg_cmd": extra_rg_cmd,
-                    "tg_cmd": build_tg_benchmark_cmd(
-                        extra_tg_args,
-                        binary=binary,
-                        force_cpu=False,
-                    ),
-                }
-            )
+            scenarios.append({
+                "name": extra["name"],
+                "rg_cmd": extra_rg_cmd,
+                "tg_cmd": build_tg_benchmark_cmd(
+                    extra_tg_args,
+                    binary=binary,
+                    force_cpu=False,
+                ),
+            })
 
     return scenarios
 
