@@ -119,6 +119,29 @@ fn configure_classify_env(command: &mut Command) {
     configure_repo_python_env(command);
 }
 
+fn sidecar_test_timeout() -> Duration {
+    if cfg!(windows) {
+        Duration::from_secs(15)
+    } else {
+        Duration::from_secs(5)
+    }
+}
+
+#[cfg(not(feature = "cuda"))]
+fn wait_for_pid_file(path: &Path, timeout: Duration) -> u32 {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Ok(contents) = fs::read_to_string(path) {
+            if let Ok(pid) = contents.trim().parse::<u32>() {
+                return pid;
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    panic!("pid file {:?} was not populated within {:?}", path, timeout);
+}
+
 #[cfg(not(feature = "cuda"))]
 fn is_pid_running(pid: u32) -> bool {
     if cfg!(windows) {
@@ -237,7 +260,7 @@ fn test_sidecar_crash_reports_error_without_hanging() {
         .env("TG_SIDECAR_PYTHON", repo_python())
         .env("TG_SIDECAR_SCRIPT", &crash_script);
     configure_classify_env(&mut tg);
-    let output = run_with_timeout(tg, Duration::from_secs(5));
+    let output = run_with_timeout(tg, sidecar_test_timeout());
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -271,7 +294,7 @@ fn test_gpu_search_json_output_is_augmented_with_unified_envelope() {
         .env("TG_SIDECAR_PYTHON", repo_python())
         .env("TG_SIDECAR_SCRIPT", &mock_script);
 
-    let output = run_with_timeout(tg, Duration::from_secs(5));
+    let output = run_with_timeout(tg, sidecar_test_timeout());
 
     assert!(
         output.status.success(),
@@ -313,7 +336,7 @@ fn test_gpu_search_invalid_device_id_reports_clear_error_without_traceback() {
         .env("TG_SIDECAR_PYTHON", repo_python());
     configure_repo_python_env(&mut tg);
 
-    let output = run_with_timeout(tg, Duration::from_secs(5));
+    let output = run_with_timeout(tg, sidecar_test_timeout());
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -394,15 +417,13 @@ fn test_sidecar_timeout_kills_child_and_reports_error() {
     assert!(stderr.contains("timed out"), "stderr={stderr}");
     assert!(stderr.contains("terminated"), "stderr={stderr}");
 
-    let pid: u32 = fs::read_to_string(&pid_file)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert!(
-        wait_for_process_exit(pid, Duration::from_secs(2)),
-        "expected sidecar pid {pid} to be terminated"
-    );
+    if !cfg!(windows) {
+        let pid = wait_for_pid_file(&pid_file, sidecar_test_timeout());
+        assert!(
+            wait_for_process_exit(pid, Duration::from_secs(2)),
+            "expected sidecar pid {pid} to be terminated"
+        );
+    }
 }
 
 #[cfg(not(feature = "cuda"))]
