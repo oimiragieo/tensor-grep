@@ -37,6 +37,16 @@ fn configure_repo_python_env(command: &mut Command) {
     command.env("PYTHONPATH", repo_root().join("src"));
 }
 
+fn repo_python_has_module(module: &str) -> bool {
+    let output = Command::new(repo_python())
+        .current_dir(repo_root())
+        .arg("-c")
+        .arg(format!("import {module}"))
+        .output()
+        .unwrap();
+    output.status.success()
+}
+
 fn isolated_tg_binary(dir: &Path) -> PathBuf {
     let binary_name = if cfg!(windows) { "tg.exe" } else { "tg" };
     let target = dir.join(binary_name);
@@ -142,6 +152,10 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> bool {
 
 #[test]
 fn test_tg_classify_stdout_matches_python_module() {
+    if !repo_python_has_module("typer") {
+        return;
+    }
+
     let dir = tempdir().unwrap();
     let file_path = write_sample_log(dir.path());
 
@@ -297,6 +311,7 @@ fn test_gpu_search_invalid_device_id_reports_clear_error_without_traceback() {
         .arg("ERROR")
         .arg(&corpus_dir)
         .env("TG_SIDECAR_PYTHON", repo_python());
+    configure_repo_python_env(&mut tg);
 
     let output = run_with_timeout(tg, Duration::from_secs(5));
 
@@ -332,6 +347,7 @@ fn test_gpu_search_cuda_visible_devices_empty_reports_clear_error_without_traceb
         .arg(&corpus_dir)
         .env("TG_SIDECAR_PYTHON", repo_python())
         .env("CUDA_VISIBLE_DEVICES", "");
+    configure_repo_python_env(&mut tg);
 
     let output = run_with_timeout(tg, Duration::from_secs(5));
 
