@@ -42,6 +42,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Symbol Callers JSON" in doc
     assert "## Session Open JSON" in doc
     assert "## Session Context JSON" in doc
+    assert "## Session Serve JSONL" in doc
     assert "## MCP Tool Responses" in doc
     assert "## Compatibility Policy" in doc
     assert "## Diff Output" in doc
@@ -82,6 +83,8 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "additive field" in doc.lower()
     assert "breaking change" in doc.lower()
     assert "version bump" in doc.lower()
+    assert '"command":"context"' in doc
+    assert "invalid_request" in doc
 
 
 def test_harness_api_examples_exist_and_have_unified_envelope() -> None:

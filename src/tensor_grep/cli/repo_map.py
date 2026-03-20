@@ -521,6 +521,16 @@ def build_context_pack_from_map(repo_map: dict[str, Any], query: str) -> dict[st
 
 def build_symbol_defs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
     payload = build_repo_map(path)
+    return build_symbol_defs_from_map(payload, symbol)
+
+
+def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+    payload = dict(repo_map)
+    payload["files"] = list(repo_map.get("files", []))
+    payload["symbols"] = [dict(current) for current in repo_map.get("symbols", [])]
+    payload["imports"] = [dict(current) for current in repo_map.get("imports", [])]
+    payload["tests"] = list(repo_map.get("tests", []))
+    payload["related_paths"] = list(repo_map.get("related_paths", []))
     definitions = [
         dict(current) for current in payload["symbols"] if str(current["name"]) == symbol
     ]
@@ -552,8 +562,13 @@ def build_symbol_defs_json(symbol: str, path: str | Path = ".") -> str:
 
 
 def build_symbol_impact(symbol: str, path: str | Path = ".") -> dict[str, Any]:
-    defs_payload = build_symbol_defs(symbol, path)
-    context_payload = build_context_pack(symbol, path)
+    payload = build_repo_map(path)
+    return build_symbol_impact_from_map(payload, symbol)
+
+
+def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    context_payload = build_context_pack_from_map(repo_map, symbol)
 
     impacted_files: list[str] = []
     import_files = [str(entry["file"]) for entry in context_payload["imports"]]
@@ -588,7 +603,12 @@ def build_symbol_impact_json(symbol: str, path: str | Path = ".") -> str:
 
 
 def build_symbol_refs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
-    payload = build_symbol_defs(symbol, path)
+    repo_map = build_repo_map(path)
+    return build_symbol_refs_from_map(repo_map, symbol)
+
+
+def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+    payload = build_symbol_defs_from_map(repo_map, symbol)
     references: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(payload["path"])):
         current_refs, _ = _python_references_and_calls(current, symbol)
@@ -614,7 +634,12 @@ def build_symbol_refs_json(symbol: str, path: str | Path = ".") -> str:
 
 
 def build_symbol_callers(symbol: str, path: str | Path = ".") -> dict[str, Any]:
-    defs_payload = build_symbol_defs(symbol, path)
+    repo_map = build_repo_map(path)
+    return build_symbol_callers_from_map(repo_map, symbol)
+
+
+def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
     calls: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(defs_payload["path"])):
         _, current_calls = _python_references_and_calls(current, symbol)
@@ -623,7 +648,7 @@ def build_symbol_callers(symbol: str, path: str | Path = ".") -> dict[str, Any]:
         calls.extend(current_calls)
 
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
-    context_payload = build_context_pack(symbol, path)
+    context_payload = build_context_pack_from_map(repo_map, symbol)
     related_tests: list[str] = []
     for current in [*context_payload["tests"], *defs_payload["tests"]]:
         if current not in related_tests:

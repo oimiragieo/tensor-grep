@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TextIO, cast
 
-from tensor_grep.cli.repo_map import build_context_pack_from_map, build_repo_map
+from tensor_grep.cli.repo_map import (
+    build_context_pack_from_map,
+    build_repo_map,
+    build_symbol_callers_from_map,
+    build_symbol_defs_from_map,
+    build_symbol_impact_from_map,
+    build_symbol_refs_from_map,
+)
 
 _SESSION_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
@@ -119,3 +127,101 @@ def session_context(session_id: str, query: str, path: str = ".") -> dict[str, A
     context["session_id"] = session_id
     context["routing_reason"] = "session-context"
     return context
+
+
+def serve_session_request(session_id: str, request: dict[str, Any], path: str = ".") -> dict[str, Any]:
+    payload = get_session(session_id, path)
+    repo_map = cast(dict[str, Any], payload["repo_map"])
+    command = str(request.get("command", "")).strip().lower()
+
+    if command == "ping":
+        return {"version": _SESSION_VERSION, "session_id": session_id, "ok": True}
+
+    if command == "show":
+        response = dict(payload)
+        response["session_id"] = session_id
+        return response
+
+    if command == "repo_map":
+        response = dict(repo_map)
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-repo-map"
+        return response
+
+    if command == "context":
+        query = str(request.get("query", "")).strip()
+        if not query:
+            raise ValueError("context requests require a non-empty query")
+        response = build_context_pack_from_map(repo_map, query)
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-context"
+        return response
+
+    if command == "defs":
+        symbol = str(request.get("symbol", "")).strip()
+        if not symbol:
+            raise ValueError("defs requests require a non-empty symbol")
+        response = build_symbol_defs_from_map(repo_map, symbol)
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-defs"
+        return response
+
+    if command == "impact":
+        symbol = str(request.get("symbol", "")).strip()
+        if not symbol:
+            raise ValueError("impact requests require a non-empty symbol")
+        response = build_symbol_impact_from_map(repo_map, symbol)
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-impact"
+        return response
+
+    if command == "refs":
+        symbol = str(request.get("symbol", "")).strip()
+        if not symbol:
+            raise ValueError("refs requests require a non-empty symbol")
+        response = build_symbol_refs_from_map(repo_map, symbol)
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-refs"
+        return response
+
+    if command == "callers":
+        symbol = str(request.get("symbol", "")).strip()
+        if not symbol:
+            raise ValueError("callers requests require a non-empty symbol")
+        response = build_symbol_callers_from_map(repo_map, symbol)
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-callers"
+        return response
+
+    raise ValueError(f"unknown session command: {command or '<empty>'}")
+
+
+def serve_session_stream(
+    session_id: str,
+    path: str = ".",
+    *,
+    input_stream: TextIO | None = None,
+    output_stream: TextIO | None = None,
+) -> int:
+    request_stream = input_stream or sys.stdin
+    response_stream = output_stream or sys.stdout
+    request_count = 0
+
+    for raw_line in request_stream:
+        line = raw_line.strip()
+        if not line:
+            continue
+        request_count += 1
+        try:
+            request = cast(dict[str, Any], json.loads(line))
+            response = serve_session_request(session_id, request, path)
+        except Exception as exc:
+            response = {
+                "version": _SESSION_VERSION,
+                "session_id": session_id,
+                "error": {"code": "invalid_request", "message": str(exc)},
+            }
+        response_stream.write(json.dumps(response) + "\n")
+        response_stream.flush()
+
+    return request_count

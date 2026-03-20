@@ -1,4 +1,5 @@
 import json
+from io import StringIO
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -65,3 +66,87 @@ def test_session_list_returns_newest_first(tmp_path: Path) -> None:
     payload = json.loads(listing.stdout)
     assert payload["sessions"][0]["session_id"] == second["session_id"]
     assert payload["sessions"][1]["session_id"] == first["session_id"]
+
+
+def test_session_serve_streams_jsonl_requests_from_cached_session(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "invoice_flow.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    monkeypatch.setattr(
+        session_store,
+        "build_repo_map",
+        lambda path=".": (_ for _ in ()).throw(AssertionError("serve should use cached repo_map")),
+    )
+
+    stdin = StringIO(
+        "\n".join(
+            [
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "context", "query": "invoice payment"}),
+                json.dumps({"command": "callers", "symbol": "create_invoice"}),
+            ]
+        )
+        + "\n"
+    )
+    stdout = StringIO()
+
+    served = session_store.serve_session_stream(
+        opened["session_id"],
+        str(project),
+        input_stream=stdin,
+        output_stream=stdout,
+    )
+
+    assert served == 3
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+    assert responses[0]["session_id"] == opened["session_id"]
+    assert responses[0]["routing_reason"] == "session-repo-map"
+    assert responses[0]["files"] == [str(module_path.resolve())]
+    assert responses[1]["routing_reason"] == "session-context"
+    assert responses[1]["tests"][0] == str(test_path.resolve())
+    assert responses[2]["routing_reason"] == "session-callers"
+    assert responses[2]["callers"][0]["file"] == str(test_path.resolve())
+
+
+def test_session_serve_cli_reports_invalid_request_as_jsonl(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        ["session", "serve", opened["session_id"], str(project)],
+        input='{"command":"context"}\n',
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["error"]["code"] == "invalid_request"
+    assert "non-empty query" in payload["error"]["message"]

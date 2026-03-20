@@ -157,6 +157,7 @@ Reuse the cached repo map for another query:
 
 ```powershell
 tg session context session-20260320071200-rewrite . --query "invoice payment" --json
+tg session serve session-20260320071200-rewrite . < requests.jsonl
 ```
 
 Recommended consumer behavior:
@@ -164,7 +165,16 @@ Recommended consumer behavior:
 1. open one session at the start of a multi-step edit task
 2. reuse `session context` for follow-up queries instead of rebuilding repo inventory
 3. keep the returned `session_id` with the task state until the edit loop finishes
-4. keep honoring the same `coverage` contract as `tg map` / `tg context`
+4. use `session serve` for repeated repo-map, context, defs, refs, callers, and impact requests
+5. keep honoring the same `coverage` contract as `tg map` / `tg context`
+
+Example `requests.jsonl`:
+
+```json
+{"command":"repo_map"}
+{"command":"context","query":"invoice payment"}
+{"command":"callers","symbol":"create_invoice"}
+```
 
 ## Rewrite Planning Flow
 

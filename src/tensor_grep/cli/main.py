@@ -1744,6 +1744,30 @@ def session_context_cmd(
     typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
 
 
+@session_app.command("serve")
+def session_serve(
+    session_id: str = typer.Argument(..., help="Session ID to serve from cache."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    jsonl: bool = typer.Option(
+        True,
+        "--jsonl/--no-jsonl",
+        help="Read newline-delimited JSON requests from stdin and emit JSON responses.",
+    ),
+) -> None:
+    """Serve repeated repo-map and symbol requests from a cached session."""
+    from tensor_grep.cli.session_store import serve_session_stream
+
+    if not jsonl:
+        typer.echo("session serve currently requires --jsonl mode", err=True)
+        raise typer.Exit(2)
+
+    try:
+        serve_session_stream(session_id, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
 @checkpoint_app.command("create")
 def checkpoint_create(
     path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),

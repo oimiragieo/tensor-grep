@@ -29,6 +29,7 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg session list" in doc
     assert "tg session show" in doc
     assert "tg session context" in doc
+    assert "tg session serve" in doc
     assert "tg.exe search --ndjson" in doc
     assert "tg.exe run --lang python --rewrite" in doc
     assert "--diff" in doc

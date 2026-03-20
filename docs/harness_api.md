@@ -500,6 +500,39 @@ This reuses a cached repo map instead of rebuilding inventory for every query.
 | `tests` | `array<string>` | Ranked tests derived from the cached repo map. |
 | `related_paths` | `array<string>` | Stable union of ranked files and tests. |
 
+## Session Serve JSONL
+
+Emitted by `tg session serve <id> [PATH]`.
+
+This is the long-lived session loop for repeated edit-tooling requests. It reads newline-delimited
+JSON requests from stdin and emits one JSON response per line to stdout.
+
+Request shape:
+
+```json
+{"command":"context","query":"invoice payment"}
+```
+
+Supported commands:
+
+- `ping`
+- `show`
+- `repo_map`
+- `context`
+- `defs`
+- `impact`
+- `refs`
+- `callers`
+
+Responses reuse the same public payload shapes as the one-shot session and repo-map-derived
+commands, with an added `session_id` field.
+
+Invalid requests return:
+
+```json
+{"version":1,"session_id":"session-...","error":{"code":"invalid_request","message":"..."}}
+```
+
 ## MCP Tool Responses
 
 The MCP server exposes stable tool contracts layered on top of the native CLI outputs.
