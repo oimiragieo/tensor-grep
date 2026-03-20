@@ -3,6 +3,13 @@
   "routing_backend": "AstBackend",
   "routing_reason": "ast-native",
   "sidecar_used": false,
+  "checkpoint": {
+    "checkpoint_id": "ckpt-1742491200-deadbeef",
+    "mode": "filesystem-snapshot",
+    "root": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite",
+    "created_at": "1742491200",
+    "file_count": 1
+  },
   "plan": {
     "version": 1,
     "routing_backend": "AstBackend",
@@ -48,6 +55,7 @@
       }
     ]
   },
+  "validation": null,
   "verification": {
     "total_edits": 2,
     "verified": 2,

@@ -1,0 +1,412 @@
+from __future__ import annotations
+
+import ast
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+JSON_OUTPUT_VERSION = 1
+ROUTING_BACKEND = "RepoMap"
+ROUTING_REASON = "repo-map"
+_SKIP_DIR_NAMES = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+}
+
+
+def _envelope(path: Path) -> dict[str, Any]:
+    return {
+        "version": JSON_OUTPUT_VERSION,
+        "routing_backend": ROUTING_BACKEND,
+        "routing_reason": ROUTING_REASON,
+        "sidecar_used": False,
+        "path": str(path),
+    }
+
+
+def _is_test_file(path: Path) -> bool:
+    name = path.name
+    return name.startswith("test_") or name.endswith("_test.py") or "tests" in path.parts
+
+
+def _iter_repo_files(root: Path) -> list[Path]:
+    if root.is_file():
+        return [root.resolve()]
+
+    files: list[Path] = []
+    for current in root.rglob("*"):
+        if not current.is_file():
+            continue
+        if any(part in _SKIP_DIR_NAMES for part in current.parts):
+            continue
+        files.append(current.resolve())
+    return sorted(files)
+
+
+def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    if path.suffix != ".py":
+        return [], []
+
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return [], []
+
+    imports: list[str] = []
+    symbols: list[dict[str, Any]] = []
+
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imports.append(node.module)
+                for alias in node.names:
+                    imports.append(f"{node.module}.{alias.name}")
+        elif isinstance(node, ast.ClassDef):
+            symbols.append(
+                {
+                    "name": node.name,
+                    "kind": "class",
+                    "file": str(path),
+                    "line": node.lineno,
+                }
+            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            symbols.append(
+                {
+                    "name": node.name,
+                    "kind": "function",
+                    "file": str(path),
+                    "line": node.lineno,
+                }
+            )
+
+    imports = sorted(dict.fromkeys(imports))
+    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
+    return imports, symbols
+
+
+def _python_references_and_calls(path: Path, symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if path.suffix != ".py":
+        return [], []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return [], []
+
+    lines = source.splitlines()
+    references: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+
+    class Visitor(ast.NodeVisitor):
+        def visit_Name(self, node: ast.Name) -> None:
+            if node.id == symbol:
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.lineno,
+                        "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+                    }
+                )
+            self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if node.attr == symbol:
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.lineno,
+                        "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+                    }
+                )
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            matched = False
+            if isinstance(node.func, ast.Name) and node.func.id == symbol:
+                matched = True
+            elif isinstance(node.func, ast.Attribute) and node.func.attr == symbol:
+                matched = True
+            if matched:
+                calls.append(
+                    {
+                        "name": symbol,
+                        "kind": "call",
+                        "file": str(path),
+                        "line": node.lineno,
+                        "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+                    }
+                )
+            self.generic_visit(node)
+
+    Visitor().visit(tree)
+    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    return references, calls
+
+
+def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
+    root = Path(path).expanduser().resolve()
+    if not root.exists():
+        raise FileNotFoundError(f"Path not found: {root}")
+
+    payload = _envelope(root)
+    all_files = _iter_repo_files(root)
+    tests = [str(current) for current in all_files if _is_test_file(current)]
+    source_files = [str(current) for current in all_files if not _is_test_file(current)]
+
+    imports: list[dict[str, Any]] = []
+    symbols: list[dict[str, Any]] = []
+    for current in all_files:
+        current_imports, current_symbols = _python_imports_and_symbols(current)
+        if current_imports:
+            imports.append({"file": str(current), "imports": current_imports})
+        symbols.extend(current_symbols)
+
+    payload["files"] = source_files
+    payload["symbols"] = symbols
+    payload["imports"] = imports
+    payload["tests"] = tests
+    payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
+    return payload
+
+
+def build_repo_map_json(path: str | Path = ".") -> str:
+    return json.dumps(build_repo_map(path), indent=2)
+
+
+def _query_terms(query: str) -> list[str]:
+    return [term for term in re.split(r"[^A-Za-z0-9_]+", query.lower()) if term]
+
+
+def _score_text_terms(text: str, terms: list[str]) -> int:
+    haystack = text.lower()
+    return sum(1 for term in terms if term in haystack)
+
+
+def _score_file_path(path: str, terms: list[str]) -> int:
+    return _score_text_terms(Path(path).name, terms) + _score_text_terms(path, terms)
+
+
+def _score_symbol(symbol: dict[str, Any], terms: list[str]) -> int:
+    return (
+        _score_text_terms(str(symbol["name"]), terms) * 3
+        + _score_text_terms(str(symbol["kind"]), terms)
+        + _score_file_path(str(symbol["file"]), terms)
+    )
+
+
+def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:
+    imports_joined = " ".join(str(item) for item in entry["imports"])
+    return _score_file_path(str(entry["file"]), terms) + _score_text_terms(imports_joined, terms) * 2
+
+
+def _context_tests(source_files: list[str], tests: list[str], terms: list[str]) -> list[str]:
+    related: list[tuple[int, str]] = []
+    source_stems = {Path(current).stem.lower() for current in source_files}
+    for current in tests:
+        score = _score_file_path(current, terms)
+        stem = Path(current).stem.lower().removeprefix("test_")
+        if stem in source_stems:
+            score += 2
+        if score > 0:
+            related.append((score, current))
+    related.sort(key=lambda item: (-item[0], item[1]))
+    return [path for _, path in related]
+
+
+def build_context_pack(query: str, path: str | Path = ".") -> dict[str, Any]:
+    payload = build_repo_map(path)
+    terms = _query_terms(query)
+
+    scored_files = [
+        (_score_file_path(current, terms), current) for current in payload["files"]
+    ]
+    scored_files = [item for item in scored_files if item[0] > 0]
+    scored_files.sort(key=lambda item: (-item[0], item[1]))
+
+    scored_symbols: list[dict[str, Any]] = []
+    for symbol in payload["symbols"]:
+        score = _score_symbol(symbol, terms)
+        if score <= 0:
+            continue
+        scored_symbol = dict(symbol)
+        scored_symbol["score"] = score
+        scored_symbols.append(scored_symbol)
+    scored_symbols.sort(
+        key=lambda item: (-int(item["score"]), str(item["file"]), int(item["line"]), str(item["name"]))
+    )
+
+    scored_imports: list[dict[str, Any]] = []
+    for entry in payload["imports"]:
+        score = _score_import_entry(entry, terms)
+        if score <= 0:
+            continue
+        scored_entry = dict(entry)
+        scored_entry["score"] = score
+        scored_imports.append(scored_entry)
+    scored_imports.sort(key=lambda item: (-int(item["score"]), str(item["file"])))
+
+    ranked_files = [path for _, path in scored_files]
+    ranked_tests = _context_tests(ranked_files, payload["tests"], terms)
+
+    related_paths = []
+    for current in ranked_files:
+        related_paths.append(current)
+    for current in ranked_tests:
+        if current not in related_paths:
+            related_paths.append(current)
+
+    payload["routing_reason"] = "context-pack"
+    payload["query"] = query
+    payload["files"] = ranked_files
+    payload["symbols"] = scored_symbols
+    payload["imports"] = scored_imports
+    payload["tests"] = ranked_tests
+    payload["related_paths"] = related_paths
+    return payload
+
+
+def build_context_pack_json(query: str, path: str | Path = ".") -> str:
+    return json.dumps(build_context_pack(query, path), indent=2)
+
+
+def build_symbol_defs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
+    payload = build_repo_map(path)
+    definitions = [
+        dict(current)
+        for current in payload["symbols"]
+        if str(current["name"]) == symbol
+    ]
+    definitions.sort(
+        key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"]), str(item["name"]))
+    )
+
+    definition_files = [str(current["file"]) for current in definitions]
+    related_paths = []
+    for current in [*definition_files, *payload["tests"]]:
+        if current not in related_paths:
+            related_paths.append(current)
+
+    payload["routing_reason"] = "symbol-defs"
+    payload["symbol"] = symbol
+    payload["definitions"] = definitions
+    payload["files"] = sorted(dict.fromkeys(definition_files))
+    payload["related_paths"] = related_paths
+    return payload
+
+
+def build_symbol_defs_json(symbol: str, path: str | Path = ".") -> str:
+    return json.dumps(build_symbol_defs(symbol, path), indent=2)
+
+
+def build_symbol_impact(symbol: str, path: str | Path = ".") -> dict[str, Any]:
+    defs_payload = build_symbol_defs(symbol, path)
+    context_payload = build_context_pack(symbol, path)
+
+    impacted_files: list[str] = []
+    import_files = [str(entry["file"]) for entry in context_payload["imports"]]
+    for current in [*defs_payload["files"], *context_payload["files"], *import_files]:
+        if current not in impacted_files:
+            impacted_files.append(current)
+
+    related_tests: list[str] = []
+    for current in [*context_payload["tests"], *defs_payload["tests"]]:
+        if current not in related_tests:
+            related_tests.append(current)
+
+    related_paths: list[str] = []
+    for current in [*impacted_files, *related_tests]:
+        if current not in related_paths:
+            related_paths.append(current)
+
+    payload = _envelope(Path(defs_payload["path"]))
+    payload["routing_reason"] = "symbol-impact"
+    payload["symbol"] = symbol
+    payload["definitions"] = defs_payload["definitions"]
+    payload["files"] = impacted_files
+    payload["tests"] = related_tests
+    payload["imports"] = context_payload["imports"]
+    payload["symbols"] = context_payload["symbols"]
+    payload["related_paths"] = related_paths
+    return payload
+
+
+def build_symbol_impact_json(symbol: str, path: str | Path = ".") -> str:
+    return json.dumps(build_symbol_impact(symbol, path), indent=2)
+
+
+def build_symbol_refs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
+    payload = build_symbol_defs(symbol, path)
+    references: list[dict[str, Any]] = []
+    for current in _iter_repo_files(Path(payload["path"])):
+        current_refs, _ = _python_references_and_calls(current, symbol)
+        references.extend(current_refs)
+
+    referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
+    related_paths: list[str] = []
+    for current in [*payload["files"], *referenced_files, *payload["tests"]]:
+        if current not in related_paths:
+            related_paths.append(current)
+
+    payload["routing_reason"] = "symbol-refs"
+    payload["references"] = references
+    payload["files"] = referenced_files
+    payload["related_paths"] = related_paths
+    return payload
+
+
+def build_symbol_refs_json(symbol: str, path: str | Path = ".") -> str:
+    return json.dumps(build_symbol_refs(symbol, path), indent=2)
+
+
+def build_symbol_callers(symbol: str, path: str | Path = ".") -> dict[str, Any]:
+    defs_payload = build_symbol_defs(symbol, path)
+    calls: list[dict[str, Any]] = []
+    for current in _iter_repo_files(Path(defs_payload["path"])):
+        _, current_calls = _python_references_and_calls(current, symbol)
+        calls.extend(current_calls)
+
+    caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
+    context_payload = build_context_pack(symbol, path)
+    related_tests: list[str] = []
+    for current in [*context_payload["tests"], *defs_payload["tests"]]:
+        if current not in related_tests:
+            related_tests.append(current)
+
+    related_paths: list[str] = []
+    for current in [*defs_payload["files"], *caller_files, *related_tests]:
+        if current not in related_paths:
+            related_paths.append(current)
+
+    payload = _envelope(Path(defs_payload["path"]))
+    payload["routing_reason"] = "symbol-callers"
+    payload["symbol"] = symbol
+    payload["definitions"] = defs_payload["definitions"]
+    payload["callers"] = calls
+    payload["files"] = caller_files
+    payload["tests"] = related_tests
+    payload["imports"] = context_payload["imports"]
+    payload["symbols"] = context_payload["symbols"]
+    payload["related_paths"] = related_paths
+    return payload
+
+
+def build_symbol_callers_json(symbol: str, path: str | Path = ".") -> str:
+    return json.dumps(build_symbol_callers(symbol, path), indent=2)

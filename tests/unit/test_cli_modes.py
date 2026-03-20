@@ -235,6 +235,244 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
     assert seen["cmd"] == ["tg.exe", "search", "--cpu", "--ndjson", "ERROR", "."]
 
 
+def test_map_json_emits_repo_inventory_envelope(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "sample.py"
+    module_path.write_text(
+        "import json\n\n"
+        "class Widget:\n"
+        "    pass\n\n"
+        "def add(x, y):\n"
+        "    return x + y\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_sample.py"
+    test_path.write_text("from src.sample import add\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["map", "--json", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+
+    assert payload["version"] == 1
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "repo-map"
+    assert payload["sidecar_used"] is False
+    assert payload["path"] == str(project.resolve())
+    assert str(module_path.resolve()) in payload["files"]
+    assert str(test_path.resolve()) in payload["tests"]
+    assert any(
+        symbol["name"] == "Widget"
+        and symbol["kind"] == "class"
+        and symbol["file"] == str(module_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        symbol["name"] == "add"
+        and symbol["kind"] == "function"
+        and symbol["file"] == str(module_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        entry["file"] == str(module_path.resolve()) and "json" in entry["imports"]
+        for entry in payload["imports"]
+    )
+    assert str(module_path.resolve()) in payload["related_paths"]
+
+
+def test_context_json_ranks_related_files_symbols_and_tests(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "import decimal\n\n"
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "users.py"
+    other_path.write_text("def load_user(user_id):\n    return user_id\n", encoding="utf-8")
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text("from src.payments import create_invoice\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["context", "--query", "invoice payment", "--json", str(project)],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+
+    assert payload["version"] == 1
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "context-pack"
+    assert payload["sidecar_used"] is False
+    assert payload["query"] == "invoice payment"
+    assert payload["path"] == str(project.resolve())
+    assert payload["files"][0] == str(module_path.resolve())
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert any(
+        symbol["name"] == "create_invoice" and symbol["score"] > 0
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        symbol["name"] == "PaymentService" and symbol["score"] > 0
+        for symbol in payload["symbols"]
+    )
+    assert payload["related_paths"][0] == str(module_path.resolve())
+    assert str(test_path.resolve()) in payload["related_paths"]
+
+
+def test_defs_json_returns_exact_symbol_definitions(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["defs", "--symbol", "create_invoice", "--json", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-defs"
+    assert payload["symbol"] == "create_invoice"
+    assert len(payload["definitions"]) == 1
+    assert payload["definitions"][0]["name"] == "create_invoice"
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert payload["files"] == [str(module_path.resolve())]
+
+
+def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "import decimal\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def invoice_total():\n"
+        "    return create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text("from src.payments import create_invoice\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["impact", "--symbol", "create_invoice", "--json", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-impact"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["definitions"][0]["name"] == "create_invoice"
+    assert payload["files"][0] == str(module_path.resolve())
+    assert str(other_path.resolve()) in payload["files"]
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert str(test_path.resolve()) in payload["related_paths"]
+
+
+def test_refs_json_returns_python_references_for_symbol(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "result = create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["refs", "--symbol", "create_invoice", "--json", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-refs"
+    assert payload["symbol"] == "create_invoice"
+    assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
+    assert str(other_path.resolve()) in payload["files"]
+
+
+def test_callers_json_returns_python_call_sites_for_symbol(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def invoice_total():\n"
+        "    return create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["callers", "--symbol", "create_invoice", "--json", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-callers"
+    assert payload["symbol"] == "create_invoice"
+    assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
+    assert str(other_path.resolve()) in payload["files"]
+    assert payload["tests"][0] == str(test_path.resolve())
+
+
 def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):
     from tensor_grep.cli import main as cli_main
 
@@ -1849,7 +2087,7 @@ def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
     assert seen["argv"] == ["tg"]
 
 
-def test_app_help_should_list_upgrade_and_update_commands():
+def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     runner = CliRunner()
 
     result = runner.invoke(app, ["--help"])
@@ -1860,6 +2098,11 @@ def test_app_help_should_list_upgrade_and_update_commands():
     assert "tg PATTERN [PATH ...]" in result.stdout
     assert "upgrade" in result.stdout
     assert "update" in result.stdout
+    assert "checkpoint" in result.stdout
+    assert "defs" in result.stdout
+    assert "impact" in result.stdout
+    assert "refs" in result.stdout
+    assert "callers" in result.stdout
     assert "Run semantic log classification" in result.stdout
 
 

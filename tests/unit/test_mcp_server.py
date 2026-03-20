@@ -406,6 +406,163 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
     ]
 
 
+def test_tg_rewrite_apply_supports_optional_validation_commands():
+    from tensor_grep.cli import mcp_server
+
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "plan": {"total_edits": 1},
+        "verification": {"total_edits": 1, "verified": 1, "mismatches": []},
+        "validation": {
+            "success": True,
+            "commands": [
+                {
+                    "kind": "lint",
+                    "command": "echo lint-ok",
+                    "success": True,
+                    "exit_code": 0,
+                    "stdout": "lint-ok\n",
+                    "stderr": "",
+                },
+                {
+                    "kind": "test",
+                    "command": "echo test-ok",
+                    "success": True,
+                    "exit_code": 0,
+                    "stdout": "test-ok\n",
+                    "stderr": "",
+                },
+            ],
+        },
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            verify=True,
+            lint_cmd="echo lint-ok",
+            test_cmd="echo test-ok",
+        )
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "run",
+        "--lang",
+        "python",
+        "--rewrite",
+        "lambda $$$ARGS: $EXPR",
+        "--apply",
+        "--verify",
+        "--lint-cmd",
+        "echo lint-ok",
+        "--test-cmd",
+        "echo test-ok",
+        "--json",
+        "def $F($$$ARGS): return $EXPR",
+        "src",
+    ]
+
+
+def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
+    from tensor_grep.cli import mcp_server
+
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "checkpoint": {
+            "checkpoint_id": "ckpt-123",
+            "mode": "filesystem-snapshot",
+            "root": "C:/repo",
+            "created_at": "1234567890",
+            "file_count": 1,
+        },
+        "plan": {"total_edits": 1},
+        "verification": None,
+        "validation": None,
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            checkpoint=True,
+        )
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "run",
+        "--lang",
+        "python",
+        "--rewrite",
+        "lambda $$$ARGS: $EXPR",
+        "--apply",
+        "--checkpoint",
+        "--json",
+        "def $F($$$ARGS): return $EXPR",
+        "src",
+    ]
+
+
+def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    project.mkdir()
+    target = project / "sample.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+
+    created = json.loads(mcp_server.tg_checkpoint_create(str(project)))
+    checkpoint_id = created["checkpoint_id"]
+    assert checkpoint_id.startswith("ckpt-")
+    assert created["file_count"] == 1
+
+    listing = json.loads(mcp_server.tg_checkpoint_list(str(project)))
+    assert listing["version"] == 1
+    assert listing["checkpoints"][0]["checkpoint_id"] == checkpoint_id
+
+    target.write_text("value = 2\n", encoding="utf-8")
+    restored = json.loads(mcp_server.tg_checkpoint_undo(checkpoint_id, str(project)))
+    assert restored["checkpoint_id"] == checkpoint_id
+    assert restored["restored_files"] == 1
+    assert target.read_text(encoding="utf-8") == "value = 1\n"
+
+
 def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
     from tensor_grep.cli import mcp_server
 
@@ -526,3 +683,216 @@ def test_tg_index_search_returns_structured_error_for_missing_path():
     assert parsed["error"]["code"] == "invalid_input"
     assert "Path not found" in parsed["error"]["message"]
     assert "Traceback" not in parsed["error"]["message"]
+
+
+def test_tg_repo_map_returns_json_inventory(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "sample.py"
+    module_path.write_text(
+        "import pathlib\n\n"
+        "class Widget:\n"
+        "    pass\n\n"
+        "def add(x, y):\n"
+        "    return x + y\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_sample.py"
+    test_path.write_text("from src.sample import add\n", encoding="utf-8")
+
+    payload = json.loads(mcp_server.tg_repo_map(str(project)))
+
+    assert payload["version"] == 1
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "repo-map"
+    assert payload["sidecar_used"] is False
+    assert payload["path"] == str(project.resolve())
+    assert str(module_path.resolve()) in payload["files"]
+    assert str(test_path.resolve()) in payload["tests"]
+    assert any(
+        symbol["name"] == "Widget"
+        and symbol["kind"] == "class"
+        and symbol["file"] == str(module_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        symbol["name"] == "add"
+        and symbol["kind"] == "function"
+        and symbol["file"] == str(module_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        entry["file"] == str(module_path.resolve()) and "pathlib" in entry["imports"]
+        for entry in payload["imports"]
+    )
+    assert str(module_path.resolve()) in payload["related_paths"]
+
+
+def test_tg_context_pack_returns_ranked_inventory(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "import decimal\n\n"
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "users.py"
+    other_path.write_text("def load_user(user_id):\n    return user_id\n", encoding="utf-8")
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text("from src.payments import create_invoice\n", encoding="utf-8")
+
+    payload = json.loads(mcp_server.tg_context_pack("invoice payment", str(project)))
+
+    assert payload["version"] == 1
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "context-pack"
+    assert payload["sidecar_used"] is False
+    assert payload["query"] == "invoice payment"
+    assert payload["path"] == str(project.resolve())
+    assert payload["files"][0] == str(module_path.resolve())
+
+
+def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_defs("create_invoice", str(project)))
+
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-defs"
+    assert payload["symbol"] == "create_invoice"
+    assert len(payload["definitions"]) == 1
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+
+
+def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", str(project)))
+
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-impact"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["files"][0] == str(module_path.resolve())
+    assert str(other_path.resolve()) in payload["files"]
+    assert payload["tests"][0] == str(test_path.resolve())
+
+
+def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "result = create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_refs("create_invoice", str(project)))
+
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-refs"
+    assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
+
+
+def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    other_path = src_dir / "billing.py"
+    other_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def invoice_total():\n"
+        "    return create_invoice(10, 2)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("create_invoice", str(project)))
+
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-callers"
+    assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert any(
+        symbol["name"] == "create_invoice" and symbol["score"] > 0
+        for symbol in payload["symbols"]
+    )
+    assert payload["related_paths"][0] == str(module_path.resolve())
+    assert str(other_path.resolve()) not in payload["related_paths"][:1]

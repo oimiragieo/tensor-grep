@@ -6,8 +6,14 @@ EXAMPLES_DIR = Path("docs/examples")
 EXPECTED_EXAMPLES = {
     "search.json": ("total_matches", "matches"),
     "index_search.json": ("sidecar_used", "matches"),
+    "repo_map.json": ("files", "symbols"),
+    "context_pack.json": ("query", "files"),
+    "defs.json": ("symbol", "definitions"),
+    "impact.json": ("symbol", "files"),
+    "refs.json": ("symbol", "references"),
+    "callers.json": ("symbol", "callers"),
     "rewrite_plan.json": ("total_edits", "edits"),
-    "rewrite_apply_verify.json": ("plan", "verification"),
+    "rewrite_apply_verify.json": ("checkpoint", "plan", "verification", "validation"),
     "gpu_sidecar_search.json": ("sidecar_used", "matches"),
     "calibrate.json": ("corpus_size_breakpoint_bytes", "measurements"),
     "mcp_rewrite_diff.json": ("sidecar_used", "diff"),
@@ -20,21 +26,42 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "# Harness API" in doc
     assert "## Search JSON" in doc
     assert "## Index Search JSON" in doc
+    assert "## Repo Map JSON" in doc
+    assert "## Context Pack JSON" in doc
     assert "## Rewrite Plan JSON" in doc
     assert "## Batch Rewrite Config" in doc
     assert "## Apply + Verify JSON" in doc
     assert "## GPU Sidecar JSON" in doc
     assert "## Calibrate JSON" in doc
     assert "## Search NDJSON" in doc
+    assert "## Symbol Defs JSON" in doc
+    assert "## Symbol Impact JSON" in doc
+    assert "## Symbol Refs JSON" in doc
+    assert "## Symbol Callers JSON" in doc
     assert "## MCP Tool Responses" in doc
     assert "## Compatibility Policy" in doc
     assert "## Diff Output" in doc
     assert "routing_backend" in doc
     assert "routing_reason" in doc
     assert "version" in doc
+    assert "tg_repo_map" in doc
+    assert "tg_context_pack" in doc
+    assert "tg_symbol_defs" in doc
+    assert "tg_symbol_impact" in doc
+    assert "tg_symbol_refs" in doc
+    assert "tg_symbol_callers" in doc
+    assert "tg_checkpoint_create" in doc
+    assert "tg_checkpoint_list" in doc
+    assert "tg_checkpoint_undo" in doc
+    assert "--apply-edit-ids" in doc
+    assert "--reject-edit-ids" in doc
+    assert "--checkpoint" in doc
+    assert "--lint-cmd" in doc
+    assert "--test-cmd" in doc
     assert "--batch-rewrite" in doc
     assert "rewrites" in doc
     assert "verify" in doc
+    assert "validation" in doc
     assert "line_number" in doc
     assert "line" in doc
     assert "---" in doc
@@ -73,9 +100,11 @@ def test_harness_api_examples_are_non_trivial_single_document_json() -> None:
         nested_total_edits = payload.get("plan", {}).get("total_edits")
         measurements = payload.get("measurements")
         diff = payload.get("diff")
+        files = payload.get("files")
+        symbols = payload.get("symbols")
 
-        assert total_matches or total_edits or nested_total_edits or measurements or diff, (
-            f"{path.name} should include matches or edits"
+        assert total_matches or total_edits or nested_total_edits or measurements or diff or files or symbols, (
+            f"{path.name} should include matches, edits, or repo inventory"
         )
 
 

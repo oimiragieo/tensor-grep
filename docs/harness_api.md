@@ -23,11 +23,17 @@ These top-level fields are shared across every JSON shape documented here.
 | --- | --- | --- |
 | Search JSON | `tg.exe search --json ...` | [`examples/search.json`](examples/search.json) |
 | Index search JSON | `tg.exe search --index --json ...` | [`examples/index_search.json`](examples/index_search.json) |
+| Repo map JSON | `tg.exe map --json ...` | [`examples/repo_map.json`](examples/repo_map.json) |
+| Context pack JSON | `tg.exe context --query ... --json ...` | [`examples/context_pack.json`](examples/context_pack.json) |
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
 | GPU sidecar JSON | `tg.exe search --gpu-device-ids ... --json ...` | [`examples/gpu_sidecar_search.json`](examples/gpu_sidecar_search.json) |
 | Calibrate JSON | `tg.exe calibrate` | [`examples/calibrate.json`](examples/calibrate.json) |
 | Search NDJSON | `tg.exe search --ndjson ...` | [`examples/search.ndjson`](examples/search.ndjson) |
+| Symbol defs JSON | `tg.exe defs --symbol <name> --json ...` | [`examples/defs.json`](examples/defs.json) |
+| Symbol impact JSON | `tg.exe impact --symbol <name> --json ...` | [`examples/impact.json`](examples/impact.json) |
+| Symbol refs JSON | `tg.exe refs --symbol <name> --json ...` | [`examples/refs.json`](examples/refs.json) |
+| Symbol callers JSON | `tg.exe callers --symbol <name> --json ...` | [`examples/callers.json`](examples/callers.json) |
 | MCP rewrite diff JSON | `tg_rewrite_diff(...)` | [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json) |
 
 ## Search JSON
@@ -75,9 +81,87 @@ The shape matches Search JSON exactly; only the routing envelope changes.
 | `matches[].line` | `integer` | 1-based line number. |
 | `matches[].text` | `string` | Matching line text. |
 
+## Repo Map JSON
+
+Emitted by `tg.exe map --json ...`.
+
+Example: [`examples/repo_map.json`](examples/repo_map.json)
+
+Use this shape when an agent needs a deterministic repository inventory before choosing edits.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `repo-map`. |
+| `sidecar_used` | `boolean` | Always `false`. |
+| `path` | `string` | Absolute root path inventoried. |
+| `files` | `array<string>` | Non-test files included in the inventory. |
+| `symbols` | `array<object>` | Deterministic symbol inventory. |
+| `imports` | `array<object>` | Per-file import inventory. |
+| `tests` | `array<string>` | Test files associated with the inventory root. |
+| `related_paths` | `array<string>` | Stable union of relevant source and test paths. |
+
+Each `symbols[]` object has:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | `string` | Symbol name. |
+| `kind` | `string` | Current values include `class` and `function`. |
+| `file` | `string` | Absolute file path containing the symbol. |
+| `line` | `integer` | 1-based line number. |
+
+Each `imports[]` object has:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `file` | `string` | Absolute file path. |
+| `imports` | `array<string>` | Imported module names extracted from the file. |
+
+## Context Pack JSON
+
+Emitted by `tg.exe context --query <text> --json ...`.
+
+Example: [`examples/context_pack.json`](examples/context_pack.json)
+
+Use this shape when an agent needs a query-driven subset of the repository map before choosing edits.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `context-pack`. |
+| `sidecar_used` | `boolean` | Always `false`. |
+| `query` | `string` | Query text used for ranking. |
+| `path` | `string` | Absolute root path inventoried. |
+| `files` | `array<string>` | Ranked source files related to the query. |
+| `symbols` | `array<object>` | Ranked symbols related to the query. |
+| `imports` | `array<object>` | Ranked import rows related to the query. |
+| `tests` | `array<string>` | Ranked test files related to the query. |
+| `related_paths` | `array<string>` | Stable merged order of the highest-value source and test paths. |
+
+Each ranked `symbols[]` object extends the Repo Map JSON symbol shape with:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `score` | `integer` | Deterministic query relevance score. |
+
+Each ranked `imports[]` object extends the Repo Map JSON import shape with:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `score` | `integer` | Deterministic query relevance score. |
+
 ## Rewrite Plan JSON
 
 Emitted by `tg.exe run --rewrite <replacement> <pattern> <path>` when `--diff` and `--apply` are not set.
+
+Optional edit selection flags:
+
+- `--apply-edit-ids <id1,id2,...>` keeps only the listed planned edit IDs
+- `--reject-edit-ids <id1,id2,...>` drops the listed planned edit IDs
+
+These flags filter `edits[]` before diff/apply/verify execution and fail closed on unknown or duplicate IDs.
 
 `tg.exe run --batch-rewrite <config.json> <path>` emits the same common rewrite-plan envelope, but replaces the single `pattern` / `replacement` / `lang` fields with a `rewrites` array copied from the config file.
 
@@ -148,6 +232,16 @@ Batch planning/apply behavior:
 
 Emitted by `tg.exe run --rewrite ... --apply --verify --json ...`.
 
+Optional edit selection flags:
+
+- `--apply-edit-ids <id1,id2,...>`
+- `--reject-edit-ids <id1,id2,...>`
+- `--lint-cmd <command>`
+- `--test-cmd <command>`
+
+When edit selection flags are present, the emitted `plan` object reflects the filtered subset that was actually applied and verified.
+When validation flags are present, the emitted payload also includes a structured `validation` object describing each post-apply command.
+
 Example: [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 
 | Field | Type | Notes |
@@ -156,7 +250,9 @@ Example: [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.js
 | `routing_backend` | `string` | `AstBackend`. |
 | `routing_reason` | `string` | `ast-native`. |
 | `sidecar_used` | `boolean` | `false`. |
+| `checkpoint` | `object \| null` | Present when `--checkpoint` is requested before apply; otherwise `null` or omitted. |
 | `plan` | `object` | Full rewrite plan object, using the same shape as Rewrite Plan JSON. |
+| `validation` | `object \| null` | Present when `--lint-cmd` and/or `--test-cmd` is requested; otherwise `null` or omitted. |
 | `verification` | `object \| null` | Present when `--verify` is requested; otherwise `null`. |
 
 `verification` currently contains:
@@ -168,6 +264,15 @@ Example: [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.js
 | `mismatches` | `array<object>` | Empty on success. |
 
 Each `mismatches[]` object contains `edit_id`, `file`, `line`, `expected`, and `actual`.
+
+`validation` currently contains:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `success` | `boolean` | `true` only when all requested post-apply commands succeeded. |
+| `commands` | `array<object>` | Ordered list of executed validation commands. |
+
+Each `commands[]` object contains `kind`, `command`, `success`, `exit_code`, `stdout`, and `stderr`.
 
 ## GPU Sidecar JSON
 
@@ -255,22 +360,122 @@ This is the streaming variant of Search JSON. Each line is a standalone JSON obj
 | `pattern_id` | `integer \| null` | Present for multi-pattern routes. |
 | `pattern_text` | `string \| null` | Present when `pattern_id` is present. |
 
+## Symbol Defs JSON
+
+Emitted by `tg.exe defs --symbol <name> --json ...`.
+
+Example: [`examples/defs.json`](examples/defs.json)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `symbol-defs`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `path` | `string` | Inventory root. |
+| `symbol` | `string` | Exact symbol name requested. |
+| `definitions` | `array<object>` | Exact symbol definitions. |
+| `files` | `array<string>` | Files containing exact definitions. |
+| `tests` | `array<string>` | Test files in the inventory root. |
+| `related_paths` | `array<string>` | Stable union of definition files and tests. |
+
+Each `definitions[]` object contains `name`, `kind`, `file`, and `line`.
+
+## Symbol Impact JSON
+
+Emitted by `tg.exe impact --symbol <name> --json ...`.
+
+Example: [`examples/impact.json`](examples/impact.json)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `symbol-impact`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `path` | `string` | Inventory root. |
+| `symbol` | `string` | Exact symbol name evaluated. |
+| `definitions` | `array<object>` | Exact symbol definitions. |
+| `files` | `array<string>` | Likely impacted source files, definition file first. |
+| `tests` | `array<string>` | Likely impacted tests. |
+| `imports` | `array<object>` | Ranked import entries from the context pack path. |
+| `symbols` | `array<object>` | Ranked related symbols, including `score`. |
+| `related_paths` | `array<string>` | Stable union of impacted files and tests. |
+
+## Symbol Refs JSON
+
+Emitted by `tg.exe refs --symbol <name> --json ...`.
+
+Example: [`examples/refs.json`](examples/refs.json)
+
+This is currently a Python-first symbol navigation contract. It finds exact name/attribute references from Python ASTs and does not claim full cross-language semantic resolution.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `symbol-refs`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `path` | `string` | Inventory root. |
+| `symbol` | `string` | Exact symbol name evaluated. |
+| `definitions` | `array<object>` | Exact symbol definitions. |
+| `references` | `array<object>` | Python-first reference rows. |
+| `files` | `array<string>` | Files containing reference rows. |
+| `related_paths` | `array<string>` | Stable union of definition files, reference files, and tests. |
+
+Each `references[]` object contains `name`, `kind`, `file`, `line`, and `text`.
+
+## Symbol Callers JSON
+
+Emitted by `tg.exe callers --symbol <name> --json ...`.
+
+Example: [`examples/callers.json`](examples/callers.json)
+
+This is currently a Python-first symbol navigation contract. It finds exact Python call sites by name/attribute match and combines them with likely impacted tests.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `symbol-callers`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `path` | `string` | Inventory root. |
+| `symbol` | `string` | Exact symbol name evaluated. |
+| `definitions` | `array<object>` | Exact symbol definitions. |
+| `callers` | `array<object>` | Python-first call rows. |
+| `files` | `array<string>` | Files containing call sites. |
+| `tests` | `array<string>` | Likely impacted tests. |
+| `related_paths` | `array<string>` | Stable union of definition files, caller files, and tests. |
+
 ## MCP Tool Responses
 
 The MCP server exposes stable tool contracts layered on top of the native CLI outputs.
 
 Current tool set:
 
+- `tg_repo_map(path=".")`
+- `tg_context_pack(query, path=".")`
+- `tg_symbol_defs(symbol, path=".")`
+- `tg_symbol_impact(symbol, path=".")`
+- `tg_symbol_refs(symbol, path=".")`
+- `tg_symbol_callers(symbol, path=".")`
+- `tg_checkpoint_create(path=".")`
+- `tg_checkpoint_list(path=".")`
+- `tg_checkpoint_undo(checkpoint_id, path=".")`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
-- `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False)`
+- `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
 - `tg_rewrite_diff(pattern, replacement, lang, path=".")`
 
 Response mapping:
 
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
+- `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)
+- `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)
+- `tg_symbol_refs(...)` returns the same v1 envelope and payload shape as [`examples/refs.json`](examples/refs.json)
+- `tg_symbol_callers(...)` returns the same v1 envelope and payload shape as [`examples/callers.json`](examples/callers.json)
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
-- `tg_rewrite_apply(..., verify=True)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
+- `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 - `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text
 
 Example diff wrapper: [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json)
@@ -333,7 +538,7 @@ The committed examples were generated with commands equivalent to:
 tg.exe search --no-ignore --json ERROR bench_data\<temp-search-dir>
 tg.exe search --index --no-ignore --fixed-strings --json ERROR bench_data\<temp-index-dir>
 tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
-tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --apply --verify --json 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
+tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --apply --verify --lint-cmd "ruff check ." --test-cmd "pytest -q" --json 'def $F($$$ARGS): return $EXPR' bench_data\<temp-rewrite-file>
 tg.exe run --batch-rewrite batch-rewrite.json --apply --json bench_data\<temp-rewrite-dir>
 tg.exe search --gpu-device-ids 0 --json ERROR bench_data\<temp-gpu-dir>
 tg.exe calibrate

@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import subprocess
@@ -43,6 +44,10 @@ persisted repeated-query acceleration, and optional GPU routing.
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="markdown",
+)
+checkpoint_app = typer.Typer(
+    help="Create, list, and undo edit checkpoints.",
+    no_args_is_help=True,
 )
 
 
@@ -1483,6 +1488,224 @@ def devices(
 
 
 @app.command()
+def map(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a deterministic repository map for AI editing workflows."""
+    from tensor_grep.cli.repo_map import build_repo_map, build_repo_map_json
+
+    try:
+        if json_output:
+            typer.echo(build_repo_map_json(path))
+            return
+
+        payload = build_repo_map(path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Repository map for {payload['path']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+    typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+
+
+@app.command()
+def context(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query: str = typer.Option(..., "--query", help="Query text used to rank relevant repo context."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a ranked repository context pack for edit planning."""
+    from tensor_grep.cli.repo_map import build_context_pack, build_context_pack_json
+
+    try:
+        if json_output:
+            typer.echo(build_context_pack_json(query, path))
+            return
+
+        payload = build_context_pack(query, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Context pack for {payload['path']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+    typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+
+
+@app.command()
+def defs(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return exact definition locations for a symbol."""
+    from tensor_grep.cli.repo_map import build_symbol_defs, build_symbol_defs_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_defs_json(symbol, path))
+            return
+
+        payload = build_symbol_defs(symbol, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Definitions for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"definitions={len(payload['definitions'])}")
+
+
+@app.command()
+def impact(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to evaluate."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return likely impacted files and tests for a symbol change."""
+    from tensor_grep.cli.repo_map import build_symbol_impact, build_symbol_impact_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_impact_json(symbol, path))
+            return
+
+        payload = build_symbol_impact(symbol, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Impact for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+
+
+@app.command()
+def refs(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return Python-first symbol references across the inventory root."""
+    from tensor_grep.cli.repo_map import build_symbol_refs, build_symbol_refs_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_refs_json(symbol, path))
+            return
+
+        payload = build_symbol_refs(symbol, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"References for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"references={len(payload['references'])} files={len(payload['files'])}")
+
+
+@app.command()
+def callers(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return Python-first call sites and likely impacted tests for a symbol."""
+    from tensor_grep.cli.repo_map import build_symbol_callers, build_symbol_callers_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_callers_json(symbol, path))
+            return
+
+        payload = build_symbol_callers(symbol, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Callers for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"callers={len(payload['callers'])} files={len(payload['files'])}")
+
+
+@checkpoint_app.command("create")
+def checkpoint_create(
+    path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Create a checkpoint for the current editable tree."""
+    from tensor_grep.cli.checkpoint_store import create_checkpoint
+
+    try:
+        payload = create_checkpoint(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Created checkpoint {payload.checkpoint_id} "
+        f"({payload.mode}, files={payload.file_count})"
+    )
+
+
+@checkpoint_app.command("list")
+def checkpoint_list(
+    path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """List available checkpoints."""
+    from tensor_grep.cli.checkpoint_store import list_checkpoints
+
+    try:
+        records = [record.__dict__ for record in list_checkpoints(path)]
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps({"version": 1, "checkpoints": records}, indent=2))
+        return
+
+    if not records:
+        typer.echo("No checkpoints found.")
+        return
+
+    for record in records:
+        typer.echo(
+            f"{record['checkpoint_id']}  {record['mode']}  "
+            f"{record['created_at']}  files={record['file_count']}"
+        )
+
+
+@checkpoint_app.command("undo")
+def checkpoint_undo(
+    checkpoint_id: str = typer.Argument(..., help="Checkpoint ID to restore."),
+    path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Restore a checkpoint."""
+    from tensor_grep.cli.checkpoint_store import undo_checkpoint
+
+    try:
+        payload = undo_checkpoint(checkpoint_id, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Restored checkpoint {payload.checkpoint_id} "
+        f"({payload.mode}, restored_files={payload.restored_files}, removed_paths={payload.removed_paths})"
+    )
+
+
+@app.command()
 def classify(
     file_path: str, format_type: str = typer.Option("json", "--format", help="Output format")
 ) -> None:
@@ -1828,6 +2051,9 @@ def lsp() -> None:
     run_lsp()
 
 
+app.add_typer(checkpoint_app, name="checkpoint")
+
+
 @app.command(name="mcp")
 def mcp_server() -> None:
     """Start the Model Context Protocol (MCP) server for AI assistants"""
@@ -1937,6 +2163,13 @@ def main_entry() -> None:
         "search",
         "calibrate",
         "devices",
+        "map",
+        "context",
+        "defs",
+        "impact",
+        "refs",
+        "callers",
+        "checkpoint",
         "classify",
         "run",
         "scan",

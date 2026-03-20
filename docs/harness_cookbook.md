@@ -48,6 +48,85 @@ Expected differences from plain search:
 
 Consumers should treat the payload shape as the same as Search JSON.
 
+## Repo Map Flow
+
+Use repo-map output before planning edits when the agent needs a deterministic view of files, symbols, imports, and likely related test files.
+
+```powershell
+tg.exe map --json .\src
+```
+
+Expected top-level fields:
+
+- `"version"`
+- `"routing_backend"`
+- `"routing_reason"`
+- `"sidecar_used"`
+- `"path"`
+- `"files"`
+- `"symbols"`
+- `"imports"`
+- `"tests"`
+- `"related_paths"`
+
+Recommended consumer behavior:
+
+1. request the repo map before multi-file edit planning
+2. choose a small set of relevant files from `files`, `symbols`, and `related_paths`
+3. feed only that subset into the next search or rewrite step
+
+## Context Pack Flow
+
+Use context packs when the agent already has a task/query and wants a smaller ranked subset than the full repo map.
+
+```powershell
+tg.exe context --query "invoice payment" --json .\src
+```
+
+Expected top-level fields:
+
+- `"version"`
+- `"routing_backend"`
+- `"routing_reason"`
+- `"sidecar_used"`
+- `"query"`
+- `"path"`
+- `"files"`
+- `"symbols"`
+- `"imports"`
+- `"tests"`
+- `"related_paths"`
+
+Recommended consumer behavior:
+
+1. use the raw user task or issue title as the initial query
+2. take the top ranked `files` and `tests` as the first edit/search context
+3. use symbol `score` to decide which definitions to inspect before planning edits
+
+Resolve exact definitions:
+
+```powershell
+tg defs --symbol create_invoice --json .\src
+```
+
+Estimate likely change impact:
+
+```powershell
+tg impact --symbol create_invoice --json .
+```
+
+Find reference sites:
+
+```powershell
+tg refs --symbol create_invoice --json .
+```
+
+Find call sites plus likely impacted tests:
+
+```powershell
+tg callers --symbol create_invoice --json .
+```
+
 ## Rewrite Planning Flow
 
 Plan first. Do not mutate files until the plan is accepted.
@@ -90,13 +169,26 @@ This emits a unified diff, not JSON. Expect:
 
 Use this when your agent needs a review artifact before mutation.
 
+If only part of the plan is acceptable, pass stable edit IDs back into the next command:
+
+```powershell
+tg.exe run --lang python --rewrite "lambda $$$ARGS: $EXPR" --apply-edit-ids "e0000:sample.py:0-27" --diff "def $F($$$ARGS): return $EXPR" .\src\sample.py
+```
+
 ## Apply + Verify Flow
 
 Apply only after planning succeeds. Prefer `--verify` for harness use.
 
 ```powershell
-tg.exe run --lang python --rewrite "lambda $$$ARGS: $EXPR" --apply --verify --json "def $F($$$ARGS): return $EXPR" .\src\sample.py
+tg.exe run --lang python --rewrite "lambda $$$ARGS: $EXPR" --apply --verify --checkpoint --lint-cmd "ruff check ." --test-cmd "pytest -q" --json "def $F($$$ARGS): return $EXPR" .\src\sample.py
 ```
+
+Selection flags are supported here too:
+
+- `--apply-edit-ids <id1,id2,...>`
+- `--reject-edit-ids <id1,id2,...>`
+
+Use them when the agent or reviewer accepts only part of the proposed edit set.
 
 The response is a single JSON document with:
 
@@ -104,10 +196,41 @@ The response is a single JSON document with:
 - `"routing_backend"`
 - `"routing_reason"`
 - `"sidecar_used"`
+- `"checkpoint"` when pre-apply rollback capture is requested
 - `"plan"`
+- `"validation"` when post-apply commands are requested
 - `"verification"`
 
 Verification is byte-level exact-text verification. Consumers should fail closed if `verification.mismatches` is non-empty.
+Validation is command-level repo health verification. Consumers should fail closed if `validation.success` is `false`.
+
+## Checkpoint Flow
+
+Use checkpoints when an agent needs an explicit rollback point before or after an edit session.
+
+Create a checkpoint:
+
+```powershell
+tg checkpoint create . --json
+```
+
+List checkpoints:
+
+```powershell
+tg checkpoint list . --json
+```
+
+Undo a checkpoint:
+
+```powershell
+tg checkpoint undo ckpt-20260320120000-deadbeef . --json
+```
+
+Current behavior:
+
+- inside a Git repo, `mode` is `git-worktree-snapshot`
+- outside Git, `mode` is `filesystem-snapshot`
+- undo restores files captured at checkpoint creation and removes paths created afterward inside the checkpoint scope
 
 ## NDJSON Streaming Flow
 
@@ -137,6 +260,15 @@ Use MCP when the consumer speaks tool calls instead of shelling out directly.
 
 Available workflow tools:
 
+- `tg_repo_map`
+- `tg_context_pack`
+- `tg_symbol_defs`
+- `tg_symbol_impact`
+- `tg_symbol_refs`
+- `tg_symbol_callers`
+- `tg_checkpoint_create`
+- `tg_checkpoint_list`
+- `tg_checkpoint_undo`
 - `tg_index_search`
 - `tg_rewrite_plan`
 - `tg_rewrite_apply`
@@ -147,7 +279,8 @@ Example flow:
 1. call `tg_index_search("ERROR", path=".")`
 2. call `tg_rewrite_plan(...)`
 3. call `tg_rewrite_diff(...)`
-4. call `tg_rewrite_apply(..., verify=True)`
+4. call `tg_checkpoint_create(path=".")` if rollback is required
+5. call `tg_rewrite_apply(..., verify=True, checkpoint=True)`
 
 The MCP tool payloads mirror the CLI contract envelopes. Consumers should still inspect:
 

@@ -975,6 +975,291 @@ fn test_tg_run_apply_verify_json_is_single_document() {
 }
 
 #[test]
+fn test_tg_run_apply_verify_json_can_create_checkpoint() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--checkpoint")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let checkpoint = parsed["checkpoint"]
+        .as_object()
+        .expect("checkpoint metadata must be present");
+    let checkpoint_id = checkpoint["checkpoint_id"]
+        .as_str()
+        .expect("checkpoint id must be a string");
+    assert!(!checkpoint_id.is_empty());
+    assert_eq!(checkpoint["file_count"], 1);
+    assert_eq!(checkpoint["mode"], "filesystem-snapshot");
+
+    let checkpoint_root = file_path.parent().unwrap();
+    let metadata_path = checkpoint_root
+        .join(".tensor-grep")
+        .join("checkpoints")
+        .join(checkpoint_id)
+        .join("metadata.json");
+    let index_path = checkpoint_root
+        .join(".tensor-grep")
+        .join("checkpoints")
+        .join("index.json");
+    assert!(
+        metadata_path.exists(),
+        "missing {}",
+        metadata_path.display()
+    );
+    assert!(index_path.exists(), "missing {}", index_path.display());
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_can_apply_selected_edit_ids_only() {
+    let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        plan_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&plan_output.stderr)
+    );
+    let planned: Value = serde_json::from_slice(&plan_output.stdout).unwrap();
+    let selected_id = planned["edits"][0]["id"].as_str().unwrap().to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--apply-edit-ids")
+        .arg(&selected_id)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["plan"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "lambda x, y: x + y\ndef mul(a, b): return a * b\n"
+    );
+}
+
+#[test]
+fn test_tg_run_apply_edit_ids_rejects_unknown_id() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--apply-edit-ids")
+        .arg("missing-edit-id")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown edit id"), "stderr={stderr}");
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "def add(x, y): return x + y\n"
+    );
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_can_reject_selected_edit_ids() {
+    let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        plan_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&plan_output.stderr)
+    );
+    let planned: Value = serde_json::from_slice(&plan_output.stdout).unwrap();
+    let rejected_id = planned["edits"][0]["id"].as_str().unwrap().to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--reject-edit-ids")
+        .arg(&rejected_id)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["plan"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "def add(x, y): return x + y\nlambda a, b: a * b\n"
+    );
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_includes_validation_results() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--lint-cmd")
+        .arg("echo lint-ok")
+        .arg("--test-cmd")
+        .arg("echo test-ok")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(parsed["validation"]["success"], true);
+    let commands = parsed["validation"]["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0]["kind"], "lint");
+    assert_eq!(commands[1]["kind"], "test");
+    assert_eq!(commands[0]["success"], true);
+    assert_eq!(commands[1]["success"], true);
+    assert!(commands[0]["stdout"].as_str().unwrap().contains("lint-ok"));
+    assert!(commands[1]["stdout"].as_str().unwrap().contains("test-ok"));
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_reports_failed_validation_and_exits_non_zero() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--lint-cmd")
+        .arg("echo lint-fail 1>&2 && exit /b 3")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let parsed: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout must remain valid JSON on failure");
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(parsed["validation"]["success"], false);
+    let commands = parsed["validation"]["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0]["kind"], "lint");
+    assert_eq!(commands[0]["success"], false);
+    assert_eq!(commands[0]["exit_code"], 3);
+    assert!(commands[0]["stderr"]
+        .as_str()
+        .unwrap()
+        .contains("lint-fail"));
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "lambda x, y: x + y\n"
+    );
+}
+
+#[test]
 fn test_verify_detects_tampered_file() {
     let source = "def add(x, y): return x + y\n";
     let (_dir, file_path) = write_source_file("py", source);

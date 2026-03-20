@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "symbol-impact",
+  "sidecar_used": false,
+  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite",
+  "symbol": "add",
+  "definitions": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    }
+  ],
+  "files": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+  ],
+  "tests": [],
+  "imports": [],
+  "symbols": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "score": 3
+    }
+  ],
+  "related_paths": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+  ]
+}

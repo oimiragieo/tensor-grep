@@ -8,6 +8,14 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from tensor_grep.cli.repo_map import (
+    build_context_pack,
+    build_repo_map,
+    build_symbol_callers,
+    build_symbol_defs,
+    build_symbol_impact,
+    build_symbol_refs,
+)
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 from tensor_grep.core.pipeline import Pipeline
@@ -158,6 +166,9 @@ def _build_rewrite_command(
     path: str,
     mode: str,
     verify: bool = False,
+    checkpoint: bool = False,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
 ) -> list[str]:
     command = [
         str(_resolve_native_tg_binary()),
@@ -174,6 +185,12 @@ def _build_rewrite_command(
         command.append("--apply")
         if verify:
             command.append("--verify")
+        if checkpoint:
+            command.append("--checkpoint")
+        if lint_cmd:
+            command.extend(["--lint-cmd", lint_cmd])
+        if test_cmd:
+            command.extend(["--test-cmd", test_cmd])
         command.append("--json")
     elif mode == "diff":
         command.append("--diff")
@@ -396,6 +413,166 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
             all_results.match_counts_by_file[match.file] = (
                 all_results.match_counts_by_file.get(match.file, 0) + 1
             )
+
+
+@mcp.tool()  # type: ignore
+def tg_repo_map(path: str = ".") -> str:
+    """
+    Return a deterministic repository inventory for agent context selection.
+
+    Args:
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_repo_map(path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "repo-map",
+            "sidecar_used": False,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_context_pack(query: str, path: str = ".") -> str:
+    """
+    Return a ranked repository context pack for edit planning.
+
+    Args:
+        query: Query text used to rank relevant files, symbols, and tests.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_context_pack(query, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-pack",
+            "sidecar_used": False,
+            "query": query,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_defs(symbol: str, path: str = ".") -> str:
+    """
+    Return exact definition locations for a symbol.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_defs(symbol, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-defs",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_impact(symbol: str, path: str = ".") -> str:
+    """
+    Return likely impacted files and tests for a symbol change.
+
+    Args:
+        symbol: Exact symbol name to evaluate.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_impact(symbol, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-impact",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_refs(symbol: str, path: str = ".") -> str:
+    """
+    Return Python-first symbol references across the inventory root.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_refs(symbol, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-refs",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_callers(symbol: str, path: str = ".") -> str:
+    """
+    Return Python-first symbol call sites and likely impacted tests.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_callers(symbol, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-callers",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
 
 
 @mcp.tool()  # type: ignore
@@ -742,6 +919,9 @@ def tg_rewrite_apply(
     lang: str,
     path: str = ".",
     verify: bool = False,
+    checkpoint: bool = False,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
 ) -> str:
     """
     Apply native AST rewrites and optionally verify the written bytes.
@@ -752,6 +932,9 @@ def tg_rewrite_apply(
         lang: Tree-sitter language name.
         path: File or directory to scan.
         verify: When true, request post-apply verification from the native CLI.
+        checkpoint: When true, create a rollback checkpoint before applying edits.
+        lint_cmd: Optional command to run after apply/verify for structured lint validation.
+        test_cmd: Optional command to run after apply/verify for structured test validation.
     """
     validation_error = _validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
@@ -764,8 +947,88 @@ def tg_rewrite_apply(
         path=path,
         mode="apply",
         verify=verify,
+        checkpoint=checkpoint,
+        lint_cmd=lint_cmd,
+        test_cmd=test_cmd,
     )
     return _execute_rewrite_json_command(command)
+
+
+@mcp.tool()  # type: ignore
+def tg_checkpoint_create(path: str = ".") -> str:
+    """
+    Create an edit checkpoint rooted at the given path.
+
+    Args:
+        path: File or directory rooted at the checkpoint scope.
+    """
+    from tensor_grep.cli.checkpoint_store import create_checkpoint
+
+    try:
+        payload = create_checkpoint(path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_checkpoint_list(path: str = ".") -> str:
+    """
+    List checkpoints rooted at the given path.
+
+    Args:
+        path: File or directory rooted at the checkpoint scope.
+    """
+    from tensor_grep.cli.checkpoint_store import list_checkpoints
+
+    try:
+        checkpoints = [record.__dict__ for record in list_checkpoints(path)]
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+            },
+            indent=2,
+        )
+
+    return json.dumps({"version": _json_output_version(), "checkpoints": checkpoints}, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
+    """
+    Undo an edit checkpoint rooted at the given path.
+
+    Args:
+        checkpoint_id: Checkpoint ID to restore.
+        path: File or directory rooted at the checkpoint scope.
+    """
+    from tensor_grep.cli.checkpoint_store import undo_checkpoint
+
+    try:
+        payload = undo_checkpoint(checkpoint_id, path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+                "checkpoint_id": checkpoint_id,
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload.__dict__, indent=2)
 
 
 @mcp.tool()  # type: ignore

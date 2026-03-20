@@ -6,9 +6,15 @@ use std::path::{Path, PathBuf};
 
 const EXPECTED_EXAMPLES: &[&str] = &[
     "calibrate.json",
+    "context_pack.json",
     "gpu_sidecar_search.json",
     "index_search.json",
     "mcp_rewrite_diff.json",
+    "repo_map.json",
+    "defs.json",
+    "impact.json",
+    "refs.json",
+    "callers.json",
     "rewrite_apply_verify.json",
     "rewrite_plan.json",
     "search.json",
@@ -25,6 +31,97 @@ struct SearchExample {
     path: String,
     total_matches: usize,
     matches: Vec<SearchMatch>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepoSymbolExample {
+    name: String,
+    kind: String,
+    file: PathBuf,
+    line: usize,
+    #[serde(default)]
+    score: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolDefsExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    path: String,
+    symbol: String,
+    files: Vec<String>,
+    symbols: Vec<RepoSymbolExample>,
+    imports: Vec<serde_json::Value>,
+    tests: Vec<String>,
+    related_paths: Vec<String>,
+    definitions: Vec<RepoSymbolExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolImpactExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    path: String,
+    symbol: String,
+    definitions: Vec<RepoSymbolExample>,
+    files: Vec<String>,
+    tests: Vec<String>,
+    imports: Vec<serde_json::Value>,
+    symbols: Vec<RepoSymbolExample>,
+    related_paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolReferenceExample {
+    name: String,
+    kind: String,
+    file: PathBuf,
+    line: usize,
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolRefsExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    path: String,
+    symbol: String,
+    files: Vec<String>,
+    symbols: Vec<RepoSymbolExample>,
+    imports: Vec<serde_json::Value>,
+    tests: Vec<String>,
+    related_paths: Vec<String>,
+    definitions: Vec<RepoSymbolExample>,
+    references: Vec<SymbolReferenceExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolCallersExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    path: String,
+    symbol: String,
+    definitions: Vec<RepoSymbolExample>,
+    callers: Vec<SymbolReferenceExample>,
+    files: Vec<String>,
+    tests: Vec<String>,
+    imports: Vec<serde_json::Value>,
+    symbols: Vec<RepoSymbolExample>,
+    related_paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,8 +233,20 @@ struct ApplyVerifyExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    checkpoint: Option<CheckpointExample>,
     plan: RewritePlanExample,
+    validation: Option<ValidationSummaryExample>,
     verification: Option<VerifyResultExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckpointExample {
+    checkpoint_id: String,
+    mode: String,
+    root: String,
+    created_at: String,
+    file_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +265,24 @@ struct VerifyMismatchExample {
     line: usize,
     expected: String,
     actual: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ValidationSummaryExample {
+    success: bool,
+    commands: Vec<ValidationCommandExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ValidationCommandExample {
+    kind: String,
+    command: String,
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -182,6 +309,62 @@ struct SearchNdjsonExample {
     text: String,
     pattern_id: Option<usize>,
     pattern_text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepoMapExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    path: PathBuf,
+    files: Vec<PathBuf>,
+    symbols: Vec<RepoSymbolExample>,
+    imports: Vec<RepoImportExample>,
+    tests: Vec<PathBuf>,
+    related_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RankedRepoSymbolExample {
+    name: String,
+    kind: String,
+    file: PathBuf,
+    line: usize,
+    score: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RepoImportExample {
+    file: PathBuf,
+    imports: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RankedRepoImportExample {
+    file: PathBuf,
+    imports: Vec<String>,
+    score: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextPackExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    query: String,
+    path: PathBuf,
+    files: Vec<PathBuf>,
+    symbols: Vec<RankedRepoSymbolExample>,
+    imports: Vec<RankedRepoImportExample>,
+    tests: Vec<PathBuf>,
+    related_paths: Vec<PathBuf>,
 }
 
 #[test]
@@ -223,6 +406,12 @@ fn test_docs_examples_match_v1_schema() {
             "gpu_sidecar_search.json" => assert_gpu_sidecar_example(path),
             "calibrate.json" => assert_calibrate_example(path),
             "mcp_rewrite_diff.json" => assert_mcp_rewrite_diff_example(path),
+            "repo_map.json" => assert_repo_map_example(path),
+            "context_pack.json" => assert_context_pack_example(path),
+            "defs.json" => assert_symbol_defs_example(path),
+            "impact.json" => assert_symbol_impact_example(path),
+            "refs.json" => assert_symbol_refs_example(path),
+            "callers.json" => assert_symbol_callers_example(path),
             other => panic!("missing schema validation for {other}"),
         }
     }
@@ -361,6 +550,71 @@ fn assert_apply_verify_example(path: &Path) {
         path.display()
     );
     assert_rewrite_plan_payload(path, &example.plan);
+    if let Some(checkpoint) = &example.checkpoint {
+        assert!(
+            !checkpoint.checkpoint_id.is_empty(),
+            "{} checkpoint id must not be empty",
+            path.display()
+        );
+        assert!(
+            checkpoint.mode == "filesystem-snapshot" || checkpoint.mode == "git-worktree-snapshot",
+            "{} checkpoint mode must be a supported snapshot mode",
+            path.display()
+        );
+        assert!(
+            !checkpoint.root.is_empty(),
+            "{} checkpoint root must not be empty",
+            path.display()
+        );
+        assert!(
+            !checkpoint.created_at.is_empty(),
+            "{} checkpoint created_at must not be empty",
+            path.display()
+        );
+        assert!(
+            checkpoint.file_count > 0,
+            "{} checkpoint file_count must be positive",
+            path.display()
+        );
+    }
+
+    if let Some(validation) = &example.validation {
+        assert_eq!(
+            validation.success,
+            validation.commands.iter().all(|command| command.success),
+            "{} validation success flag must match command results",
+            path.display()
+        );
+        for command in &validation.commands {
+            assert!(
+                !command.kind.is_empty(),
+                "{} validation command missing kind",
+                path.display()
+            );
+            assert!(
+                !command.command.is_empty(),
+                "{} validation command missing command text",
+                path.display()
+            );
+            if let Some(exit_code) = command.exit_code {
+                if command.success {
+                    assert_eq!(
+                        exit_code,
+                        0,
+                        "{} successful validation command should exit 0",
+                        path.display()
+                    );
+                }
+            }
+            if !command.success {
+                assert!(
+                    !command.stderr.is_empty() || command.exit_code.is_some(),
+                    "{} failed validation command should report stderr or exit code",
+                    path.display()
+                );
+            }
+        }
+    }
 
     let verification = example
         .verification
@@ -405,6 +659,266 @@ fn assert_apply_verify_example(path: &Path) {
             path.display()
         );
     }
+}
+
+fn assert_symbol_defs_example(path: &Path) {
+    let example: SymbolDefsExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(example.routing_backend, "RepoMap");
+    assert_eq!(example.routing_reason, "symbol-defs");
+    assert!(
+        !example.sidecar_used,
+        "{} should be native symbol defs output",
+        path.display()
+    );
+    assert!(
+        !example.path.is_empty(),
+        "{} path must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    for definition in &example.definitions {
+        assert_eq!(
+            definition.name,
+            example.symbol,
+            "{} definition name must match symbol",
+            path.display()
+        );
+        assert!(
+            !definition.kind.is_empty(),
+            "{} definition kind must not be empty",
+            path.display()
+        );
+        assert!(
+            definition.line > 0,
+            "{} definition line must be positive",
+            path.display()
+        );
+    }
+    assert!(
+        !example.files.is_empty(),
+        "{} files must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbols.is_empty(),
+        "{} symbols must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.related_paths.is_empty(),
+        "{} related_paths must not be empty",
+        path.display()
+    );
+    let _ = &example.imports;
+    let _ = &example.tests;
+}
+
+fn assert_symbol_impact_example(path: &Path) {
+    let example: SymbolImpactExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(example.routing_backend, "RepoMap");
+    assert_eq!(example.routing_reason, "symbol-impact");
+    assert!(
+        !example.sidecar_used,
+        "{} should be native symbol impact output",
+        path.display()
+    );
+    assert!(
+        !example.path.is_empty(),
+        "{} path must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.files.is_empty(),
+        "{} files must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.related_paths.is_empty(),
+        "{} related_paths must not be empty",
+        path.display()
+    );
+    for symbol in &example.symbols {
+        assert!(
+            symbol.score.unwrap_or_default() >= 0,
+            "{} symbol score must be non-negative",
+            path.display()
+        );
+    }
+    let _ = &example.imports;
+    let _ = &example.tests;
+}
+
+fn assert_symbol_refs_example(path: &Path) {
+    let example: SymbolRefsExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(example.routing_backend, "RepoMap");
+    assert_eq!(example.routing_reason, "symbol-refs");
+    assert!(
+        !example.sidecar_used,
+        "{} should be native symbol refs output",
+        path.display()
+    );
+    assert!(
+        !example.path.is_empty(),
+        "{} path must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.references.is_empty(),
+        "{} references must not be empty",
+        path.display()
+    );
+    for reference in &example.references {
+        assert_eq!(
+            reference.name,
+            example.symbol,
+            "{} reference name must match symbol",
+            path.display()
+        );
+        assert_eq!(reference.kind, "reference");
+        assert!(
+            reference.line > 0,
+            "{} reference line must be positive",
+            path.display()
+        );
+        assert!(
+            !reference.text.is_empty(),
+            "{} reference text must not be empty",
+            path.display()
+        );
+    }
+    assert!(
+        !example.files.is_empty(),
+        "{} files must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbols.is_empty(),
+        "{} symbols must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.related_paths.is_empty(),
+        "{} related_paths must not be empty",
+        path.display()
+    );
+    let _ = &example.imports;
+    let _ = &example.tests;
+}
+
+fn assert_symbol_callers_example(path: &Path) {
+    let example: SymbolCallersExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(example.routing_backend, "RepoMap");
+    assert_eq!(example.routing_reason, "symbol-callers");
+    assert!(
+        !example.sidecar_used,
+        "{} should be native symbol callers output",
+        path.display()
+    );
+    assert!(
+        !example.path.is_empty(),
+        "{} path must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.callers.is_empty(),
+        "{} callers must not be empty",
+        path.display()
+    );
+    for caller in &example.callers {
+        assert_eq!(
+            caller.name,
+            example.symbol,
+            "{} caller name must match symbol",
+            path.display()
+        );
+        assert_eq!(caller.kind, "call");
+        assert!(
+            caller.line > 0,
+            "{} caller line must be positive",
+            path.display()
+        );
+        assert!(
+            !caller.text.is_empty(),
+            "{} caller text must not be empty",
+            path.display()
+        );
+    }
+    assert!(
+        !example.files.is_empty(),
+        "{} files must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.related_paths.is_empty(),
+        "{} related_paths must not be empty",
+        path.display()
+    );
+    let _ = &example.imports;
+    let _ = &example.tests;
+    let _ = &example.symbols;
 }
 
 fn assert_gpu_sidecar_example(path: &Path) {
@@ -565,6 +1079,222 @@ fn assert_mcp_rewrite_diff_example(path: &Path) {
         "{} diff missing hunk header",
         path.display()
     );
+}
+
+fn assert_repo_map_example(path: &Path) {
+    let example: RepoMapExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "repo-map",
+        "{} should keep repo-map routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should stay native",
+        path.display()
+    );
+    assert!(
+        is_portable_absolute_path(&example.path),
+        "{} path should be absolute or an absolute Windows path literal",
+        path.display()
+    );
+    assert!(
+        !example.files.is_empty(),
+        "{} should list files",
+        path.display()
+    );
+    assert!(
+        !example.symbols.is_empty(),
+        "{} should list symbols",
+        path.display()
+    );
+    assert!(
+        !example.related_paths.is_empty(),
+        "{} should list related paths",
+        path.display()
+    );
+    for file in &example.files {
+        assert!(
+            is_portable_absolute_path(file),
+            "{} file entry should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for symbol in &example.symbols {
+        assert!(
+            !symbol.name.is_empty(),
+            "{} symbol missing name",
+            path.display()
+        );
+        assert!(
+            !symbol.kind.is_empty(),
+            "{} symbol missing kind",
+            path.display()
+        );
+        assert!(
+            is_portable_absolute_path(&symbol.file),
+            "{} symbol file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            symbol.line > 0,
+            "{} symbol line must be 1-based",
+            path.display()
+        );
+    }
+    for import in &example.imports {
+        assert!(
+            is_portable_absolute_path(&import.file),
+            "{} import file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            !import.imports.is_empty(),
+            "{} import entry should include at least one import",
+            path.display()
+        );
+        for import_name in &import.imports {
+            assert!(
+                !import_name.is_empty(),
+                "{} import name must not be empty",
+                path.display()
+            );
+        }
+    }
+    for test_path in &example.tests {
+        assert!(
+            is_portable_absolute_path(test_path),
+            "{} test path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for related_path in &example.related_paths {
+        assert!(
+            is_portable_absolute_path(related_path),
+            "{} related path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+}
+
+fn assert_context_pack_example(path: &Path) {
+    let example: ContextPackExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "context-pack",
+        "{} should keep context-pack routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should stay native",
+        path.display()
+    );
+    assert!(
+        !example.query.is_empty(),
+        "{} query must not be empty",
+        path.display()
+    );
+    assert!(
+        is_portable_absolute_path(&example.path),
+        "{} path should be absolute or an absolute Windows path literal",
+        path.display()
+    );
+    assert!(
+        !example.files.is_empty(),
+        "{} should rank files",
+        path.display()
+    );
+    assert!(
+        !example.symbols.is_empty(),
+        "{} should rank symbols",
+        path.display()
+    );
+    assert!(
+        !example.related_paths.is_empty(),
+        "{} should list related paths",
+        path.display()
+    );
+    for file in &example.files {
+        assert!(
+            is_portable_absolute_path(file),
+            "{} file entry should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for symbol in &example.symbols {
+        assert!(
+            !symbol.name.is_empty(),
+            "{} symbol missing name",
+            path.display()
+        );
+        assert!(
+            !symbol.kind.is_empty(),
+            "{} symbol missing kind",
+            path.display()
+        );
+        assert!(
+            is_portable_absolute_path(&symbol.file),
+            "{} symbol file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            symbol.line > 0,
+            "{} symbol line must be 1-based",
+            path.display()
+        );
+        assert!(
+            symbol.score > 0,
+            "{} symbol score must be positive",
+            path.display()
+        );
+    }
+    for import in &example.imports {
+        assert!(
+            is_portable_absolute_path(&import.file),
+            "{} import file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            import.score > 0,
+            "{} import score must be positive",
+            path.display()
+        );
+        for import_name in &import.imports {
+            assert!(
+                !import_name.is_empty(),
+                "{} import name must not be empty",
+                path.display()
+            );
+        }
+    }
+    for test_path in &example.tests {
+        assert!(
+            is_portable_absolute_path(test_path),
+            "{} test path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for related_path in &example.related_paths {
+        assert!(
+            is_portable_absolute_path(related_path),
+            "{} related path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
 }
 
 fn assert_rewrite_plan_payload(path: &Path, plan: &RewritePlanExample) {
