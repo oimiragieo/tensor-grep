@@ -97,6 +97,7 @@ Use this shape when an agent needs a deterministic repository inventory before c
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `repo-map`. |
 | `sidecar_used` | `boolean` | Always `false`. |
+| `coverage` | `object` | Self-description for the current inventory/navigation coverage. |
 | `path` | `string` | Absolute root path inventoried. |
 | `files` | `array<string>` | Non-test files included in the inventory. |
 | `symbols` | `array<object>` | Deterministic symbol inventory. |
@@ -120,6 +121,14 @@ Each `imports[]` object has:
 | `file` | `string` | Absolute file path. |
 | `imports` | `array<string>` | Imported module names extracted from the file. |
 
+Current `coverage` values:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `language_scope` | `string` | Currently `python-first`. |
+| `symbol_navigation` | `string` | Currently `python-ast`. |
+| `test_matching` | `string` | Currently `filename-heuristic`. |
+
 ## Context Pack JSON
 
 Emitted by `tg.exe context --query <text> --json ...`.
@@ -134,6 +143,7 @@ Use this shape when an agent needs a query-driven subset of the repository map b
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `context-pack`. |
 | `sidecar_used` | `boolean` | Always `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `query` | `string` | Query text used for ranking. |
 | `path` | `string` | Absolute root path inventoried. |
 | `files` | `array<string>` | Ranked source files related to the query. |
@@ -374,6 +384,7 @@ Example: [`examples/defs.json`](examples/defs.json)
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `symbol-defs`. |
 | `sidecar_used` | `boolean` | `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name requested. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
@@ -395,6 +406,7 @@ Example: [`examples/impact.json`](examples/impact.json)
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `symbol-impact`. |
 | `sidecar_used` | `boolean` | `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
@@ -418,6 +430,7 @@ This is currently a Python-first symbol navigation contract. It finds exact name
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `symbol-refs`. |
 | `sidecar_used` | `boolean` | `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
@@ -441,6 +454,7 @@ This is currently a Python-first symbol navigation contract. It finds exact Pyth
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `symbol-callers`. |
 | `sidecar_used` | `boolean` | `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
@@ -477,6 +491,7 @@ This reuses a cached repo map instead of rebuilding inventory for every query.
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `session-context`. |
 | `sidecar_used` | `boolean` | `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `path` | `string` | Session root. |
 | `query` | `string` | Query text used to rank context. |
 | `session_id` | `string` | Session identifier used for the cached lookup. |

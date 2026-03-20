@@ -586,6 +586,9 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     context = json.loads(mcp_server.tg_session_context(session_id, "add", str(project)))
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
+    assert context["coverage"]["language_scope"] == "python-first"
+    assert context["coverage"]["symbol_navigation"] == "python-ast"
+    assert context["coverage"]["test_matching"] == "filename-heuristic"
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
 
@@ -734,6 +737,7 @@ def test_tg_repo_map_returns_json_inventory(tmp_path):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "repo-map"
     assert payload["sidecar_used"] is False
+    assert payload["coverage"]["language_scope"] == "python-first"
     assert payload["path"] == str(project.resolve())
     assert str(module_path.resolve()) in payload["files"]
     assert str(test_path.resolve()) in payload["tests"]
@@ -785,6 +789,7 @@ def test_tg_context_pack_returns_ranked_inventory(tmp_path):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "context-pack"
     assert payload["sidecar_used"] is False
+    assert payload["coverage"]["symbol_navigation"] == "python-ast"
     assert payload["query"] == "invoice payment"
     assert payload["path"] == str(project.resolve())
     assert payload["files"][0] == str(module_path.resolve())
@@ -807,6 +812,7 @@ def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-defs"
+    assert payload["coverage"]["language_scope"] == "python-first"
     assert payload["symbol"] == "create_invoice"
     assert len(payload["definitions"]) == 1
     assert payload["definitions"][0]["file"] == str(module_path.resolve())
@@ -841,6 +847,7 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-impact"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast"
     assert payload["symbol"] == "create_invoice"
     assert payload["files"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) in payload["files"]
@@ -869,6 +876,7 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-refs"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast"
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
 
 
@@ -903,6 +911,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-callers"
+    assert payload["coverage"]["test_matching"] == "filename-heuristic"
     assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
     assert payload["tests"][0] == str(test_path.resolve())
     assert payload["tests"][0] == str(test_path.resolve())

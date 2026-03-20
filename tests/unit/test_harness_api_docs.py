@@ -48,6 +48,10 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "routing_backend" in doc
     assert "routing_reason" in doc
     assert "version" in doc
+    assert "coverage" in doc
+    assert "python-first" in doc
+    assert "python-ast" in doc
+    assert "filename-heuristic" in doc
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
     assert "tg_symbol_defs" in doc
@@ -101,6 +105,18 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
             assert payload["routing_backend"]
             assert isinstance(payload["routing_reason"], str)
             assert payload["routing_reason"]
+            if file_name in {
+                "repo_map.json",
+                "context_pack.json",
+                "defs.json",
+                "impact.json",
+                "refs.json",
+                "callers.json",
+                "session_context.json",
+            }:
+                assert payload["coverage"]["language_scope"] == "python-first"
+                assert payload["coverage"]["symbol_navigation"] == "python-ast"
+                assert payload["coverage"]["test_matching"] == "filename-heuristic"
 
         for key in required_keys:
             assert key in payload

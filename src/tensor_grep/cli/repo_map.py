@@ -28,6 +28,11 @@ def _envelope(path: Path) -> dict[str, Any]:
         "routing_backend": ROUTING_BACKEND,
         "routing_reason": ROUTING_REASON,
         "sidecar_used": False,
+        "coverage": {
+            "language_scope": "python-first",
+            "symbol_navigation": "python-ast",
+            "test_matching": "filename-heuristic",
+        },
         "path": str(path),
     }
 

@@ -22,5 +22,10 @@
   "related_paths": [
     "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
   ],
-  "session_id": "session-20260320071200-rewrite"
+  "session_id": "session-20260320071200-rewrite",
+  "coverage": {
+    "language_scope": "python-first",
+    "symbol_navigation": "python-ast",
+    "test_matching": "filename-heuristic"
+  }
 }

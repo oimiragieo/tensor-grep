@@ -35,5 +35,10 @@
   "related_paths": [
     "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\src\\sample.py",
     "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\tests\\test_sample.py"
-  ]
+  ],
+  "coverage": {
+    "language_scope": "python-first",
+    "symbol_navigation": "python-ast",
+    "test_matching": "filename-heuristic"
+  }
 }

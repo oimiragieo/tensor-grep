@@ -34,5 +34,10 @@
       "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
       "line": 1
     }
-  ]
+  ],
+  "coverage": {
+    "language_scope": "python-first",
+    "symbol_navigation": "python-ast",
+    "test_matching": "filename-heuristic"
+  }
 }

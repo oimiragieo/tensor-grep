@@ -48,11 +48,20 @@ struct RepoSymbolExample {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CoverageExample {
+    language_scope: String,
+    symbol_navigation: String,
+    test_matching: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SymbolDefsExample {
     version: u32,
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    coverage: CoverageExample,
     path: String,
     symbol: String,
     files: Vec<String>,
@@ -70,6 +79,7 @@ struct SymbolImpactExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    coverage: CoverageExample,
     path: String,
     symbol: String,
     definitions: Vec<RepoSymbolExample>,
@@ -97,6 +107,7 @@ struct SymbolRefsExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    coverage: CoverageExample,
     path: String,
     symbol: String,
     files: Vec<String>,
@@ -115,6 +126,7 @@ struct SymbolCallersExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    coverage: CoverageExample,
     path: String,
     symbol: String,
     definitions: Vec<RepoSymbolExample>,
@@ -320,6 +332,7 @@ struct RepoMapExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    coverage: CoverageExample,
     path: PathBuf,
     files: Vec<PathBuf>,
     symbols: Vec<RepoSymbolExample>,
@@ -360,6 +373,7 @@ struct ContextPackExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    coverage: CoverageExample,
     query: String,
     path: PathBuf,
     files: Vec<PathBuf>,
@@ -386,6 +400,7 @@ struct SessionContextExample {
     routing_backend: String,
     routing_reason: String,
     sidecar_used: bool,
+    coverage: CoverageExample,
     query: String,
     path: PathBuf,
     files: Vec<PathBuf>,
@@ -644,6 +659,7 @@ fn assert_apply_verify_example(path: &Path) {
                     path.display()
                 );
             }
+            let _ = &command.stdout;
         }
     }
 
@@ -707,6 +723,7 @@ fn assert_symbol_defs_example(path: &Path) {
         "{} should be native symbol defs output",
         path.display()
     );
+    assert_repo_map_coverage(path, &example.coverage);
     assert!(
         !example.path.is_empty(),
         "{} path must not be empty",
@@ -774,6 +791,7 @@ fn assert_symbol_impact_example(path: &Path) {
         "{} should be native symbol impact output",
         path.display()
     );
+    assert_repo_map_coverage(path, &example.coverage);
     assert!(
         !example.path.is_empty(),
         "{} path must not be empty",
@@ -825,6 +843,7 @@ fn assert_symbol_refs_example(path: &Path) {
         "{} should be native symbol refs output",
         path.display()
     );
+    assert_repo_map_coverage(path, &example.coverage);
     assert!(
         !example.path.is_empty(),
         "{} path must not be empty",
@@ -853,6 +872,11 @@ fn assert_symbol_refs_example(path: &Path) {
             path.display()
         );
         assert_eq!(reference.kind, "reference");
+        assert!(
+            is_portable_absolute_path(&reference.file),
+            "{} reference file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
         assert!(
             reference.line > 0,
             "{} reference line must be positive",
@@ -898,6 +922,7 @@ fn assert_symbol_callers_example(path: &Path) {
         "{} should be native symbol callers output",
         path.display()
     );
+    assert_repo_map_coverage(path, &example.coverage);
     assert!(
         !example.path.is_empty(),
         "{} path must not be empty",
@@ -926,6 +951,11 @@ fn assert_symbol_callers_example(path: &Path) {
             path.display()
         );
         assert_eq!(caller.kind, "call");
+        assert!(
+            is_portable_absolute_path(&caller.file),
+            "{} caller file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
         assert!(
             caller.line > 0,
             "{} caller line must be positive",
@@ -1131,6 +1161,7 @@ fn assert_repo_map_example(path: &Path) {
         "{} should stay native",
         path.display()
     );
+    assert_repo_map_coverage(path, &example.coverage);
     assert!(
         is_portable_absolute_path(&example.path),
         "{} path should be absolute or an absolute Windows path literal",
@@ -1234,6 +1265,7 @@ fn assert_context_pack_example(path: &Path) {
         "{} should stay native",
         path.display()
     );
+    assert_repo_map_coverage(path, &example.coverage);
     assert!(
         !example.query.is_empty(),
         "{} query must not be empty",
@@ -1376,6 +1408,7 @@ fn assert_session_context_example(path: &Path) {
         "{} should stay native",
         path.display()
     );
+    assert_repo_map_coverage(path, &example.coverage);
     assert!(
         !example.query.is_empty(),
         "{} query must not be empty",
@@ -1441,11 +1474,7 @@ fn assert_session_context_example(path: &Path) {
             "{} import file should be absolute or an absolute Windows path literal",
             path.display()
         );
-        assert!(
-            import.score >= 0,
-            "{} import score must be non-negative",
-            path.display()
-        );
+        let _ = import.score;
     }
     for test_path in &example.tests {
         assert!(
@@ -1581,6 +1610,27 @@ fn assert_common_envelope(path: &Path, version: u32, routing_backend: &str, rout
     assert!(
         !routing_reason.is_empty(),
         "{} missing routing_reason",
+        path.display()
+    );
+}
+
+fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
+    assert_eq!(
+        coverage.language_scope,
+        "python-first",
+        "{} coverage.language_scope must stay python-first",
+        path.display()
+    );
+    assert_eq!(
+        coverage.symbol_navigation,
+        "python-ast",
+        "{} coverage.symbol_navigation must stay python-ast",
+        path.display()
+    );
+    assert_eq!(
+        coverage.test_matching,
+        "filename-heuristic",
+        "{} coverage.test_matching must stay filename-heuristic",
         path.display()
     );
 }

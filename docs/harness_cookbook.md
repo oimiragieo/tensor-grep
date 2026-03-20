@@ -62,6 +62,7 @@ Expected top-level fields:
 - `"routing_backend"`
 - `"routing_reason"`
 - `"sidecar_used"`
+- `"coverage"`
 - `"path"`
 - `"files"`
 - `"symbols"`
@@ -74,6 +75,12 @@ Recommended consumer behavior:
 1. request the repo map before multi-file edit planning
 2. choose a small set of relevant files from `files`, `symbols`, and `related_paths`
 3. feed only that subset into the next search or rewrite step
+
+Current coverage values describe the limits of this surface:
+
+- `"language_scope": "python-first"`
+- `"symbol_navigation": "python-ast"`
+- `"test_matching": "filename-heuristic"`
 
 ## Context Pack Flow
 
@@ -89,6 +96,7 @@ Expected top-level fields:
 - `"routing_backend"`
 - `"routing_reason"`
 - `"sidecar_used"`
+- `"coverage"`
 - `"query"`
 - `"path"`
 - `"files"`
@@ -102,6 +110,7 @@ Recommended consumer behavior:
 1. use the raw user task or issue title as the initial query
 2. take the top ranked `files` and `tests` as the first edit/search context
 3. use symbol `score` to decide which definitions to inspect before planning edits
+4. inspect `coverage` before treating the results as cross-language semantic truth
 
 Resolve exact definitions:
 
@@ -155,6 +164,7 @@ Recommended consumer behavior:
 1. open one session at the start of a multi-step edit task
 2. reuse `session context` for follow-up queries instead of rebuilding repo inventory
 3. keep the returned `session_id` with the task state until the edit loop finishes
+4. keep honoring the same `coverage` contract as `tg map` / `tg context`
 
 ## Rewrite Planning Flow
 

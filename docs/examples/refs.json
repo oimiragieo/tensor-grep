@@ -43,5 +43,10 @@
       "line": 1,
       "text": "def add(x, y): return x + y"
     }
-  ]
+  ],
+  "coverage": {
+    "language_scope": "python-first",
+    "symbol_navigation": "python-ast",
+    "test_matching": "filename-heuristic"
+  }
 }
