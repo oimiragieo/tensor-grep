@@ -150,3 +150,28 @@ def test_session_serve_cli_reports_invalid_request_as_jsonl(tmp_path: Path) -> N
     assert payload["session_id"] == opened["session_id"]
     assert payload["error"]["code"] == "invalid_request"
     assert "non-empty query" in payload["error"]["message"]
+
+
+def test_session_serve_reports_stale_session_after_file_change(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    module_path.write_text("def create_invoice():\n    return 2\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["session", "serve", opened["session_id"], str(project)],
+        input='{"command":"context","query":"invoice"}\n',
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["error"]["code"] == "stale_session"
+    assert "changed on disk" in payload["error"]["message"]

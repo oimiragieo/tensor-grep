@@ -41,6 +41,10 @@ class SessionOpenResult:
     symbol_count: int
 
 
+class SessionStaleError(RuntimeError):
+    pass
+
+
 def _resolve_root(path: Path) -> Path:
     resolved = path.expanduser().resolve()
     return resolved if resolved.is_dir() else resolved.parent
@@ -72,6 +76,44 @@ def _write_index(root: Path, records: list[SessionRecord]) -> None:
     path.write_text(json.dumps([asdict(record) for record in records], indent=2), encoding="utf-8")
 
 
+def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
+    snapshot: list[dict[str, Any]] = []
+    for current in file_paths:
+        path = Path(current)
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        snapshot.append(
+            {
+                "path": str(path),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        )
+    snapshot.sort(key=lambda item: str(item["path"]))
+    return snapshot
+
+
+def _stale_reason(payload: dict[str, Any]) -> str | None:
+    snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
+    if not snapshot:
+        return None
+
+    for entry in snapshot:
+        current_path = Path(str(entry["path"]))
+        if not current_path.exists():
+            return f"cached session file was removed: {current_path}"
+        try:
+            stat = current_path.stat()
+        except OSError:
+            return f"cached session file cannot be read: {current_path}"
+        if int(stat.st_size) != int(entry["size"]) or int(stat.st_mtime_ns) != int(entry["mtime_ns"]):
+            return f"cached session file changed on disk: {current_path}"
+
+    return None
+
+
 def open_session(path: str = ".") -> SessionOpenResult:
     root = _resolve_root(Path(path))
     repo_map = build_repo_map(root)
@@ -83,6 +125,7 @@ def open_session(path: str = ".") -> SessionOpenResult:
         "root": str(root),
         "created_at": created_at,
         "repo_map": repo_map,
+        "snapshot": _capture_snapshot(repo_map["files"]),
     }
     session_path = _session_payload_path(root, session_id)
     session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,6 +166,9 @@ def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
 
 def session_context(session_id: str, query: str, path: str = ".") -> dict[str, Any]:
     payload = get_session(session_id, path)
+    reason = _stale_reason(payload)
+    if reason:
+        raise SessionStaleError(reason)
     context = build_context_pack_from_map(payload["repo_map"], query)
     context["session_id"] = session_id
     context["routing_reason"] = "session-context"
@@ -141,6 +187,10 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
         response = dict(payload)
         response["session_id"] = session_id
         return response
+
+    reason = _stale_reason(payload)
+    if reason:
+        raise SessionStaleError(reason)
 
     if command == "repo_map":
         response = dict(repo_map)
@@ -215,6 +265,12 @@ def serve_session_stream(
         try:
             request = cast(dict[str, Any], json.loads(line))
             response = serve_session_request(session_id, request, path)
+        except SessionStaleError as exc:
+            response = {
+                "version": _SESSION_VERSION,
+                "session_id": session_id,
+                "error": {"code": "stale_session", "message": str(exc)},
+            }
         except Exception as exc:
             response = {
                 "version": _SESSION_VERSION,
