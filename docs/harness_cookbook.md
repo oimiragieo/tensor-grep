@@ -80,7 +80,7 @@ Current coverage values describe the limits of this surface:
 
 - `"language_scope": "python-js-ts-rust"`
 - `"symbol_navigation": "python-ast+heuristic-js-ts-rust"`
-- `"test_matching": "filename-heuristic"`
+- `"test_matching": "filename+import-heuristic"`
 
 ## Context Pack Flow
 

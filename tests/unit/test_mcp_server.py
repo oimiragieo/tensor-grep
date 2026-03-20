@@ -588,7 +588,7 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     assert context["routing_reason"] == "session-context"
     assert context["coverage"]["language_scope"] == "python-js-ts-rust"
     assert context["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
-    assert context["coverage"]["test_matching"] == "filename-heuristic"
+    assert context["coverage"]["test_matching"] == "filename+import-heuristic"
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
 
@@ -947,6 +947,53 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
     assert payload["tests"][0] == str(test_path.resolve())
 
 
+def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    ts_path = src_dir / "payments.ts"
+    ts_path.write_text(
+        "export function createInvoice(total: number) {\n"
+        "  return total;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    rust_path = src_dir / "billing.rs"
+    rust_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    ts_test_path = tests_dir / "invoice_flow.spec.ts"
+    ts_test_path.write_text(
+        'import { createInvoice } from "../src/payments";\n'
+        "test('invoice', () => expect(createInvoice(1)).toBe(1));\n",
+        encoding="utf-8",
+    )
+    rust_test_path = tests_dir / "integration_checks.rs"
+    rust_test_path.write_text(
+        "use crate::billing::issue_invoice;\n\n"
+        "#[test]\n"
+        "fn invoice_smoke() {\n"
+        "    assert_eq!(issue_invoice(), 1);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    ts_payload = json.loads(mcp_server.tg_symbol_impact("createInvoice", str(project)))
+    rust_payload = json.loads(mcp_server.tg_symbol_impact("issue_invoice", str(project)))
+
+    assert ts_payload["coverage"]["test_matching"] == "filename+import-heuristic"
+    assert ts_payload["tests"][0] == str(ts_test_path.resolve())
+    assert rust_payload["tests"][0] == str(rust_test_path.resolve())
+
+
 def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
     from tensor_grep.cli import mcp_server
 
@@ -1045,7 +1092,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-callers"
     assert payload["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
-    assert payload["coverage"]["test_matching"] == "filename-heuristic"
+    assert payload["coverage"]["test_matching"] == "filename+import-heuristic"
     assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
     assert payload["tests"][0] == str(test_path.resolve())
     assert payload["tests"][0] == str(test_path.resolve())
@@ -1054,3 +1101,36 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
     )
     assert payload["related_paths"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) not in payload["related_paths"][:1]
+
+
+def test_tg_symbol_callers_prefers_import_linked_typescript_tests(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    ts_path = src_dir / "payments.ts"
+    ts_path.write_text(
+        "export function createInvoice(total: number) {\n"
+        "  return total;\n"
+        "}\n\n"
+        "export function renderInvoice() {\n"
+        "  return createInvoice(10);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    ts_test_path = tests_dir / "invoice_flow.spec.ts"
+    ts_test_path.write_text(
+        'import { createInvoice } from "../src/payments";\n'
+        "test('invoice', () => expect(createInvoice(1)).toBe(1));\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("createInvoice", str(project)))
+
+    assert payload["coverage"]["test_matching"] == "filename+import-heuristic"
+    assert any(caller["file"] == str(ts_path.resolve()) for caller in payload["callers"])
+    assert payload["tests"][0] == str(ts_test_path.resolve())

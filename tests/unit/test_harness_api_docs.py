@@ -51,7 +51,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "coverage" in doc
     assert "python-js-ts-rust" in doc
     assert "python-ast+heuristic-js-ts-rust" in doc
-    assert "filename-heuristic" in doc
+    assert "filename+import-heuristic" in doc
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
     assert "tg_symbol_defs" in doc
@@ -116,7 +116,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
             }:
                 assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
                 assert payload["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
-                assert payload["coverage"]["test_matching"] == "filename-heuristic"
+                assert payload["coverage"]["test_matching"] == "filename+import-heuristic"
 
         for key in required_keys:
             assert key in payload

@@ -33,7 +33,7 @@ def _envelope(path: Path) -> dict[str, Any]:
         "coverage": {
             "language_scope": "python-js-ts-rust",
             "symbol_navigation": "python-ast+heuristic-js-ts-rust",
-            "test_matching": "filename-heuristic",
+            "test_matching": "filename+import-heuristic",
         },
         "path": str(path),
     }
@@ -388,14 +388,46 @@ def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:
     )
 
 
-def _context_tests(source_files: list[str], tests: list[str], terms: list[str]) -> list[str]:
+def _source_tokens(source_files: list[str]) -> set[str]:
+    tokens: set[str] = set()
+    for current in source_files:
+        path = Path(current)
+        stem = path.stem.lower()
+        tokens.add(stem)
+        for part in re.split(r"[^A-Za-z0-9_]+", stem):
+            if part:
+                tokens.add(part)
+    return tokens
+
+
+def _test_import_bonus(
+    test_path: str,
+    source_tokens: set[str],
+    imports_by_file: dict[str, list[str]],
+) -> int:
+    bonus = 0
+    for import_name in imports_by_file.get(test_path, []):
+        lowered = import_name.lower()
+        if any(token and token in lowered for token in source_tokens):
+            bonus += 3
+    return bonus
+
+
+def _context_tests(
+    source_files: list[str],
+    tests: list[str],
+    terms: list[str],
+    imports_by_file: dict[str, list[str]],
+) -> list[str]:
     related: list[tuple[int, str]] = []
     source_stems = {Path(current).stem.lower() for current in source_files}
+    source_tokens = _source_tokens(source_files)
     for current in tests:
         score = _score_file_path(current, terms)
         stem = Path(current).stem.lower().removeprefix("test_")
         if stem in source_stems:
             score += 2
+        score += _test_import_bonus(current, source_tokens, imports_by_file)
         if score > 0:
             related.append((score, current))
     related.sort(key=lambda item: (-item[0], item[1]))
@@ -404,6 +436,9 @@ def _context_tests(source_files: list[str], tests: list[str], terms: list[str]) 
 
 def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[str, Any]:
     terms = _query_terms(query)
+    imports_by_file = {
+        str(entry["file"]): [str(item) for item in entry["imports"]] for entry in payload["imports"]
+    }
 
     scored_files = [(_score_file_path(current, terms), current) for current in payload["files"]]
     scored_files = [item for item in scored_files if item[0] > 0]
@@ -446,7 +481,7 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
             current = str(entry["file"])
             if current not in ranked_files:
                 ranked_files.append(current)
-    ranked_tests = _context_tests(ranked_files, payload["tests"], terms)
+    ranked_tests = _context_tests(ranked_files, payload["tests"], terms, imports_by_file)
 
     related_paths = []
     for current in ranked_files:

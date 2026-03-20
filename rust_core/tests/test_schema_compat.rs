@@ -1629,8 +1629,8 @@ fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
     );
     assert_eq!(
         coverage.test_matching,
-        "filename-heuristic",
-        "{} coverage.test_matching must stay filename-heuristic",
+        "filename+import-heuristic",
+        "{} coverage.test_matching must stay filename+import-heuristic",
         path.display()
     );
 }

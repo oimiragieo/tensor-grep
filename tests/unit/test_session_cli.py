@@ -46,7 +46,7 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     assert context["routing_reason"] == "session-context"
     assert context["coverage"]["language_scope"] == "python-js-ts-rust"
     assert context["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
-    assert context["coverage"]["test_matching"] == "filename-heuristic"
+    assert context["coverage"]["test_matching"] == "filename+import-heuristic"
     assert context["files"][0] == str(module_path.resolve())
     assert context["tests"][0] == str(test_path.resolve())
 
