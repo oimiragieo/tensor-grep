@@ -25,7 +25,16 @@ fn repo_python() -> PathBuf {
         return candidate;
     }
 
+    let unix_candidate = repo_root().join(".venv").join("bin").join("python");
+    if unix_candidate.exists() {
+        return unix_candidate;
+    }
+
     PathBuf::from("python")
+}
+
+fn configure_repo_python_env(command: &mut Command) {
+    command.env("PYTHONPATH", repo_root().join("src"));
 }
 
 fn isolated_tg_binary(dir: &Path) -> PathBuf {
@@ -97,6 +106,7 @@ fn configure_classify_env(command: &mut Command) {
         .env("TENSOR_GREP_TRITON_TIMEOUT_SECONDS", "0.01")
         .env("HF_HUB_OFFLINE", "1")
         .env("TRANSFORMERS_OFFLINE", "1");
+    configure_repo_python_env(command);
 }
 
 #[cfg(not(feature = "cuda"))]
