@@ -34,6 +34,8 @@ These top-level fields are shared across every JSON shape documented here.
 | Symbol impact JSON | `tg.exe impact --symbol <name> --json ...` | [`examples/impact.json`](examples/impact.json) |
 | Symbol refs JSON | `tg.exe refs --symbol <name> --json ...` | [`examples/refs.json`](examples/refs.json) |
 | Symbol callers JSON | `tg.exe callers --symbol <name> --json ...` | [`examples/callers.json`](examples/callers.json) |
+| Session open JSON | `tg.exe session open ... --json` | [`examples/session_open.json`](examples/session_open.json) |
+| Session context JSON | `tg.exe session context <id> --query ... --json` | [`examples/session_context.json`](examples/session_context.json) |
 | MCP rewrite diff JSON | `tg_rewrite_diff(...)` | [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json) |
 
 ## Search JSON
@@ -447,6 +449,42 @@ This is currently a Python-first symbol navigation contract. It finds exact Pyth
 | `tests` | `array<string>` | Likely impacted tests. |
 | `related_paths` | `array<string>` | Stable union of definition files, caller files, and tests. |
 
+## Session Open JSON
+
+Emitted by `tg.exe session open ... --json`.
+
+Example: [`examples/session_open.json`](examples/session_open.json)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `session_id` | `string` | Stable identifier for later session queries. |
+| `root` | `string` | Session root. |
+| `created_at` | `string` | ISO-8601 timestamp for the cached repo map. |
+| `file_count` | `integer` | Number of source files captured in the cached repo map. |
+| `symbol_count` | `integer` | Number of symbols captured in the cached repo map. |
+
+## Session Context JSON
+
+Emitted by `tg.exe session context <id> --query ... --json`.
+
+Example: [`examples/session_context.json`](examples/session_context.json)
+
+This reuses a cached repo map instead of rebuilding inventory for every query.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `session-context`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `path` | `string` | Session root. |
+| `query` | `string` | Query text used to rank context. |
+| `session_id` | `string` | Session identifier used for the cached lookup. |
+| `files` | `array<string>` | Ranked source files derived from the cached repo map. |
+| `symbols` | `array<object>` | Ranked symbols, including `score`. |
+| `tests` | `array<string>` | Ranked tests derived from the cached repo map. |
+| `related_paths` | `array<string>` | Stable union of ranked files and tests. |
+
 ## MCP Tool Responses
 
 The MCP server exposes stable tool contracts layered on top of the native CLI outputs.
@@ -462,6 +500,10 @@ Current tool set:
 - `tg_checkpoint_create(path=".")`
 - `tg_checkpoint_list(path=".")`
 - `tg_checkpoint_undo(checkpoint_id, path=".")`
+- `tg_session_open(path=".")`
+- `tg_session_list(path=".")`
+- `tg_session_show(session_id, path=".")`
+- `tg_session_context(session_id, query, path=".")`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
@@ -474,6 +516,8 @@ Response mapping:
 - `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)
 - `tg_symbol_refs(...)` returns the same v1 envelope and payload shape as [`examples/refs.json`](examples/refs.json)
 - `tg_symbol_callers(...)` returns the same v1 envelope and payload shape as [`examples/callers.json`](examples/callers.json)
+- `tg_session_open(...)` returns the same payload shape as [`examples/session_open.json`](examples/session_open.json)
+- `tg_session_context(...)` returns the same payload shape as [`examples/session_context.json`](examples/session_context.json)
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 - `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 - `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text

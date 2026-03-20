@@ -244,11 +244,7 @@ def test_map_json_emits_repo_inventory_envelope(tmp_path):
 
     module_path = src_dir / "sample.py"
     module_path.write_text(
-        "import json\n\n"
-        "class Widget:\n"
-        "    pass\n\n"
-        "def add(x, y):\n"
-        "    return x + y\n",
+        "import json\n\nclass Widget:\n    pass\n\ndef add(x, y):\n    return x + y\n",
         encoding="utf-8",
     )
     test_path = tests_dir / "test_sample.py"
@@ -325,12 +321,10 @@ def test_context_json_ranks_related_files_symbols_and_tests(tmp_path):
     assert payload["files"][0] == str(module_path.resolve())
     assert payload["tests"][0] == str(test_path.resolve())
     assert any(
-        symbol["name"] == "create_invoice" and symbol["score"] > 0
-        for symbol in payload["symbols"]
+        symbol["name"] == "create_invoice" and symbol["score"] > 0 for symbol in payload["symbols"]
     )
     assert any(
-        symbol["name"] == "PaymentService" and symbol["score"] > 0
-        for symbol in payload["symbols"]
+        symbol["name"] == "PaymentService" and symbol["score"] > 0 for symbol in payload["symbols"]
     )
     assert payload["related_paths"][0] == str(module_path.resolve())
     assert str(test_path.resolve()) in payload["related_paths"]
@@ -373,9 +367,7 @@ def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "import decimal\n\n"
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "import decimal\n\ndef create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     other_path = src_dir / "billing.py"
@@ -410,14 +402,12 @@ def test_refs_json_returns_python_references_for_symbol(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     other_path = src_dir / "billing.py"
     other_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "result = create_invoice(10, 2)\n",
+        "from src.payments import create_invoice\n\nresult = create_invoice(10, 2)\n",
         encoding="utf-8",
     )
 
@@ -442,8 +432,7 @@ def test_callers_json_returns_python_call_sites_for_symbol(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     other_path = src_dir / "billing.py"
@@ -455,8 +444,7 @@ def test_callers_json_returns_python_call_sites_for_symbol(tmp_path):
     )
     test_path = tests_dir / "test_payments.py"
     test_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "assert create_invoice(1, 2) == 3\n",
+        "from src.payments import create_invoice\n\nassert create_invoice(1, 2) == 3\n",
         encoding="utf-8",
     )
 
@@ -2099,6 +2087,7 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "upgrade" in result.stdout
     assert "update" in result.stdout
     assert "checkpoint" in result.stdout
+    assert "session" in result.stdout
     assert "defs" in result.stdout
     assert "impact" in result.stdout
     assert "refs" in result.stdout

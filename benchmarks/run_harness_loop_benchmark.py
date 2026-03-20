@@ -329,12 +329,14 @@ def main() -> int:
         errors.append(f"tg binary not found: {tg_binary}")
 
     if errors:
-        payload.update({
-            "passed": False,
-            "all_passed": False,
-            "error": " ".join(errors),
-            "rows": [],
-        })
+        payload.update(
+            {
+                "passed": False,
+                "all_passed": False,
+                "error": " ".join(errors),
+                "rows": [],
+            }
+        )
         write_json(output_path, payload)
         for error in errors:
             print(error, file=sys.stderr)
@@ -361,14 +363,16 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    payload.update({
-        "tg_binary": str(tg_binary),
-        "corpus_dir": str(corpus_dir),
-        "manifest_path": str(corpus_info["manifest_path"]),
-        "file_count": corpus_info["file_count"],
-        "total_loc": corpus_info["total_loc"],
-        **results,
-    })
+    payload.update(
+        {
+            "tg_binary": str(tg_binary),
+            "corpus_dir": str(corpus_dir),
+            "manifest_path": str(corpus_info["manifest_path"]),
+            "file_count": corpus_info["file_count"],
+            "total_loc": corpus_info["total_loc"],
+            **results,
+        }
+    )
     if payload.get("rows") and (
         not isinstance(payload.get("phase_medians_s"), dict)
         or not isinstance(payload.get("phase_totals_s"), dict)

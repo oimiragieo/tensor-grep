@@ -12,6 +12,8 @@ EXPECTED_EXAMPLES = {
     "impact.json": ("symbol", "files"),
     "refs.json": ("symbol", "references"),
     "callers.json": ("symbol", "callers"),
+    "session_open.json": ("session_id", "file_count"),
+    "session_context.json": ("query", "files", "session_id"),
     "rewrite_plan.json": ("total_edits", "edits"),
     "rewrite_apply_verify.json": ("checkpoint", "plan", "verification", "validation"),
     "gpu_sidecar_search.json": ("sidecar_used", "matches"),
@@ -38,6 +40,8 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Symbol Impact JSON" in doc
     assert "## Symbol Refs JSON" in doc
     assert "## Symbol Callers JSON" in doc
+    assert "## Session Open JSON" in doc
+    assert "## Session Context JSON" in doc
     assert "## MCP Tool Responses" in doc
     assert "## Compatibility Policy" in doc
     assert "## Diff Output" in doc
@@ -50,6 +54,10 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_symbol_impact" in doc
     assert "tg_symbol_refs" in doc
     assert "tg_symbol_callers" in doc
+    assert "tg_session_open" in doc
+    assert "tg_session_list" in doc
+    assert "tg_session_show" in doc
+    assert "tg_session_context" in doc
     assert "tg_checkpoint_create" in doc
     assert "tg_checkpoint_list" in doc
     assert "tg_checkpoint_undo" in doc
@@ -78,11 +86,21 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
     for file_name, required_keys in EXPECTED_EXAMPLES.items():
         payload = json.loads((EXAMPLES_DIR / file_name).read_text(encoding="utf-8"))
 
-        assert isinstance(payload["version"], int)
-        assert isinstance(payload["routing_backend"], str)
-        assert payload["routing_backend"]
-        assert isinstance(payload["routing_reason"], str)
-        assert payload["routing_reason"]
+        if file_name == "session_open.json":
+            assert isinstance(payload["session_id"], str)
+            assert payload["session_id"]
+            assert isinstance(payload["root"], str)
+            assert payload["root"]
+            assert isinstance(payload["created_at"], str)
+            assert payload["created_at"]
+            assert isinstance(payload["file_count"], int)
+            assert isinstance(payload["symbol_count"], int)
+        else:
+            assert isinstance(payload["version"], int)
+            assert isinstance(payload["routing_backend"], str)
+            assert payload["routing_backend"]
+            assert isinstance(payload["routing_reason"], str)
+            assert payload["routing_reason"]
 
         for key in required_keys:
             assert key in payload
@@ -102,10 +120,18 @@ def test_harness_api_examples_are_non_trivial_single_document_json() -> None:
         diff = payload.get("diff")
         files = payload.get("files")
         symbols = payload.get("symbols")
+        file_count = payload.get("file_count")
 
-        assert total_matches or total_edits or nested_total_edits or measurements or diff or files or symbols, (
-            f"{path.name} should include matches, edits, or repo inventory"
-        )
+        assert (
+            total_matches
+            or total_edits
+            or nested_total_edits
+            or measurements
+            or diff
+            or files
+            or symbols
+            or file_count
+        ), f"{path.name} should include matches, edits, repo inventory, or session metadata"
 
 
 def test_harness_api_ndjson_example_contains_parseable_rows() -> None:

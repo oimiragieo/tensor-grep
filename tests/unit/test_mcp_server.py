@@ -563,6 +563,32 @@ def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):
     assert target.read_text(encoding="utf-8") == "value = 1\n"
 
 
+def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "sample.py").write_text("def add(x):\n    return x\n", encoding="utf-8")
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+    assert opened["file_count"] == 1
+
+    listing = json.loads(mcp_server.tg_session_list(str(project)))
+    assert listing["version"] == 1
+    assert listing["sessions"][0]["session_id"] == session_id
+
+    shown = json.loads(mcp_server.tg_session_show(session_id, str(project)))
+    assert shown["session_id"] == session_id
+    assert shown["repo_map"]["files"] == [str((src_dir / "sample.py").resolve())]
+
+    context = json.loads(mcp_server.tg_session_context(session_id, "add", str(project)))
+    assert context["session_id"] == session_id
+    assert context["routing_reason"] == "session-context"
+    assert context["files"] == [str((src_dir / "sample.py").resolve())]
+
+
 def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
     from tensor_grep.cli import mcp_server
 
@@ -696,11 +722,7 @@ def test_tg_repo_map_returns_json_inventory(tmp_path):
 
     module_path = src_dir / "sample.py"
     module_path.write_text(
-        "import pathlib\n\n"
-        "class Widget:\n"
-        "    pass\n\n"
-        "def add(x, y):\n"
-        "    return x + y\n",
+        "import pathlib\n\nclass Widget:\n    pass\n\ndef add(x, y):\n    return x + y\n",
         encoding="utf-8",
     )
     test_path = tests_dir / "test_sample.py"
@@ -777,8 +799,7 @@ def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
 
@@ -802,8 +823,7 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     other_path = src_dir / "billing.py"
@@ -836,14 +856,12 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     other_path = src_dir / "billing.py"
     other_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "result = create_invoice(10, 2)\n",
+        "from src.payments import create_invoice\n\nresult = create_invoice(10, 2)\n",
         encoding="utf-8",
     )
 
@@ -865,8 +883,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     other_path = src_dir / "billing.py"
@@ -878,8 +895,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
     )
     test_path = tests_dir / "test_payments.py"
     test_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "assert create_invoice(1, 2) == 3\n",
+        "from src.payments import create_invoice\n\nassert create_invoice(1, 2) == 3\n",
         encoding="utf-8",
     )
 
@@ -891,8 +907,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
     assert payload["tests"][0] == str(test_path.resolve())
     assert payload["tests"][0] == str(test_path.resolve())
     assert any(
-        symbol["name"] == "create_invoice" and symbol["score"] > 0
-        for symbol in payload["symbols"]
+        symbol["name"] == "create_invoice" and symbol["score"] > 0 for symbol in payload["symbols"]
     )
     assert payload["related_paths"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) not in payload["related_paths"][:1]

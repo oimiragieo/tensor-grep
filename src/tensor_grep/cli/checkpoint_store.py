@@ -157,7 +157,9 @@ def _metadata_path(root: Path, checkpoint_id: str) -> Path:
     return _checkpoint_dir(root, checkpoint_id) / _METADATA_FILE
 
 
-def _write_checkpoint_metadata(root: Path, result: CheckpointCreateResult, entries: dict[str, bool]) -> None:
+def _write_checkpoint_metadata(
+    root: Path, result: CheckpointCreateResult, entries: dict[str, bool]
+) -> None:
     payload: dict[str, Any] = {
         "version": _CHECKPOINT_VERSION,
         "checkpoint_id": result.checkpoint_id,

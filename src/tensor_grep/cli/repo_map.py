@@ -96,7 +96,9 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
     return imports, symbols
 
 
-def _python_references_and_calls(path: Path, symbol: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _python_references_and_calls(
+    path: Path, symbol: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if path.suffix != ".py":
         return [], []
 
@@ -214,7 +216,9 @@ def _score_symbol(symbol: dict[str, Any], terms: list[str]) -> int:
 
 def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:
     imports_joined = " ".join(str(item) for item in entry["imports"])
-    return _score_file_path(str(entry["file"]), terms) + _score_text_terms(imports_joined, terms) * 2
+    return (
+        _score_file_path(str(entry["file"]), terms) + _score_text_terms(imports_joined, terms) * 2
+    )
 
 
 def _context_tests(source_files: list[str], tests: list[str], terms: list[str]) -> list[str]:
@@ -231,13 +235,10 @@ def _context_tests(source_files: list[str], tests: list[str], terms: list[str]) 
     return [path for _, path in related]
 
 
-def build_context_pack(query: str, path: str | Path = ".") -> dict[str, Any]:
-    payload = build_repo_map(path)
+def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[str, Any]:
     terms = _query_terms(query)
 
-    scored_files = [
-        (_score_file_path(current, terms), current) for current in payload["files"]
-    ]
+    scored_files = [(_score_file_path(current, terms), current) for current in payload["files"]]
     scored_files = [item for item in scored_files if item[0] > 0]
     scored_files.sort(key=lambda item: (-item[0], item[1]))
 
@@ -250,7 +251,12 @@ def build_context_pack(query: str, path: str | Path = ".") -> dict[str, Any]:
         scored_symbol["score"] = score
         scored_symbols.append(scored_symbol)
     scored_symbols.sort(
-        key=lambda item: (-int(item["score"]), str(item["file"]), int(item["line"]), str(item["name"]))
+        key=lambda item: (
+            -int(item["score"]),
+            str(item["file"]),
+            int(item["line"]),
+            str(item["name"]),
+        )
     )
 
     scored_imports: list[dict[str, Any]] = []
@@ -264,6 +270,15 @@ def build_context_pack(query: str, path: str | Path = ".") -> dict[str, Any]:
     scored_imports.sort(key=lambda item: (-int(item["score"]), str(item["file"])))
 
     ranked_files = [path for _, path in scored_files]
+    if not ranked_files:
+        for symbol in scored_symbols:
+            current = str(symbol["file"])
+            if current not in ranked_files:
+                ranked_files.append(current)
+        for entry in scored_imports:
+            current = str(entry["file"])
+            if current not in ranked_files:
+                ranked_files.append(current)
     ranked_tests = _context_tests(ranked_files, payload["tests"], terms)
 
     related_paths = []
@@ -283,19 +298,37 @@ def build_context_pack(query: str, path: str | Path = ".") -> dict[str, Any]:
     return payload
 
 
+def build_context_pack(query: str, path: str | Path = ".") -> dict[str, Any]:
+    payload = build_repo_map(path)
+    return _build_context_pack_from_map(payload, query)
+
+
 def build_context_pack_json(query: str, path: str | Path = ".") -> str:
     return json.dumps(build_context_pack(query, path), indent=2)
+
+
+def build_context_pack_from_map(repo_map: dict[str, Any], query: str) -> dict[str, Any]:
+    payload = dict(repo_map)
+    payload["files"] = list(repo_map.get("files", []))
+    payload["symbols"] = [dict(symbol) for symbol in repo_map.get("symbols", [])]
+    payload["imports"] = [dict(entry) for entry in repo_map.get("imports", [])]
+    payload["tests"] = list(repo_map.get("tests", []))
+    payload["related_paths"] = list(repo_map.get("related_paths", []))
+    return _build_context_pack_from_map(payload, query)
 
 
 def build_symbol_defs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
     payload = build_repo_map(path)
     definitions = [
-        dict(current)
-        for current in payload["symbols"]
-        if str(current["name"]) == symbol
+        dict(current) for current in payload["symbols"] if str(current["name"]) == symbol
     ]
     definitions.sort(
-        key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"]), str(item["name"]))
+        key=lambda item: (
+            str(item["file"]),
+            int(item["line"]),
+            str(item["kind"]),
+            str(item["name"]),
+        )
     )
 
     definition_files = [str(current["file"]) for current in definitions]

@@ -49,6 +49,10 @@ checkpoint_app = typer.Typer(
     help="Create, list, and undo edit checkpoints.",
     no_args_is_help=True,
 )
+session_app = typer.Typer(
+    help="Open and reuse cached repository-map sessions.",
+    no_args_is_help=True,
+)
 
 
 def _read_project_version_fallback() -> str:
@@ -165,10 +169,12 @@ def _resolve_native_tg_binary() -> Path | None:
     candidates = []
     if env_override:
         candidates.append(Path(env_override).expanduser())
-    candidates.extend([
-        repo_root / "rust_core" / "target" / "release" / binary_name,
-        repo_root / "rust_core" / "target" / "debug" / binary_name,
-    ])
+    candidates.extend(
+        [
+            repo_root / "rust_core" / "target" / "release" / binary_name,
+            repo_root / "rust_core" / "target" / "debug" / binary_name,
+        ]
+    )
 
     existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
     if not existing:
@@ -457,23 +463,27 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append({
-                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
-                    "language": str(
-                        item.get("language") or payload.get("language") or default_language
-                    ),
-                })
+                specs.append(
+                    {
+                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                        "pattern": pattern,
+                        "language": str(
+                            item.get("language") or payload.get("language") or default_language
+                        ),
+                    }
+                )
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append({
-            "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
-            "language": str(payload.get("language") or default_language),
-        })
+        specs.append(
+            {
+                "id": str(payload.get("id") or rule_file.stem),
+                "pattern": pattern,
+                "language": str(payload.get("language") or default_language),
+            }
+        )
 
     return specs
 
@@ -1513,7 +1523,9 @@ def map(
 @app.command()
 def context(
     path: str = typer.Argument(".", help="File or directory to inventory"),
-    query: str = typer.Option(..., "--query", help="Query text used to rank relevant repo context."),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank relevant repo context."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a ranked repository context pack for edit planning."""
@@ -1627,6 +1639,111 @@ def callers(
     typer.echo(f"callers={len(payload['callers'])} files={len(payload['files'])}")
 
 
+@session_app.command("open")
+def session_open(
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Create a cached repo-map session for repeated edit loops."""
+    from tensor_grep.cli.session_store import open_session
+
+    try:
+        payload = open_session(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Opened session {payload.session_id} "
+        f"(files={payload.file_count}, symbols={payload.symbol_count})"
+    )
+
+
+@session_app.command("list")
+def session_list(
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """List cached sessions for the current root."""
+    from tensor_grep.cli.session_store import list_sessions
+
+    try:
+        records = [record.__dict__ for record in list_sessions(path)]
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps({"version": 1, "sessions": records}, indent=2))
+        return
+
+    if not records:
+        typer.echo("No sessions found.")
+        return
+
+    for record in records:
+        typer.echo(
+            f"{record['session_id']}  {record['created_at']}  "
+            f"files={record['file_count']} symbols={record['symbol_count']}"
+        )
+
+
+@session_app.command("show")
+def session_show(
+    session_id: str = typer.Argument(..., help="Session ID to inspect."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Show the cached repo-map payload for a session."""
+    from tensor_grep.cli.session_store import get_session
+
+    try:
+        payload = get_session(session_id, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session {payload['session_id']} for {payload['root']}")
+    typer.echo(
+        f"files={len(payload['repo_map']['files'])} symbols={len(payload['repo_map']['symbols'])}"
+    )
+
+
+@session_app.command("context")
+def session_context_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank relevant repo context."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a context pack derived from a cached session."""
+    from tensor_grep.cli.session_store import session_context
+
+    try:
+        payload = session_context(session_id, query, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session context for {payload['session_id']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+
+
 @checkpoint_app.command("create")
 def checkpoint_create(
     path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
@@ -1646,8 +1763,7 @@ def checkpoint_create(
         return
 
     typer.echo(
-        f"Created checkpoint {payload.checkpoint_id} "
-        f"({payload.mode}, files={payload.file_count})"
+        f"Created checkpoint {payload.checkpoint_id} ({payload.mode}, files={payload.file_count})"
     )
 
 
@@ -1974,16 +2090,18 @@ def test(
                         temp_name.write_text(snippet, encoding="utf-8")
                         try:
                             result = backend.search(str(temp_name), pattern, config=case_cfg)
-                            evaluated_snippets.append((
-                                f"{test_file}:{case_id}",
-                                snippet,
-                                expected_match,
-                                bool(
-                                    result.total_files > 0
-                                    or result.total_matches > 0
-                                    or result.matched_file_paths
-                                ),
-                            ))
+                            evaluated_snippets.append(
+                                (
+                                    f"{test_file}:{case_id}",
+                                    snippet,
+                                    expected_match,
+                                    bool(
+                                        result.total_files > 0
+                                        or result.total_matches > 0
+                                        or result.matched_file_paths
+                                    ),
+                                )
+                            )
                         finally:
                             temp_name.unlink(missing_ok=True)
             except Exception as exc:
@@ -2052,6 +2170,7 @@ def lsp() -> None:
 
 
 app.add_typer(checkpoint_app, name="checkpoint")
+app.add_typer(session_app, name="session")
 
 
 @app.command(name="mcp")
@@ -2170,6 +2289,7 @@ def main_entry() -> None:
         "refs",
         "callers",
         "checkpoint",
+        "session",
         "classify",
         "run",
         "scan",

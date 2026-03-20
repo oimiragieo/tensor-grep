@@ -162,16 +162,18 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
     monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
     monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
 
-    timing_samples = iter([
-        9.9,
-        8.8,
-        0.40,
-        0.20,
-        0.30,
-        0.80,
-        0.60,
-        0.70,
-    ])
+    timing_samples = iter(
+        [
+            9.9,
+            8.8,
+            0.40,
+            0.20,
+            0.30,
+            0.80,
+            0.60,
+            0.70,
+        ]
+    )
     timing_calls: list[list[str]] = []
     capture_calls: list[list[str]] = []
 
@@ -356,62 +358,64 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
         lambda *_args, **_kwargs: {"path": tmp_path / "many_files", "file_count": 1200},
     )
 
-    benchmark_rows = iter([
-        {
-            "name": "cold_standard_corpus",
-            "target": str(tmp_path / "bench_data"),
-            "pattern": "ERROR",
-            "rg_time_s": 1.0,
-            "tg_time_s": 1.04,
-            "rg_samples_s": [1.0, 0.98, 1.04],
-            "tg_samples_s": [1.04, 1.01, 1.06],
-            "ratio_vs_rg": 1.04,
-            "threshold_ratio": 1.05,
-            "status": "PASS",
-            "counts_match": True,
-        },
-        {
-            "name": "large_file_200mb",
-            "target": str(tmp_path / "large_fixture.log"),
-            "pattern": "ERROR native cpu benchmark sentinel",
-            "rg_time_s": 1.0,
-            "tg_time_s": 1.12,
-            "rg_samples_s": [1.0, 1.01, 0.99],
-            "tg_samples_s": [1.12, 1.14, 1.11],
-            "ratio_vs_rg": 1.12,
-            "threshold_ratio": 1.15,
-            "require_tg_faster": False,
-            "status": "PASS",
-            "counts_match": True,
-        },
-        {
-            "name": "large_file_200mb_count",
-            "target": str(tmp_path / "large_fixture.log"),
-            "pattern": "ERROR native cpu benchmark sentinel",
-            "rg_time_s": 1.0,
-            "tg_time_s": 0.92,
-            "rg_samples_s": [1.0, 1.01, 0.99],
-            "tg_samples_s": [0.92, 0.94, 0.91],
-            "ratio_vs_rg": 0.92,
-            "threshold_ratio": 1.0,
-            "require_tg_faster": True,
-            "status": "PASS",
-            "counts_match": True,
-        },
-        {
-            "name": "many_file_directory",
-            "target": str(tmp_path / "many_files"),
-            "pattern": "ERROR native cpu benchmark sentinel",
-            "rg_time_s": 1.0,
-            "tg_time_s": 1.03,
-            "rg_samples_s": [1.0, 1.01, 0.99],
-            "tg_samples_s": [1.03, 1.02, 1.04],
-            "ratio_vs_rg": 1.03,
-            "threshold_ratio": 1.05,
-            "status": "PASS",
-            "counts_match": True,
-        },
-    ])
+    benchmark_rows = iter(
+        [
+            {
+                "name": "cold_standard_corpus",
+                "target": str(tmp_path / "bench_data"),
+                "pattern": "ERROR",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.04,
+                "rg_samples_s": [1.0, 0.98, 1.04],
+                "tg_samples_s": [1.04, 1.01, 1.06],
+                "ratio_vs_rg": 1.04,
+                "threshold_ratio": 1.05,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "large_file_200mb",
+                "target": str(tmp_path / "large_fixture.log"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.12,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [1.12, 1.14, 1.11],
+                "ratio_vs_rg": 1.12,
+                "threshold_ratio": 1.15,
+                "require_tg_faster": False,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "large_file_200mb_count",
+                "target": str(tmp_path / "large_fixture.log"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 0.92,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [0.92, 0.94, 0.91],
+                "ratio_vs_rg": 0.92,
+                "threshold_ratio": 1.0,
+                "require_tg_faster": True,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "many_file_directory",
+                "target": str(tmp_path / "many_files"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.03,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [1.03, 1.02, 1.04],
+                "ratio_vs_rg": 1.03,
+                "threshold_ratio": 1.05,
+                "status": "PASS",
+                "counts_match": True,
+            },
+        ]
+    )
     monkeypatch.setattr(
         module, "run_native_cpu_benchmark_case", lambda **_kwargs: next(benchmark_rows)
     )
@@ -751,12 +755,17 @@ def test_run_harness_loop_iteration_should_require_zero_remaining_matches(monkey
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir()
 
-    responses = iter([
-        (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
-        (0.22, {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]}),
-        (0.33, {"plan": {"total_edits": 3}, "verification": None}),
-        (0.14, {"total_matches": 0, "matches": []}),
-    ])
+    responses = iter(
+        [
+            (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
+            (
+                0.22,
+                {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]},
+            ),
+            (0.33, {"plan": {"total_edits": 3}, "verification": None}),
+            (0.14, {"total_matches": 0, "matches": []}),
+        ]
+    )
     commands: list[list[str]] = []
 
     def _fake_run_json_command(command):
@@ -1050,38 +1059,40 @@ def test_run_index_scaling_benchmark_should_fail_when_10k_build_exceeds_threshol
         },
     )
 
-    rows = iter([
-        {
-            "name": "index_scale_1000_files",
-            "file_count": 1000,
-            "build_time_s": 1.0,
-            "index_size_bytes": 1024,
-            "query_median_s": 0.01,
-            "query_correct": True,
-            "build_within_threshold": True,
-            "queries": [{"pattern": "ERROR timeout"}] * 3,
-        },
-        {
-            "name": "index_scale_5000_files",
-            "file_count": 5000,
-            "build_time_s": 5.0,
-            "index_size_bytes": 4096,
-            "query_median_s": 0.03,
-            "query_correct": True,
-            "build_within_threshold": True,
-            "queries": [{"pattern": "ERROR timeout"}] * 3,
-        },
-        {
-            "name": "index_scale_10000_files",
-            "file_count": 10000,
-            "build_time_s": 61.0,
-            "index_size_bytes": 8192,
-            "query_median_s": 0.05,
-            "query_correct": True,
-            "build_within_threshold": False,
-            "queries": [{"pattern": "ERROR timeout"}] * 3,
-        },
-    ])
+    rows = iter(
+        [
+            {
+                "name": "index_scale_1000_files",
+                "file_count": 1000,
+                "build_time_s": 1.0,
+                "index_size_bytes": 1024,
+                "query_median_s": 0.01,
+                "query_correct": True,
+                "build_within_threshold": True,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+            {
+                "name": "index_scale_5000_files",
+                "file_count": 5000,
+                "build_time_s": 5.0,
+                "index_size_bytes": 4096,
+                "query_median_s": 0.03,
+                "query_correct": True,
+                "build_within_threshold": True,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+            {
+                "name": "index_scale_10000_files",
+                "file_count": 10000,
+                "build_time_s": 61.0,
+                "index_size_bytes": 8192,
+                "query_median_s": 0.05,
+                "query_correct": True,
+                "build_within_threshold": False,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+        ]
+    )
     monkeypatch.setattr(module, "benchmark_scale", lambda **_kwargs: next(rows))
 
     result = module.run_index_scaling_benchmark(
@@ -1154,13 +1165,15 @@ def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path
     tg_binary.write_text("binary", encoding="utf-8")
     monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
-    cmd = module.build_tg_ast_benchmark_cmd([
-        "run",
-        "--lang",
-        "python",
-        "pattern",
-        "bench_ast_data",
-    ])
+    cmd = module.build_tg_ast_benchmark_cmd(
+        [
+            "run",
+            "--lang",
+            "python",
+            "pattern",
+            "bench_ast_data",
+        ]
+    )
 
     assert cmd[0] == str(tg_binary)
     assert cmd[1:] == ["run", "--lang", "python", "pattern", "bench_ast_data"]
@@ -1807,19 +1820,23 @@ def test_check_regression_should_refuse_cross_environment_comparison_by_default(
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "linux", "machine": "x86_64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "linux", "machine": "x86_64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.2}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.2}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -1845,19 +1862,23 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "linux", "machine": "x86_64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "linux", "machine": "x86_64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -1886,19 +1907,23 @@ def test_check_regression_should_use_five_percent_default_threshold(monkeypatch,
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.06}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.06}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -1928,10 +1953,12 @@ def test_check_regression_should_compare_hot_query_benchmarks(monkeypatch, tmp_p
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
-        json.dumps({
-            **payload,
-            "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
-        }),
+        json.dumps(
+            {
+                **payload,
+                "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -1990,20 +2017,24 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -2034,22 +2065,26 @@ def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tm
     milestones_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = milestones_dir / "baseline_m1.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "milestone": "m1",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "milestone": "m1",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "milestone": "m2",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.04}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "milestone": "m2",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.04}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -2081,11 +2116,13 @@ def test_check_regression_should_fail_when_auto_baseline_platform_is_unavailable
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "darwin", "machine": "arm64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "darwin", "machine": "arm64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -2116,20 +2153,24 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -2164,11 +2205,13 @@ def test_summarize_benchmarks_should_fail_when_auto_baseline_platform_is_unavail
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "darwin", "machine": "arm64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "darwin", "machine": "arm64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"

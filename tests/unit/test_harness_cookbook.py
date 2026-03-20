@@ -12,6 +12,7 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "## Indexed Search Flow" in doc
     assert "## Repo Map Flow" in doc
     assert "## Context Pack Flow" in doc
+    assert "## Session Reuse Flow" in doc
     assert "## Rewrite Planning Flow" in doc
     assert "## Diff Review Flow" in doc
     assert "## Apply + Verify Flow" in doc
@@ -24,6 +25,10 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg.exe search --index --json" in doc
     assert "tg.exe map --json" in doc
     assert 'tg.exe context --query "invoice payment" --json' in doc
+    assert "tg session open" in doc
+    assert "tg session list" in doc
+    assert "tg session show" in doc
+    assert "tg session context" in doc
     assert "tg.exe search --ndjson" in doc
     assert "tg.exe run --lang python --rewrite" in doc
     assert "--diff" in doc
@@ -57,6 +62,10 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg_symbol_impact" in doc
     assert "tg_symbol_refs" in doc
     assert "tg_symbol_callers" in doc
+    assert "tg_session_open" in doc
+    assert "tg_session_list" in doc
+    assert "tg_session_show" in doc
+    assert "tg_session_context" in doc
     assert "tg_checkpoint_create" in doc
     assert "tg_checkpoint_list" in doc
     assert "tg_checkpoint_undo" in doc

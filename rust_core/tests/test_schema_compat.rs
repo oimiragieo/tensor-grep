@@ -15,6 +15,8 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "impact.json",
     "refs.json",
     "callers.json",
+    "session_open.json",
+    "session_context.json",
     "rewrite_apply_verify.json",
     "rewrite_plan.json",
     "search.json",
@@ -367,6 +369,33 @@ struct ContextPackExample {
     related_paths: Vec<PathBuf>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionOpenExample {
+    session_id: String,
+    root: PathBuf,
+    created_at: String,
+    file_count: usize,
+    symbol_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionContextExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    query: String,
+    path: PathBuf,
+    files: Vec<PathBuf>,
+    symbols: Vec<RankedRepoSymbolExample>,
+    imports: Vec<RankedRepoImportExample>,
+    tests: Vec<PathBuf>,
+    related_paths: Vec<PathBuf>,
+    session_id: String,
+}
+
 #[test]
 fn test_docs_examples_match_v1_schema() {
     let examples_dir = repo_root().join("docs").join("examples");
@@ -412,6 +441,8 @@ fn test_docs_examples_match_v1_schema() {
             "impact.json" => assert_symbol_impact_example(path),
             "refs.json" => assert_symbol_refs_example(path),
             "callers.json" => assert_symbol_callers_example(path),
+            "session_open.json" => assert_session_open_example(path),
+            "session_context.json" => assert_session_context_example(path),
             other => panic!("missing schema validation for {other}"),
         }
     }
@@ -1280,6 +1311,141 @@ fn assert_context_pack_example(path: &Path) {
                 path.display()
             );
         }
+    }
+    for test_path in &example.tests {
+        assert!(
+            is_portable_absolute_path(test_path),
+            "{} test path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for related_path in &example.related_paths {
+        assert!(
+            is_portable_absolute_path(related_path),
+            "{} related path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+}
+
+fn assert_session_open_example(path: &Path) {
+    let example: SessionOpenExample = parse_json_document(path);
+    assert!(
+        !example.session_id.is_empty(),
+        "{} session_id must not be empty",
+        path.display()
+    );
+    assert!(
+        is_portable_absolute_path(&example.root),
+        "{} root should be absolute or an absolute Windows path literal",
+        path.display()
+    );
+    assert!(
+        !example.created_at.is_empty(),
+        "{} created_at must not be empty",
+        path.display()
+    );
+    assert!(
+        example.file_count > 0,
+        "{} file_count must be positive",
+        path.display()
+    );
+    assert!(
+        example.symbol_count > 0,
+        "{} symbol_count must be positive",
+        path.display()
+    );
+}
+
+fn assert_session_context_example(path: &Path) {
+    let example: SessionContextExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "session-context",
+        "{} should keep session-context routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should stay native",
+        path.display()
+    );
+    assert!(
+        !example.query.is_empty(),
+        "{} query must not be empty",
+        path.display()
+    );
+    assert!(
+        is_portable_absolute_path(&example.path),
+        "{} path should be absolute or an absolute Windows path literal",
+        path.display()
+    );
+    assert!(
+        !example.files.is_empty(),
+        "{} should rank files",
+        path.display()
+    );
+    assert!(
+        !example.symbols.is_empty(),
+        "{} should rank symbols",
+        path.display()
+    );
+    assert!(
+        !example.session_id.is_empty(),
+        "{} session_id must not be empty",
+        path.display()
+    );
+    for file in &example.files {
+        assert!(
+            is_portable_absolute_path(file),
+            "{} file entry should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for symbol in &example.symbols {
+        assert!(
+            !symbol.name.is_empty(),
+            "{} symbol missing name",
+            path.display()
+        );
+        assert!(
+            !symbol.kind.is_empty(),
+            "{} symbol missing kind",
+            path.display()
+        );
+        assert!(
+            is_portable_absolute_path(&symbol.file),
+            "{} symbol file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            symbol.line > 0,
+            "{} symbol line must be 1-based",
+            path.display()
+        );
+        assert!(
+            symbol.score > 0,
+            "{} symbol score must be positive",
+            path.display()
+        );
+    }
+    for import in &example.imports {
+        assert!(
+            is_portable_absolute_path(&import.file),
+            "{} import file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            import.score >= 0,
+            "{} import score must be non-negative",
+            path.display()
+        );
     }
     for test_path in &example.tests {
         assert!(

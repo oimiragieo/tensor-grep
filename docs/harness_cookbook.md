@@ -127,6 +127,35 @@ Find call sites plus likely impacted tests:
 tg callers --symbol create_invoice --json .
 ```
 
+## Session Reuse Flow
+
+Use sessions when the agent will issue multiple context queries against the same repo during one edit loop.
+
+Open a cached session:
+
+```powershell
+tg session open . --json
+```
+
+Inspect cached session metadata:
+
+```powershell
+tg session list . --json
+tg session show session-20260320071200-rewrite . --json
+```
+
+Reuse the cached repo map for another query:
+
+```powershell
+tg session context session-20260320071200-rewrite . --query "invoice payment" --json
+```
+
+Recommended consumer behavior:
+
+1. open one session at the start of a multi-step edit task
+2. reuse `session context` for follow-up queries instead of rebuilding repo inventory
+3. keep the returned `session_id` with the task state until the edit loop finishes
+
 ## Rewrite Planning Flow
 
 Plan first. Do not mutate files until the plan is accepted.
@@ -266,6 +295,10 @@ Available workflow tools:
 - `tg_symbol_impact`
 - `tg_symbol_refs`
 - `tg_symbol_callers`
+- `tg_session_open`
+- `tg_session_list`
+- `tg_session_show`
+- `tg_session_context`
 - `tg_checkpoint_create`
 - `tg_checkpoint_list`
 - `tg_checkpoint_undo`

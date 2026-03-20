@@ -121,11 +121,13 @@ def _resolve_native_tg_binary() -> Path:
     candidates = []
     if env_override:
         candidates.append(Path(env_override).expanduser())
-    candidates.extend([
-        repo_root / "rust_core" / "target" / "release" / binary_name,
-        repo_root / "benchmarks" / binary_name,
-        repo_root / "benchmarks" / "tg_rust.exe",
-    ])
+    candidates.extend(
+        [
+            repo_root / "rust_core" / "target" / "release" / binary_name,
+            repo_root / "benchmarks" / binary_name,
+            repo_root / "benchmarks" / "tg_rust.exe",
+        ]
+    )
 
     for candidate in candidates:
         if candidate.is_file():
@@ -1029,6 +1031,112 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
         )
 
     return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_open(path: str = ".") -> str:
+    """
+    Create a cached repository-map session for repeated edit loops.
+
+    Args:
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import open_session
+
+    try:
+        payload = open_session(path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_list(path: str = ".") -> str:
+    """
+    List cached sessions for the current root.
+
+    Args:
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import list_sessions
+
+    try:
+        sessions = [record.__dict__ for record in list_sessions(path)]
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+            },
+            indent=2,
+        )
+
+    return json.dumps({"version": _json_output_version(), "sessions": sessions}, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_show(session_id: str, path: str = ".") -> str:
+    """
+    Return the cached repository-map payload for a session.
+
+    Args:
+        session_id: Session ID to inspect.
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import get_session
+
+    try:
+        payload = get_session(session_id, path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+                "session_id": session_id,
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_context(session_id: str, query: str, path: str = ".") -> str:
+    """
+    Return a context pack derived from a cached session.
+
+    Args:
+        session_id: Session ID to query.
+        query: Query text used to rank relevant repo context.
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import session_context
+
+    try:
+        payload = session_context(session_id, query, path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+                "session_id": session_id,
+                "query": query,
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload, indent=2)
 
 
 @mcp.tool()  # type: ignore
