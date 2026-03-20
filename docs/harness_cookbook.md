@@ -79,7 +79,7 @@ Recommended consumer behavior:
 Current coverage values describe the limits of this surface:
 
 - `"language_scope": "python-js-ts-rust"`
-- `"symbol_navigation": "python-ast"`
+- `"symbol_navigation": "python-ast+heuristic-js-ts-rust"`
 - `"test_matching": "filename-heuristic"`
 
 ## Context Pack Flow

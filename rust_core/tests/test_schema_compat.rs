@@ -1623,8 +1623,8 @@ fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
     );
     assert_eq!(
         coverage.symbol_navigation,
-        "python-ast",
-        "{} coverage.symbol_navigation must stay python-ast",
+        "python-ast+heuristic-js-ts-rust",
+        "{} coverage.symbol_navigation must stay python-ast+heuristic-js-ts-rust",
         path.display()
     );
     assert_eq!(

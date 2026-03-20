@@ -25,7 +25,7 @@
   "session_id": "session-20260320071200-rewrite",
   "coverage": {
     "language_scope": "python-js-ts-rust",
-    "symbol_navigation": "python-ast",
+    "symbol_navigation": "python-ast+heuristic-js-ts-rust",
     "test_matching": "filename-heuristic"
   }
 }

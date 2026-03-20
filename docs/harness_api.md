@@ -126,7 +126,7 @@ Current `coverage` values:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `language_scope` | `string` | Currently `python-js-ts-rust`. |
-| `symbol_navigation` | `string` | Currently `python-ast`. |
+| `symbol_navigation` | `string` | Currently `python-ast+heuristic-js-ts-rust`. |
 | `test_matching` | `string` | Currently `filename-heuristic`. |
 
 ## Context Pack JSON

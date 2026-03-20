@@ -32,7 +32,7 @@ def _envelope(path: Path) -> dict[str, Any]:
         "sidecar_used": False,
         "coverage": {
             "language_scope": "python-js-ts-rust",
-            "symbol_navigation": "python-ast",
+            "symbol_navigation": "python-ast+heuristic-js-ts-rust",
             "test_matching": "filename-heuristic",
         },
         "path": str(path),
@@ -284,6 +284,50 @@ def _python_references_and_calls(
     return references, calls
 
 
+def _regex_references_and_calls(
+    path: Path, symbol: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
+        return [], []
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return [], []
+
+    symbol_pattern = re.compile(rf"\b{re.escape(symbol)}\b")
+    call_pattern = re.compile(rf"(?:\b|\.|::){re.escape(symbol)}\s*\(")
+
+    references: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+
+    for line_number, line in enumerate(lines, start=1):
+        if symbol_pattern.search(line):
+            references.append(
+                {
+                    "name": symbol,
+                    "kind": "reference",
+                    "file": str(path),
+                    "line": line_number,
+                    "text": line,
+                }
+            )
+        if call_pattern.search(line):
+            calls.append(
+                {
+                    "name": symbol,
+                    "kind": "call",
+                    "file": str(path),
+                    "line": line_number,
+                    "text": line,
+                }
+            )
+
+    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    return references, calls
+
+
 def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -513,6 +557,8 @@ def build_symbol_refs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
     references: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(payload["path"])):
         current_refs, _ = _python_references_and_calls(current, symbol)
+        if not current_refs:
+            current_refs, _ = _regex_references_and_calls(current, symbol)
         references.extend(current_refs)
 
     referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
@@ -537,6 +583,8 @@ def build_symbol_callers(symbol: str, path: str | Path = ".") -> dict[str, Any]:
     calls: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(defs_payload["path"])):
         _, current_calls = _python_references_and_calls(current, symbol)
+        if not current_calls:
+            _, current_calls = _regex_references_and_calls(current, symbol)
         calls.extend(current_calls)
 
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))

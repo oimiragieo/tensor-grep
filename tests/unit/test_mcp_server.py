@@ -587,7 +587,7 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
     assert context["coverage"]["language_scope"] == "python-js-ts-rust"
-    assert context["coverage"]["symbol_navigation"] == "python-ast"
+    assert context["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
     assert context["coverage"]["test_matching"] == "filename-heuristic"
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
@@ -854,7 +854,7 @@ def test_tg_context_pack_returns_ranked_inventory(tmp_path):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "context-pack"
     assert payload["sidecar_used"] is False
-    assert payload["coverage"]["symbol_navigation"] == "python-ast"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
     assert payload["query"] == "invoice payment"
     assert payload["path"] == str(project.resolve())
     assert payload["files"][0] == str(module_path.resolve())
@@ -940,7 +940,7 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-impact"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
     assert payload["symbol"] == "create_invoice"
     assert payload["files"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) in payload["files"]
@@ -969,8 +969,48 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-refs"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
+
+
+def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    ts_path = src_dir / "payments.ts"
+    ts_path.write_text(
+        "export function createInvoice(total: number) {\n"
+        "  return total;\n"
+        "}\n\n"
+        "export function renderInvoice() {\n"
+        "  return createInvoice(10);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    rust_path = src_dir / "billing.rs"
+    rust_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    1\n"
+        "}\n\n"
+        "pub fn settle_invoice() -> usize {\n"
+        "    issue_invoice()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    ts_refs = json.loads(mcp_server.tg_symbol_refs("createInvoice", str(project)))
+    ts_callers = json.loads(mcp_server.tg_symbol_callers("createInvoice", str(project)))
+    rust_refs = json.loads(mcp_server.tg_symbol_refs("issue_invoice", str(project)))
+    rust_callers = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
+
+    assert ts_refs["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
+    assert any(ref["file"] == str(ts_path.resolve()) for ref in ts_refs["references"])
+    assert any(caller["file"] == str(ts_path.resolve()) for caller in ts_callers["callers"])
+    assert any(ref["file"] == str(rust_path.resolve()) for ref in rust_refs["references"])
+    assert any(caller["file"] == str(rust_path.resolve()) for caller in rust_callers["callers"])
 
 
 def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
@@ -1004,6 +1044,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-callers"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+heuristic-js-ts-rust"
     assert payload["coverage"]["test_matching"] == "filename-heuristic"
     assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
     assert payload["tests"][0] == str(test_path.resolve())
