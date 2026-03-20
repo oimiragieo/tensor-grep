@@ -37,7 +37,7 @@
     "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\tests\\test_sample.py"
   ],
   "coverage": {
-    "language_scope": "python-first",
+    "language_scope": "python-js-ts-rust",
     "symbol_navigation": "python-ast",
     "test_matching": "filename-heuristic"
   }

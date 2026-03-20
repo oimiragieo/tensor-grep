@@ -78,7 +78,7 @@ Recommended consumer behavior:
 
 Current coverage values describe the limits of this surface:
 
-- `"language_scope": "python-first"`
+- `"language_scope": "python-js-ts-rust"`
 - `"symbol_navigation": "python-ast"`
 - `"test_matching": "filename-heuristic"`
 

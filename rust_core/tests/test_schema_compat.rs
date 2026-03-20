@@ -1617,8 +1617,8 @@ fn assert_common_envelope(path: &Path, version: u32, routing_backend: &str, rout
 fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
     assert_eq!(
         coverage.language_scope,
-        "python-first",
-        "{} coverage.language_scope must stay python-first",
+        "python-js-ts-rust",
+        "{} coverage.language_scope must stay python-js-ts-rust",
         path.display()
     );
     assert_eq!(

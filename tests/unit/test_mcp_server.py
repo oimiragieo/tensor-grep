@@ -586,7 +586,7 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     context = json.loads(mcp_server.tg_session_context(session_id, "add", str(project)))
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
-    assert context["coverage"]["language_scope"] == "python-first"
+    assert context["coverage"]["language_scope"] == "python-js-ts-rust"
     assert context["coverage"]["symbol_navigation"] == "python-ast"
     assert context["coverage"]["test_matching"] == "filename-heuristic"
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
@@ -737,7 +737,7 @@ def test_tg_repo_map_returns_json_inventory(tmp_path):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "repo-map"
     assert payload["sidecar_used"] is False
-    assert payload["coverage"]["language_scope"] == "python-first"
+    assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
     assert payload["path"] == str(project.resolve())
     assert str(module_path.resolve()) in payload["files"]
     assert str(test_path.resolve()) in payload["tests"]
@@ -758,6 +758,71 @@ def test_tg_repo_map_returns_json_inventory(tmp_path):
         for entry in payload["imports"]
     )
     assert str(module_path.resolve()) in payload["related_paths"]
+
+
+def test_tg_repo_map_includes_typescript_and_rust_inventory(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    ts_path = src_dir / "payments.ts"
+    ts_path.write_text(
+        'import { money } from "./money";\n'
+        "export class PaymentService {}\n"
+        "export function createInvoice(total: number) {\n"
+        "  return money(total);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    rust_path = src_dir / "billing.rs"
+    rust_path.write_text(
+        "use crate::payments::create_invoice;\n\n"
+        "pub struct Invoice {}\n\n"
+        "pub fn issue_invoice() -> Invoice {\n"
+        "    let _ = create_invoice();\n"
+        "    Invoice {}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_repo_map(str(project)))
+
+    assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
+    assert any(
+        symbol["name"] == "PaymentService"
+        and symbol["kind"] == "class"
+        and symbol["file"] == str(ts_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        symbol["name"] == "createInvoice"
+        and symbol["kind"] == "function"
+        and symbol["file"] == str(ts_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        symbol["name"] == "Invoice"
+        and symbol["kind"] == "struct"
+        and symbol["file"] == str(rust_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        symbol["name"] == "issue_invoice"
+        and symbol["kind"] == "function"
+        and symbol["file"] == str(rust_path.resolve())
+        for symbol in payload["symbols"]
+    )
+    assert any(
+        entry["file"] == str(ts_path.resolve()) and "./money" in entry["imports"]
+        for entry in payload["imports"]
+    )
+    assert any(
+        entry["file"] == str(rust_path.resolve())
+        and "crate::payments::create_invoice" in entry["imports"]
+        for entry in payload["imports"]
+    )
 
 
 def test_tg_context_pack_returns_ranked_inventory(tmp_path):
@@ -812,10 +877,38 @@ def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-defs"
-    assert payload["coverage"]["language_scope"] == "python-first"
+    assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
     assert payload["symbol"] == "create_invoice"
     assert len(payload["definitions"]) == 1
     assert payload["definitions"][0]["file"] == str(module_path.resolve())
+
+
+def test_tg_symbol_defs_can_find_rust_and_typescript_symbols(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    ts_path = src_dir / "payments.ts"
+    ts_path.write_text(
+        "export function createInvoice(total: number) {\n  return total;\n}\n",
+        encoding="utf-8",
+    )
+    rust_path = src_dir / "billing.rs"
+    rust_path.write_text(
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
+        encoding="utf-8",
+    )
+
+    ts_payload = json.loads(mcp_server.tg_symbol_defs("createInvoice", str(project)))
+    rust_payload = json.loads(mcp_server.tg_symbol_defs("issue_invoice", str(project)))
+
+    assert ts_payload["coverage"]["language_scope"] == "python-js-ts-rust"
+    assert ts_payload["definitions"][0]["file"] == str(ts_path.resolve())
+    assert ts_payload["definitions"][0]["kind"] == "function"
+    assert rust_payload["definitions"][0]["file"] == str(rust_path.resolve())
+    assert rust_payload["definitions"][0]["kind"] == "function"
 
 
 def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):

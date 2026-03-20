@@ -125,7 +125,7 @@ Current `coverage` values:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `language_scope` | `string` | Currently `python-first`. |
+| `language_scope` | `string` | Currently `python-js-ts-rust`. |
 | `symbol_navigation` | `string` | Currently `python-ast`. |
 | `test_matching` | `string` | Currently `filename-heuristic`. |
 

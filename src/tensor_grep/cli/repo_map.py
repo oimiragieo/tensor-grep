@@ -20,6 +20,8 @@ _SKIP_DIR_NAMES = {
     ".mypy_cache",
     ".pytest_cache",
 }
+_JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+_RUST_SUFFIXES = {".rs"}
 
 
 def _envelope(path: Path) -> dict[str, Any]:
@@ -29,7 +31,7 @@ def _envelope(path: Path) -> dict[str, Any]:
         "routing_reason": ROUTING_REASON,
         "sidecar_used": False,
         "coverage": {
-            "language_scope": "python-first",
+            "language_scope": "python-js-ts-rust",
             "symbol_navigation": "python-ast",
             "test_matching": "filename-heuristic",
         },
@@ -39,7 +41,16 @@ def _envelope(path: Path) -> dict[str, Any]:
 
 def _is_test_file(path: Path) -> bool:
     name = path.name
-    return name.startswith("test_") or name.endswith("_test.py") or "tests" in path.parts
+    return (
+        name.startswith("test_")
+        or name.endswith("_test.py")
+        or name.endswith(".test.ts")
+        or name.endswith(".test.js")
+        or name.endswith(".spec.ts")
+        or name.endswith(".spec.js")
+        or "tests" in path.parts
+        or "__tests__" in path.parts
+    )
 
 
 def _iter_repo_files(root: Path) -> list[Path]:
@@ -95,6 +106,111 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
                     "line": node.lineno,
                 }
             )
+
+    imports = sorted(dict.fromkeys(imports))
+    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
+    return imports, symbols
+
+
+def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
+        return [], []
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return [], []
+
+    imports: list[str] = []
+    symbols: list[dict[str, Any]] = []
+
+    for line_number, line in enumerate(lines, start=1):
+        if path.suffix in _JS_TS_SUFFIXES:
+            import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
+            export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
+            class_match = re.match(r"^\s*(?:export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+            function_match = re.match(
+                r"^\s*(?:export\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
+                line,
+            )
+            if import_match:
+                imports.append(import_match.group(1))
+            if export_from_match:
+                imports.append(export_from_match.group(1))
+            if class_match:
+                symbols.append(
+                    {
+                        "name": class_match.group(1),
+                        "kind": "class",
+                        "file": str(path),
+                        "line": line_number,
+                    }
+                )
+            if function_match:
+                symbols.append(
+                    {
+                        "name": function_match.group(1),
+                        "kind": "function",
+                        "file": str(path),
+                        "line": line_number,
+                    }
+                )
+        elif path.suffix in _RUST_SUFFIXES:
+            use_match = re.match(r"^\s*use\s+([^;]+);", line)
+            fn_match = re.match(
+                r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+                line,
+            )
+            struct_match = re.match(
+                r"^\s*(?:pub\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)",
+                line,
+            )
+            enum_match = re.match(
+                r"^\s*(?:pub\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)",
+                line,
+            )
+            trait_match = re.match(
+                r"^\s*(?:pub\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)",
+                line,
+            )
+            if use_match:
+                imports.append(use_match.group(1).strip())
+            if fn_match:
+                symbols.append(
+                    {
+                        "name": fn_match.group(1),
+                        "kind": "function",
+                        "file": str(path),
+                        "line": line_number,
+                    }
+                )
+            if struct_match:
+                symbols.append(
+                    {
+                        "name": struct_match.group(1),
+                        "kind": "struct",
+                        "file": str(path),
+                        "line": line_number,
+                    }
+                )
+            if enum_match:
+                symbols.append(
+                    {
+                        "name": enum_match.group(1),
+                        "kind": "enum",
+                        "file": str(path),
+                        "line": line_number,
+                    }
+                )
+            if trait_match:
+                symbols.append(
+                    {
+                        "name": trait_match.group(1),
+                        "kind": "trait",
+                        "file": str(path),
+                        "line": line_number,
+                    }
+                )
 
     imports = sorted(dict.fromkeys(imports))
     symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
@@ -182,6 +298,8 @@ def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     symbols: list[dict[str, Any]] = []
     for current in all_files:
         current_imports, current_symbols = _python_imports_and_symbols(current)
+        if not current_imports and not current_symbols:
+            current_imports, current_symbols = _regex_imports_and_symbols(current)
         if current_imports:
             imports.append({"file": str(current), "imports": current_imports})
         symbols.extend(current_symbols)
