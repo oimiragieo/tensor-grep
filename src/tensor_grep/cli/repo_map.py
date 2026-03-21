@@ -34,7 +34,7 @@ def _envelope(path: Path) -> dict[str, Any]:
         "coverage": {
             "language_scope": "python-js-ts-rust",
             "symbol_navigation": "python-ast+heuristic-js-ts-rust",
-            "test_matching": "filename+import-heuristic",
+            "test_matching": "filename+import+graph-heuristic",
         },
         "path": str(path),
     }
@@ -556,6 +556,33 @@ def _import_graph_bonus(
     return bonus
 
 
+def _reverse_import_distances(
+    seed_files: list[str],
+    all_files: list[str],
+    imports_by_file: dict[str, list[str]],
+) -> dict[str, int]:
+    distances: dict[str, int] = {}
+    frontier = list(seed_files)
+    seen = set(seed_files)
+
+    for depth in range(1, 4):
+        dependency_aliases = {current: _module_aliases_for_path(current) for current in frontier}
+        next_frontier: list[str] = []
+        for current in all_files:
+            if current in seen:
+                continue
+            bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
+            if bonus <= 0:
+                continue
+            distances[current] = depth
+            seen.add(current)
+            next_frontier.append(current)
+        if not next_frontier:
+            break
+        frontier = next_frontier
+    return distances
+
+
 def _dependency_ranked_files(
     ranked_files: list[str],
     all_files: list[str],
@@ -564,15 +591,11 @@ def _dependency_ranked_files(
     if not ranked_files:
         return []
 
-    dependency_aliases = {current: _module_aliases_for_path(current) for current in ranked_files}
     boosted: list[tuple[int, str]] = []
-    seen = set(ranked_files)
-    for current in all_files:
-        if current in seen:
-            continue
-        bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
-        if bonus > 0:
-            boosted.append((bonus, current))
+    distances = _reverse_import_distances(ranked_files, all_files, imports_by_file)
+    for current, depth in distances.items():
+        bonus = max(1, 5 - depth)
+        boosted.append((bonus, current))
 
     boosted.sort(key=lambda item: (-item[0], item[1]))
     for _, current in boosted:
@@ -584,12 +607,18 @@ def _test_import_bonus(
     test_path: str,
     source_tokens: set[str],
     imports_by_file: dict[str, list[str]],
+    file_distances: dict[str, int],
 ) -> int:
     bonus = 0
     for import_name in imports_by_file.get(test_path, []):
         lowered = import_name.lower()
         if any(token and token in lowered for token in source_tokens):
             bonus += 3
+        for file_path, depth in file_distances.items():
+            aliases = _module_aliases_for_path(file_path)
+            if any(alias and alias in lowered for alias in aliases):
+                bonus += max(1, 4 - depth)
+                break
     return bonus
 
 
@@ -598,6 +627,7 @@ def _context_tests(
     tests: list[str],
     terms: list[str],
     imports_by_file: dict[str, list[str]],
+    file_distances: dict[str, int],
 ) -> list[str]:
     related: list[tuple[int, str]] = []
     source_stems = {Path(current).stem.lower() for current in source_files}
@@ -607,7 +637,7 @@ def _context_tests(
         stem = Path(current).stem.lower().removeprefix("test_")
         if stem in source_stems:
             score += 2
-        score += _test_import_bonus(current, source_tokens, imports_by_file)
+        score += _test_import_bonus(current, source_tokens, imports_by_file, file_distances)
         if score > 0:
             related.append((score, current))
     related.sort(key=lambda item: (-item[0], item[1]))
@@ -669,6 +699,11 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     dependency_aliases = {
         current: _module_aliases_for_path(current) for current in dependency_seed_files
     }
+    file_distances = _reverse_import_distances(
+        dependency_seed_files,
+        [str(current) for current in payload["files"]],
+        imports_by_file,
+    )
     for current in payload["files"]:
         current_path = str(current)
         if current_path in dependency_seed_files:
@@ -678,6 +713,10 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
             dependency_aliases,
             imports_by_file,
         )
+        if current_path in file_distances:
+            file_scores[current_path] = file_scores.get(current_path, 0) + max(
+                1, 5 - file_distances[current_path]
+            )
 
     scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
     scored_files.sort(key=lambda item: (-item[0], item[1]))
@@ -691,7 +730,7 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
             current = str(entry["file"])
             if current not in ranked_files:
                 ranked_files.append(current)
-    ranked_tests = _context_tests(ranked_files, payload["tests"], terms, imports_by_file)
+    ranked_tests = _context_tests(ranked_files, payload["tests"], terms, imports_by_file, file_distances)
 
     related_paths = []
     for current in ranked_files:

@@ -1742,8 +1742,8 @@ fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
     );
     assert_eq!(
         coverage.test_matching,
-        "filename+import-heuristic",
-        "{} coverage.test_matching must stay filename+import-heuristic",
+        "filename+import+graph-heuristic",
+        "{} coverage.test_matching must stay filename+import+graph-heuristic",
         path.display()
     );
 }
@@ -1775,7 +1775,6 @@ fn example_file_name(path: &Path) -> &str {
         .and_then(|name| name.to_str())
         .unwrap_or_else(|| panic!("invalid example file name: {}", path.display()))
 }
-
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

@@ -80,7 +80,7 @@ Current coverage values describe the limits of this surface:
 
 - `"language_scope": "python-js-ts-rust"`
 - `"symbol_navigation": "python-ast+heuristic-js-ts-rust"`
-- `"test_matching": "filename+import-heuristic"`
+- `"test_matching": "filename+import+graph-heuristic"`
 
 ## Context Pack Flow
 
@@ -393,3 +393,4 @@ Use these rules:
    - use only when routing or explicit calibration says it wins
 
 For stable field semantics, see [Harness API](harness_api.md).
+

@@ -128,7 +128,7 @@ Current `coverage` values:
 | --- | --- | --- |
 | `language_scope` | `string` | Currently `python-js-ts-rust`. |
 | `symbol_navigation` | `string` | Currently `python-ast+heuristic-js-ts-rust`. |
-| `test_matching` | `string` | Currently `filename+import-heuristic`. |
+| `test_matching` | `string` | Currently `filename+import+graph-heuristic`. |
 
 ## Context Pack JSON
 
@@ -692,3 +692,4 @@ Rules:
 - field renames, type changes, removing required fields, or changing single-document output into a different transport shape are breaking changes
 - new example artifacts and schema tests must land with any contract expansion
 - docs, example artifacts, and schema tests must stay in sync
+
