@@ -395,6 +395,34 @@ def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
     assert str(test_path.resolve()) in payload["related_paths"]
 
 
+def test_source_json_returns_exact_symbol_source_blocks(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    subtotal = total + tax\n"
+        "    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["source", "--symbol", "create_invoice", "--json", str(project)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-source"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert payload["sources"][0]["file"] == str(module_path.resolve())
+    assert payload["sources"][0]["start_line"] == 1
+    assert payload["sources"][0]["end_line"] == 3
+    assert "subtotal = total + tax" in payload["sources"][0]["source"]
+
+
 def test_refs_json_returns_python_references_for_symbol(tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -2089,6 +2117,7 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "checkpoint" in result.stdout
     assert "session" in result.stdout
     assert "defs" in result.stdout
+    assert "source" in result.stdout
     assert "impact" in result.stdout
     assert "refs" in result.stdout
     assert "callers" in result.stdout

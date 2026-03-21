@@ -118,6 +118,12 @@ Resolve exact definitions:
 tg defs --symbol create_invoice --json .\src
 ```
 
+Fetch the exact source block:
+
+```powershell
+tg source --symbol create_invoice --json .\src
+```
+
 Estimate likely change impact:
 
 ```powershell
@@ -315,6 +321,7 @@ Available workflow tools:
 - `tg_repo_map`
 - `tg_context_pack`
 - `tg_symbol_defs`
+- `tg_symbol_source`
 - `tg_symbol_impact`
 - `tg_symbol_refs`
 - `tg_symbol_callers`

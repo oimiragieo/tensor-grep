@@ -9,6 +9,7 @@ EXPECTED_EXAMPLES = {
     "repo_map.json": ("files", "symbols"),
     "context_pack.json": ("query", "files"),
     "defs.json": ("symbol", "definitions"),
+    "source.json": ("symbol", "sources"),
     "impact.json": ("symbol", "files"),
     "refs.json": ("symbol", "references"),
     "callers.json": ("symbol", "callers"),
@@ -37,6 +38,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Calibrate JSON" in doc
     assert "## Search NDJSON" in doc
     assert "## Symbol Defs JSON" in doc
+    assert "## Symbol Source JSON" in doc
     assert "## Symbol Impact JSON" in doc
     assert "## Symbol Refs JSON" in doc
     assert "## Symbol Callers JSON" in doc
@@ -57,6 +59,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
     assert "tg_symbol_defs" in doc
+    assert "tg_symbol_source" in doc
     assert "tg_symbol_impact" in doc
     assert "tg_symbol_refs" in doc
     assert "tg_symbol_callers" in doc
@@ -115,6 +118,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 "repo_map.json",
                 "context_pack.json",
                 "defs.json",
+                "source.json",
                 "impact.json",
                 "refs.json",
                 "callers.json",

@@ -1571,6 +1571,29 @@ def defs(
 
 
 @app.command()
+def source(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return exact source blocks for a symbol definition."""
+    from tensor_grep.cli.repo_map import build_symbol_source, build_symbol_source_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_source_json(symbol, path))
+            return
+
+        payload = build_symbol_source(symbol, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Source for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"sources={len(payload['sources'])} files={len(payload['files'])}")
+
+
+@app.command()
 def impact(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to evaluate."),
@@ -2339,6 +2362,7 @@ def main_entry() -> None:
         "map",
         "context",
         "defs",
+        "source",
         "impact",
         "refs",
         "callers",

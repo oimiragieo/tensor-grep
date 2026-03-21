@@ -15,6 +15,7 @@ from tensor_grep.cli.repo_map import (
     build_symbol_defs,
     build_symbol_impact,
     build_symbol_refs,
+    build_symbol_source,
 )
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
@@ -485,6 +486,33 @@ def tg_symbol_defs(symbol: str, path: str = ".") -> str:
             "version": _json_output_version(),
             "routing_backend": "RepoMap",
             "routing_reason": "symbol-defs",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_source(symbol: str, path: str = ".") -> str:
+    """
+    Return exact source blocks for a symbol definition.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_source(symbol, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-source",
             "sidecar_used": False,
             "symbol": symbol,
             "path": str(Path(path).expanduser()),

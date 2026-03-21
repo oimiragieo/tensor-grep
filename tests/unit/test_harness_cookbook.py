@@ -44,6 +44,7 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg checkpoint list" in doc
     assert "tg checkpoint undo" in doc
     assert "tg defs --symbol" in doc
+    assert "tg source --symbol" in doc
     assert "tg impact --symbol" in doc
     assert "tg refs --symbol" in doc
     assert "tg callers --symbol" in doc
@@ -62,6 +63,7 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
     assert "tg_symbol_defs" in doc
+    assert "tg_symbol_source" in doc
     assert "tg_symbol_impact" in doc
     assert "tg_symbol_refs" in doc
     assert "tg_symbol_callers" in doc

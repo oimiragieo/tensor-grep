@@ -31,6 +31,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Calibrate JSON | `tg.exe calibrate` | [`examples/calibrate.json`](examples/calibrate.json) |
 | Search NDJSON | `tg.exe search --ndjson ...` | [`examples/search.ndjson`](examples/search.ndjson) |
 | Symbol defs JSON | `tg.exe defs --symbol <name> --json ...` | [`examples/defs.json`](examples/defs.json) |
+| Symbol source JSON | `tg.exe source --symbol <name> --json ...` | [`examples/source.json`](examples/source.json) |
 | Symbol impact JSON | `tg.exe impact --symbol <name> --json ...` | [`examples/impact.json`](examples/impact.json) |
 | Symbol refs JSON | `tg.exe refs --symbol <name> --json ...` | [`examples/refs.json`](examples/refs.json) |
 | Symbol callers JSON | `tg.exe callers --symbol <name> --json ...` | [`examples/callers.json`](examples/callers.json) |
@@ -394,6 +395,29 @@ Example: [`examples/defs.json`](examples/defs.json)
 
 Each `definitions[]` object contains `name`, `kind`, `file`, and `line`.
 
+## Symbol Source JSON
+
+Emitted by `tg.exe source --symbol <name> --json ...`.
+
+Example: [`examples/source.json`](examples/source.json)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `symbol-source`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
+| `path` | `string` | Inventory root. |
+| `symbol` | `string` | Exact symbol name requested. |
+| `definitions` | `array<object>` | Exact symbol definitions. |
+| `sources` | `array<object>` | Exact Python blocks or heuristic JS/TS/Rust blocks for the resolved symbol. |
+| `files` | `array<string>` | Files containing exact definitions. |
+| `tests` | `array<string>` | Test files in the inventory root. |
+| `related_paths` | `array<string>` | Stable union of definition files and tests. |
+
+Each `sources[]` object contains `name`, `kind`, `file`, `start_line`, `end_line`, and `source`.
+
 ## Symbol Impact JSON
 
 Emitted by `tg.exe impact --symbol <name> --json ...`.
@@ -557,6 +581,7 @@ Current tool set:
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
 - `tg_symbol_defs(symbol, path=".")`
+- `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".")`
 - `tg_symbol_refs(symbol, path=".")`
 - `tg_symbol_callers(symbol, path=".")`
@@ -577,6 +602,7 @@ Response mapping:
 
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
 - `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)
+- `tg_symbol_source(...)` returns the same v1 envelope and payload shape as [`examples/source.json`](examples/source.json)
 - `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)
 - `tg_symbol_refs(...)` returns the same v1 envelope and payload shape as [`examples/refs.json`](examples/refs.json)
 - `tg_symbol_callers(...)` returns the same v1 envelope and payload shape as [`examples/callers.json`](examples/callers.json)

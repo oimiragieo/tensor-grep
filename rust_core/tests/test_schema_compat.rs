@@ -12,6 +12,7 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "mcp_rewrite_diff.json",
     "repo_map.json",
     "defs.json",
+    "source.json",
     "impact.json",
     "refs.json",
     "callers.json",
@@ -88,6 +89,36 @@ struct SymbolImpactExample {
     imports: Vec<serde_json::Value>,
     symbols: Vec<RepoSymbolExample>,
     related_paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolSourceBlockExample {
+    name: String,
+    kind: String,
+    file: PathBuf,
+    start_line: usize,
+    end_line: usize,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolSourceExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    coverage: CoverageExample,
+    path: String,
+    symbol: String,
+    files: Vec<String>,
+    symbols: Vec<RepoSymbolExample>,
+    imports: Vec<serde_json::Value>,
+    tests: Vec<String>,
+    related_paths: Vec<String>,
+    definitions: Vec<RepoSymbolExample>,
+    sources: Vec<SymbolSourceBlockExample>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -453,6 +484,7 @@ fn test_docs_examples_match_v1_schema() {
             "repo_map.json" => assert_repo_map_example(path),
             "context_pack.json" => assert_context_pack_example(path),
             "defs.json" => assert_symbol_defs_example(path),
+            "source.json" => assert_symbol_source_example(path),
             "impact.json" => assert_symbol_impact_example(path),
             "refs.json" => assert_symbol_refs_example(path),
             "callers.json" => assert_symbol_callers_example(path),
@@ -826,6 +858,87 @@ fn assert_symbol_impact_example(path: &Path) {
     }
     let _ = &example.imports;
     let _ = &example.tests;
+}
+
+fn assert_symbol_source_example(path: &Path) {
+    let example: SymbolSourceExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(example.routing_backend, "RepoMap");
+    assert_eq!(example.routing_reason, "symbol-source");
+    assert!(
+        !example.sidecar_used,
+        "{} should be native symbol source output",
+        path.display()
+    );
+    assert_repo_map_coverage(path, &example.coverage);
+    assert!(
+        !example.path.is_empty(),
+        "{} path must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.sources.is_empty(),
+        "{} sources must not be empty",
+        path.display()
+    );
+    for source in &example.sources {
+        assert!(
+            !source.name.is_empty(),
+            "{} source name must not be empty",
+            path.display()
+        );
+        assert_eq!(
+            source.name,
+            example.symbol,
+            "{} source name must match symbol",
+            path.display()
+        );
+        assert!(
+            !source.kind.is_empty(),
+            "{} source kind must not be empty",
+            path.display()
+        );
+        assert!(
+            is_portable_absolute_path(&source.file),
+            "{} source file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            source.start_line > 0,
+            "{} source start_line must be positive",
+            path.display()
+        );
+        assert!(
+            source.end_line >= source.start_line,
+            "{} source end_line must be >= start_line",
+            path.display()
+        );
+        assert!(
+            !source.source.trim().is_empty(),
+            "{} source body must not be empty",
+            path.display()
+        );
+    }
+    let _ = &example.files;
+    let _ = &example.symbols;
+    let _ = &example.imports;
+    let _ = &example.tests;
+    let _ = &example.related_paths;
 }
 
 fn assert_symbol_refs_example(path: &Path) {

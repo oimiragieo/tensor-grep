@@ -962,6 +962,65 @@ def test_tg_symbol_defs_can_find_rust_and_typescript_symbols(tmp_path):
     assert rust_payload["definitions"][0]["kind"] == "function"
 
 
+def test_tg_symbol_source_returns_exact_python_function_body(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    subtotal = total + tax\n"
+        "    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_source("create_invoice", str(project)))
+
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-source"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert payload["sources"][0]["start_line"] == 1
+    assert payload["sources"][0]["end_line"] == 3
+    assert "subtotal = total + tax" in payload["sources"][0]["source"]
+
+
+def test_tg_symbol_source_can_extract_typescript_and_rust_blocks(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    ts_path = src_dir / "payments.ts"
+    ts_path.write_text(
+        "export function createInvoice(total: number) {\n"
+        "  const subtotal = total + 1;\n"
+        "  return subtotal;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    rust_path = src_dir / "billing.rs"
+    rust_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    let subtotal = 1;\n"
+        "    subtotal\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    ts_payload = json.loads(mcp_server.tg_symbol_source("createInvoice", str(project)))
+    rust_payload = json.loads(mcp_server.tg_symbol_source("issue_invoice", str(project)))
+
+    assert ts_payload["sources"][0]["file"] == str(ts_path.resolve())
+    assert "const subtotal = total + 1;" in ts_payload["sources"][0]["source"]
+    assert rust_payload["sources"][0]["file"] == str(rust_path.resolve())
+    assert "let subtotal = 1;" in rust_payload["sources"][0]["source"]
+
+
 def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
     from tensor_grep.cli import mcp_server
 

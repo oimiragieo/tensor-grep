@@ -329,6 +329,135 @@ def _regex_references_and_calls(
     return references, calls
 
 
+def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
+    if path.suffix != ".py":
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return []
+
+    lines = source.splitlines()
+    sources: list[dict[str, Any]] = []
+
+    for node in tree.body:
+        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.name != symbol:
+            continue
+        end_lineno = getattr(node, "end_lineno", node.lineno)
+        block = "\n".join(lines[node.lineno - 1 : end_lineno])
+        if block:
+            block = f"{block}\n"
+        kind = "class" if isinstance(node, ast.ClassDef) else "function"
+        sources.append(
+            {
+                "name": symbol,
+                "kind": kind,
+                "file": str(path),
+                "start_line": node.lineno,
+                "end_line": end_lineno,
+                "source": block,
+            }
+        )
+
+    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
+    return sources
+
+
+def _extract_braced_block(lines: list[str], start_index: int) -> tuple[int, str]:
+    start_line = lines[start_index]
+    start_line_num = start_index + 1
+    brace_balance = start_line.count("{") - start_line.count("}")
+    if brace_balance <= 0:
+        return start_line_num, f"{start_line}\n"
+
+    block_lines = [start_line]
+    end_index = start_index
+    for current_index in range(start_index + 1, len(lines)):
+        current_line = lines[current_index]
+        block_lines.append(current_line)
+        brace_balance += current_line.count("{") - current_line.count("}")
+        end_index = current_index
+        if brace_balance <= 0:
+            break
+    return end_index + 1, "\n".join(block_lines) + "\n"
+
+
+def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
+    if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
+        return []
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    if path.suffix in _JS_TS_SUFFIXES:
+        patterns = [
+            (
+                "class",
+                re.compile(
+                    rf"^\s*(?:export\s+)?class\s+({re.escape(symbol)})\b"
+                ),
+            ),
+            (
+                "function",
+                re.compile(
+                    rf"^\s*(?:export\s+)?function\s+({re.escape(symbol)})\b"
+                ),
+            ),
+        ]
+    else:
+        patterns = [
+            (
+                "function",
+                re.compile(
+                    rf"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+({re.escape(symbol)})\b"
+                ),
+            ),
+            (
+                "struct",
+                re.compile(rf"^\s*(?:pub\s+)?struct\s+({re.escape(symbol)})\b"),
+            ),
+            (
+                "enum",
+                re.compile(rf"^\s*(?:pub\s+)?enum\s+({re.escape(symbol)})\b"),
+            ),
+            (
+                "trait",
+                re.compile(rf"^\s*(?:pub\s+)?trait\s+({re.escape(symbol)})\b"),
+            ),
+        ]
+
+    sources: list[dict[str, Any]] = []
+    for line_number, line in enumerate(lines, start=1):
+        matched_kind = None
+        for kind, pattern in patterns:
+            if pattern.match(line):
+                matched_kind = kind
+                break
+        if matched_kind is None:
+            continue
+
+        end_line, block = _extract_braced_block(lines, line_number - 1)
+        sources.append(
+            {
+                "name": symbol,
+                "kind": matched_kind,
+                "file": str(path),
+                "start_line": line_number,
+                "end_line": end_line,
+                "source": block,
+            }
+        )
+
+    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
+    return sources
+
+
 def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -640,6 +769,47 @@ def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
 
 def build_symbol_defs_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_defs(symbol, path), indent=2)
+
+
+def build_symbol_source(symbol: str, path: str | Path = ".") -> dict[str, Any]:
+    repo_map = build_repo_map(path)
+    return build_symbol_source_from_map(repo_map, symbol)
+
+
+def build_symbol_source_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    sources: list[dict[str, Any]] = []
+    seen_files: set[str] = set()
+    for definition in defs_payload["definitions"]:
+        current_path = Path(str(definition["file"]))
+        if str(current_path) in seen_files:
+            continue
+        seen_files.add(str(current_path))
+        current_sources = _python_symbol_sources(current_path, symbol)
+        if not current_sources:
+            current_sources = _regex_symbol_sources(current_path, symbol)
+        sources.extend(current_sources)
+
+    related_paths: list[str] = []
+    for current in [*defs_payload["files"], *defs_payload["tests"]]:
+        if current not in related_paths:
+            related_paths.append(current)
+
+    payload = _envelope(Path(defs_payload["path"]))
+    payload["routing_reason"] = "symbol-source"
+    payload["symbol"] = symbol
+    payload["definitions"] = defs_payload["definitions"]
+    payload["files"] = defs_payload["files"]
+    payload["symbols"] = defs_payload["symbols"]
+    payload["imports"] = defs_payload["imports"]
+    payload["tests"] = defs_payload["tests"]
+    payload["related_paths"] = related_paths
+    payload["sources"] = sources
+    return payload
+
+
+def build_symbol_source_json(symbol: str, path: str | Path = ".") -> str:
+    return json.dumps(build_symbol_source(symbol, path), indent=2)
 
 
 def build_symbol_impact(symbol: str, path: str | Path = ".") -> dict[str, Any]:
