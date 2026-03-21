@@ -401,6 +401,56 @@ def _source_tokens(source_files: list[str]) -> set[str]:
     return tokens
 
 
+def _module_aliases_for_path(path: str) -> set[str]:
+    current = Path(path)
+    aliases = {current.stem.lower()}
+    parts = [part.lower() for part in current.with_suffix("").parts]
+    if parts:
+        aliases.add(".".join(parts))
+    if len(parts) > 1:
+        aliases.add(".".join(parts[-2:]))
+    return {alias for alias in aliases if alias}
+
+
+def _import_graph_bonus(
+    file_path: str,
+    dependency_aliases: dict[str, set[str]],
+    imports_by_file: dict[str, list[str]],
+) -> int:
+    bonus = 0
+    for import_name in imports_by_file.get(file_path, []):
+        lowered = import_name.lower()
+        for aliases in dependency_aliases.values():
+            if any(alias and alias in lowered for alias in aliases):
+                bonus += 4
+                break
+    return bonus
+
+
+def _dependency_ranked_files(
+    ranked_files: list[str],
+    all_files: list[str],
+    imports_by_file: dict[str, list[str]],
+) -> list[str]:
+    if not ranked_files:
+        return []
+
+    dependency_aliases = {current: _module_aliases_for_path(current) for current in ranked_files}
+    boosted: list[tuple[int, str]] = []
+    seen = set(ranked_files)
+    for current in all_files:
+        if current in seen:
+            continue
+        bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
+        if bonus > 0:
+            boosted.append((bonus, current))
+
+    boosted.sort(key=lambda item: (-item[0], item[1]))
+    for _, current in boosted:
+        ranked_files.append(current)
+    return ranked_files
+
+
 def _test_import_bonus(
     test_path: str,
     source_tokens: set[str],
@@ -440,10 +490,7 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     imports_by_file = {
         str(entry["file"]): [str(item) for item in entry["imports"]] for entry in payload["imports"]
     }
-
-    scored_files = [(_score_file_path(current, terms), current) for current in payload["files"]]
-    scored_files = [item for item in scored_files if item[0] > 0]
-    scored_files.sort(key=lambda item: (-item[0], item[1]))
+    file_scores = {str(current): _score_file_path(str(current), terms) for current in payload["files"]}
 
     scored_symbols: list[dict[str, Any]] = []
     for symbol in payload["symbols"]:
@@ -461,6 +508,9 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
             str(item["name"]),
         )
     )
+    for symbol in scored_symbols:
+        current = str(symbol["file"])
+        file_scores[current] = file_scores.get(current, 0) + int(symbol["score"]) * 2
 
     scored_imports: list[dict[str, Any]] = []
     for entry in payload["imports"]:
@@ -471,7 +521,37 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
         scored_entry["score"] = score
         scored_imports.append(scored_entry)
     scored_imports.sort(key=lambda item: (-int(item["score"]), str(item["file"])))
+    for entry in scored_imports:
+        current = str(entry["file"])
+        file_scores[current] = file_scores.get(current, 0) + int(entry["score"]) * 2
 
+    dependency_seed_files: list[str] = []
+    for symbol in scored_symbols:
+        current = str(symbol["file"])
+        if current not in dependency_seed_files:
+            dependency_seed_files.append(current)
+    for entry in scored_imports:
+        current = str(entry["file"])
+        if current not in dependency_seed_files:
+            dependency_seed_files.append(current)
+    if not dependency_seed_files:
+        dependency_seed_files = [path for path in payload["files"] if _score_file_path(str(path), terms) > 0]
+
+    dependency_aliases = {
+        current: _module_aliases_for_path(current) for current in dependency_seed_files
+    }
+    for current in payload["files"]:
+        current_path = str(current)
+        if current_path in dependency_seed_files:
+            continue
+        file_scores[current_path] = file_scores.get(current_path, 0) + _import_graph_bonus(
+            current_path,
+            dependency_aliases,
+            imports_by_file,
+        )
+
+    scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
+    scored_files.sort(key=lambda item: (-item[0], item[1]))
     ranked_files = [path for _, path in scored_files]
     if not ranked_files:
         for symbol in scored_symbols:

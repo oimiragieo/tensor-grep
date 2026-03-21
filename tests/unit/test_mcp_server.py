@@ -1045,6 +1045,68 @@ def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_pa
     assert rust_payload["tests"][0] == str(rust_test_path.resolve())
 
 
+def test_tg_symbol_impact_prefers_import_linked_source_files_over_name_only_matches(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    notes_dir = project / "notes"
+    src_dir.mkdir(parents=True)
+    notes_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    importer_path = src_dir / "billing.py"
+    importer_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def bill():\n"
+        "    return create_invoice(1, 2)\n",
+        encoding="utf-8",
+    )
+    noisy_path = notes_dir / "invoice_notes.py"
+    noisy_path.write_text("def placeholder():\n    return 'invoice'\n", encoding="utf-8")
+
+    payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", str(project)))
+
+    assert payload["files"][0] == str(module_path.resolve())
+    assert payload["files"][1] == str(importer_path.resolve())
+    assert str(noisy_path.resolve()) not in payload["files"][:2]
+
+
+def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    notes_dir = project / "notes"
+    src_dir.mkdir(parents=True)
+    notes_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    importer_path = src_dir / "billing.py"
+    importer_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def bill():\n"
+        "    return create_invoice(1, 2)\n",
+        encoding="utf-8",
+    )
+    noisy_path = notes_dir / "invoice_notes.py"
+    noisy_path.write_text("def placeholder():\n    return 'invoice'\n", encoding="utf-8")
+
+    payload = json.loads(mcp_server.tg_context_pack("create invoice", str(project)))
+
+    assert payload["files"][0] == str(module_path.resolve())
+    assert payload["files"][1] == str(importer_path.resolve())
+    assert str(noisy_path.resolve()) not in payload["files"][:2]
+
+
 def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
     from tensor_grep.cli import mcp_server
 
