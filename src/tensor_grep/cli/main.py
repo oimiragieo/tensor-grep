@@ -1717,6 +1717,31 @@ def session_show(
     )
 
 
+@session_app.command("refresh")
+def session_refresh(
+    session_id: str = typer.Argument(..., help="Session ID to refresh."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Refresh a cached session after file changes."""
+    from tensor_grep.cli.session_store import refresh_session
+
+    try:
+        payload = refresh_session(session_id, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Refreshed session {payload.session_id} "
+        f"(files={payload.file_count}, symbols={payload.symbol_count})"
+    )
+
+
 @session_app.command("context")
 def session_context_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
@@ -1753,6 +1778,11 @@ def session_serve(
         "--jsonl/--no-jsonl",
         help="Read newline-delimited JSON requests from stdin and emit JSON responses.",
     ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
 ) -> None:
     """Serve repeated repo-map and symbol requests from a cached session."""
     from tensor_grep.cli.session_store import serve_session_stream
@@ -1762,7 +1792,7 @@ def session_serve(
         raise typer.Exit(2)
 
     try:
-        serve_session_stream(session_id, path)
+        serve_session_stream(session_id, path, refresh_on_stale=refresh_on_stale)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

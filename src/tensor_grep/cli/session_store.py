@@ -41,6 +41,15 @@ class SessionOpenResult:
     symbol_count: int
 
 
+@dataclass
+class SessionRefreshResult:
+    session_id: str
+    root: str
+    refreshed_at: str
+    file_count: int
+    symbol_count: int
+
+
 class SessionStaleError(RuntimeError):
     pass
 
@@ -151,6 +160,60 @@ def open_session(path: str = ".") -> SessionOpenResult:
     )
 
 
+def refresh_session(session_id: str, path: str = ".") -> SessionRefreshResult:
+    root = _resolve_root(Path(path))
+    existing = get_session(session_id, path)
+    repo_map = build_repo_map(root)
+    refreshed_at = datetime.now(UTC).isoformat()
+    created_at = str(existing.get("created_at", refreshed_at))
+    payload = {
+        "version": _SESSION_VERSION,
+        "session_id": session_id,
+        "root": str(root),
+        "created_at": created_at,
+        "refreshed_at": refreshed_at,
+        "repo_map": repo_map,
+        "snapshot": _capture_snapshot(repo_map["files"]),
+    }
+    session_path = _session_payload_path(root, session_id)
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    records = _load_index(root)
+    for index, record in enumerate(records):
+        if record.session_id == session_id:
+            records[index] = SessionRecord(
+                version=_SESSION_VERSION,
+                session_id=session_id,
+                root=str(root),
+                created_at=created_at,
+                file_count=len(repo_map["files"]),
+                symbol_count=len(repo_map["symbols"]),
+            )
+            break
+    else:
+        records.insert(
+            0,
+            SessionRecord(
+                version=_SESSION_VERSION,
+                session_id=session_id,
+                root=str(root),
+                created_at=created_at,
+                file_count=len(repo_map["files"]),
+                symbol_count=len(repo_map["symbols"]),
+            ),
+        )
+    _write_index(root, records)
+
+    return SessionRefreshResult(
+        session_id=session_id,
+        root=str(root),
+        refreshed_at=refreshed_at,
+        file_count=len(repo_map["files"]),
+        symbol_count=len(repo_map["symbols"]),
+    )
+
+
 def list_sessions(path: str = ".") -> list[SessionRecord]:
     root = _resolve_root(Path(path))
     return _load_index(root)
@@ -250,6 +313,7 @@ def serve_session_stream(
     session_id: str,
     path: str = ".",
     *,
+    refresh_on_stale: bool = False,
     input_stream: TextIO | None = None,
     output_stream: TextIO | None = None,
 ) -> int:
@@ -266,11 +330,16 @@ def serve_session_stream(
             request = cast(dict[str, Any], json.loads(line))
             response = serve_session_request(session_id, request, path)
         except SessionStaleError as exc:
-            response = {
-                "version": _SESSION_VERSION,
-                "session_id": session_id,
-                "error": {"code": "stale_session", "message": str(exc)},
-            }
+            if refresh_on_stale:
+                refresh_session(session_id, path)
+                request = cast(dict[str, Any], json.loads(line))
+                response = serve_session_request(session_id, request, path)
+            else:
+                response = {
+                    "version": _SESSION_VERSION,
+                    "session_id": session_id,
+                    "error": {"code": "stale_session", "message": str(exc)},
+                }
         except Exception as exc:
             response = {
                 "version": _SESSION_VERSION,

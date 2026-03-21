@@ -175,3 +175,61 @@ def test_session_serve_reports_stale_session_after_file_change(tmp_path: Path) -
     assert payload["session_id"] == opened["session_id"]
     assert payload["error"]["code"] == "stale_session"
     assert "changed on disk" in payload["error"]["message"]
+
+
+def test_session_refresh_updates_cached_repo_map_after_file_change(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    second_path = src_dir / "billing.py"
+    second_path.write_text("def issue_invoice():\n    return 2\n", encoding="utf-8")
+
+    refresh_result = runner.invoke(
+        app,
+        ["session", "refresh", opened["session_id"], str(project), "--json"],
+    )
+
+    assert refresh_result.exit_code == 0
+    refreshed = json.loads(refresh_result.stdout)
+    assert refreshed["session_id"] == opened["session_id"]
+    assert refreshed["file_count"] == 2
+    assert refreshed["symbol_count"] == 2
+
+    show_result = runner.invoke(app, ["session", "show", opened["session_id"], str(project), "--json"])
+    shown = json.loads(show_result.stdout)
+    assert str(second_path.resolve()) in shown["repo_map"]["files"]
+
+
+def test_session_serve_can_auto_refresh_stale_session(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    module_path.write_text(
+        "def create_invoice():\n    return 2\n\n"
+        "def settle_invoice():\n    return create_invoice()\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["session", "serve", opened["session_id"], str(project), "--refresh-on-stale"],
+        input='{"command":"defs","symbol":"settle_invoice"}\n',
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout.strip())
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["routing_reason"] == "session-defs"
+    assert payload["definitions"][0]["name"] == "settle_invoice"

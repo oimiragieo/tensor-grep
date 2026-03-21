@@ -10,6 +10,7 @@ JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
 ROUTING_REASON = "repo-map"
 _SKIP_DIR_NAMES = {
+    ".tensor-grep",
     ".git",
     ".hg",
     ".svn",

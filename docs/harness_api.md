@@ -477,6 +477,18 @@ Example: [`examples/session_open.json`](examples/session_open.json)
 | `file_count` | `integer` | Number of source files captured in the cached repo map. |
 | `symbol_count` | `integer` | Number of symbols captured in the cached repo map. |
 
+## Session Refresh JSON
+
+Emitted by `tg session refresh <id> ... --json`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `session_id` | `string` | Session identifier refreshed in place. |
+| `root` | `string` | Session root. |
+| `refreshed_at` | `string` | ISO-8601 refresh timestamp. |
+| `file_count` | `integer` | Number of source files captured after refresh. |
+| `symbol_count` | `integer` | Number of symbols captured after refresh. |
+
 ## Session Context JSON
 
 Emitted by `tg.exe session context <id> --query ... --json`.
@@ -526,6 +538,9 @@ Supported commands:
 
 Responses reuse the same public payload shapes as the one-shot session and repo-map-derived
 commands, with an added `session_id` field.
+
+Use `--refresh-on-stale` to refresh the cached session once and retry the request when file
+changes are detected.
 
 Invalid requests return:
 

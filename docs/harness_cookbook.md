@@ -151,6 +151,7 @@ Inspect cached session metadata:
 ```powershell
 tg session list . --json
 tg session show session-20260320071200-rewrite . --json
+tg session refresh session-20260320071200-rewrite . --json
 ```
 
 Reuse the cached repo map for another query:
@@ -158,6 +159,7 @@ Reuse the cached repo map for another query:
 ```powershell
 tg session context session-20260320071200-rewrite . --query "invoice payment" --json
 tg session serve session-20260320071200-rewrite . < requests.jsonl
+tg session serve session-20260320071200-rewrite . --refresh-on-stale < requests.jsonl
 ```
 
 Recommended consumer behavior:
@@ -165,8 +167,9 @@ Recommended consumer behavior:
 1. open one session at the start of a multi-step edit task
 2. reuse `session context` for follow-up queries instead of rebuilding repo inventory
 3. keep the returned `session_id` with the task state until the edit loop finishes
-4. use `session serve` for repeated repo-map, context, defs, refs, callers, and impact requests
-5. keep honoring the same `coverage` contract as `tg map` / `tg context`
+4. run `session refresh` after accepted file mutations or use `--refresh-on-stale` for automated recovery
+5. use `session serve` for repeated repo-map, context, defs, refs, callers, and impact requests
+6. keep honoring the same `coverage` contract as `tg map` / `tg context`
 
 Example `requests.jsonl`:
 
