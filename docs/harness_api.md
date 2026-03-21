@@ -566,6 +566,7 @@ Current tool set:
 - `tg_session_open(path=".")`
 - `tg_session_list(path=".")`
 - `tg_session_show(session_id, path=".")`
+- `tg_session_refresh(session_id, path=".")`
 - `tg_session_context(session_id, query, path=".")`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
@@ -580,6 +581,7 @@ Response mapping:
 - `tg_symbol_refs(...)` returns the same v1 envelope and payload shape as [`examples/refs.json`](examples/refs.json)
 - `tg_symbol_callers(...)` returns the same v1 envelope and payload shape as [`examples/callers.json`](examples/callers.json)
 - `tg_session_open(...)` returns the same payload shape as [`examples/session_open.json`](examples/session_open.json)
+- `tg_session_refresh(...)` returns the same payload shape as Session Refresh JSON
 - `tg_session_context(...)` returns the same payload shape as [`examples/session_context.json`](examples/session_context.json)
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 - `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)

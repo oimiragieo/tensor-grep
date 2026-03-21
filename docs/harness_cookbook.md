@@ -321,6 +321,7 @@ Available workflow tools:
 - `tg_session_open`
 - `tg_session_list`
 - `tg_session_show`
+- `tg_session_refresh`
 - `tg_session_context`
 - `tg_checkpoint_create`
 - `tg_checkpoint_list`

@@ -592,6 +592,57 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
 
+def test_tg_session_refresh_updates_cached_session_payload(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    sample_path = src_dir / "sample.py"
+    sample_path.write_text("def add(x):\n    return x\n", encoding="utf-8")
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    second_path = src_dir / "billing.py"
+    second_path.write_text("def issue_invoice():\n    return 2\n", encoding="utf-8")
+
+    refreshed = json.loads(mcp_server.tg_session_refresh(session_id, str(project)))
+    assert refreshed["session_id"] == session_id
+    assert refreshed["file_count"] == 2
+    assert isinstance(refreshed["refreshed_at"], str)
+    assert refreshed["refreshed_at"]
+
+    shown = json.loads(mcp_server.tg_session_show(session_id, str(project)))
+    assert str(second_path.resolve()) in shown["repo_map"]["files"]
+
+
+def test_tg_session_context_reports_stale_session_until_refreshed(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    sample_path = src_dir / "sample.py"
+    sample_path.write_text("def add(x):\n    return x\n", encoding="utf-8")
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    sample_path.write_text("def add(x):\n    return x + 1\n", encoding="utf-8")
+
+    stale = json.loads(mcp_server.tg_session_context(session_id, "add", str(project)))
+    assert stale["error"]["code"] == "invalid_input"
+    assert "changed on disk" in stale["error"]["message"]
+
+    refreshed = json.loads(mcp_server.tg_session_refresh(session_id, str(project)))
+    assert refreshed["session_id"] == session_id
+
+    context = json.loads(mcp_server.tg_session_context(session_id, "add", str(project)))
+    assert context["session_id"] == session_id
+    assert context["routing_reason"] == "session-context"
+
+
 def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
     from tensor_grep.cli import mcp_server
 

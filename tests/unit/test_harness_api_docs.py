@@ -63,6 +63,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_session_open" in doc
     assert "tg_session_list" in doc
     assert "tg_session_show" in doc
+    assert "tg_session_refresh" in doc
     assert "tg_session_context" in doc
     assert "tg_checkpoint_create" in doc
     assert "tg_checkpoint_list" in doc

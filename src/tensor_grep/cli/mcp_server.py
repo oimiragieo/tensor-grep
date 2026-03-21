@@ -1111,6 +1111,33 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
+def tg_session_refresh(session_id: str, path: str = ".") -> str:
+    """
+    Refresh a cached repository-map session after file changes.
+
+    Args:
+        session_id: Session ID to refresh.
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import refresh_session
+
+    try:
+        payload = refresh_session(session_id, path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+                "session_id": session_id,
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
 def tg_session_context(session_id: str, query: str, path: str = ".") -> str:
     """
     Return a context pack derived from a cached session.

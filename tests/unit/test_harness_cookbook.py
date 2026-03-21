@@ -68,6 +68,7 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert "tg_session_open" in doc
     assert "tg_session_list" in doc
     assert "tg_session_show" in doc
+    assert "tg_session_refresh" in doc
     assert "tg_session_context" in doc
     assert "tg_checkpoint_create" in doc
     assert "tg_checkpoint_list" in doc
