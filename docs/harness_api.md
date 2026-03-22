@@ -148,9 +148,11 @@ Use this shape when an agent needs a query-driven subset of the repository map b
 | `query` | `string` | Query text used for ranking. |
 | `path` | `string` | Absolute root path inventoried. |
 | `files` | `array<string>` | Ranked source files related to the query. |
+| `file_matches` | `array<object>` | Ranked source file metadata with stable `path`, `score`, and `reasons`. |
 | `symbols` | `array<object>` | Ranked symbols related to the query. |
 | `imports` | `array<object>` | Ranked import rows related to the query. |
 | `tests` | `array<string>` | Ranked test files related to the query. |
+| `test_matches` | `array<object>` | Ranked test metadata with stable `path`, `score`, and `reasons`. |
 | `related_paths` | `array<string>` | Stable merged order of the highest-value source and test paths. |
 
 Each ranked `symbols[]` object extends the Repo Map JSON symbol shape with:
@@ -158,6 +160,14 @@ Each ranked `symbols[]` object extends the Repo Map JSON symbol shape with:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `score` | `integer` | Deterministic query relevance score. |
+
+Each `file_matches[]` and `test_matches[]` object uses:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `path` | `string` | Absolute path for the ranked file. |
+| `score` | `integer` | Deterministic rank score used for ordering. |
+| `reasons` | `array<string>` | Stable provenance labels such as `path`, `symbol`, `definition`, `import`, `import-graph`, `filename`, or `test-graph`. |
 
 Each ranked `imports[]` object extends the Repo Map JSON import shape with:
 
@@ -435,7 +445,9 @@ Example: [`examples/impact.json`](examples/impact.json)
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `files` | `array<string>` | Likely impacted source files, definition file first. |
+| `file_matches` | `array<object>` | Ranked impacted file metadata with stable `path`, `score`, and provenance `reasons`. |
 | `tests` | `array<string>` | Likely impacted tests. |
+| `test_matches` | `array<object>` | Ranked impacted test metadata with stable `path`, `score`, and provenance `reasons`. |
 | `imports` | `array<object>` | Ranked import entries from the context pack path. |
 | `symbols` | `array<object>` | Ranked related symbols, including `score`. |
 | `related_paths` | `array<string>` | Stable union of impacted files and tests. |

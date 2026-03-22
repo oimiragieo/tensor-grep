@@ -936,6 +936,20 @@ def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:
     )
 
 
+def _append_reason(reason_map: dict[str, list[str]], path: str, reason: str) -> None:
+    current = reason_map.setdefault(path, [])
+    if reason not in current:
+        current.append(reason)
+
+
+def _match_record(path: str, score: int, reasons: list[str]) -> dict[str, Any]:
+    return {
+        "path": path,
+        "score": score,
+        "reasons": list(reasons),
+    }
+
+
 def _source_tokens(source_files: list[str]) -> set[str]:
     tokens: set[str] = set()
     for current in source_files:
@@ -1046,20 +1060,27 @@ def _context_tests(
     terms: list[str],
     imports_by_file: dict[str, list[str]],
     file_distances: dict[str, int],
-) -> list[str]:
-    related: list[tuple[int, str]] = []
+) -> list[dict[str, Any]]:
+    related: list[dict[str, Any]] = []
     source_stems = {Path(current).stem.lower() for current in source_files}
     source_tokens = _source_tokens(source_files)
     for current in tests:
         score = _score_file_path(current, terms)
+        reasons: list[str] = []
+        if score > 0:
+            reasons.append("path")
         stem = Path(current).stem.lower().removeprefix("test_")
         if stem in source_stems:
             score += 2
-        score += _test_import_bonus(current, source_tokens, imports_by_file, file_distances)
+            reasons.append("filename")
+        import_bonus = _test_import_bonus(current, source_tokens, imports_by_file, file_distances)
+        score += import_bonus
+        if import_bonus > 0:
+            reasons.append("test-graph")
         if score > 0:
-            related.append((score, current))
-    related.sort(key=lambda item: (-item[0], item[1]))
-    return [path for _, path in related]
+            related.append(_match_record(current, score, reasons))
+    related.sort(key=lambda item: (-int(item["score"]), str(item["path"])))
+    return related
 
 
 def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[str, Any]:
@@ -1068,6 +1089,10 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
         str(entry["file"]): [str(item) for item in entry["imports"]] for entry in payload["imports"]
     }
     file_scores = {str(current): _score_file_path(str(current), terms) for current in payload["files"]}
+    file_reasons: dict[str, list[str]] = {}
+    for current, score in file_scores.items():
+        if score > 0:
+            _append_reason(file_reasons, current, "path")
 
     scored_symbols: list[dict[str, Any]] = []
     for symbol in payload["symbols"]:
@@ -1076,6 +1101,10 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
             continue
         scored_symbol = dict(symbol)
         scored_symbol["score"] = score
+        current_path = str(scored_symbol["file"])
+        _append_reason(file_reasons, current_path, "definition")
+        if _score_text_terms(str(scored_symbol["name"]), terms) > 0:
+            _append_reason(file_reasons, current_path, "symbol")
         scored_symbols.append(scored_symbol)
     scored_symbols.sort(
         key=lambda item: (
@@ -1101,6 +1130,7 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     for entry in scored_imports:
         current = str(entry["file"])
         file_scores[current] = file_scores.get(current, 0) + int(entry["score"]) * 2
+        _append_reason(file_reasons, current, "import")
 
     dependency_seed_files: list[str] = []
     for symbol in scored_symbols:
@@ -1126,19 +1156,22 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
         current_path = str(current)
         if current_path in dependency_seed_files:
             continue
-        file_scores[current_path] = file_scores.get(current_path, 0) + _import_graph_bonus(
+        import_graph_bonus = _import_graph_bonus(
             current_path,
             dependency_aliases,
             imports_by_file,
         )
+        file_scores[current_path] = file_scores.get(current_path, 0) + import_graph_bonus
+        if import_graph_bonus > 0:
+            _append_reason(file_reasons, current_path, "import-graph")
         if current_path in file_distances:
-            file_scores[current_path] = file_scores.get(current_path, 0) + max(
-                1, 5 - file_distances[current_path]
-            )
+            file_scores[current_path] = file_scores.get(current_path, 0) + max(1, 5 - file_distances[current_path])
+            _append_reason(file_reasons, current_path, "import-graph")
 
     scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
     scored_files.sort(key=lambda item: (-item[0], item[1]))
     ranked_files = [path for _, path in scored_files]
+    file_matches = [_match_record(path, score, file_reasons.get(path, [])) for score, path in scored_files]
     if not ranked_files:
         for symbol in scored_symbols:
             current = str(symbol["file"])
@@ -1148,7 +1181,8 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
             current = str(entry["file"])
             if current not in ranked_files:
                 ranked_files.append(current)
-    ranked_tests = _context_tests(ranked_files, payload["tests"], terms, imports_by_file, file_distances)
+    test_matches = _context_tests(ranked_files, payload["tests"], terms, imports_by_file, file_distances)
+    ranked_tests = [str(item["path"]) for item in test_matches]
 
     related_paths = []
     for current in ranked_files:
@@ -1160,9 +1194,11 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     payload["routing_reason"] = "context-pack"
     payload["query"] = query
     payload["files"] = ranked_files
+    payload["file_matches"] = file_matches
     payload["symbols"] = scored_symbols
     payload["imports"] = scored_imports
     payload["tests"] = ranked_tests
+    payload["test_matches"] = test_matches
     payload["related_paths"] = related_paths
     return payload
 
@@ -1293,6 +1329,43 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
         if current not in related_tests:
             related_tests.append(current)
 
+    file_matches_by_path: dict[str, dict[str, Any]] = {
+        str(item["path"]): {
+            "path": str(item["path"]),
+            "score": int(item["score"]),
+            "reasons": list(item["reasons"]),
+        }
+        for item in context_payload.get("file_matches", [])
+    }
+    for current in defs_payload["files"]:
+        entry = file_matches_by_path.setdefault(
+            str(current),
+            {"path": str(current), "score": 0, "reasons": []},
+        )
+        if "definition" not in entry["reasons"]:
+            entry["reasons"].append("definition")
+    for current in import_files:
+        entry = file_matches_by_path.setdefault(
+            str(current),
+            {"path": str(current), "score": 0, "reasons": []},
+        )
+        if "import" not in entry["reasons"]:
+            entry["reasons"].append("import")
+
+    test_matches_by_path: dict[str, dict[str, Any]] = {
+        str(item["path"]): {
+            "path": str(item["path"]),
+            "score": int(item["score"]),
+            "reasons": list(item["reasons"]),
+        }
+        for item in context_payload.get("test_matches", [])
+    }
+    for current in defs_payload["tests"]:
+        test_matches_by_path.setdefault(
+            str(current),
+            {"path": str(current), "score": 0, "reasons": ["filename"]},
+        )
+
     related_paths: list[str] = []
     for current in [*impacted_files, *related_tests]:
         if current not in related_paths:
@@ -1303,7 +1376,9 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
     payload["symbol"] = symbol
     payload["definitions"] = defs_payload["definitions"]
     payload["files"] = impacted_files
+    payload["file_matches"] = [file_matches_by_path[str(current)] for current in impacted_files]
     payload["tests"] = related_tests
+    payload["test_matches"] = [test_matches_by_path[str(current)] for current in related_tests]
     payload["imports"] = context_payload["imports"]
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths

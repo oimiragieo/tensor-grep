@@ -1164,6 +1164,11 @@ def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(t
     assert payload["files"][0] == str(module_path.resolve())
     assert payload["files"][1] == str(importer_path.resolve())
     assert str(noisy_path.resolve()) not in payload["files"][:2]
+    assert payload["file_matches"][0]["path"] == str(module_path.resolve())
+    assert "symbol" in payload["file_matches"][0]["reasons"]
+    assert "definition" in payload["file_matches"][0]["reasons"]
+    assert payload["file_matches"][1]["path"] == str(importer_path.resolve())
+    assert "import" in payload["file_matches"][1]["reasons"]
 
 
 def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
@@ -1350,6 +1355,8 @@ def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_pat
     payload = json.loads(mcp_server.tg_symbol_impact("createInvoice", str(project)))
 
     assert payload["tests"][0] == str(test_path.resolve())
+    assert payload["test_matches"][0]["path"] == str(test_path.resolve())
+    assert "test-graph" in payload["test_matches"][0]["reasons"]
 
 
 def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(tmp_path):

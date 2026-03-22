@@ -85,7 +85,9 @@ struct SymbolImpactExample {
     symbol: String,
     definitions: Vec<RepoSymbolExample>,
     files: Vec<String>,
+    file_matches: Vec<RankedPathMatchExample>,
     tests: Vec<String>,
+    test_matches: Vec<RankedPathMatchExample>,
     imports: Vec<serde_json::Value>,
     symbols: Vec<RepoSymbolExample>,
     related_paths: Vec<String>,
@@ -399,6 +401,14 @@ struct RankedRepoImportExample {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RankedPathMatchExample {
+    path: PathBuf,
+    score: usize,
+    reasons: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ContextPackExample {
     version: u32,
     routing_backend: String,
@@ -408,9 +418,11 @@ struct ContextPackExample {
     query: String,
     path: PathBuf,
     files: Vec<PathBuf>,
+    file_matches: Vec<RankedPathMatchExample>,
     symbols: Vec<RankedRepoSymbolExample>,
     imports: Vec<RankedRepoImportExample>,
     tests: Vec<PathBuf>,
+    test_matches: Vec<RankedPathMatchExample>,
     related_paths: Vec<PathBuf>,
 }
 
@@ -435,9 +447,11 @@ struct SessionContextExample {
     query: String,
     path: PathBuf,
     files: Vec<PathBuf>,
+    file_matches: Vec<RankedPathMatchExample>,
     symbols: Vec<RankedRepoSymbolExample>,
     imports: Vec<RankedRepoImportExample>,
     tests: Vec<PathBuf>,
+    test_matches: Vec<RankedPathMatchExample>,
     related_paths: Vec<PathBuf>,
     session_id: String,
 }
@@ -844,11 +858,57 @@ fn assert_symbol_impact_example(path: &Path) {
         "{} files must not be empty",
         path.display()
     );
+    assert_eq!(
+        example.files.len(),
+        example.file_matches.len(),
+        "{} file_matches should align with files",
+        path.display()
+    );
+    assert_eq!(
+        example.tests.len(),
+        example.test_matches.len(),
+        "{} test_matches should align with tests",
+        path.display()
+    );
     assert!(
         !example.related_paths.is_empty(),
         "{} related_paths must not be empty",
         path.display()
     );
+    for file_match in &example.file_matches {
+        assert!(
+            is_portable_absolute_path(&file_match.path),
+            "{} file_match path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            file_match.score > 0,
+            "{} file_match score must be positive",
+            path.display()
+        );
+        assert!(
+            !file_match.reasons.is_empty(),
+            "{} file_match reasons must not be empty",
+            path.display()
+        );
+    }
+    for test_match in &example.test_matches {
+        assert!(
+            is_portable_absolute_path(&test_match.path),
+            "{} test_match path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            test_match.score > 0,
+            "{} test_match score must be positive",
+            path.display()
+        );
+        assert!(
+            !test_match.reasons.is_empty(),
+            "{} test_match reasons must not be empty",
+            path.display()
+        );
+    }
     for symbol in &example.symbols {
         assert!(
             symbol.score.unwrap_or_default() >= 0,
@@ -1394,6 +1454,12 @@ fn assert_context_pack_example(path: &Path) {
         "{} should rank files",
         path.display()
     );
+    assert_eq!(
+        example.files.len(),
+        example.file_matches.len(),
+        "{} file_matches should align with files",
+        path.display()
+    );
     assert!(
         !example.symbols.is_empty(),
         "{} should rank symbols",
@@ -1408,6 +1474,23 @@ fn assert_context_pack_example(path: &Path) {
         assert!(
             is_portable_absolute_path(file),
             "{} file entry should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for file_match in &example.file_matches {
+        assert!(
+            is_portable_absolute_path(&file_match.path),
+            "{} file_match path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            file_match.score > 0,
+            "{} file_match score must be positive",
+            path.display()
+        );
+        assert!(
+            !file_match.reasons.is_empty(),
+            "{} file_match reasons must not be empty",
             path.display()
         );
     }
@@ -1461,6 +1544,29 @@ fn assert_context_pack_example(path: &Path) {
         assert!(
             is_portable_absolute_path(test_path),
             "{} test path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    assert_eq!(
+        example.tests.len(),
+        example.test_matches.len(),
+        "{} test_matches should align with tests",
+        path.display()
+    );
+    for test_match in &example.test_matches {
+        assert!(
+            is_portable_absolute_path(&test_match.path),
+            "{} test_match path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            test_match.score > 0,
+            "{} test_match score must be positive",
+            path.display()
+        );
+        assert!(
+            !test_match.reasons.is_empty(),
+            "{} test_match reasons must not be empty",
             path.display()
         );
     }
@@ -1537,6 +1643,12 @@ fn assert_session_context_example(path: &Path) {
         "{} should rank files",
         path.display()
     );
+    assert_eq!(
+        example.files.len(),
+        example.file_matches.len(),
+        "{} file_matches should align with files",
+        path.display()
+    );
     assert!(
         !example.symbols.is_empty(),
         "{} should rank symbols",
@@ -1551,6 +1663,23 @@ fn assert_session_context_example(path: &Path) {
         assert!(
             is_portable_absolute_path(file),
             "{} file entry should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for file_match in &example.file_matches {
+        assert!(
+            is_portable_absolute_path(&file_match.path),
+            "{} file_match path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            file_match.score > 0,
+            "{} file_match score must be positive",
+            path.display()
+        );
+        assert!(
+            !file_match.reasons.is_empty(),
+            "{} file_match reasons must not be empty",
             path.display()
         );
     }
@@ -1593,6 +1722,29 @@ fn assert_session_context_example(path: &Path) {
         assert!(
             is_portable_absolute_path(test_path),
             "{} test path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    assert_eq!(
+        example.tests.len(),
+        example.test_matches.len(),
+        "{} test_matches should align with tests",
+        path.display()
+    );
+    for test_match in &example.test_matches {
+        assert!(
+            is_portable_absolute_path(&test_match.path),
+            "{} test_match path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            test_match.score > 0,
+            "{} test_match score must be positive",
+            path.display()
+        );
+        assert!(
+            !test_match.reasons.is_empty(),
+            "{} test_match reasons must not be empty",
             path.display()
         );
     }

@@ -8,6 +8,16 @@
   "files": [
     "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
   ],
+  "file_matches": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "score": 9,
+      "reasons": [
+        "definition",
+        "symbol"
+      ]
+    }
+  ],
   "symbols": [
     {
       "name": "add",
@@ -19,6 +29,7 @@
   ],
   "imports": [],
   "tests": [],
+  "test_matches": [],
   "related_paths": [
     "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
   ],
