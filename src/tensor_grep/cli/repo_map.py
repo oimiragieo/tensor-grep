@@ -34,7 +34,7 @@ def _envelope(path: Path) -> dict[str, Any]:
         "sidecar_used": False,
         "coverage": {
             "language_scope": "python-js-ts-rust",
-            "symbol_navigation": "python-ast+parser-js+heuristic-ts-rust",
+            "symbol_navigation": "python-ast+parser-js-ts+heuristic-rust",
             "test_matching": "filename+import+graph-heuristic",
         },
         "path": str(path),
@@ -123,6 +123,23 @@ def _javascript_parser() -> Any | None:
         return None
 
     language = tree_sitter.Language(tree_sitter_javascript.language())
+    return tree_sitter.Parser(language)
+
+
+@lru_cache(maxsize=2)
+def _typescript_parser(*, tsx: bool) -> Any | None:
+    try:
+        import tree_sitter
+        import tree_sitter_typescript
+    except ImportError:
+        return None
+
+    raw_language = (
+        tree_sitter_typescript.language_tsx()
+        if tsx
+        else tree_sitter_typescript.language_typescript()
+    )
+    language = tree_sitter.Language(raw_language)
     return tree_sitter.Parser(language)
 
 
@@ -342,13 +359,16 @@ def _regex_references_and_calls(
     return references, calls
 
 
-def _javascript_references_and_calls(
+def _js_ts_references_and_calls(
     path: Path, symbol: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if path.suffix not in _JS_TS_SUFFIXES:
         return [], []
 
-    parser = _javascript_parser()
+    if path.suffix in {".ts", ".tsx"}:
+        parser = _typescript_parser(tsx=path.suffix == ".tsx")
+    else:
+        parser = _javascript_parser()
     if parser is None:
         return [], []
 
@@ -999,7 +1019,7 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     for current in _iter_repo_files(Path(payload["path"])):
         current_refs, _ = _python_references_and_calls(current, symbol)
         if not current_refs:
-            current_refs, _ = _javascript_references_and_calls(current, symbol)
+            current_refs, _ = _js_ts_references_and_calls(current, symbol)
         if not current_refs:
             current_refs, _ = _regex_references_and_calls(current, symbol)
         references.extend(current_refs)
@@ -1032,7 +1052,7 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
     for current in _iter_repo_files(Path(defs_payload["path"])):
         _, current_calls = _python_references_and_calls(current, symbol)
         if not current_calls:
-            _, current_calls = _javascript_references_and_calls(current, symbol)
+            _, current_calls = _js_ts_references_and_calls(current, symbol)
         if not current_calls:
             _, current_calls = _regex_references_and_calls(current, symbol)
         calls.extend(current_calls)
@@ -1064,4 +1084,6 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
 
 def build_symbol_callers_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_callers(symbol, path), indent=2)
+
+
 

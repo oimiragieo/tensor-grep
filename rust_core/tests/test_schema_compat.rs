@@ -1736,8 +1736,8 @@ fn assert_repo_map_coverage(path: &Path, coverage: &CoverageExample) {
     );
     assert_eq!(
         coverage.symbol_navigation,
-        "python-ast+parser-js+heuristic-ts-rust",
-        "{} coverage.symbol_navigation must stay python-ast+parser-js+heuristic-ts-rust",
+        "python-ast+parser-js-ts+heuristic-rust",
+        "{} coverage.symbol_navigation must stay python-ast+parser-js-ts+heuristic-rust",
         path.display()
     );
     assert_eq!(

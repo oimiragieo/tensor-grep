@@ -38,9 +38,11 @@
   ],
   "coverage": {
     "language_scope": "python-js-ts-rust",
-    "symbol_navigation": "python-ast+parser-js+heuristic-ts-rust",
+    "symbol_navigation": "python-ast+parser-js-ts+heuristic-rust",
     "test_matching": "filename+import+graph-heuristic"
   }
 }
+
+
 
 
