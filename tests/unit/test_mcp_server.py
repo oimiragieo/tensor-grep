@@ -1459,6 +1459,42 @@ def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_pa
     assert consumer_calls[0]["line"] == 4
 
 
+def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    ts_path = src_dir / "payments.ts"
+    ts_path.write_text(
+        "// export function createInvoice() {}\n"
+        "export function createInvoice(total: number) {\n"
+        "  return total;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    rust_path = src_dir / "billing.rs"
+    rust_path.write_text(
+        "// pub fn issue_invoice() -> usize { 0 }\n"
+        "pub fn issue_invoice() -> usize {\n"
+        "    1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    ts_payload = json.loads(mcp_server.tg_symbol_source("createInvoice", str(project)))
+    rust_payload = json.loads(mcp_server.tg_symbol_source("issue_invoice", str(project)))
+
+    assert ts_payload["sources"][0]["file"] == str(ts_path.resolve())
+    assert ts_payload["sources"][0]["start_line"] == 2
+    assert "return total;" in ts_payload["sources"][0]["source"]
+
+    assert rust_payload["sources"][0]["file"] == str(rust_path.resolve())
+    assert rust_payload["sources"][0]["start_line"] == 2
+    assert "1" in rust_payload["sources"][0]["source"]
+
+
 
 
 

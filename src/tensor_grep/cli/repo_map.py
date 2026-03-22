@@ -260,6 +260,98 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
     return imports, symbols
 
 
+def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
+    if path.suffix not in _JS_TS_SUFFIXES:
+        return []
+
+    if path.suffix in {".ts", ".tsx"}:
+        parser = _typescript_parser(tsx=path.suffix == ".tsx")
+    else:
+        parser = _javascript_parser()
+    if parser is None:
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    tree = parser.parse(source.encode("utf-8"))
+    symbols: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return source[node.start_byte : node.end_byte]
+
+    def _walk(node: Any) -> None:
+        if node.type in {"function_declaration", "class_declaration"}:
+            name_node = node.child_by_field_name("name")
+            if name_node is not None:
+                symbols.append(
+                    {
+                        "name": _node_text(name_node),
+                        "kind": "class" if node.type == "class_declaration" else "function",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                    }
+                )
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
+    return symbols
+
+
+def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
+    if path.suffix not in _RUST_SUFFIXES:
+        return []
+
+    parser = _rust_parser()
+    if parser is None:
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    tree = parser.parse(source.encode("utf-8"))
+    symbols: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return source[node.start_byte : node.end_byte]
+
+    def _walk(node: Any) -> None:
+        kind_map = {
+            "function_item": "function",
+            "struct_item": "struct",
+            "enum_item": "enum",
+            "trait_item": "trait",
+        }
+        if node.type in kind_map:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                for child in node.children:
+                    if child.type == "identifier":
+                        name_node = child
+                        break
+            if name_node is not None:
+                symbols.append(
+                    {
+                        "name": _node_text(name_node),
+                        "kind": kind_map[node.type],
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                    }
+                )
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
+    return symbols
+
+
 def _python_references_and_calls(
     path: Path, symbol: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -581,6 +673,108 @@ def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     return sources
 
 
+def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
+    if path.suffix not in _JS_TS_SUFFIXES:
+        return []
+
+    if path.suffix in {".ts", ".tsx"}:
+        parser = _typescript_parser(tsx=path.suffix == ".tsx")
+    else:
+        parser = _javascript_parser()
+    if parser is None:
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    tree = parser.parse(source.encode("utf-8"))
+    sources: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return source[node.start_byte : node.end_byte]
+
+    def _walk(node: Any) -> None:
+        if node.type in {"function_declaration", "class_declaration"}:
+            name_node = node.child_by_field_name("name")
+            if name_node is not None and _node_text(name_node) == symbol:
+                block = _node_text(node)
+                if block and not block.endswith("\n"):
+                    block = f"{block}\n"
+                sources.append(
+                    {
+                        "name": symbol,
+                        "kind": "class" if node.type == "class_declaration" else "function",
+                        "file": str(path),
+                        "start_line": node.start_point[0] + 1,
+                        "end_line": node.end_point[0] + 1,
+                        "source": block,
+                    }
+                )
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
+    return sources
+
+
+def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
+    if path.suffix not in _RUST_SUFFIXES:
+        return []
+
+    parser = _rust_parser()
+    if parser is None:
+        return []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+
+    tree = parser.parse(source.encode("utf-8"))
+    sources: list[dict[str, Any]] = []
+    kind_map = {
+        "function_item": "function",
+        "struct_item": "struct",
+        "enum_item": "enum",
+        "trait_item": "trait",
+    }
+
+    def _node_text(node: Any) -> str:
+        return source[node.start_byte : node.end_byte]
+
+    def _walk(node: Any) -> None:
+        if node.type in kind_map:
+            name_node = node.child_by_field_name("name")
+            if name_node is None:
+                for child in node.children:
+                    if child.type == "identifier":
+                        name_node = child
+                        break
+            if name_node is not None and _node_text(name_node) == symbol:
+                block = _node_text(node)
+                if block and not block.endswith("\n"):
+                    block = f"{block}\n"
+                sources.append(
+                    {
+                        "name": symbol,
+                        "kind": kind_map[node.type],
+                        "file": str(path),
+                        "start_line": node.start_point[0] + 1,
+                        "end_line": node.end_point[0] + 1,
+                        "source": block,
+                    }
+                )
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
+    return sources
+
+
 def _extract_braced_block(lines: list[str], start_index: int) -> tuple[int, str]:
     start_line = lines[start_index]
     start_line_num = start_index + 1
@@ -686,7 +880,17 @@ def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     symbols: list[dict[str, Any]] = []
     for current in all_files:
         current_imports, current_symbols = _python_imports_and_symbols(current)
-        if not current_imports and not current_symbols:
+        if current.suffix in _JS_TS_SUFFIXES:
+            current_imports, _ = _regex_imports_and_symbols(current)
+            current_symbols = _js_ts_parser_symbols(current)
+            if not current_symbols:
+                _, current_symbols = _regex_imports_and_symbols(current)
+        elif current.suffix in _RUST_SUFFIXES:
+            current_imports, _ = _regex_imports_and_symbols(current)
+            current_symbols = _rust_parser_symbols(current)
+            if not current_symbols:
+                _, current_symbols = _regex_imports_and_symbols(current)
+        elif not current_imports and not current_symbols:
             current_imports, current_symbols = _regex_imports_and_symbols(current)
         if current_imports:
             imports.append({"file": str(current), "imports": current_imports})
@@ -1039,6 +1243,10 @@ def build_symbol_source_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
             continue
         seen_files.add(str(current_path))
         current_sources = _python_symbol_sources(current_path, symbol)
+        if not current_sources and current_path.suffix in _JS_TS_SUFFIXES:
+            current_sources = _js_ts_parser_symbol_sources(current_path, symbol)
+        if not current_sources and current_path.suffix in _RUST_SUFFIXES:
+            current_sources = _rust_parser_symbol_sources(current_path, symbol)
         if not current_sources:
             current_sources = _regex_symbol_sources(current_path, symbol)
         sources.extend(current_sources)
