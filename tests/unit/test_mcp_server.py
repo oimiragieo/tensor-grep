@@ -1363,6 +1363,58 @@ def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_pat
     assert "test-graph" in payload["test_matches"][0]["reasons"]
 
 
+def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    central_path = src_dir / "z_billing.py"
+    central_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def invoice_total():\n"
+        "    return create_invoice(1, 2)\n",
+        encoding="utf-8",
+    )
+    leaf_path = src_dir / "a_cli.py"
+    leaf_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def run():\n"
+        "    return create_invoice(2, 3)\n",
+        encoding="utf-8",
+    )
+    ui_path = src_dir / "ui.py"
+    ui_path.write_text(
+        "from src.z_billing import invoice_total\n\n"
+        "def render():\n"
+        "    return invoice_total()\n",
+        encoding="utf-8",
+    )
+    api_path = src_dir / "api.py"
+    api_path.write_text(
+        "from src.z_billing import invoice_total\n\n"
+        "def serve():\n"
+        "    return invoice_total()\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_context_pack("create invoice", str(project)))
+
+    assert payload["files"].index(str(central_path.resolve())) < payload["files"].index(
+        str(leaf_path.resolve())
+    )
+    central_match = next(
+        item for item in payload["file_matches"] if item["path"] == str(central_path.resolve())
+    )
+    assert "graph-centrality" in central_match["reasons"]
+
+
 def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(tmp_path):
     from tensor_grep.cli import mcp_server
 

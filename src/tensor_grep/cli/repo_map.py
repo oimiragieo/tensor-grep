@@ -1039,6 +1039,45 @@ def _reverse_import_distances(
     return distances
 
 
+def _reverse_importers(
+    all_files: list[str],
+    imports_by_file: dict[str, list[str]],
+) -> dict[str, set[str]]:
+    aliases_by_file = {current: _module_aliases_for_path(current) for current in all_files}
+    reverse: dict[str, set[str]] = {current: set() for current in all_files}
+    for importer in all_files:
+        for import_name in imports_by_file.get(importer, []):
+            lowered = import_name.lower()
+            for current, aliases in aliases_by_file.items():
+                if current == importer:
+                    continue
+                if any(alias and alias in lowered for alias in aliases):
+                    reverse[current].add(importer)
+    return reverse
+
+
+def _graph_centrality_bonus(
+    file_path: str,
+    reverse_importers: dict[str, set[str]],
+) -> int:
+    bonus = 0
+    seen = {file_path}
+    frontier = [file_path]
+    for depth in range(1, 4):
+        next_frontier: list[str] = []
+        for current in frontier:
+            for importer in reverse_importers.get(current, set()):
+                if importer in seen:
+                    continue
+                seen.add(importer)
+                next_frontier.append(importer)
+                bonus += max(1, 4 - depth)
+        if not next_frontier:
+            break
+        frontier = next_frontier
+    return bonus
+
+
 def _dependency_ranked_files(
     ranked_files: list[str],
     all_files: list[str],
@@ -1169,14 +1208,16 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     if not dependency_seed_files:
         dependency_seed_files = [path for path in payload["files"] if _score_file_path(str(path), terms) > 0]
 
+    all_files = [str(current) for current in payload["files"]]
     dependency_aliases = {
         current: _module_aliases_for_path(current) for current in dependency_seed_files
     }
     file_distances = _reverse_import_distances(
         dependency_seed_files,
-        [str(current) for current in payload["files"]],
+        all_files,
         imports_by_file,
     )
+    reverse_importers = _reverse_importers(all_files, imports_by_file)
     for current in payload["files"]:
         current_path = str(current)
         if current_path in dependency_seed_files:
@@ -1192,6 +1233,12 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
         if current_path in file_distances:
             file_scores[current_path] = file_scores.get(current_path, 0) + max(1, 5 - file_distances[current_path])
             _append_reason(file_reasons, current_path, "import-graph")
+    for current_path in set(dependency_seed_files) | set(file_distances):
+        centrality_bonus = _graph_centrality_bonus(current_path, reverse_importers)
+        if centrality_bonus <= 0:
+            continue
+        file_scores[current_path] = file_scores.get(current_path, 0) + centrality_bonus
+        _append_reason(file_reasons, current_path, "graph-centrality")
 
     scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
     scored_files.sort(key=lambda item: (-item[0], item[1]))
