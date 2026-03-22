@@ -942,12 +942,20 @@ def _append_reason(reason_map: dict[str, list[str]], path: str, reason: str) -> 
         current.append(reason)
 
 
-def _match_record(path: str, score: int, reasons: list[str]) -> dict[str, Any]:
-    return {
+def _match_record(
+    path: str,
+    score: int,
+    reasons: list[str],
+    graph_score: float | None = None,
+) -> dict[str, Any]:
+    payload = {
         "path": path,
         "score": score,
         "reasons": list(reasons),
     }
+    if graph_score is not None:
+        payload["graph_score"] = round(graph_score, 6)
+    return payload
 
 
 def _file_summaries(symbols: list[dict[str, Any]], ranked_files: list[str]) -> list[dict[str, Any]]:
@@ -1056,26 +1064,43 @@ def _reverse_importers(
     return reverse
 
 
-def _graph_centrality_bonus(
-    file_path: str,
+def _personalized_reverse_import_pagerank(
+    seed_files: list[str],
+    all_files: list[str],
     reverse_importers: dict[str, set[str]],
-) -> int:
-    bonus = 0
-    seen = {file_path}
-    frontier = [file_path]
-    for depth in range(1, 4):
-        next_frontier: list[str] = []
-        for current in frontier:
-            for importer in reverse_importers.get(current, set()):
-                if importer in seen:
-                    continue
-                seen.add(importer)
-                next_frontier.append(importer)
-                bonus += max(1, 4 - depth)
-        if not next_frontier:
-            break
-        frontier = next_frontier
-    return bonus
+    *,
+    alpha: float = 0.85,
+    iterations: int = 12,
+) -> dict[str, float]:
+    if not seed_files:
+        return {}
+
+    unique_seeds = [current for current in seed_files if current in set(all_files)]
+    if not unique_seeds:
+        return {}
+
+    seed_set = set(unique_seeds)
+    seed_weight = 1.0 / len(unique_seeds)
+    personalization = {
+        current: (seed_weight if current in seed_set else 0.0) for current in all_files
+    }
+    ranks = dict(personalization)
+    for _ in range(iterations):
+        updated = {
+            current: (1.0 - alpha) * personalization[current] for current in all_files
+        }
+        for current in all_files:
+            outgoing = sorted(reverse_importers.get(current, set()))
+            if outgoing:
+                share = alpha * ranks[current] / len(outgoing)
+                for importer in outgoing:
+                    updated[importer] = updated.get(importer, 0.0) + share
+                continue
+            spill = alpha * ranks[current] / len(unique_seeds)
+            for seed in unique_seeds:
+                updated[seed] = updated.get(seed, 0.0) + spill
+        ranks = updated
+    return {current: rank for current, rank in ranks.items() if rank > 0.0}
 
 
 def _dependency_ranked_files(
@@ -1233,17 +1258,33 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
         if current_path in file_distances:
             file_scores[current_path] = file_scores.get(current_path, 0) + max(1, 5 - file_distances[current_path])
             _append_reason(file_reasons, current_path, "import-graph")
+    graph_seed_files: list[str] = []
+    for symbol in scored_symbols:
+        current = str(symbol["file"])
+        if current not in graph_seed_files:
+            graph_seed_files.append(current)
+    if not graph_seed_files:
+        graph_seed_files = list(dependency_seed_files)
+
+    graph_scores = _personalized_reverse_import_pagerank(
+        graph_seed_files,
+        all_files,
+        reverse_importers,
+    )
     for current_path in set(dependency_seed_files) | set(file_distances):
-        centrality_bonus = _graph_centrality_bonus(current_path, reverse_importers)
-        if centrality_bonus <= 0:
+        graph_score = graph_scores.get(current_path, 0.0)
+        if graph_score <= 0.0:
             continue
-        file_scores[current_path] = file_scores.get(current_path, 0) + centrality_bonus
+        file_scores[current_path] = file_scores.get(current_path, 0) + max(1, round(graph_score * 10))
         _append_reason(file_reasons, current_path, "graph-centrality")
 
     scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
     scored_files.sort(key=lambda item: (-item[0], item[1]))
     ranked_files = [path for _, path in scored_files]
-    file_matches = [_match_record(path, score, file_reasons.get(path, [])) for score, path in scored_files]
+    file_matches = [
+        _match_record(path, score, file_reasons.get(path, []), graph_scores.get(path))
+        for score, path in scored_files
+    ]
     if not ranked_files:
         for symbol in scored_symbols:
             current = str(symbol["file"])
@@ -1407,6 +1448,11 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
             "path": str(item["path"]),
             "score": int(item["score"]),
             "reasons": list(item["reasons"]),
+            **(
+                {"graph_score": float(item["graph_score"])}
+                if "graph_score" in item
+                else {}
+            ),
         }
         for item in context_payload.get("file_matches", [])
     }

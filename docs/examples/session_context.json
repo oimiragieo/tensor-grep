@@ -12,6 +12,7 @@
     {
       "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
       "score": 9,
+      "graph_score": 0.5,
       "reasons": [
         "definition",
         "symbol"

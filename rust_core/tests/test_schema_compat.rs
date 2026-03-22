@@ -405,6 +405,8 @@ struct RankedRepoImportExample {
 struct RankedPathMatchExample {
     path: PathBuf,
     score: usize,
+    #[serde(default)]
+    graph_score: Option<f64>,
     reasons: Vec<String>,
 }
 
@@ -910,6 +912,13 @@ fn assert_symbol_impact_example(path: &Path) {
             "{} file_match score must be positive",
             path.display()
         );
+        if let Some(graph_score) = file_match.graph_score {
+            assert!(
+                graph_score >= 0.0,
+                "{} file_match graph_score must be non-negative",
+                path.display()
+            );
+        }
         assert!(
             !file_match.reasons.is_empty(),
             "{} file_match reasons must not be empty",
@@ -1547,6 +1556,13 @@ fn assert_context_pack_example(path: &Path) {
             "{} file_match score must be positive",
             path.display()
         );
+        if let Some(graph_score) = file_match.graph_score {
+            assert!(
+                graph_score >= 0.0,
+                "{} file_match graph_score must be non-negative",
+                path.display()
+            );
+        }
         assert!(
             !file_match.reasons.is_empty(),
             "{} file_match reasons must not be empty",
@@ -1754,6 +1770,13 @@ fn assert_session_context_example(path: &Path) {
             "{} file_match score must be positive",
             path.display()
         );
+        if let Some(graph_score) = file_match.graph_score {
+            assert!(
+                graph_score >= 0.0,
+                "{} file_match graph_score must be non-negative",
+                path.display()
+            );
+        }
         assert!(
             !file_match.reasons.is_empty(),
             "{} file_match reasons must not be empty",

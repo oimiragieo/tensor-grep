@@ -168,6 +168,7 @@ Each `file_matches[]` and `test_matches[]` object uses:
 | --- | --- | --- |
 | `path` | `string` | Absolute path for the ranked file. |
 | `score` | `integer` | Deterministic rank score used for ordering. |
+| `graph_score` | `number` | Optional personalized reverse-import score when graph ranking contributes to file selection. |
 | `reasons` | `array<string>` | Stable provenance labels such as `path`, `symbol`, `definition`, `import`, `import-graph`, `graph-centrality`, `filename`, or `test-graph`. |
 
 Each `file_summaries[]` object uses:

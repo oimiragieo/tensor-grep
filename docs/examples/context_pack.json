@@ -12,6 +12,7 @@
     {
       "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
       "score": 21,
+      "graph_score": 0.5,
       "reasons": [
         "symbol",
         "definition"

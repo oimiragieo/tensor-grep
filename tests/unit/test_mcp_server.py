@@ -1412,7 +1412,9 @@ def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers
     central_match = next(
         item for item in payload["file_matches"] if item["path"] == str(central_path.resolve())
     )
+    leaf_match = next(item for item in payload["file_matches"] if item["path"] == str(leaf_path.resolve()))
     assert "graph-centrality" in central_match["reasons"]
+    assert central_match["graph_score"] > leaf_match["graph_score"]
 
 
 def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(tmp_path):
