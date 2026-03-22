@@ -2182,3 +2182,4 @@ def test_main_entry_should_fallback_to_pyproject_version_when_metadata_missing(m
 
 
 
+

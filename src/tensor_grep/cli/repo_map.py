@@ -34,7 +34,7 @@ def _envelope(path: Path) -> dict[str, Any]:
         "sidecar_used": False,
         "coverage": {
             "language_scope": "python-js-ts-rust",
-            "symbol_navigation": "python-ast+parser-js-ts+heuristic-rust",
+            "symbol_navigation": "python-ast+parser-js-ts-rust",
             "test_matching": "filename+import+graph-heuristic",
         },
         "path": str(path),
@@ -140,6 +140,18 @@ def _typescript_parser(*, tsx: bool) -> Any | None:
         else tree_sitter_typescript.language_typescript()
     )
     language = tree_sitter.Language(raw_language)
+    return tree_sitter.Parser(language)
+
+
+@lru_cache(maxsize=1)
+def _rust_parser() -> Any | None:
+    try:
+        import tree_sitter
+        import tree_sitter_rust
+    except ImportError:
+        return None
+
+    language = tree_sitter.Language(tree_sitter_rust.language())
     return tree_sitter.Parser(language)
 
 
@@ -427,6 +439,92 @@ def _js_ts_references_and_calls(
                         property_node is not None and _node_text(property_node) == symbol
                     )
             if matched:
+                calls.append(
+                    {
+                        "name": symbol,
+                        "kind": "call",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                    }
+                )
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
+    return references, calls
+
+
+def _rust_references_and_calls(
+    path: Path, symbol: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if path.suffix not in _RUST_SUFFIXES:
+        return [], []
+
+    parser = _rust_parser()
+    if parser is None:
+        return [], []
+
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return [], []
+
+    tree = parser.parse(source.encode("utf-8"))
+    lines = source.splitlines()
+    references: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+
+    def _node_text(node: Any) -> str:
+        return source[node.start_byte : node.end_byte]
+
+    def _line_text(node: Any) -> str:
+        line_index = node.start_point[0]
+        return lines[line_index] if 0 <= line_index < len(lines) else ""
+
+    def _is_definition_identifier(node: Any) -> bool:
+        parent = node.parent
+        if parent is None:
+            return False
+        return bool(parent.type in {"function_item", "struct_item", "enum_item", "trait_item"})
+
+    def _walk(node: Any) -> None:
+        node_type = node.type
+        if node_type == "identifier" and _node_text(node) == symbol:
+            if not _is_definition_identifier(node):
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                    }
+                )
+        elif node_type == "call_expression":
+            function_node = node.child_by_field_name("function")
+            matched = False
+            if function_node is not None:
+                if function_node.type == "identifier":
+                    matched = _node_text(function_node) == symbol
+                elif function_node.type == "field_expression":
+                    field_node = function_node.child_by_field_name("field")
+                    matched = bool(field_node is not None and _node_text(field_node) == symbol)
+                elif function_node.type == "scoped_identifier":
+                    name_node = function_node.child_by_field_name("name")
+                    matched = bool(name_node is not None and _node_text(name_node) == symbol)
+            if matched:
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                    }
+                )
                 calls.append(
                     {
                         "name": symbol,
@@ -1017,10 +1115,24 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     payload = build_symbol_defs_from_map(repo_map, symbol)
     references: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(payload["path"])):
-        current_refs, _ = _python_references_and_calls(current, symbol)
-        if not current_refs:
+        if current.suffix == ".py":
+            current_refs, _ = _python_references_and_calls(current, symbol)
+        elif current.suffix in _JS_TS_SUFFIXES:
             current_refs, _ = _js_ts_references_and_calls(current, symbol)
-        if not current_refs:
+        elif current.suffix in _RUST_SUFFIXES:
+            current_refs, current_calls = _rust_references_and_calls(current, symbol)
+            rust_call_refs = [
+                {
+                    "name": str(call["name"]),
+                    "kind": "reference",
+                    "file": str(call["file"]),
+                    "line": int(call["line"]),
+                    "text": str(call["text"]),
+                }
+                for call in current_calls
+            ]
+            current_refs.extend(rust_call_refs)
+        else:
             current_refs, _ = _regex_references_and_calls(current, symbol)
         references.extend(current_refs)
 
@@ -1050,10 +1162,13 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
     calls: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(defs_payload["path"])):
-        _, current_calls = _python_references_and_calls(current, symbol)
-        if not current_calls:
+        if current.suffix == ".py":
+            _, current_calls = _python_references_and_calls(current, symbol)
+        elif current.suffix in _JS_TS_SUFFIXES:
             _, current_calls = _js_ts_references_and_calls(current, symbol)
-        if not current_calls:
+        elif current.suffix in _RUST_SUFFIXES:
+            _, current_calls = _rust_references_and_calls(current, symbol)
+        else:
             _, current_calls = _regex_references_and_calls(current, symbol)
         calls.extend(current_calls)
 
@@ -1084,6 +1199,7 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
 
 def build_symbol_callers_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_callers(symbol, path), indent=2)
+
 
 
 

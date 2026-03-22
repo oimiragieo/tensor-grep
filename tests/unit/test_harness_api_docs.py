@@ -54,7 +54,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "version" in doc
     assert "coverage" in doc
     assert "python-js-ts-rust" in doc
-    assert "python-ast+parser-js-ts+heuristic-rust" in doc
+    assert "python-ast+parser-js-ts-rust" in doc
     assert "filename+import+graph-heuristic" in doc
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
@@ -125,7 +125,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 "session_context.json",
             }:
                 assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
-                assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+                assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
                 assert payload["coverage"]["test_matching"] == "filename+import+graph-heuristic"
 
         for key in required_keys:
@@ -180,6 +180,7 @@ def test_harness_api_ndjson_example_contains_parseable_rows() -> None:
         assert isinstance(row["file"], str)
         assert isinstance(row["line"], int)
         assert isinstance(row["text"], str)
+
 
 
 

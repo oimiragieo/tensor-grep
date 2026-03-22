@@ -587,7 +587,7 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
     assert context["coverage"]["language_scope"] == "python-js-ts-rust"
-    assert context["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+    assert context["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert context["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
@@ -905,7 +905,7 @@ def test_tg_context_pack_returns_ranked_inventory(tmp_path):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "context-pack"
     assert payload["sidecar_used"] is False
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert payload["query"] == "invoice payment"
     assert payload["path"] == str(project.resolve())
     assert payload["files"][0] == str(module_path.resolve())
@@ -1050,7 +1050,7 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-impact"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert payload["symbol"] == "create_invoice"
     assert payload["files"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) in payload["files"]
@@ -1188,7 +1188,7 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-refs"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
 
 
@@ -1225,7 +1225,7 @@ def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_p
     rust_refs = json.loads(mcp_server.tg_symbol_refs("issue_invoice", str(project)))
     rust_callers = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
 
-    assert ts_refs["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+    assert ts_refs["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert any(ref["file"] == str(ts_path.resolve()) for ref in ts_refs["references"])
     assert any(caller["file"] == str(ts_path.resolve()) for caller in ts_callers["callers"])
     assert any(ref["file"] == str(rust_path.resolve()) for ref in rust_refs["references"])
@@ -1263,7 +1263,7 @@ def test_tg_symbol_callers_returns_python_call_sites(tmp_path):
 
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-callers"
-    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert payload["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert any(caller["file"] == str(other_path.resolve()) for caller in payload["callers"])
     assert payload["tests"][0] == str(test_path.resolve())
@@ -1422,6 +1422,42 @@ def test_tg_symbol_callers_uses_parser_backed_typescript_calls_not_string_noise(
     ]
     assert len(consumer_calls) == 1
     assert consumer_calls[0]["line"] == 5
+
+
+def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    api_path = src_dir / "billing.rs"
+    api_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    consumer_path = src_dir / "consumer.rs"
+    consumer_path.write_text(
+        'const NOTE: &str = "issue_invoice()";\n'
+        "// issue_invoice();\n"
+        "pub fn render_invoice() -> usize {\n"
+        "    issue_invoice()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
+
+    consumer_calls = [
+        caller
+        for caller in payload["callers"]
+        if caller["file"] == str(consumer_path.resolve())
+    ]
+    assert len(consumer_calls) == 1
+    assert consumer_calls[0]["line"] == 4
+
 
 
 

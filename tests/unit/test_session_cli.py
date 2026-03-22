@@ -46,7 +46,7 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     assert context["session_id"] == session_id
     assert context["routing_reason"] == "session-context"
     assert context["coverage"]["language_scope"] == "python-js-ts-rust"
-    assert context["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts+heuristic-rust"
+    assert context["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert context["coverage"]["test_matching"] == "filename+import+graph-heuristic"
     assert context["files"][0] == str(module_path.resolve())
     assert context["tests"][0] == str(test_path.resolve())
@@ -233,6 +233,7 @@ def test_session_serve_can_auto_refresh_stale_session(tmp_path: Path) -> None:
     assert payload["session_id"] == opened["session_id"]
     assert payload["routing_reason"] == "session-defs"
     assert payload["definitions"][0]["name"] == "settle_invoice"
+
 
 
 
