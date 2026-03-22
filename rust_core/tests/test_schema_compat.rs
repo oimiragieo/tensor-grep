@@ -86,6 +86,7 @@ struct SymbolImpactExample {
     definitions: Vec<RepoSymbolExample>,
     files: Vec<String>,
     file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
     tests: Vec<String>,
     test_matches: Vec<RankedPathMatchExample>,
     imports: Vec<serde_json::Value>,
@@ -409,6 +410,21 @@ struct RankedPathMatchExample {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct FileSummarySymbolExample {
+    name: String,
+    kind: String,
+    line: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FileSummaryExample {
+    path: PathBuf,
+    symbols: Vec<FileSummarySymbolExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ContextPackExample {
     version: u32,
     routing_backend: String,
@@ -419,6 +435,7 @@ struct ContextPackExample {
     path: PathBuf,
     files: Vec<PathBuf>,
     file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
     symbols: Vec<RankedRepoSymbolExample>,
     imports: Vec<RankedRepoImportExample>,
     tests: Vec<PathBuf>,
@@ -448,6 +465,7 @@ struct SessionContextExample {
     path: PathBuf,
     files: Vec<PathBuf>,
     file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
     symbols: Vec<RankedRepoSymbolExample>,
     imports: Vec<RankedRepoImportExample>,
     tests: Vec<PathBuf>,
@@ -865,6 +883,12 @@ fn assert_symbol_impact_example(path: &Path) {
         path.display()
     );
     assert_eq!(
+        example.files.len(),
+        example.file_summaries.len(),
+        "{} file_summaries should align with files",
+        path.display()
+    );
+    assert_eq!(
         example.tests.len(),
         example.test_matches.len(),
         "{} test_matches should align with tests",
@@ -891,6 +915,35 @@ fn assert_symbol_impact_example(path: &Path) {
             "{} file_match reasons must not be empty",
             path.display()
         );
+    }
+    for file_summary in &example.file_summaries {
+        assert!(
+            is_portable_absolute_path(&file_summary.path),
+            "{} file_summary path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            !file_summary.symbols.is_empty(),
+            "{} file_summary symbols must not be empty",
+            path.display()
+        );
+        for symbol in &file_summary.symbols {
+            assert!(
+                !symbol.name.is_empty(),
+                "{} file_summary symbol name must not be empty",
+                path.display()
+            );
+            assert!(
+                !symbol.kind.is_empty(),
+                "{} file_summary symbol kind must not be empty",
+                path.display()
+            );
+            assert!(
+                symbol.line > 0,
+                "{} file_summary symbol line must be 1-based",
+                path.display()
+            );
+        }
     }
     for test_match in &example.test_matches {
         assert!(
@@ -1460,6 +1513,12 @@ fn assert_context_pack_example(path: &Path) {
         "{} file_matches should align with files",
         path.display()
     );
+    assert_eq!(
+        example.files.len(),
+        example.file_summaries.len(),
+        "{} file_summaries should align with files",
+        path.display()
+    );
     assert!(
         !example.symbols.is_empty(),
         "{} should rank symbols",
@@ -1491,6 +1550,18 @@ fn assert_context_pack_example(path: &Path) {
         assert!(
             !file_match.reasons.is_empty(),
             "{} file_match reasons must not be empty",
+            path.display()
+        );
+    }
+    for file_summary in &example.file_summaries {
+        assert!(
+            is_portable_absolute_path(&file_summary.path),
+            "{} file_summary path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            !file_summary.symbols.is_empty(),
+            "{} file_summary symbols must not be empty",
             path.display()
         );
     }
@@ -1649,6 +1720,12 @@ fn assert_session_context_example(path: &Path) {
         "{} file_matches should align with files",
         path.display()
     );
+    assert_eq!(
+        example.files.len(),
+        example.file_summaries.len(),
+        "{} file_summaries should align with files",
+        path.display()
+    );
     assert!(
         !example.symbols.is_empty(),
         "{} should rank symbols",
@@ -1680,6 +1757,18 @@ fn assert_session_context_example(path: &Path) {
         assert!(
             !file_match.reasons.is_empty(),
             "{} file_match reasons must not be empty",
+            path.display()
+        );
+    }
+    for file_summary in &example.file_summaries {
+        assert!(
+            is_portable_absolute_path(&file_summary.path),
+            "{} file_summary path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            !file_summary.symbols.is_empty(),
+            "{} file_summary symbols must not be empty",
             path.display()
         );
     }

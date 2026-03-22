@@ -950,6 +950,30 @@ def _match_record(path: str, score: int, reasons: list[str]) -> dict[str, Any]:
     }
 
 
+def _file_summaries(symbols: list[dict[str, Any]], ranked_files: list[str]) -> list[dict[str, Any]]:
+    symbols_by_file: dict[str, list[dict[str, Any]]] = {}
+    for symbol in symbols:
+        current_path = str(symbol["file"])
+        current_symbols = symbols_by_file.setdefault(current_path, [])
+        current_symbols.append(
+            {
+                "name": str(symbol["name"]),
+                "kind": str(symbol["kind"]),
+                "line": int(symbol["line"]),
+            }
+        )
+    for current_symbols in symbols_by_file.values():
+        current_symbols.sort(key=lambda item: (int(item["line"]), str(item["kind"]), str(item["name"])))
+
+    summaries: list[dict[str, Any]] = []
+    for current in ranked_files:
+        file_symbols = symbols_by_file.get(str(current), [])
+        if not file_symbols:
+            continue
+        summaries.append({"path": str(current), "symbols": file_symbols})
+    return summaries
+
+
 def _source_tokens(source_files: list[str]) -> set[str]:
     tokens: set[str] = set()
     for current in source_files:
@@ -1085,6 +1109,7 @@ def _context_tests(
 
 def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[str, Any]:
     terms = _query_terms(query)
+    all_symbols = [dict(symbol) for symbol in payload["symbols"]]
     imports_by_file = {
         str(entry["file"]): [str(item) for item in entry["imports"]] for entry in payload["imports"]
     }
@@ -1195,6 +1220,7 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     payload["query"] = query
     payload["files"] = ranked_files
     payload["file_matches"] = file_matches
+    payload["file_summaries"] = _file_summaries(all_symbols, ranked_files)
     payload["symbols"] = scored_symbols
     payload["imports"] = scored_imports
     payload["tests"] = ranked_tests
@@ -1377,6 +1403,7 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
     payload["definitions"] = defs_payload["definitions"]
     payload["files"] = impacted_files
     payload["file_matches"] = [file_matches_by_path[str(current)] for current in impacted_files]
+    payload["file_summaries"] = _file_summaries(repo_map.get("symbols", []), impacted_files)
     payload["tests"] = related_tests
     payload["test_matches"] = [test_matches_by_path[str(current)] for current in related_tests]
     payload["imports"] = context_payload["imports"]

@@ -1169,6 +1169,10 @@ def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(t
     assert "definition" in payload["file_matches"][0]["reasons"]
     assert payload["file_matches"][1]["path"] == str(importer_path.resolve())
     assert "import" in payload["file_matches"][1]["reasons"]
+    assert payload["file_summaries"][0]["path"] == str(module_path.resolve())
+    assert {item["name"] for item in payload["file_summaries"][0]["symbols"]} == {
+        "create_invoice"
+    }
 
 
 def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):

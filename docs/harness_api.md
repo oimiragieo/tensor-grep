@@ -149,6 +149,7 @@ Use this shape when an agent needs a query-driven subset of the repository map b
 | `path` | `string` | Absolute root path inventoried. |
 | `files` | `array<string>` | Ranked source files related to the query. |
 | `file_matches` | `array<object>` | Ranked source file metadata with stable `path`, `score`, and `reasons`. |
+| `file_summaries` | `array<object>` | Compact top-level symbol skeletons for the ranked files. |
 | `symbols` | `array<object>` | Ranked symbols related to the query. |
 | `imports` | `array<object>` | Ranked import rows related to the query. |
 | `tests` | `array<string>` | Ranked test files related to the query. |
@@ -168,6 +169,13 @@ Each `file_matches[]` and `test_matches[]` object uses:
 | `path` | `string` | Absolute path for the ranked file. |
 | `score` | `integer` | Deterministic rank score used for ordering. |
 | `reasons` | `array<string>` | Stable provenance labels such as `path`, `symbol`, `definition`, `import`, `import-graph`, `filename`, or `test-graph`. |
+
+Each `file_summaries[]` object uses:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `path` | `string` | Absolute path for the summarized file. |
+| `symbols` | `array<object>` | Ordered top-level symbol skeletons with `name`, `kind`, and `line`. |
 
 Each ranked `imports[]` object extends the Repo Map JSON import shape with:
 
@@ -446,6 +454,7 @@ Example: [`examples/impact.json`](examples/impact.json)
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `files` | `array<string>` | Likely impacted source files, definition file first. |
 | `file_matches` | `array<object>` | Ranked impacted file metadata with stable `path`, `score`, and provenance `reasons`. |
+| `file_summaries` | `array<object>` | Compact top-level symbol skeletons for the impacted files. |
 | `tests` | `array<string>` | Likely impacted tests. |
 | `test_matches` | `array<object>` | Ranked impacted test metadata with stable `path`, `score`, and provenance `reasons`. |
 | `imports` | `array<object>` | Ranked import entries from the context pack path. |

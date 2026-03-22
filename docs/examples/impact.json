@@ -26,6 +26,18 @@
       ]
     }
   ],
+  "file_summaries": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "symbols": [
+        {
+          "name": "add",
+          "kind": "function",
+          "line": 1
+        }
+      ]
+    }
+  ],
   "tests": [],
   "test_matches": [],
   "imports": [],
