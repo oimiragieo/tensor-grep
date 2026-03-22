@@ -1417,6 +1417,62 @@ def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers
     assert central_match["graph_score"] > leaf_match["graph_score"]
 
 
+def test_tg_symbol_impact_prefers_tests_covering_more_central_files(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n",
+        encoding="utf-8",
+    )
+    (src_dir / "z_billing.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def invoice_total():\n"
+        "    return create_invoice(1, 2)\n",
+        encoding="utf-8",
+    )
+    (src_dir / "a_cli.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def run():\n"
+        "    return create_invoice(2, 3)\n",
+        encoding="utf-8",
+    )
+    (src_dir / "ui.py").write_text(
+        "from src.z_billing import invoice_total\n\n"
+        "def render():\n"
+        "    return invoice_total()\n",
+        encoding="utf-8",
+    )
+    ui_test = tests_dir / "test_ui_flow.py"
+    ui_test.write_text(
+        "from src.ui import render\n\n"
+        "def test_render():\n"
+        "    assert render() == 3\n",
+        encoding="utf-8",
+    )
+    cli_test = tests_dir / "test_cli_flow.py"
+    cli_test.write_text(
+        "from src.a_cli import run\n\n"
+        "def test_run():\n"
+        "    assert run() == 5\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", str(project)))
+
+    assert payload["tests"].index(str(ui_test.resolve())) < payload["tests"].index(
+        str(cli_test.resolve())
+    )
+    ui_match = next(item for item in payload["test_matches"] if item["path"] == str(ui_test.resolve()))
+    cli_match = next(item for item in payload["test_matches"] if item["path"] == str(cli_test.resolve()))
+    assert ui_match["graph_score"] > cli_match["graph_score"]
+
+
 def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(tmp_path):
     from tensor_grep.cli import mcp_server
 

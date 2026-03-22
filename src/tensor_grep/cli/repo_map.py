@@ -1142,12 +1142,38 @@ def _test_import_bonus(
     return bonus
 
 
+def _test_graph_score(
+    test_path: str,
+    source_files: list[str],
+    imports_by_file: dict[str, list[str]],
+    graph_scores: dict[str, float],
+    file_scores: dict[str, int],
+) -> float:
+    aliases_by_file = {current: _module_aliases_for_path(current) for current in source_files}
+    score = 0.0
+    matched_files: set[str] = set()
+    max_file_score = max(file_scores.values(), default=0)
+    for import_name in imports_by_file.get(test_path, []):
+        lowered = import_name.lower()
+        for current, aliases in aliases_by_file.items():
+            if current in matched_files:
+                continue
+            if any(alias and alias in lowered for alias in aliases):
+                matched_files.add(current)
+                score += graph_scores.get(current, 0.0)
+                if max_file_score > 0:
+                    score += file_scores.get(current, 0) / max_file_score
+    return score
+
+
 def _context_tests(
     source_files: list[str],
     tests: list[str],
     terms: list[str],
     imports_by_file: dict[str, list[str]],
     file_distances: dict[str, int],
+    graph_scores: dict[str, float],
+    file_scores: dict[str, int],
 ) -> list[dict[str, Any]]:
     related: list[dict[str, Any]] = []
     source_stems = {Path(current).stem.lower() for current in source_files}
@@ -1165,8 +1191,18 @@ def _context_tests(
         score += import_bonus
         if import_bonus > 0:
             reasons.append("test-graph")
+        graph_score = _test_graph_score(
+            current,
+            source_files,
+            imports_by_file,
+            graph_scores,
+            file_scores,
+        )
+        if graph_score > 0.0:
+            reasons.append("graph-centrality")
+            score += max(1, round(graph_score * 10))
         if score > 0:
-            related.append(_match_record(current, score, reasons))
+            related.append(_match_record(current, score, reasons, graph_score if graph_score > 0.0 else None))
     related.sort(key=lambda item: (-int(item["score"]), str(item["path"])))
     return related
 
@@ -1294,7 +1330,15 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
             current = str(entry["file"])
             if current not in ranked_files:
                 ranked_files.append(current)
-    test_matches = _context_tests(ranked_files, payload["tests"], terms, imports_by_file, file_distances)
+    test_matches = _context_tests(
+        ranked_files,
+        payload["tests"],
+        terms,
+        imports_by_file,
+        file_distances,
+        graph_scores,
+        file_scores,
+    )
     ranked_tests = [str(item["path"]) for item in test_matches]
 
     related_paths = []
@@ -1476,6 +1520,11 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
             "path": str(item["path"]),
             "score": int(item["score"]),
             "reasons": list(item["reasons"]),
+            **(
+                {"graph_score": float(item["graph_score"])}
+                if "graph_score" in item
+                else {}
+            ),
         }
         for item in context_payload.get("test_matches", [])
     }
