@@ -1525,6 +1525,37 @@ def _is_comment_line(path: Path, line: str) -> bool:
     return False
 
 
+def _python_ast_omitted_relative_lines(block: str) -> tuple[set[int], set[int]]:
+    try:
+        tree = ast.parse(block)
+    except SyntaxError:
+        return set(), set()
+
+    docstring_lines: set[int] = set()
+    boilerplate_lines: set[int] = set()
+
+    for node in tree.body:
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        first_value = getattr(first, "value", None)
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first_value, ast.Constant)
+            and isinstance(first_value.value, str)
+        ):
+            end_lineno = getattr(first, "end_lineno", first.lineno)
+            docstring_lines.update(range(first.lineno, end_lineno + 1))
+        if len(body) == 2 and any(isinstance(child, ast.Pass) for child in body):
+            for child in body:
+                if isinstance(child, ast.Pass):
+                    end_lineno = getattr(child, "end_lineno", child.lineno)
+                    boilerplate_lines.update(range(child.lineno, end_lineno + 1))
+
+    return docstring_lines, boilerplate_lines
+
+
 def _render_source_block(
     source: dict[str, Any],
     *,
@@ -1540,6 +1571,8 @@ def _render_source_block(
         "removed_line_count": 0,
         "removed_comment_lines": 0,
         "removed_blank_lines": 0,
+        "removed_docstring_lines": 0,
+        "removed_boilerplate_lines": 0,
     }
     line_map: list[dict[str, int]] = []
 
@@ -1562,13 +1595,26 @@ def _render_source_block(
         current_segment: dict[str, int] | None = None
         rendered_line_number = 1
         original_start = int(source["start_line"])
+        omitted_docstring_lines: set[int] = set()
+        omitted_boilerplate_lines: set[int] = set()
+        if path.suffix == ".py":
+            omitted_docstring_lines, omitted_boilerplate_lines = _python_ast_omitted_relative_lines(
+                block
+            )
         for index, line in enumerate(original_lines):
             original_line_number = original_start + index
+            relative_line_number = index + 1
             if not line.strip():
                 diagnostics["removed_blank_lines"] += 1
                 continue
             if _is_comment_line(path, line):
                 diagnostics["removed_comment_lines"] += 1
+                continue
+            if relative_line_number in omitted_docstring_lines:
+                diagnostics["removed_docstring_lines"] += 1
+                continue
+            if relative_line_number in omitted_boilerplate_lines:
+                diagnostics["removed_boilerplate_lines"] += 1
                 continue
 
             kept_lines.append(line)

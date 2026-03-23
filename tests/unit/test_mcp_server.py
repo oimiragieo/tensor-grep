@@ -1057,6 +1057,60 @@ def test_tg_context_render_can_optimize_source_blocks_for_llm_use(tmp_path):
     assert "create_invoice" in payload["rendered_context"]
 
 
+def test_tg_context_render_strips_python_docstrings_and_pass_boilerplate(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "class PaymentService:\n"
+        '    """Service docstring."""\n'
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        '    """Create an invoice."""\n'
+        "    subtotal = total + tax\n"
+        "    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    class_payload = json.loads(
+        mcp_server.tg_context_render(
+            "payment service",
+            str(project),
+            optimize_context=True,
+            render_profile="llm",
+        )
+    )
+    function_payload = json.loads(
+        mcp_server.tg_context_render(
+            "create invoice",
+            str(project),
+            optimize_context=True,
+            render_profile="llm",
+        )
+    )
+
+    payment_service = next(
+        item for item in class_payload["sources"] if item["name"] == "PaymentService"
+    )
+    create_invoice = next(
+        item for item in function_payload["sources"] if item["name"] == "create_invoice"
+    )
+
+    assert '"""Service docstring."""' not in payment_service["rendered_source"]
+    assert "pass" not in payment_service["rendered_source"]
+    assert payment_service["render_diagnostics"]["removed_docstring_lines"] >= 1
+    assert payment_service["render_diagnostics"]["removed_boilerplate_lines"] >= 1
+
+    assert '"""Create an invoice."""' not in create_invoice["rendered_source"]
+    assert "subtotal = total + tax" in create_invoice["rendered_source"]
+    assert create_invoice["line_map"][0]["original_start_line"] == 5
+    assert create_invoice["line_map"][0]["rendered_start_line"] == 1
+
+
 def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
     from tensor_grep.cli import mcp_server
 

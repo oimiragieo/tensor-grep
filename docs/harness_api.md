@@ -231,6 +231,11 @@ Each `sources[]` object may also include compact-render metadata when `optimize_
 - `line_map[]`
 - `render_diagnostics`
 
+For Python source blocks, compact and `llm` profiles also strip:
+
+- leading docstrings
+- pure `pass` boilerplate in otherwise empty class/function bodies
+
 ## Rewrite Plan JSON
 
 Emitted by `tg.exe run --rewrite <replacement> <pattern> <path>` when `--diff` and `--apply` are not set.

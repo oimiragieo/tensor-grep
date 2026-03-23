@@ -140,7 +140,9 @@
         "rendered_line_count": 2,
         "removed_line_count": 0,
         "removed_comment_lines": 0,
-        "removed_blank_lines": 0
+        "removed_blank_lines": 0,
+        "removed_docstring_lines": 0,
+        "removed_boilerplate_lines": 0
       }
     },
     {
@@ -166,7 +168,9 @@
         "rendered_line_count": 2,
         "removed_line_count": 0,
         "removed_comment_lines": 0,
-        "removed_blank_lines": 0
+        "removed_blank_lines": 0,
+        "removed_docstring_lines": 0,
+        "removed_boilerplate_lines": 0
       }
     },
     {
@@ -192,7 +196,9 @@
         "rendered_line_count": 2,
         "removed_line_count": 0,
         "removed_comment_lines": 0,
-        "removed_blank_lines": 0
+        "removed_blank_lines": 0,
+        "removed_docstring_lines": 0,
+        "removed_boilerplate_lines": 0
       }
     }
   ],

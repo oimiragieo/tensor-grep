@@ -133,6 +133,10 @@ struct RenderDiagnosticsExample {
     removed_line_count: usize,
     removed_comment_lines: usize,
     removed_blank_lines: usize,
+    #[serde(default)]
+    removed_docstring_lines: usize,
+    #[serde(default)]
+    removed_boilerplate_lines: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1227,6 +1231,12 @@ fn assert_symbol_source_block(path: &Path, source: &SymbolSourceBlockExample) {
             diagnostics.removed_comment_lines + diagnostics.removed_blank_lines
                 <= diagnostics.removed_line_count,
             "{} removed comment and blank lines must not exceed total removed lines",
+            path.display()
+        );
+        assert!(
+            diagnostics.removed_docstring_lines + diagnostics.removed_boilerplate_lines
+                <= diagnostics.removed_line_count,
+            "{} removed docstring and boilerplate lines must not exceed total removed lines",
             path.display()
         );
     }
