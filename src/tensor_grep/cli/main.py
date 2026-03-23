@@ -1724,6 +1724,41 @@ def callers(
     typer.echo(f"callers={len(payload['callers'])} files={len(payload['files'])}")
 
 
+@app.command(name="blast-radius")
+def blast_radius(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return exact callers plus a transitive file/test blast radius for a symbol."""
+    from tensor_grep.cli.repo_map import (
+        build_symbol_blast_radius,
+        build_symbol_blast_radius_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_blast_radius_json(symbol, path, max_depth=max_depth))
+            return
+
+        payload = build_symbol_blast_radius(symbol, path, max_depth=max_depth)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
+    typer.echo(
+        f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
+        f"files={len(payload['files'])} tests={len(payload['tests'])}"
+    )
+
+
 @session_app.command("open")
 def session_open(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),

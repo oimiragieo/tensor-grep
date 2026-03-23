@@ -489,6 +489,60 @@ def test_callers_json_returns_python_call_sites_for_symbol(tmp_path):
     assert payload["tests"][0] == str(test_path.resolve())
 
 
+def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    api_path = src_dir / "api.py"
+    api_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def post_invoice(total):\n"
+        "    return build_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_api.py"
+    test_path.write_text(
+        "from src.api import post_invoice\n\n"
+        "def test_post_invoice():\n"
+        "    assert post_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["blast-radius", "--symbol", "create_invoice", "--max-depth", "2", "--json", str(project)],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-blast-radius"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["max_depth"] == 2
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert any(caller["file"] == str(service_path.resolve()) for caller in payload["callers"])
+    assert payload["files"][0] == str(module_path.resolve())
+    assert str(service_path.resolve()) in payload["files"]
+    assert str(api_path.resolve()) in payload["files"]
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert any(level["depth"] == 0 for level in payload["caller_tree"])
+    assert any(level["depth"] == 1 for level in payload["caller_tree"])
+    assert "Depth 0:" in payload["rendered_caller_tree"]
+
+
 def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):
     from tensor_grep.cli import main as cli_main
 
@@ -2121,6 +2175,7 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "impact" in result.stdout
     assert "refs" in result.stdout
     assert "callers" in result.stdout
+    assert "blast-radius" in result.stdout
     assert "Run semantic log classification" in result.stdout
 
 

@@ -36,6 +36,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Symbol impact JSON | `tg.exe impact --symbol <name> --json ...` | [`examples/impact.json`](examples/impact.json) |
 | Symbol refs JSON | `tg.exe refs --symbol <name> --json ...` | [`examples/refs.json`](examples/refs.json) |
 | Symbol callers JSON | `tg.exe callers --symbol <name> --json ...` | [`examples/callers.json`](examples/callers.json) |
+| Symbol blast radius JSON | `tg.exe blast-radius --symbol <name> --json ...` | [`examples/blast_radius.json`](examples/blast_radius.json) |
 | Session open JSON | `tg.exe session open ... --json` | [`examples/session_open.json`](examples/session_open.json) |
 | Session context JSON | `tg.exe session context <id> --query ... --json` | [`examples/session_context.json`](examples/session_context.json) |
 | MCP rewrite diff JSON | `tg_rewrite_diff(...)` | [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json) |
@@ -579,6 +580,37 @@ This is currently a Python-first symbol navigation contract. It finds exact Pyth
 | `tests` | `array<string>` | Likely impacted tests. |
 | `related_paths` | `array<string>` | Stable union of definition files, caller files, and tests. |
 
+## Symbol Blast Radius JSON
+
+Emitted by `tg.exe blast-radius --symbol <name> --json ...`.
+
+Example: [`examples/blast_radius.json`](examples/blast_radius.json)
+
+Use this shape when an agent needs an explicit downstream change radius instead of only flat caller rows or ranked impact files.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `symbol-blast-radius`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
+| `path` | `string` | Inventory root. |
+| `symbol` | `string` | Exact symbol name evaluated. |
+| `max_depth` | `integer` | Maximum reverse-import depth included in the radius. |
+| `definitions` | `array<object>` | Exact symbol definitions. |
+| `callers` | `array<object>` | Exact caller rows discovered by the symbol navigation layer. |
+| `files` | `array<string>` | Files inside the computed blast radius, ordered by depth then score. |
+| `file_matches` | `array<object>` | Ranked file metadata with `path`, `depth`, `score`, optional `graph_score`, and `reasons`. |
+| `file_summaries` | `array<object>` | Top-level symbol skeletons for ranked radius files. |
+| `tests` | `array<string>` | Likely validation tests covering the radius. |
+| `test_matches` | `array<object>` | Ranked test metadata for the same radius. |
+| `caller_tree` | `array<object>` | Depth-indexed radius tree with one object per depth level. |
+| `rendered_caller_tree` | `string` | Deterministic text rendering of `caller_tree`. |
+| `imports` | `array<object>` | Ranked imports reused from the impact surface. |
+| `symbols` | `array<object>` | Ranked symbol matches reused from the impact surface. |
+| `related_paths` | `array<string>` | Stable union of radius files and tests. |
+
 ## Session Open JSON
 
 Emitted by `tg.exe session open ... --json`.
@@ -678,6 +710,7 @@ Current tool set:
 - `tg_symbol_impact(symbol, path=".")`
 - `tg_symbol_refs(symbol, path=".")`
 - `tg_symbol_callers(symbol, path=".")`
+- `tg_symbol_blast_radius(symbol, path=".", max_depth=3)`
 - `tg_checkpoint_create(path=".")`
 - `tg_checkpoint_list(path=".")`
 - `tg_checkpoint_undo(checkpoint_id, path=".")`
@@ -701,6 +734,7 @@ Response mapping:
 - `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)
 - `tg_symbol_refs(...)` returns the same v1 envelope and payload shape as [`examples/refs.json`](examples/refs.json)
 - `tg_symbol_callers(...)` returns the same v1 envelope and payload shape as [`examples/callers.json`](examples/callers.json)
+- `tg_symbol_blast_radius(...)` returns the same v1 envelope and payload shape as [`examples/blast_radius.json`](examples/blast_radius.json)
 - `tg_session_open(...)` returns the same payload shape as [`examples/session_open.json`](examples/session_open.json)
 - `tg_session_refresh(...)` returns the same payload shape as Session Refresh JSON
 - `tg_session_context(...)` returns the same payload shape as [`examples/session_context.json`](examples/session_context.json)

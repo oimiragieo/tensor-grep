@@ -1636,6 +1636,59 @@ def test_tg_symbol_callers_prefers_import_linked_typescript_tests(tmp_path):
     assert payload["tests"][0] == str(ts_test_path.resolve())
 
 
+def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    api_path = src_dir / "api.py"
+    api_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def post_invoice(total):\n"
+        "    return build_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_api.py"
+    test_path.write_text(
+        "from src.api import post_invoice\n\n"
+        "def test_post_invoice():\n"
+        "    assert post_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_symbol_blast_radius("create_invoice", str(project), max_depth=2)
+    )
+
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "symbol-blast-radius"
+    assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["max_depth"] == 2
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert any(caller["file"] == str(service_path.resolve()) for caller in payload["callers"])
+    assert payload["files"][0] == str(module_path.resolve())
+    assert str(service_path.resolve()) in payload["files"]
+    assert str(api_path.resolve()) in payload["files"]
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert any(level["depth"] == 0 for level in payload["caller_tree"])
+    assert any(level["depth"] == 1 for level in payload["caller_tree"])
+    assert "Depth 0:" in payload["rendered_caller_tree"]
+
+
 def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_path):
     from tensor_grep.cli import mcp_server
 

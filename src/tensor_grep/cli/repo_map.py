@@ -2129,5 +2129,223 @@ def build_symbol_callers_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_callers(symbol, path), indent=2)
 
 
+def build_symbol_blast_radius(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    max_depth: int = 3,
+) -> dict[str, Any]:
+    repo_map = build_repo_map(path)
+    return build_symbol_blast_radius_from_map(repo_map, symbol, max_depth=max_depth)
+
+
+def build_symbol_blast_radius_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    max_depth: int = 3,
+) -> dict[str, Any]:
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    callers_payload = build_symbol_callers_from_map(repo_map, symbol)
+    impact_payload = build_symbol_impact_from_map(repo_map, symbol)
+
+    normalized_depth = max(0, int(max_depth))
+    all_files = [str(current) for current in repo_map.get("files", [])]
+    imports_by_file = {
+        str(current["file"]): list(
+            dict.fromkeys(
+                str(import_name) for import_name in current.get("imports", []) if import_name
+            )
+        )
+        for current in repo_map.get("imports", [])
+    }
+    reverse_importers = _reverse_importers(all_files, imports_by_file)
+    definition_files = [str(current) for current in defs_payload.get("files", [])]
+    dependency_distances = _reverse_import_distances(definition_files, all_files, imports_by_file)
+    reverse_graph_scores = _personalized_reverse_import_pagerank(
+        definition_files,
+        all_files,
+        reverse_importers,
+    )
+
+    direct_callers = [dict(current) for current in callers_payload.get("callers", [])]
+    caller_files = sorted(dict.fromkeys(str(current["file"]) for current in direct_callers))
+
+    file_matches_by_path: dict[str, dict[str, Any]] = {}
+    file_depths: dict[str, int] = {}
+
+    def _merge_file_match(
+        current_path: str,
+        *,
+        depth: int,
+        score: int,
+        reasons: list[str],
+        graph_score: float | None = None,
+    ) -> None:
+        entry = file_matches_by_path.setdefault(
+            current_path,
+            {
+                "path": current_path,
+                "depth": depth,
+                "score": 0,
+                "reasons": [],
+            },
+        )
+        entry["depth"] = min(int(entry.get("depth", depth)), depth)
+        entry["score"] = max(int(entry.get("score", 0)), score)
+        for reason in reasons:
+            if reason not in entry["reasons"]:
+                entry["reasons"].append(reason)
+        if graph_score is not None and graph_score > float(entry.get("graph_score", 0.0)):
+            entry["graph_score"] = round(graph_score, 6)
+        file_depths[current_path] = min(file_depths.get(current_path, depth), depth)
+
+    for current in definition_files:
+        current_match: dict[str, Any] = next(
+            (
+                item
+                for item in impact_payload.get("file_matches", [])
+                if str(item.get("path")) == current
+            ),
+            {},
+        )
+        _merge_file_match(
+            current,
+            depth=0,
+            score=max(1, int(current_match.get("score", 0))),
+            reasons=["definition", *list(current_match.get("reasons", []))],
+            graph_score=(
+                float(current_match["graph_score"])
+                if "graph_score" in current_match
+                else reverse_graph_scores.get(current)
+            ),
+        )
+
+    for current in caller_files:
+        _merge_file_match(
+            current,
+            depth=1 if current not in definition_files else 0,
+            score=max(
+                1,
+                int(
+                    next(
+                        (
+                            item.get("score", 0)
+                            for item in impact_payload.get("file_matches", [])
+                            if str(item.get("path")) == current
+                        ),
+                        0,
+                    )
+                ),
+            ),
+            reasons=["caller"],
+            graph_score=reverse_graph_scores.get(current),
+        )
+
+    for current, depth in dependency_distances.items():
+        if depth > normalized_depth:
+            continue
+        reasons = ["graph-depth"]
+        if current in caller_files and "caller" not in reasons:
+            reasons.append("caller")
+        if current in definition_files and "definition" not in reasons:
+            reasons.append("definition")
+        graph_score = reverse_graph_scores.get(current, 0.0)
+        score = max(1, round(graph_score * 10))
+        _merge_file_match(
+            current,
+            depth=depth,
+            score=score,
+            reasons=reasons,
+            graph_score=graph_score if graph_score > 0.0 else None,
+        )
+
+    ranked_files = sorted(
+        file_matches_by_path.values(),
+        key=lambda item: (
+            int(item.get("depth", normalized_depth + 1)),
+            -int(item.get("score", 0)),
+            -float(item.get("graph_score", 0.0)),
+            str(item.get("path", "")),
+        ),
+    )
+    radius_files = [str(item["path"]) for item in ranked_files]
+
+    test_match_lookup = {
+        str(item["path"]): dict(item) for item in impact_payload.get("test_matches", [])
+    }
+    related_tests: list[str] = []
+    for current in impact_payload.get("tests", []):
+        test_entry = test_match_lookup.get(str(current), {})
+        reasons = list(test_entry.get("reasons", []))
+        if "blast-radius" not in reasons:
+            reasons.append("blast-radius")
+        graph_score = float(test_entry.get("graph_score", 0.0))
+        score = int(test_entry.get("score", 0))
+        coverage_hits = 0
+        current_imports = imports_by_file.get(str(current), [])
+        for source_file in radius_files:
+            aliases = _module_aliases_for_path(source_file)
+            if any(alias and alias in import_name.lower() for alias in aliases for import_name in current_imports):
+                coverage_hits += 1
+        if coverage_hits <= 0 and not any(reason in {"import-graph", "graph-centrality"} for reason in reasons):
+            continue
+        score += coverage_hits
+        related_tests.append(str(current))
+        test_match_lookup[str(current)] = {
+            "path": str(current),
+            "score": score,
+            "reasons": reasons,
+            **({"graph_score": graph_score} if graph_score > 0.0 else {}),
+        }
+
+    caller_tree: list[dict[str, Any]] = []
+    rendered_lines = [f"Blast radius for {symbol}:"]
+    for depth in range(0, normalized_depth + 1):
+        depth_files = [
+            str(item["path"]) for item in ranked_files if int(item.get("depth", normalized_depth + 1)) == depth
+        ]
+        if not depth_files:
+            continue
+        caller_tree.append({"depth": depth, "files": depth_files})
+        rendered_lines.append(f"Depth {depth}:")
+        rendered_lines.extend(f"- {current}" for current in depth_files)
+
+    related_paths: list[str] = []
+    for current in [*radius_files, *related_tests]:
+        if current not in related_paths:
+            related_paths.append(current)
+
+    payload = _envelope(Path(defs_payload["path"]))
+    payload["routing_reason"] = "symbol-blast-radius"
+    payload["symbol"] = symbol
+    payload["max_depth"] = normalized_depth
+    payload["definitions"] = defs_payload["definitions"]
+    payload["callers"] = direct_callers
+    payload["files"] = radius_files
+    payload["file_matches"] = ranked_files
+    payload["file_summaries"] = _file_summaries(repo_map.get("symbols", []), radius_files)
+    payload["tests"] = related_tests
+    payload["test_matches"] = [test_match_lookup[str(current)] for current in related_tests]
+    payload["caller_tree"] = caller_tree
+    payload["rendered_caller_tree"] = "\n".join(rendered_lines)
+    payload["imports"] = impact_payload["imports"]
+    payload["symbols"] = impact_payload["symbols"]
+    payload["related_paths"] = related_paths
+    return payload
+
+
+def build_symbol_blast_radius_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    max_depth: int = 3,
+) -> str:
+    return json.dumps(
+        build_symbol_blast_radius(symbol, path, max_depth=max_depth),
+        indent=2,
+    )
+
+
 
 

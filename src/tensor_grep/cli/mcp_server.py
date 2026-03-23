@@ -12,6 +12,7 @@ from tensor_grep.cli.repo_map import (
     build_context_pack,
     build_context_render,
     build_repo_map,
+    build_symbol_blast_radius,
     build_symbol_callers,
     build_symbol_defs,
     build_symbol_impact,
@@ -713,6 +714,38 @@ def tg_symbol_callers(symbol: str, path: str = ".") -> str:
             "routing_reason": "symbol-callers",
             "sidecar_used": False,
             "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()
+def tg_symbol_blast_radius(symbol: str, path: str = ".", max_depth: int = 3) -> str:
+    """
+    Return exact callers plus a transitive file/test blast radius for a symbol.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+        max_depth: Maximum reverse-import depth to include.
+    """
+    try:
+        return json.dumps(
+            build_symbol_blast_radius(symbol, path, max_depth=max_depth),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-blast-radius",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
             "path": str(Path(path).expanduser()),
             "error": {
                 "code": "invalid_input",

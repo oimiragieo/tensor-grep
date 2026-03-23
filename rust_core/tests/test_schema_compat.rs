@@ -17,6 +17,7 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "impact.json",
     "refs.json",
     "callers.json",
+    "blast_radius.json",
     "session_open.json",
     "session_context.json",
     "rewrite_apply_verify.json",
@@ -201,6 +202,38 @@ struct SymbolCallersExample {
     callers: Vec<SymbolReferenceExample>,
     files: Vec<String>,
     tests: Vec<String>,
+    imports: Vec<serde_json::Value>,
+    symbols: Vec<RepoSymbolExample>,
+    related_paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlastRadiusTreeLevelExample {
+    depth: usize,
+    files: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SymbolBlastRadiusExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    coverage: CoverageExample,
+    path: String,
+    symbol: String,
+    max_depth: usize,
+    definitions: Vec<RepoSymbolExample>,
+    callers: Vec<SymbolReferenceExample>,
+    files: Vec<String>,
+    file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
+    tests: Vec<String>,
+    test_matches: Vec<RankedPathMatchExample>,
+    caller_tree: Vec<BlastRadiusTreeLevelExample>,
+    rendered_caller_tree: String,
     imports: Vec<serde_json::Value>,
     symbols: Vec<RepoSymbolExample>,
     related_paths: Vec<String>,
@@ -451,6 +484,8 @@ struct RankedPathMatchExample {
     path: PathBuf,
     score: usize,
     #[serde(default)]
+    depth: Option<usize>,
+    #[serde(default)]
     graph_score: Option<f64>,
     reasons: Vec<String>,
 }
@@ -644,6 +679,7 @@ fn test_docs_examples_match_v1_schema() {
             "impact.json" => assert_symbol_impact_example(path),
             "refs.json" => assert_symbol_refs_example(path),
             "callers.json" => assert_symbol_callers_example(path),
+            "blast_radius.json" => assert_symbol_blast_radius_example(path),
             "session_open.json" => assert_session_open_example(path),
             "session_context.json" => assert_session_context_example(path),
             other => panic!("missing schema validation for {other}"),
@@ -987,6 +1023,100 @@ fn assert_symbol_defs_example(path: &Path) {
     );
     let _ = &example.imports;
     let _ = &example.tests;
+}
+
+fn assert_symbol_blast_radius_example(path: &Path) {
+    let example: SymbolBlastRadiusExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(example.routing_backend, "RepoMap");
+    assert_eq!(example.routing_reason, "symbol-blast-radius");
+    assert!(
+        !example.sidecar_used,
+        "{} should be native symbol blast radius output",
+        path.display()
+    );
+    assert_repo_map_coverage(path, &example.coverage);
+    assert!(
+        !example.path.is_empty(),
+        "{} path must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.callers.is_empty(),
+        "{} callers must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.files.is_empty(),
+        "{} files must not be empty",
+        path.display()
+    );
+    assert_eq!(
+        example.files.len(),
+        example.file_matches.len(),
+        "{} file_matches should align with files",
+        path.display()
+    );
+    assert_eq!(
+        example.tests.len(),
+        example.test_matches.len(),
+        "{} test_matches should align with tests",
+        path.display()
+    );
+    assert!(
+        !example.caller_tree.is_empty(),
+        "{} caller_tree must not be empty",
+        path.display()
+    );
+    assert!(
+        example.rendered_caller_tree.contains("Depth 0:"),
+        "{} rendered_caller_tree must include depth headers",
+        path.display()
+    );
+    for caller in &example.callers {
+        assert_eq!(
+            caller.name,
+            example.symbol,
+            "{} caller name must match symbol",
+            path.display()
+        );
+        assert_eq!(caller.kind, "call");
+        assert!(is_portable_absolute_path(&caller.file));
+        assert!(caller.line > 0);
+        assert!(!caller.text.is_empty());
+    }
+    for file_match in &example.file_matches {
+        assert!(is_portable_absolute_path(&file_match.path));
+        assert!(file_match.depth.unwrap_or(0) <= example.max_depth);
+        assert!(!file_match.reasons.is_empty());
+    }
+    for test_match in &example.test_matches {
+        assert!(is_portable_absolute_path(&test_match.path));
+        assert!(!test_match.reasons.is_empty());
+    }
+    for level in &example.caller_tree {
+        assert!(level.depth <= example.max_depth);
+        assert!(!level.files.is_empty());
+    }
+    let _ = &example.file_summaries;
+    let _ = &example.imports;
+    let _ = &example.symbols;
+    let _ = &example.related_paths;
 }
 
 fn assert_symbol_impact_example(path: &Path) {
