@@ -589,6 +589,52 @@ def tg_session_context_render(
 
 
 @mcp.tool()  # type: ignore
+def tg_session_blast_radius(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+) -> str:
+    """
+    Return a cached-session blast radius for a symbol.
+
+    Args:
+        session_id: Session ID to query.
+        symbol: Exact symbol name to resolve.
+        path: File or directory rooted at the session scope.
+        max_depth: Maximum reverse-import depth to include.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius
+
+    try:
+        return json.dumps(
+            session_blast_radius(session_id, symbol, path, max_depth=max_depth),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+        return json.dumps(payload, indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
 def tg_symbol_defs(symbol: str, path: str = ".") -> str:
     """
     Return exact definition locations for a symbol.

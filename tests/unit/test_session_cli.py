@@ -106,6 +106,7 @@ def test_session_serve_streams_jsonl_requests_from_cached_session(
                 json.dumps({"command": "repo_map"}),
                 json.dumps({"command": "context", "query": "invoice payment"}),
                 json.dumps({"command": "callers", "symbol": "create_invoice"}),
+                json.dumps({"command": "blast_radius", "symbol": "create_invoice", "max_depth": 1}),
             ]
         )
         + "\n"
@@ -119,7 +120,7 @@ def test_session_serve_streams_jsonl_requests_from_cached_session(
         output_stream=stdout,
     )
 
-    assert served == 3
+    assert served == 4
     responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
     assert responses[0]["session_id"] == opened["session_id"]
     assert responses[0]["routing_reason"] == "session-repo-map"
@@ -128,6 +129,9 @@ def test_session_serve_streams_jsonl_requests_from_cached_session(
     assert responses[1]["tests"][0] == str(test_path.resolve())
     assert responses[2]["routing_reason"] == "session-callers"
     assert responses[2]["callers"][0]["file"] == str(test_path.resolve())
+    assert responses[3]["routing_reason"] == "session-blast-radius"
+    assert responses[3]["max_depth"] == 1
+    assert responses[3]["tests"][0] == str(test_path.resolve())
 
 
 def test_session_serve_cli_reports_invalid_request_as_jsonl(tmp_path: Path) -> None:
@@ -233,6 +237,59 @@ def test_session_serve_can_auto_refresh_stale_session(tmp_path: Path) -> None:
     assert payload["session_id"] == opened["session_id"]
     assert payload["routing_reason"] == "session-defs"
     assert payload["definitions"][0]["name"] == "settle_invoice"
+
+
+def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "blast-radius",
+            opened["session_id"],
+            str(project),
+            "--symbol",
+            "create_invoice",
+            "--max-depth",
+            "1",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["routing_reason"] == "session-blast-radius"
+    assert payload["max_depth"] == 1
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert any(caller["file"] == str(service_path.resolve()) for caller in payload["callers"])
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
 

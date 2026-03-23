@@ -720,6 +720,7 @@ Current tool set:
 - `tg_session_refresh(session_id, path=".")`
 - `tg_session_context(session_id, query, path=".")`
 - `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
+- `tg_session_blast_radius(session_id, symbol, path=".", max_depth=3)`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
@@ -739,6 +740,7 @@ Response mapping:
 - `tg_session_refresh(...)` returns the same payload shape as Session Refresh JSON
 - `tg_session_context(...)` returns the same payload shape as [`examples/session_context.json`](examples/session_context.json)
 - `tg_session_context_render(...)` returns the same payload shape as [`examples/context_render.json`](examples/context_render.json) plus `session_id` and `routing_reason = "session-context-render"`
+- `tg_session_blast_radius(...)` returns the same payload shape as [`examples/blast_radius.json`](examples/blast_radius.json) plus `session_id` and `routing_reason = "session-blast-radius"`
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 - `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 - `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text

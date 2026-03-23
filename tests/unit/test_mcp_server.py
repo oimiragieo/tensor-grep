@@ -737,6 +737,53 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
     assert "rendered_context" in rendered
 
 
+def test_tg_session_blast_radius_uses_cached_repo_map(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    payload = json.loads(
+        mcp_server.tg_session_blast_radius(
+            session_id,
+            "create_invoice",
+            str(project),
+            max_depth=1,
+        )
+    )
+
+    assert payload["session_id"] == session_id
+    assert payload["routing_reason"] == "session-blast-radius"
+    assert payload["max_depth"] == 1
+    assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert any(caller["file"] == str(service_path.resolve()) for caller in payload["callers"])
+    assert payload["tests"][0] == str(test_path.resolve())
+    assert "Depth 0:" in payload["rendered_caller_tree"]
+
+
 def test_tg_session_refresh_updates_cached_session_payload(tmp_path):
     from tensor_grep.cli import mcp_server
 

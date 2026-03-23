@@ -78,6 +78,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_symbol_refs" in doc
     assert "tg_symbol_callers" in doc
     assert "tg_symbol_blast_radius" in doc
+    assert "tg_session_blast_radius" in doc
     assert "tg_session_open" in doc
     assert "tg_session_list" in doc
     assert "tg_session_show" in doc

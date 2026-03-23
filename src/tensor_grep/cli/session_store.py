@@ -11,6 +11,7 @@ from tensor_grep.cli.repo_map import (
     build_context_pack_from_map,
     build_context_render_from_map,
     build_repo_map,
+    build_symbol_blast_radius_from_map,
     build_symbol_callers_from_map,
     build_symbol_defs_from_map,
     build_symbol_impact_from_map,
@@ -270,6 +271,27 @@ def session_context_render(
     return context
 
 
+def session_blast_radius(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    *,
+    max_depth: int = 3,
+) -> dict[str, Any]:
+    payload = get_session(session_id, path)
+    reason = _stale_reason(payload)
+    if reason:
+        raise SessionStaleError(reason)
+    response = build_symbol_blast_radius_from_map(
+        payload["repo_map"],
+        symbol,
+        max_depth=max_depth,
+    )
+    response["session_id"] = session_id
+    response["routing_reason"] = "session-blast-radius"
+    return response
+
+
 def serve_session_request(session_id: str, request: dict[str, Any], path: str = ".") -> dict[str, Any]:
     payload = get_session(session_id, path)
     repo_map = cast(dict[str, Any], payload["repo_map"])
@@ -358,6 +380,19 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
         response = build_symbol_callers_from_map(repo_map, symbol)
         response["session_id"] = session_id
         response["routing_reason"] = "session-callers"
+        return response
+
+    if command == "blast_radius":
+        symbol = str(request.get("symbol", "")).strip()
+        if not symbol:
+            raise ValueError("blast_radius requests require a non-empty symbol")
+        response = build_symbol_blast_radius_from_map(
+            repo_map,
+            symbol,
+            max_depth=int(request.get("max_depth", 3)),
+        )
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-blast-radius"
         return response
 
     raise ValueError(f"unknown session command: {command or '<empty>'}")

@@ -1950,6 +1950,35 @@ def session_context_render_cmd(
     typer.echo(payload["rendered_context"])
 
 
+@session_app.command("blast-radius")
+def session_blast_radius_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a cached-session blast radius for a symbol."""
+    from tensor_grep.cli.session_store import session_blast_radius
+
+    try:
+        payload = session_blast_radius(session_id, symbol, path, max_depth=max_depth)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(payload["rendered_caller_tree"])
+
+
 @session_app.command("serve")
 def session_serve(
     session_id: str = typer.Argument(..., help="Session ID to serve from cache."),
