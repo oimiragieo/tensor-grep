@@ -1547,6 +1547,30 @@ def context(
     typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
 
 
+@app.command(name="context-render")
+def context_render(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank and render repo context."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready repository context bundle for edit planning."""
+    from tensor_grep.cli.repo_map import build_context_render, build_context_render_json
+
+    try:
+        if json_output:
+            typer.echo(build_context_render_json(query, path))
+            return
+
+        payload = build_context_render(query, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(payload["rendered_context"])
+
+
 @app.command()
 def defs(
     path: str = typer.Argument(".", help="File or directory to inventory"),

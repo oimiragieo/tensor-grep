@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from tensor_grep.cli.repo_map import (
     build_context_pack,
+    build_context_render,
     build_repo_map,
     build_symbol_callers,
     build_symbol_defs,
@@ -459,6 +460,33 @@ def tg_context_pack(query: str, path: str = ".") -> str:
             "version": _json_output_version(),
             "routing_backend": "RepoMap",
             "routing_reason": "context-pack",
+            "sidecar_used": False,
+            "query": query,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_context_render(query: str, path: str = ".") -> str:
+    """
+    Return a prompt-ready repository context bundle for edit planning.
+
+    Args:
+        query: Query text used to rank and render repo context.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_context_render(query, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-render",
             "sidecar_used": False,
             "query": query,
             "path": str(Path(path).expanduser()),

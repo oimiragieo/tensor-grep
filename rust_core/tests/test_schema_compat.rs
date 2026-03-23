@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 const EXPECTED_EXAMPLES: &[&str] = &[
     "calibrate.json",
     "context_pack.json",
+    "context_render.json",
     "gpu_sidecar_search.json",
     "index_search.json",
     "mcp_rewrite_diff.json",
@@ -447,6 +448,28 @@ struct ContextPackExample {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ContextRenderExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    coverage: CoverageExample,
+    query: String,
+    path: PathBuf,
+    files: Vec<PathBuf>,
+    file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
+    symbols: Vec<RankedRepoSymbolExample>,
+    imports: Vec<RankedRepoImportExample>,
+    tests: Vec<PathBuf>,
+    test_matches: Vec<RankedPathMatchExample>,
+    related_paths: Vec<PathBuf>,
+    sources: Vec<SymbolSourceBlockExample>,
+    rendered_context: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SessionOpenExample {
     session_id: String,
     root: PathBuf,
@@ -517,6 +540,7 @@ fn test_docs_examples_match_v1_schema() {
             "mcp_rewrite_diff.json" => assert_mcp_rewrite_diff_example(path),
             "repo_map.json" => assert_repo_map_example(path),
             "context_pack.json" => assert_context_pack_example(path),
+            "context_render.json" => assert_context_render_example(path),
             "defs.json" => assert_symbol_defs_example(path),
             "source.json" => assert_symbol_source_example(path),
             "impact.json" => assert_symbol_impact_example(path),
@@ -1657,6 +1681,97 @@ fn assert_context_pack_example(path: &Path) {
             path.display()
         );
     }
+    for related_path in &example.related_paths {
+        assert!(
+            is_portable_absolute_path(related_path),
+            "{} related path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+}
+
+fn assert_context_render_example(path: &Path) {
+    let example: ContextRenderExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "context-render",
+        "{} should keep context-render routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should stay native",
+        path.display()
+    );
+    assert_repo_map_coverage(path, &example.coverage);
+    assert!(
+        !example.query.is_empty(),
+        "{} query must not be empty",
+        path.display()
+    );
+    assert!(
+        is_portable_absolute_path(&example.path),
+        "{} path should be absolute or an absolute Windows path literal",
+        path.display()
+    );
+    assert!(
+        !example.files.is_empty(),
+        "{} should rank files",
+        path.display()
+    );
+    assert_eq!(
+        example.files.len(),
+        example.file_matches.len(),
+        "{} file_matches should align with files",
+        path.display()
+    );
+    assert_eq!(
+        example.files.len(),
+        example.file_summaries.len(),
+        "{} file_summaries should align with files",
+        path.display()
+    );
+    assert!(
+        !example.symbols.is_empty(),
+        "{} should rank symbols",
+        path.display()
+    );
+    assert!(
+        !example.sources.is_empty(),
+        "{} should include rendered source blocks",
+        path.display()
+    );
+    assert!(
+        !example.rendered_context.is_empty(),
+        "{} rendered_context must not be empty",
+        path.display()
+    );
+    for import in &example.imports {
+        assert!(
+            is_portable_absolute_path(&import.file),
+            "{} import file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for test_path in &example.tests {
+        assert!(
+            is_portable_absolute_path(test_path),
+            "{} test path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    assert_eq!(
+        example.tests.len(),
+        example.test_matches.len(),
+        "{} test_matches should align with tests",
+        path.display()
+    );
     for related_path in &example.related_paths {
         assert!(
             is_portable_absolute_path(related_path),

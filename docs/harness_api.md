@@ -25,6 +25,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Index search JSON | `tg.exe search --index --json ...` | [`examples/index_search.json`](examples/index_search.json) |
 | Repo map JSON | `tg.exe map --json ...` | [`examples/repo_map.json`](examples/repo_map.json) |
 | Context pack JSON | `tg.exe context --query ... --json ...` | [`examples/context_pack.json`](examples/context_pack.json) |
+| Context render JSON | `tg.exe context-render --query ... --json ...` | [`examples/context_render.json`](examples/context_render.json) |
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
 | GPU sidecar JSON | `tg.exe search --gpu-device-ids ... --json ...` | [`examples/gpu_sidecar_search.json`](examples/gpu_sidecar_search.json) |
@@ -183,6 +184,34 @@ Each ranked `imports[]` object extends the Repo Map JSON import shape with:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `score` | `integer` | Deterministic query relevance score. |
+
+## Context Render JSON
+
+Emitted by `tg.exe context-render --query ... --json ...`.
+
+Example: [`examples/context_render.json`](examples/context_render.json)
+
+Use this shape when an agent wants a prompt-ready bundle instead of only the raw ranked context inventory.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `RepoMap`. |
+| `routing_reason` | `string` | `context-render`. |
+| `sidecar_used` | `boolean` | Always `false`. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
+| `query` | `string` | Query text used for ranking and rendering. |
+| `path` | `string` | Absolute root path inventoried. |
+| `files` | `array<string>` | Ranked source files included in the render bundle. |
+| `file_matches` | `array<object>` | Ranked source file metadata with stable `path`, `score`, optional `graph_score`, and `reasons`. |
+| `file_summaries` | `array<object>` | Compact top-level symbol skeletons for the rendered files. |
+| `symbols` | `array<object>` | Ranked symbols that seeded the selected source blocks. |
+| `imports` | `array<object>` | Ranked import rows carried through from the context pack path. |
+| `tests` | `array<string>` | Ranked related tests. |
+| `test_matches` | `array<object>` | Ranked related test metadata with `path`, `score`, optional `graph_score`, and `reasons`. |
+| `related_paths` | `array<string>` | Stable merged order of rendered source and test paths. |
+| `sources` | `array<object>` | Exact source blocks selected from the highest-value ranked symbols. |
+| `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
 
 ## Rewrite Plan JSON
 
@@ -602,6 +631,7 @@ Current tool set:
 
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
+- `tg_context_render(query, path=".")`
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".")`
@@ -623,6 +653,7 @@ Current tool set:
 Response mapping:
 
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
+- `tg_context_render(...)` returns the same v1 envelope and payload shape as [`examples/context_render.json`](examples/context_render.json)
 - `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)
 - `tg_symbol_source(...)` returns the same v1 envelope and payload shape as [`examples/source.json`](examples/source.json)
 - `tg_symbol_impact(...)` returns the same v1 envelope and payload shape as [`examples/impact.json`](examples/impact.json)

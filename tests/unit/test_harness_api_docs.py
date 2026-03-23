@@ -8,6 +8,7 @@ EXPECTED_EXAMPLES = {
     "index_search.json": ("sidecar_used", "matches"),
     "repo_map.json": ("files", "symbols"),
     "context_pack.json": ("query", "files"),
+    "context_render.json": ("query", "rendered_context", "sources"),
     "defs.json": ("symbol", "definitions"),
     "source.json": ("symbol", "sources"),
     "impact.json": ("symbol", "files"),
@@ -31,6 +32,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Index Search JSON" in doc
     assert "## Repo Map JSON" in doc
     assert "## Context Pack JSON" in doc
+    assert "## Context Render JSON" in doc
     assert "## Rewrite Plan JSON" in doc
     assert "## Batch Rewrite Config" in doc
     assert "## Apply + Verify JSON" in doc
@@ -58,6 +60,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "filename+import+graph-heuristic" in doc
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
+    assert "tg_context_render" in doc
     assert "tg_symbol_defs" in doc
     assert "tg_symbol_source" in doc
     assert "tg_symbol_impact" in doc
@@ -117,6 +120,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
             if file_name in {
                 "repo_map.json",
                 "context_pack.json",
+                "context_render.json",
                 "defs.json",
                 "source.json",
                 "impact.json",

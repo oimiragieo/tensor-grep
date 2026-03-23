@@ -911,6 +911,41 @@ def test_tg_context_pack_returns_ranked_inventory(tmp_path):
     assert payload["files"][0] == str(module_path.resolve())
 
 
+def test_tg_context_render_returns_prompt_ready_context(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_context_render("create invoice", str(project)))
+
+    assert payload["routing_backend"] == "RepoMap"
+    assert payload["routing_reason"] == "context-render"
+    assert payload["files"][0] == str(module_path.resolve())
+    assert payload["sources"][0]["name"] == "create_invoice"
+    assert str(module_path.resolve()) in payload["rendered_context"]
+    assert "create_invoice" in payload["rendered_context"]
+
+
 def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
     from tensor_grep.cli import mcp_server
 

@@ -1370,6 +1370,77 @@ def build_context_pack_json(query: str, path: str | Path = ".") -> str:
     return json.dumps(build_context_pack(query, path), indent=2)
 
 
+def _render_context_string(payload: dict[str, Any]) -> str:
+    lines = [f"Query: {payload['query']}"]
+    tests = [str(current) for current in payload.get("tests", [])]
+    if tests:
+        lines.append("Tests:")
+        for current in tests[:3]:
+            lines.append(f"- {current}")
+
+    sources_by_file: dict[str, list[dict[str, Any]]] = {}
+    for source in payload.get("sources", []):
+        current = str(source["file"])
+        current_sources = sources_by_file.setdefault(current, [])
+        current_sources.append(source)
+
+    for summary in payload.get("file_summaries", [])[:3]:
+        current_path = str(summary["path"])
+        lines.append("")
+        lines.append(f"File: {current_path}")
+        lines.append("Summary:")
+        for symbol in summary.get("symbols", [])[:6]:
+            lines.append(
+                f"- {symbol['kind']} {symbol['name']} @ line {symbol['line']}"
+            )
+        selected_sources = sources_by_file.get(current_path, [])
+        if selected_sources:
+            lines.append("Source:")
+            for source in selected_sources[:2]:
+                lines.append(
+                    f"```text\n{str(source['source']).rstrip()}\n```"
+                )
+    return "\n".join(lines).strip()
+
+
+def build_context_render(query: str, path: str | Path = ".") -> dict[str, Any]:
+    repo_map = build_repo_map(path)
+    return build_context_render_from_map(repo_map, query)
+
+
+def build_context_render_from_map(repo_map: dict[str, Any], query: str) -> dict[str, Any]:
+    context_payload = build_context_pack_from_map(repo_map, query)
+    top_files = {str(current) for current in context_payload.get("files", [])[:3]}
+    sources: list[dict[str, Any]] = []
+    seen_symbols: set[tuple[str, str]] = set()
+    for symbol in context_payload.get("symbols", []):
+        current_file = str(symbol["file"])
+        if current_file not in top_files:
+            continue
+        symbol_key = (current_file, str(symbol["name"]))
+        if symbol_key in seen_symbols:
+            continue
+        seen_symbols.add(symbol_key)
+        symbol_sources = build_symbol_source_from_map(repo_map, str(symbol["name"])).get("sources", [])
+        for source in symbol_sources:
+            if str(source["file"]) != current_file:
+                continue
+            sources.append(source)
+            break
+        if len(sources) >= 5:
+            break
+
+    payload = dict(context_payload)
+    payload["routing_reason"] = "context-render"
+    payload["sources"] = sources
+    payload["rendered_context"] = _render_context_string(payload)
+    return payload
+
+
+def build_context_render_json(query: str, path: str | Path = ".") -> str:
+    return json.dumps(build_context_render(query, path), indent=2)
+
+
 def build_context_pack_from_map(repo_map: dict[str, Any], query: str) -> dict[str, Any]:
     payload = dict(repo_map)
     payload["files"] = list(repo_map.get("files", []))
