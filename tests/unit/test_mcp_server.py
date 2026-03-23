@@ -967,8 +967,18 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert payload["sources"][0]["name"] == "create_invoice"
     assert any(section["kind"] == "tests" for section in payload["sections"])
     assert any(section["kind"] == "source" for section in payload["sections"])
+    summary_section = next(section for section in payload["sections"] if section["kind"] == "summary")
+    source_section = next(section for section in payload["sections"] if section["kind"] == "source")
+    assert summary_section["provenance"]["path"] == str(module_path.resolve())
+    assert "symbol" in summary_section["provenance"]["reasons"]
+    assert source_section["provenance"]["symbol"] == "create_invoice"
+    assert source_section["provenance"]["symbol_score"] >= 1
     assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
     assert payload["candidate_edit_targets"]["symbols"][0]["name"] == "create_invoice"
+    assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "create_invoice"
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert payload["edit_plan_seed"]["validation_tests"] == [str(test_path.resolve())]
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
 

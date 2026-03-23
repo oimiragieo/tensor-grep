@@ -1372,10 +1372,37 @@ def build_context_pack_json(query: str, path: str | Path = ".") -> str:
 
 def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     parts: list[dict[str, Any]] = [{"kind": "query", "text": f"Query: {payload['query']}"}]
+    file_matches_by_path = {
+        str(match["path"]): match for match in payload.get("file_matches", [])
+    }
+    test_matches_by_path = {
+        str(match["path"]): match for match in payload.get("test_matches", [])
+    }
+    symbol_scores_by_key = {
+        (str(symbol["file"]), str(symbol["name"])): int(symbol.get("score", 0))
+        for symbol in payload.get("symbols", [])
+    }
     tests = [str(current) for current in payload.get("tests", [])]
     if tests:
         test_lines = ["Tests:", *[f"- {current}" for current in tests[:3]]]
-        parts.append({"kind": "tests", "text": "\n".join(test_lines), "paths": tests[:3]})
+        parts.append(
+            {
+                "kind": "tests",
+                "text": "\n".join(test_lines),
+                "paths": tests[:3],
+                "provenance": {
+                    "matches": [
+                        {
+                            "path": current,
+                            "score": int(test_matches_by_path.get(current, {}).get("score", 0)),
+                            "graph_score": test_matches_by_path.get(current, {}).get("graph_score"),
+                            "reasons": list(test_matches_by_path.get(current, {}).get("reasons", [])),
+                        }
+                        for current in tests[:3]
+                    ]
+                },
+            }
+        )
 
     sources_by_file: dict[str, list[dict[str, Any]]] = {}
     for source in payload.get("sources", []):
@@ -1388,13 +1415,36 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
         summary_lines = [f"File: {current_path}", "Summary:"]
         for symbol in summary.get("symbols", [])[: int(payload.get("max_symbols_per_file", 6))]:
             summary_lines.append(f"- {symbol['kind']} {symbol['name']} @ line {symbol['line']}")
-        parts.append({"kind": "summary", "path": current_path, "text": "\n".join(summary_lines)})
+        file_match = file_matches_by_path.get(current_path, {})
+        parts.append(
+            {
+                "kind": "summary",
+                "path": current_path,
+                "text": "\n".join(summary_lines),
+                "provenance": {
+                    "path": current_path,
+                    "score": int(file_match.get("score", 0)),
+                    "graph_score": file_match.get("graph_score"),
+                    "reasons": list(file_match.get("reasons", [])),
+                },
+            }
+        )
         for source in sources_by_file.get(current_path, [])[:2]:
+            file_match = file_matches_by_path.get(current_path, {})
+            symbol_name = str(source["name"])
             parts.append(
                 {
                     "kind": "source",
                     "path": current_path,
-                    "symbol": str(source["name"]),
+                    "symbol": symbol_name,
+                    "provenance": {
+                        "path": current_path,
+                        "symbol": symbol_name,
+                        "score": int(file_match.get("score", 0)),
+                        "graph_score": file_match.get("graph_score"),
+                        "reasons": list(file_match.get("reasons", [])),
+                        "symbol_score": symbol_scores_by_key.get((current_path, symbol_name), 0),
+                    },
                     "text": f"Source:\n```text\n{str(source['source']).rstrip()}\n```",
                 }
             )
@@ -1522,10 +1572,41 @@ def build_context_render_from_map(
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
     payload["truncated"] = truncated
+    ranked_symbols = sorted(
+        payload.get("symbols", []),
+        key=lambda symbol: (
+            -int(symbol.get("score", 0)),
+            0 if str(symbol.get("kind")) == "function" else 1,
+            str(symbol.get("file")),
+            int(symbol.get("line", 0)),
+            str(symbol.get("name")),
+        ),
+    )
     payload["candidate_edit_targets"] = {
         "files": list(payload.get("files", []))[:max_files],
-        "symbols": list(payload.get("symbols", []))[:max_sources],
+        "symbols": ranked_symbols[:max_sources],
         "tests": list(payload.get("tests", []))[:max_files],
+    }
+    primary_file = next(iter(payload.get("files", [])), None)
+    primary_symbol = None
+    if primary_file is not None:
+        primary_file_symbols = [
+            symbol for symbol in ranked_symbols if str(symbol.get("file")) == str(primary_file)
+        ]
+        primary_symbol = next(
+            iter(primary_file_symbols),
+            None,
+        )
+    if primary_symbol is None:
+        primary_symbol = next(iter(ranked_symbols), None)
+    payload["edit_plan_seed"] = {
+        "primary_file": primary_file,
+        "primary_symbol": primary_symbol,
+        "primary_test": next(iter(payload.get("tests", [])), None),
+        "validation_tests": list(payload.get("tests", []))[: max(1, min(max_files, 3))],
+        "reasons": list(payload.get("file_matches", [{}])[0].get("reasons", []))
+        if payload.get("file_matches")
+        else [],
     }
     return payload
 

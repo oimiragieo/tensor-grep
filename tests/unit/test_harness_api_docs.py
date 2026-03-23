@@ -14,6 +14,7 @@ EXPECTED_EXAMPLES = {
         "sources",
         "sections",
         "candidate_edit_targets",
+        "edit_plan_seed",
     ),
     "defs.json": ("symbol", "definitions"),
     "source.json": ("symbol", "sources"),

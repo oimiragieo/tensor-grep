@@ -438,6 +438,8 @@ struct RenderSectionExample {
     symbol: Option<String>,
     #[serde(default)]
     paths: Vec<PathBuf>,
+    #[serde(default)]
+    provenance: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -446,6 +448,16 @@ struct CandidateEditTargetsExample {
     files: Vec<PathBuf>,
     symbols: Vec<RankedRepoSymbolExample>,
     tests: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditPlanSeedExample {
+    primary_file: Option<PathBuf>,
+    primary_symbol: Option<RankedRepoSymbolExample>,
+    primary_test: Option<PathBuf>,
+    validation_tests: Vec<PathBuf>,
+    reasons: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,6 +506,7 @@ struct ContextRenderExample {
     truncated: bool,
     sections: Vec<RenderSectionExample>,
     candidate_edit_targets: CandidateEditTargetsExample,
+    edit_plan_seed: EditPlanSeedExample,
     rendered_context: String,
 }
 
@@ -1836,6 +1849,13 @@ fn assert_context_render_example(path: &Path) {
                 path.display()
             );
         }
+        if let Some(provenance) = &section.provenance {
+            assert!(
+                provenance.is_object(),
+                "{} section provenance must be an object when present",
+                path.display()
+            );
+        }
     }
     for candidate_file in &example.candidate_edit_targets.files {
         assert!(
@@ -1858,6 +1878,39 @@ fn assert_context_render_example(path: &Path) {
             path.display()
         );
     }
+    if let Some(primary_file) = &example.edit_plan_seed.primary_file {
+        assert!(
+            is_portable_absolute_path(primary_file),
+            "{} primary_file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    if let Some(primary_symbol) = &example.edit_plan_seed.primary_symbol {
+        assert!(
+            !primary_symbol.name.is_empty(),
+            "{} primary_symbol name must not be empty",
+            path.display()
+        );
+    }
+    if let Some(primary_test) = &example.edit_plan_seed.primary_test {
+        assert!(
+            is_portable_absolute_path(primary_test),
+            "{} primary_test should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for validation_test in &example.edit_plan_seed.validation_tests {
+        assert!(
+            is_portable_absolute_path(validation_test),
+            "{} validation_tests should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    assert!(
+        !example.edit_plan_seed.reasons.is_empty(),
+        "{} edit_plan_seed reasons must not be empty",
+        path.display()
+    );
     assert!(
         !example.rendered_context.is_empty(),
         "{} rendered_context must not be empty",
