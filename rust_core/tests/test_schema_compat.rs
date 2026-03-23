@@ -316,6 +316,7 @@ struct ApplyVerifyExample {
     routing_reason: String,
     sidecar_used: bool,
     checkpoint: Option<CheckpointExample>,
+    audit_manifest: Option<AuditManifestExample>,
     plan: RewritePlanExample,
     validation: Option<ValidationSummaryExample>,
     verification: Option<VerifyResultExample>,
@@ -329,6 +330,14 @@ struct CheckpointExample {
     root: String,
     created_at: String,
     file_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuditManifestExample {
+    path: String,
+    file_count: usize,
+    applied_edit_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -797,6 +806,23 @@ fn assert_apply_verify_example(path: &Path) {
         assert!(
             checkpoint.file_count > 0,
             "{} checkpoint file_count must be positive",
+            path.display()
+        );
+    }
+    if let Some(audit_manifest) = &example.audit_manifest {
+        assert!(
+            !audit_manifest.path.is_empty(),
+            "{} audit manifest path must not be empty",
+            path.display()
+        );
+        assert!(
+            audit_manifest.file_count > 0,
+            "{} audit manifest file_count must be positive",
+            path.display()
+        );
+        assert!(
+            audit_manifest.applied_edit_count > 0,
+            "{} audit manifest applied_edit_count must be positive",
             path.display()
         );
     }

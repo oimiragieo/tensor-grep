@@ -5,6 +5,7 @@ use clap::{Args, Parser, Subcommand};
 #[cfg(feature = "cuda")]
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
@@ -217,6 +218,10 @@ pub struct RunArgs {
     /// Create a rollback checkpoint before applying rewrite edits
     #[arg(long)]
     pub checkpoint: bool,
+
+    /// Write a deterministic rewrite audit manifest for applied edits
+    #[arg(long = "audit-manifest")]
+    pub audit_manifest: Option<PathBuf>,
 
     /// Apply only the specified comma-delimited rewrite edit IDs
     #[arg(
@@ -1388,6 +1393,7 @@ struct ApplyVerifyJson<'a> {
     routing_reason: &'static str,
     sidecar_used: bool,
     checkpoint: Option<&'a CheckpointCreateSummary>,
+    audit_manifest: Option<&'a AuditManifestSummary>,
     plan: &'a tensor_grep_rs::backend_ast::RewritePlan,
     verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
     validation: Option<&'a ValidationSummary>,
@@ -1400,6 +1406,7 @@ struct BatchApplyVerifyJson<'a> {
     routing_reason: &'static str,
     sidecar_used: bool,
     checkpoint: Option<&'a CheckpointCreateSummary>,
+    audit_manifest: Option<&'a AuditManifestSummary>,
     plan: &'a BatchRewritePlan,
     verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
     validation: Option<&'a ValidationSummary>,
@@ -1449,6 +1456,35 @@ struct ValidationCommandResult {
     exit_code: Option<i32>,
     stdout: String,
     stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestSummary {
+    path: String,
+    file_count: usize,
+    applied_edit_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RewriteAuditManifest {
+    version: u32,
+    kind: &'static str,
+    created_at: String,
+    lang: String,
+    path: String,
+    plan_total_edits: usize,
+    applied_edit_ids: Vec<String>,
+    checkpoint: Option<CheckpointCreateSummary>,
+    validation: Option<ValidationSummary>,
+    files: Vec<RewriteAuditManifestFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RewriteAuditManifestFile {
+    path: String,
+    edit_ids: Vec<String>,
+    before_sha256: String,
+    after_sha256: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2034,6 +2070,94 @@ fn run_post_apply_validation(args: &RunArgs, path: &str) -> Option<ValidationSum
     })
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
+}
+
+fn collect_pre_apply_hashes(
+    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut hashes = BTreeMap::new();
+    for file in edits
+        .iter()
+        .map(|edit| edit.file.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let bytes = std::fs::read(&file)
+            .with_context(|| format!("failed to read {} for audit manifest", file.display()))?;
+        hashes.insert(file.to_string_lossy().to_string(), sha256_hex(&bytes));
+    }
+    Ok(hashes)
+}
+
+fn write_audit_manifest_for_plan(
+    path: &Path,
+    lang: &str,
+    root_path: &str,
+    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+    plan_total_edits: usize,
+    checkpoint: Option<&CheckpointCreateSummary>,
+    validation: Option<&ValidationSummary>,
+    before_hashes: &BTreeMap<String, String>,
+) -> anyhow::Result<AuditManifestSummary> {
+    let mut by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for edit in edits {
+        by_file
+            .entry(edit.file.to_string_lossy().to_string())
+            .or_default()
+            .push(edit.id.clone());
+    }
+
+    let mut files = Vec::with_capacity(by_file.len());
+    for (file, edit_ids) in by_file {
+        let after_bytes = std::fs::read(&file)
+            .with_context(|| format!("failed to read {} for audit manifest", file))?;
+        let before_sha256 = before_hashes
+            .get(&file)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing pre-apply hash for {file}"))?;
+        files.push(RewriteAuditManifestFile {
+            path: file.clone(),
+            edit_ids,
+            before_sha256,
+            after_sha256: sha256_hex(&after_bytes),
+        });
+    }
+
+    let manifest = RewriteAuditManifest {
+        version: JSON_OUTPUT_VERSION,
+        kind: "rewrite-audit-manifest",
+        created_at: checkpoint_timestamp_string(),
+        lang: lang.to_string(),
+        path: root_path.to_string(),
+        plan_total_edits,
+        applied_edit_ids: edits.iter().map(|edit| edit.id.clone()).collect(),
+        checkpoint: checkpoint.cloned(),
+        validation: validation.cloned(),
+        files,
+    };
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create audit manifest dir {}", parent.display()))?;
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(&manifest)?)
+        .with_context(|| format!("failed to write audit manifest {}", path.display()))?;
+
+    Ok(AuditManifestSummary {
+        path: path.to_string_lossy().to_string(),
+        file_count: manifest.files.len(),
+        applied_edit_count: manifest.applied_edit_ids.len(),
+    })
+}
+
 fn emit_validation_status(summary: &ValidationSummary) {
     for result in &summary.commands {
         if result.success {
@@ -2204,6 +2328,12 @@ fn handle_ast_rewrite_apply(
         None
     };
 
+    let before_hashes = if args.audit_manifest.is_some() {
+        Some(collect_pre_apply_hashes(&plan.edits)?)
+    } else {
+        None
+    };
+
     AstBackend::apply_rewrites(&plan)?;
 
     if !plan.rejected_overlaps.is_empty() {
@@ -2237,6 +2367,23 @@ fn handle_ast_rewrite_apply(
         emit_validation_status(summary);
     }
 
+    let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
+        Some(write_audit_manifest_for_plan(
+            audit_manifest_path,
+            &args.lang,
+            path,
+            &plan.edits,
+            plan.total_edits,
+            checkpoint.as_ref(),
+            validation.as_ref(),
+            before_hashes
+                .as_ref()
+                .expect("pre-apply hashes should exist when audit manifest requested"),
+        )?)
+    } else {
+        None
+    };
+
     if args.json {
         let payload = ApplyVerifyJson {
             version: plan.version,
@@ -2244,6 +2391,7 @@ fn handle_ast_rewrite_apply(
             routing_reason: plan.routing_reason,
             sidecar_used: plan.sidecar_used,
             checkpoint: checkpoint.as_ref(),
+            audit_manifest: audit_manifest.as_ref(),
             plan: &plan,
             verification: verification.as_ref(),
             validation: validation.as_ref(),
@@ -2342,6 +2490,12 @@ fn handle_ast_batch_rewrite_apply(
         None
     };
 
+    let before_hashes = if args.audit_manifest.is_some() {
+        Some(collect_pre_apply_hashes(&plan.edits)?)
+    } else {
+        None
+    };
+
     AstBackend::apply_batch_rewrites(&plan)?;
 
     if !plan.rejected_overlaps.is_empty() {
@@ -2382,6 +2536,23 @@ fn handle_ast_batch_rewrite_apply(
         emit_validation_status(summary);
     }
 
+    let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
+        Some(write_audit_manifest_for_plan(
+            audit_manifest_path,
+            &args.lang,
+            path,
+            &plan.edits,
+            plan.total_edits,
+            checkpoint.as_ref(),
+            validation.as_ref(),
+            before_hashes
+                .as_ref()
+                .expect("pre-apply hashes should exist when audit manifest requested"),
+        )?)
+    } else {
+        None
+    };
+
     if args.json {
         let payload = BatchApplyVerifyJson {
             version: plan.version,
@@ -2389,6 +2560,7 @@ fn handle_ast_batch_rewrite_apply(
             routing_reason: plan.routing_reason,
             sidecar_used: plan.sidecar_used,
             checkpoint: checkpoint.as_ref(),
+            audit_manifest: audit_manifest.as_ref(),
             plan: &plan,
             verification: verification.as_ref(),
             validation: validation.as_ref(),

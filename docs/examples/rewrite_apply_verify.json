@@ -10,6 +10,11 @@
     "created_at": "1742491200",
     "file_count": 1
   },
+  "audit_manifest": {
+    "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+    "file_count": 1,
+    "applied_edit_count": 2
+  },
   "plan": {
     "version": 1,
     "routing_backend": "AstBackend",

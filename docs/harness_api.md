@@ -322,6 +322,7 @@ Optional edit selection flags:
 - `--reject-edit-ids <id1,id2,...>`
 - `--lint-cmd <command>`
 - `--test-cmd <command>`
+- `--audit-manifest <path>`
 
 When edit selection flags are present, the emitted `plan` object reflects the filtered subset that was actually applied and verified.
 When validation flags are present, the emitted payload also includes a structured `validation` object describing each post-apply command.
@@ -335,6 +336,7 @@ Example: [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.js
 | `routing_reason` | `string` | `ast-native`. |
 | `sidecar_used` | `boolean` | `false`. |
 | `checkpoint` | `object \| null` | Present when `--checkpoint` is requested before apply; otherwise `null` or omitted. |
+| `audit_manifest` | `object \| null` | Present when `--audit-manifest <path>` is requested; otherwise `null` or omitted. |
 | `plan` | `object` | Full rewrite plan object, using the same shape as Rewrite Plan JSON. |
 | `validation` | `object \| null` | Present when `--lint-cmd` and/or `--test-cmd` is requested; otherwise `null` or omitted. |
 | `verification` | `object \| null` | Present when `--verify` is requested; otherwise `null`. |
@@ -357,6 +359,14 @@ Each `mismatches[]` object contains `edit_id`, `file`, `line`, `expected`, and `
 | `commands` | `array<object>` | Ordered list of executed validation commands. |
 
 Each `commands[]` object contains `kind`, `command`, `success`, `exit_code`, `stdout`, and `stderr`.
+
+When `--audit-manifest <path>` is present, the payload also includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `audit_manifest.path` | `string` | Absolute or caller-provided output path written for the manifest. |
+| `audit_manifest.file_count` | `integer` | Number of files included in the manifest. |
+| `audit_manifest.applied_edit_count` | `integer` | Number of applied edit IDs recorded in the manifest. |
 
 ## GPU Sidecar JSON
 

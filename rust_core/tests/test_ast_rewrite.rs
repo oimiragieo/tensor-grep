@@ -1215,6 +1215,69 @@ fn test_tg_run_apply_verify_json_includes_validation_results() {
 }
 
 #[test]
+fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--checkpoint")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("--lint-cmd")
+        .arg("echo lint-ok")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let manifest_summary = parsed["audit_manifest"]
+        .as_object()
+        .expect("audit manifest summary must be present");
+    assert_eq!(
+        manifest_summary["path"].as_str().unwrap(),
+        audit_manifest_path.to_str().unwrap()
+    );
+    let manifest_json: Value =
+        serde_json::from_slice(&fs::read(&audit_manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest_json["version"], 1);
+    assert_eq!(manifest_json["kind"], "rewrite-audit-manifest");
+    assert_eq!(manifest_json["lang"], "python");
+    assert_eq!(manifest_json["plan_total_edits"], 1);
+    assert_eq!(
+        manifest_json["applied_edit_ids"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        manifest_json["checkpoint"]["checkpoint_id"],
+        parsed["checkpoint"]["checkpoint_id"]
+    );
+    assert_eq!(manifest_json["validation"]["success"], true);
+    let files = manifest_json["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(
+        files[0]["path"].as_str().unwrap(),
+        file_path.to_str().unwrap()
+    );
+    assert!(files[0]["before_sha256"].as_str().unwrap().len() >= 32);
+    assert!(files[0]["after_sha256"].as_str().unwrap().len() >= 32);
+}
+
+#[test]
 fn test_tg_run_apply_verify_json_reports_failed_validation_and_exits_non_zero() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
 

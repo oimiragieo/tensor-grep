@@ -171,6 +171,7 @@ def _build_rewrite_command(
     mode: str,
     verify: bool = False,
     checkpoint: bool = False,
+    audit_manifest: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
 ) -> list[str]:
@@ -191,6 +192,8 @@ def _build_rewrite_command(
             command.append("--verify")
         if checkpoint:
             command.append("--checkpoint")
+        if audit_manifest:
+            command.extend(["--audit-manifest", audit_manifest])
         if lint_cmd:
             command.extend(["--lint-cmd", lint_cmd])
         if test_cmd:
@@ -1061,6 +1064,7 @@ def tg_rewrite_apply(
     path: str = ".",
     verify: bool = False,
     checkpoint: bool = False,
+    audit_manifest: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
 ) -> str:
@@ -1074,6 +1078,7 @@ def tg_rewrite_apply(
         path: File or directory to scan.
         verify: When true, request post-apply verification from the native CLI.
         checkpoint: When true, create a rollback checkpoint before applying edits.
+        audit_manifest: Optional path for a deterministic rewrite audit manifest.
         lint_cmd: Optional command to run after apply/verify for structured lint validation.
         test_cmd: Optional command to run after apply/verify for structured test validation.
     """
@@ -1089,6 +1094,7 @@ def tg_rewrite_apply(
         mode="apply",
         verify=verify,
         checkpoint=checkpoint,
+        audit_manifest=audit_manifest,
         lint_cmd=lint_cmd,
         test_cmd=test_cmd,
     )
