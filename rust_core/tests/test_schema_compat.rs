@@ -457,7 +457,17 @@ struct EditPlanSeedExample {
     primary_symbol: Option<RankedRepoSymbolExample>,
     primary_test: Option<PathBuf>,
     validation_tests: Vec<PathBuf>,
+    validation_commands: Vec<String>,
     reasons: Vec<String>,
+    confidence: EditPlanSeedConfidenceExample,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditPlanSeedConfidenceExample {
+    file: f64,
+    symbol: f64,
+    test: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1906,9 +1916,31 @@ fn assert_context_render_example(path: &Path) {
             path.display()
         );
     }
+    for validation_command in &example.edit_plan_seed.validation_commands {
+        assert!(
+            !validation_command.is_empty(),
+            "{} validation_commands entries must not be empty",
+            path.display()
+        );
+    }
     assert!(
         !example.edit_plan_seed.reasons.is_empty(),
         "{} edit_plan_seed reasons must not be empty",
+        path.display()
+    );
+    assert!(
+        (0.0..=1.0).contains(&example.edit_plan_seed.confidence.file),
+        "{} file confidence must be normalized",
+        path.display()
+    );
+    assert!(
+        (0.0..=1.0).contains(&example.edit_plan_seed.confidence.symbol),
+        "{} symbol confidence must be normalized",
+        path.display()
+    );
+    assert!(
+        (0.0..=1.0).contains(&example.edit_plan_seed.confidence.test),
+        "{} test confidence must be normalized",
         path.display()
     );
     assert!(

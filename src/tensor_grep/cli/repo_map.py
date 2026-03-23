@@ -1496,6 +1496,21 @@ def _render_context_string_and_sections(
     return "".join(rendered_parts).rstrip(), sections, truncated
 
 
+def _confidence_from_score(score: int) -> float:
+    if score <= 0:
+        return 0.0
+    return round(min(1.0, 0.35 + (score / 20.0)), 3)
+
+
+def _validation_commands_for_tests(tests: list[str]) -> list[str]:
+    commands: list[str] = []
+    for current in tests:
+        path = Path(current)
+        if path.suffix == ".py":
+            commands.append(f"uv run pytest {path} -q")
+    return commands
+
+
 def build_context_render(
     query: str,
     path: str | Path = ".",
@@ -1599,14 +1614,38 @@ def build_context_render_from_map(
         )
     if primary_symbol is None:
         primary_symbol = next(iter(ranked_symbols), None)
+    primary_file_match = next(
+        (
+            match
+            for match in payload.get("file_matches", [])
+            if str(match.get("path")) == str(primary_file)
+        ),
+        payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+    )
+    primary_test = next(iter(payload.get("tests", [])), None)
+    primary_test_match = next(
+        (
+            match
+            for match in payload.get("test_matches", [])
+            if str(match.get("path")) == str(primary_test)
+        ),
+        payload.get("test_matches", [{}])[0] if payload.get("test_matches") else {},
+    )
+    validation_tests = list(payload.get("tests", []))[: max(1, min(max_files, 3))]
     payload["edit_plan_seed"] = {
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
-        "primary_test": next(iter(payload.get("tests", [])), None),
-        "validation_tests": list(payload.get("tests", []))[: max(1, min(max_files, 3))],
-        "reasons": list(payload.get("file_matches", [{}])[0].get("reasons", []))
-        if payload.get("file_matches")
-        else [],
+        "primary_test": primary_test,
+        "validation_tests": validation_tests,
+        "validation_commands": _validation_commands_for_tests(validation_tests),
+        "reasons": list(primary_file_match.get("reasons", [])),
+        "confidence": {
+            "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
+            "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
+            if primary_symbol is not None
+            else 0.0,
+            "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
+        },
     }
     return payload
 

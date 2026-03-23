@@ -612,6 +612,9 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
     assert rendered["session_id"] == session_id
     assert rendered["routing_reason"] == "session-context-render"
     assert rendered["sources"][0]["name"] == "add"
+    assert rendered["edit_plan_seed"]["primary_symbol"]["name"] == "add"
+    assert rendered["edit_plan_seed"]["validation_commands"] == []
+    assert 0.0 <= rendered["edit_plan_seed"]["confidence"]["symbol"] <= 1.0
     assert "rendered_context" in rendered
 
 
@@ -979,6 +982,10 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
     assert payload["edit_plan_seed"]["validation_tests"] == [str(test_path.resolve())]
+    assert payload["edit_plan_seed"]["validation_commands"] == [f"uv run pytest {test_path.resolve()} -q"]
+    assert payload["edit_plan_seed"]["confidence"]["file"] >= 0.5
+    assert payload["edit_plan_seed"]["confidence"]["symbol"] >= 0.5
+    assert payload["edit_plan_seed"]["confidence"]["test"] >= 0.5
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
 

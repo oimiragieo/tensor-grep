@@ -315,11 +315,19 @@
     "validation_tests": [
       "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
     ],
+    "validation_commands": [
+      "uv run pytest C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py -q"
+    ],
     "reasons": [
       "path",
       "definition",
       "symbol",
       "graph-centrality"
-    ]
+    ],
+    "confidence": {
+      "file": 1.0,
+      "symbol": 0.6,
+      "test": 1.0
+    }
   }
 }
