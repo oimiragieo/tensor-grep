@@ -262,6 +262,24 @@ pub struct RunArgs {
 #[derive(Args, Debug, Clone, Default)]
 pub struct CalibrateArgs {}
 
+#[derive(Args, Debug, Clone)]
+pub struct AuditVerifyArgs {
+    /// Path to the rewrite audit manifest JSON file
+    pub manifest_path: PathBuf,
+
+    /// Optional HMAC signing key path for signed manifests
+    #[arg(long = "signing-key")]
+    pub signing_key: Option<PathBuf>,
+
+    /// Optional previous manifest path for validating manifest chaining
+    #[arg(long = "previous-manifest")]
+    pub previous_manifest: Option<PathBuf>,
+
+    /// Emit structured JSON verification output
+    #[arg(long)]
+    pub json: bool,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Search for a regex pattern with ripgrep-compatible flags
@@ -271,6 +289,9 @@ pub enum Commands {
     /// Upgrade tensor-grep via the managed Python package path
     #[command(alias = "update")]
     Upgrade,
+    /// Verify a rewrite audit manifest digest, chain, and optional signature
+    #[command(name = "audit-verify")]
+    AuditVerify(AuditVerifyArgs),
     /// Start the AI-assistant Model Context Protocol (MCP) server
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
@@ -420,6 +441,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Search(args) => handle_ripgrep_search(args),
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
+        Commands::AuditVerify(args) => handle_audit_verify_command(args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
         Commands::Run(args) => handle_ast_run(args),
@@ -450,6 +472,28 @@ fn handle_calibrate_command(_args: CalibrateArgs) -> anyhow::Result<()> {
             eprintln!("{err}");
             std::process::exit(2);
         }
+    }
+}
+
+fn handle_audit_verify_command(args: AuditVerifyArgs) -> anyhow::Result<()> {
+    let payload = verify_audit_manifest_payload(&args)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("Manifest: {}", payload.manifest_path);
+        println!("valid={}", payload.valid);
+        println!(
+            "checks=digest:{} chain:{} signature:{}",
+            payload.checks.digest_valid, payload.checks.chain_valid, payload.checks.signature_valid
+        );
+        for error in &payload.errors {
+            println!("- {error}");
+        }
+    }
+    if payload.valid {
+        Ok(())
+    } else {
+        anyhow::bail!("audit manifest verification failed")
     }
 }
 
@@ -629,6 +673,7 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         "search",
         "calibrate",
         "upgrade",
+        "audit-verify",
         "update",
         "mcp",
         "classify",
@@ -1505,6 +1550,46 @@ struct AuditManifestSignature {
     value: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct RewriteAuditManifestRead {
+    kind: String,
+    previous_manifest_sha256: Option<String>,
+    manifest_sha256: Option<String>,
+    signature: Option<AuditManifestSignatureRead>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AuditManifestSignatureRead {
+    kind: String,
+    key_path: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestVerifyChecks {
+    digest_valid: bool,
+    chain_valid: bool,
+    signature_valid: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestVerifyJson {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    manifest_path: String,
+    signing_key_path: Option<String>,
+    previous_manifest_path: Option<String>,
+    kind: Option<String>,
+    manifest_sha256: Option<String>,
+    previous_manifest_sha256: Option<String>,
+    checks: AuditManifestVerifyChecks,
+    signature_kind: Option<String>,
+    valid: bool,
+    errors: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 struct BatchRewriteConfig {
     rewrites: Vec<BatchRewriteRule>,
@@ -2112,6 +2197,18 @@ fn canonical_manifest_bytes(manifest: &RewriteAuditManifest) -> anyhow::Result<V
     Ok(serde_json::to_vec_pretty(&value)?)
 }
 
+fn previous_manifest_digest(path: &Path) -> anyhow::Result<String> {
+    let previous_bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read previous audit manifest {}", path.display()))?;
+    let previous_value: Option<serde_json::Value> = serde_json::from_slice(&previous_bytes).ok();
+    Ok(previous_value
+        .as_ref()
+        .and_then(|value| value.get("manifest_sha256"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| sha256_hex(&previous_bytes)))
+}
+
 fn collect_pre_apply_hashes(
     edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
 ) -> anyhow::Result<BTreeMap<String, String>> {
@@ -2140,19 +2237,7 @@ fn write_audit_manifest_for_plan(
     signing_key_path: Option<&Path>,
 ) -> anyhow::Result<AuditManifestSummary> {
     let previous_manifest_sha256 = if path.exists() {
-        let previous_bytes = std::fs::read(path).with_context(|| {
-            format!("failed to read previous audit manifest {}", path.display())
-        })?;
-        let previous_value: Option<serde_json::Value> =
-            serde_json::from_slice(&previous_bytes).ok();
-        Some(
-            previous_value
-                .as_ref()
-                .and_then(|value| value.get("manifest_sha256"))
-                .and_then(|value| value.as_str())
-                .map(ToOwned::to_owned)
-                .unwrap_or_else(|| sha256_hex(&previous_bytes)),
-        )
+        Some(previous_manifest_digest(path)?)
     } else {
         None
     };
@@ -2235,6 +2320,145 @@ fn write_audit_manifest_for_plan(
         applied_edit_count: manifest.applied_edit_ids.len(),
         signed: manifest.signature.is_some(),
         signature_kind: manifest.signature.as_ref().map(|signature| signature.kind),
+    })
+}
+
+fn verify_audit_manifest_payload(
+    args: &AuditVerifyArgs,
+) -> anyhow::Result<AuditManifestVerifyJson> {
+    let manifest_path = args.manifest_path.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve audit manifest {}",
+            args.manifest_path.display()
+        )
+    })?;
+    let manifest_bytes = std::fs::read(&manifest_path)
+        .with_context(|| format!("failed to read audit manifest {}", manifest_path.display()))?;
+    let manifest: RewriteAuditManifestRead = serde_json::from_slice(&manifest_bytes)
+        .with_context(|| format!("failed to parse audit manifest {}", manifest_path.display()))?;
+
+    let mut manifest_value: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .with_context(|| format!("failed to parse audit manifest {}", manifest_path.display()))?;
+    let object = manifest_value
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("audit manifest must be a JSON object"))?;
+    object.remove("manifest_sha256");
+    object.remove("signature");
+    let canonical_bytes = serde_json::to_vec_pretty(&manifest_value)?;
+
+    let expected_digest = sha256_hex(&canonical_bytes);
+    let digest_valid = manifest
+        .manifest_sha256
+        .as_ref()
+        .map(|digest| digest == &expected_digest)
+        .unwrap_or(false);
+
+    let previous_manifest_path = args
+        .previous_manifest
+        .as_ref()
+        .map(|path| path.canonicalize())
+        .transpose()
+        .with_context(|| {
+            args.previous_manifest
+                .as_ref()
+                .map(|path| format!("failed to resolve previous manifest {}", path.display()))
+                .unwrap_or_default()
+        })?;
+    let mut chain_valid = true;
+    let mut errors = Vec::new();
+    if let Some(previous_digest) = manifest.previous_manifest_sha256.as_ref() {
+        if let Some(previous_path) = previous_manifest_path.as_ref() {
+            let actual_previous_digest = previous_manifest_digest(previous_path)?;
+            if previous_digest != &actual_previous_digest {
+                chain_valid = false;
+                errors.push(
+                    "Previous manifest digest does not match previous_manifest_sha256.".to_string(),
+                );
+            }
+        } else {
+            chain_valid = false;
+            errors.push(
+                "Manifest chain digest is present but no previous manifest was provided."
+                    .to_string(),
+            );
+        }
+    }
+
+    let signing_key_path = args
+        .signing_key
+        .as_ref()
+        .map(|path| path.canonicalize())
+        .transpose()
+        .with_context(|| {
+            args.signing_key
+                .as_ref()
+                .map(|path| format!("failed to resolve signing key {}", path.display()))
+                .unwrap_or_default()
+        })?;
+    let mut signature_valid = true;
+    let signature_kind = manifest
+        .signature
+        .as_ref()
+        .map(|signature| signature.kind.clone());
+    if let Some(signature) = manifest.signature.as_ref() {
+        if signature.kind != "hmac-sha256" {
+            signature_valid = false;
+            errors.push(format!("Unsupported signature kind: {}", signature.kind));
+        } else {
+            let key_path = signing_key_path
+                .as_ref()
+                .map(PathBuf::as_path)
+                .unwrap_or_else(|| Path::new(&signature.key_path));
+            let key_bytes = std::fs::read(key_path).with_context(|| {
+                format!("failed to read audit signing key {}", key_path.display())
+            })?;
+            let mut mac = Hmac::<Sha256>::new_from_slice(&key_bytes)
+                .map_err(|_| anyhow::anyhow!("invalid audit signing key"))?;
+            mac.update(&canonical_bytes);
+            let actual_signature = mac.finalize().into_bytes();
+            let mut actual_signature_hex = String::with_capacity(actual_signature.len() * 2);
+            for byte in actual_signature {
+                actual_signature_hex.push_str(&format!("{byte:02x}"));
+            }
+            if actual_signature_hex != signature.value {
+                signature_valid = false;
+                errors.push(
+                    "Manifest signature does not match the supplied signing key.".to_string(),
+                );
+            }
+        }
+    } else if signing_key_path.is_some() {
+        signature_valid = false;
+        errors.push("Signing key was provided but the manifest is unsigned.".to_string());
+    }
+
+    if !digest_valid {
+        errors.insert(
+            0,
+            "Manifest digest does not match manifest_sha256.".to_string(),
+        );
+    }
+
+    Ok(AuditManifestVerifyJson {
+        version: JSON_OUTPUT_VERSION,
+        routing_backend: "AuditManifest",
+        routing_reason: "audit-manifest-verify",
+        sidecar_used: false,
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        signing_key_path: signing_key_path.map(|path| path.to_string_lossy().to_string()),
+        previous_manifest_path: previous_manifest_path
+            .map(|path| path.to_string_lossy().to_string()),
+        kind: Some(manifest.kind),
+        manifest_sha256: manifest.manifest_sha256,
+        previous_manifest_sha256: manifest.previous_manifest_sha256,
+        checks: AuditManifestVerifyChecks {
+            digest_valid,
+            chain_valid,
+            signature_valid,
+        },
+        signature_kind,
+        valid: digest_valid && chain_valid && signature_valid,
+        errors,
     })
 }
 

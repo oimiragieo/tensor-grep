@@ -1286,6 +1286,7 @@ fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
         .as_object_mut()
         .unwrap()
         .remove("manifest_sha256");
+    canonical_manifest.as_object_mut().unwrap().remove("signature");
     let mut hasher = Sha256::new();
     hasher.update(serde_json::to_vec_pretty(&canonical_manifest).unwrap());
     assert_eq!(manifest_digest, format!("{:x}", hasher.finalize()));
@@ -1323,6 +1324,7 @@ fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
         .as_object_mut()
         .unwrap()
         .remove("manifest_sha256");
+    second_canonical.as_object_mut().unwrap().remove("signature");
     let mut second_hasher = Sha256::new();
     second_hasher.update(serde_json::to_vec_pretty(&second_canonical).unwrap());
     assert_eq!(second_digest, format!("{:x}", second_hasher.finalize()));
@@ -1376,6 +1378,142 @@ fn test_tg_run_apply_verify_json_can_sign_audit_manifest() {
         signing_key_path.to_str().unwrap()
     );
     assert!(manifest_json["signature"]["value"].as_str().unwrap().len() >= 32);
+}
+
+#[test]
+fn test_tg_audit_verify_json_accepts_signed_manifest() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+    let signing_key_path = file_path.parent().unwrap().join("audit.key");
+    fs::write(&signing_key_path, b"super-secret-key").unwrap();
+
+    let apply_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("--audit-signing-key")
+        .arg(&signing_key_path)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        apply_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+
+    let verify_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("audit-verify")
+        .arg(&audit_manifest_path)
+        .arg("--signing-key")
+        .arg(&signing_key_path)
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    assert!(
+        verify_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&verify_output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&verify_output.stdout).unwrap();
+    assert_eq!(parsed["routing_reason"], "audit-manifest-verify");
+    assert_eq!(parsed["checks"]["digest_valid"], true);
+    assert_eq!(parsed["checks"]["chain_valid"], true);
+    assert_eq!(parsed["checks"]["signature_valid"], true);
+    assert_eq!(parsed["valid"], true);
+}
+
+#[test]
+fn test_tg_audit_verify_json_reports_chain_failure() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        first_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+
+    let previous_manifest_path = file_path.parent().unwrap().join("previous-audit.json");
+    fs::copy(&audit_manifest_path, &previous_manifest_path).unwrap();
+    fs::write(
+        &previous_manifest_path,
+        br#"{"version":1,"manifest_sha256":"deadbeef"}"#,
+    )
+    .unwrap();
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: ($EXPR)")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        second_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let verify_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("audit-verify")
+        .arg(&audit_manifest_path)
+        .arg("--previous-manifest")
+        .arg(&previous_manifest_path)
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    assert!(!verify_output.status.success());
+    let parsed: Value = serde_json::from_slice(&verify_output.stdout).unwrap();
+    assert_eq!(parsed["checks"]["digest_valid"], true);
+    assert_eq!(parsed["checks"]["chain_valid"], false);
+    assert_eq!(parsed["checks"]["signature_valid"], true);
+    assert_eq!(parsed["valid"], false);
+    assert!(parsed["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value
+            .as_str()
+            .unwrap()
+            .contains("Previous manifest digest does not match previous_manifest_sha256.")));
 }
 
 #[test]
