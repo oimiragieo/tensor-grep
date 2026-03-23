@@ -215,11 +215,21 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `max_sources` | `integer` | Maximum exact source blocks allowed in the render bundle. |
 | `max_symbols_per_file` | `integer` | Maximum summary symbols emitted per file. |
 | `max_render_chars` | `integer \| null` | Optional render-text budget applied to `rendered_context`. |
+| `optimize_context` | `boolean` | Whether comment-only and blank lines were stripped from rendered source blocks. |
+| `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, or `llm`. |
 | `truncated` | `boolean` | Whether `rendered_context` was clipped to satisfy `max_render_chars`. |
 | `sections` | `array<object>` | Machine-readable section metadata for the rendered bundle, including byte offsets, section type, and provenance for why each section was included. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Default primary file/symbol/test, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
+
+Each `sources[]` object may also include compact-render metadata when `optimize_context` is enabled:
+
+- `render_profile`
+- `optimize_context`
+- `rendered_source`
+- `line_map[]`
+- `render_diagnostics`
 
 ## Rewrite Plan JSON
 
@@ -639,7 +649,7 @@ Current tool set:
 
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
-- `tg_context_render(query, path=".")`
+- `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".")`
@@ -653,7 +663,7 @@ Current tool set:
 - `tg_session_show(session_id, path=".")`
 - `tg_session_refresh(session_id, path=".")`
 - `tg_session_context(session_id, query, path=".")`
-- `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None)`
+- `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`

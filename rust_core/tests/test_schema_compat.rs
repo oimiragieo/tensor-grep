@@ -104,6 +104,35 @@ struct SymbolSourceBlockExample {
     start_line: usize,
     end_line: usize,
     source: String,
+    #[serde(default)]
+    render_profile: Option<String>,
+    #[serde(default)]
+    optimize_context: Option<bool>,
+    #[serde(default)]
+    rendered_source: Option<String>,
+    #[serde(default)]
+    line_map: Vec<SourceLineMapEntryExample>,
+    #[serde(default)]
+    render_diagnostics: Option<RenderDiagnosticsExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceLineMapEntryExample {
+    rendered_start_line: usize,
+    rendered_end_line: usize,
+    original_start_line: usize,
+    original_end_line: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RenderDiagnosticsExample {
+    original_line_count: usize,
+    rendered_line_count: usize,
+    removed_line_count: usize,
+    removed_comment_lines: usize,
+    removed_blank_lines: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -513,6 +542,8 @@ struct ContextRenderExample {
     max_sources: usize,
     max_symbols_per_file: usize,
     max_render_chars: Option<usize>,
+    optimize_context: bool,
+    render_profile: String,
     truncated: bool,
     sections: Vec<RenderSectionExample>,
     candidate_edit_targets: CandidateEditTargetsExample,
@@ -1095,40 +1126,11 @@ fn assert_symbol_source_example(path: &Path) {
         path.display()
     );
     for source in &example.sources {
-        assert!(
-            !source.name.is_empty(),
-            "{} source name must not be empty",
-            path.display()
-        );
+        assert_symbol_source_block(path, source);
         assert_eq!(
             source.name,
             example.symbol,
             "{} source name must match symbol",
-            path.display()
-        );
-        assert!(
-            !source.kind.is_empty(),
-            "{} source kind must not be empty",
-            path.display()
-        );
-        assert!(
-            is_portable_absolute_path(&source.file),
-            "{} source file should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-        assert!(
-            source.start_line > 0,
-            "{} source start_line must be positive",
-            path.display()
-        );
-        assert!(
-            source.end_line >= source.start_line,
-            "{} source end_line must be >= start_line",
-            path.display()
-        );
-        assert!(
-            !source.source.trim().is_empty(),
-            "{} source body must not be empty",
             path.display()
         );
     }
@@ -1137,6 +1139,97 @@ fn assert_symbol_source_example(path: &Path) {
     let _ = &example.imports;
     let _ = &example.tests;
     let _ = &example.related_paths;
+}
+
+fn assert_symbol_source_block(path: &Path, source: &SymbolSourceBlockExample) {
+    assert!(
+        !source.name.is_empty(),
+        "{} source name must not be empty",
+        path.display()
+    );
+    assert!(
+        !source.kind.is_empty(),
+        "{} source kind must not be empty",
+        path.display()
+    );
+    assert!(
+        is_portable_absolute_path(&source.file),
+        "{} source file should be absolute or an absolute Windows path literal",
+        path.display()
+    );
+    assert!(
+        source.start_line > 0,
+        "{} source start_line must be positive",
+        path.display()
+    );
+    assert!(
+        source.end_line >= source.start_line,
+        "{} source end_line must be >= start_line",
+        path.display()
+    );
+    assert!(
+        !source.source.trim().is_empty(),
+        "{} source body must not be empty",
+        path.display()
+    );
+    if let Some(render_profile) = &source.render_profile {
+        assert!(
+            matches!(render_profile.as_str(), "full" | "compact" | "llm"),
+            "{} render_profile must be full, compact, or llm",
+            path.display()
+        );
+    }
+    if let Some(optimize_context) = source.optimize_context {
+        if optimize_context {
+            assert!(
+                source.rendered_source.is_some(),
+                "{} optimized source blocks should include rendered_source",
+                path.display()
+            );
+        }
+    }
+    if let Some(rendered_source) = &source.rendered_source {
+        assert!(
+            !rendered_source.trim().is_empty(),
+            "{} rendered_source must not be empty when present",
+            path.display()
+        );
+    }
+    for line_map_entry in &source.line_map {
+        assert!(
+            line_map_entry.rendered_start_line > 0
+                && line_map_entry.rendered_end_line >= line_map_entry.rendered_start_line,
+            "{} rendered line-map entries must be ordered",
+            path.display()
+        );
+        assert!(
+            line_map_entry.original_start_line >= source.start_line
+                && line_map_entry.original_end_line >= line_map_entry.original_start_line,
+            "{} original line-map entries must be ordered",
+            path.display()
+        );
+    }
+    if let Some(diagnostics) = &source.render_diagnostics {
+        assert!(
+            diagnostics.original_line_count >= diagnostics.rendered_line_count,
+            "{} original line count must be >= rendered line count",
+            path.display()
+        );
+        assert_eq!(
+            diagnostics.removed_line_count,
+            diagnostics
+                .original_line_count
+                .saturating_sub(diagnostics.rendered_line_count),
+            "{} removed line count must match line delta",
+            path.display()
+        );
+        assert!(
+            diagnostics.removed_comment_lines + diagnostics.removed_blank_lines
+                <= diagnostics.removed_line_count,
+            "{} removed comment and blank lines must not exceed total removed lines",
+            path.display()
+        );
+    }
 }
 
 fn assert_symbol_refs_example(path: &Path) {
@@ -1799,6 +1892,9 @@ fn assert_context_render_example(path: &Path) {
         "{} should include rendered source blocks",
         path.display()
     );
+    for source in &example.sources {
+        assert_symbol_source_block(path, source);
+    }
     assert!(
         example.max_files > 0,
         "{} max_files must be positive",
@@ -1821,6 +1917,12 @@ fn assert_context_render_example(path: &Path) {
             path.display()
         );
     }
+    assert!(
+        matches!(example.render_profile.as_str(), "full" | "compact" | "llm"),
+        "{} render_profile must be full, compact, or llm",
+        path.display()
+    );
+    let _ = example.optimize_context;
     let _ = example.truncated;
     assert!(
         !example.sections.is_empty(),

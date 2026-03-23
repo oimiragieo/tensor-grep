@@ -12,6 +12,8 @@ EXPECTED_EXAMPLES = {
         "query",
         "rendered_context",
         "sources",
+        "render_profile",
+        "optimize_context",
         "sections",
         "candidate_edit_targets",
         "edit_plan_seed",

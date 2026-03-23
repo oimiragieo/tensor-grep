@@ -1561,6 +1561,16 @@ def context_render(
     max_render_chars: int | None = typer.Option(
         None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
     ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
@@ -1576,6 +1586,8 @@ def context_render(
                     max_sources=max_sources,
                     max_symbols_per_file=max_symbols_per_file,
                     max_render_chars=max_render_chars,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
                 )
             )
             return
@@ -1587,6 +1599,8 @@ def context_render(
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -1855,6 +1869,16 @@ def session_context_render_cmd(
     max_render_chars: int | None = typer.Option(
         None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
     ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready render bundle derived from a cached session."""
@@ -1869,6 +1893,8 @@ def session_context_render_cmd(
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
         )
     except SessionStaleError as exc:
         error_payload = {

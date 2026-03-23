@@ -248,6 +248,8 @@ def session_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
 ) -> dict[str, Any]:
     payload = get_session(session_id, path)
     reason = _stale_reason(payload)
@@ -260,6 +262,8 @@ def session_context_render(
         max_sources=max_sources,
         max_symbols_per_file=max_symbols_per_file,
         max_render_chars=max_render_chars,
+        optimize_context=optimize_context,
+        render_profile=render_profile,
     )
     context["session_id"] = session_id
     context["routing_reason"] = "session-context-render"
@@ -313,6 +317,8 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
                 if request.get("max_render_chars") in (None, "")
                 else int(request["max_render_chars"])
             ),
+            optimize_context=bool(request.get("optimize_context", False)),
+            render_profile=str(request.get("render_profile", "full")),
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-context-render"

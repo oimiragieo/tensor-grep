@@ -1017,6 +1017,46 @@ def test_tg_context_render_honors_max_render_chars(tmp_path):
     assert payload["sources"][0]["name"] == "create_invoice"
 
 
+def test_tg_context_render_can_optimize_source_blocks_for_llm_use(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "# module comment\n"
+        "\n"
+        "def create_invoice(total, tax):\n"
+        "    # subtotal comment\n"
+        "    subtotal = total + tax\n"
+        "\n"
+        "    return subtotal\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_context_render(
+            "create invoice",
+            str(project),
+            optimize_context=True,
+            render_profile="llm",
+        )
+    )
+
+    assert payload["optimize_context"] is True
+    assert payload["render_profile"] == "llm"
+    source = next(item for item in payload["sources"] if item["name"] == "create_invoice")
+    assert "# subtotal comment" not in source["rendered_source"]
+    assert "\n\n" not in source["rendered_source"]
+    assert source["line_map"][0]["original_start_line"] == 3
+    assert source["line_map"][0]["rendered_start_line"] == 1
+    assert source["render_diagnostics"]["removed_comment_lines"] >= 1
+    assert source["render_diagnostics"]["removed_blank_lines"] >= 1
+    assert "create_invoice" in payload["rendered_context"]
+
+
 def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
     from tensor_grep.cli import mcp_server
 

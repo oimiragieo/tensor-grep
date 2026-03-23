@@ -24,6 +24,7 @@ _SKIP_DIR_NAMES = {
 }
 _JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 _RUST_SUFFIXES = {".rs"}
+_RENDER_PROFILES = {"full", "compact", "llm"}
 
 
 def _envelope(path: Path) -> dict[str, Any]:
@@ -1445,7 +1446,10 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
                         "reasons": list(file_match.get("reasons", [])),
                         "symbol_score": symbol_scores_by_key.get((current_path, symbol_name), 0),
                     },
-                    "text": f"Source:\n```text\n{str(source['source']).rstrip()}\n```",
+                    "text": (
+                        "Source:\n```text\n"
+                        f"{str(source.get('rendered_source', source['source'])).rstrip()}\n```"
+                    ),
                 }
             )
     return parts
@@ -1496,6 +1500,111 @@ def _render_context_string_and_sections(
     return "".join(rendered_parts).rstrip(), sections, truncated
 
 
+def _normalize_render_profile(render_profile: str, optimize_context: bool) -> str:
+    profile = render_profile.strip().lower() or "full"
+    if profile not in _RENDER_PROFILES:
+        raise ValueError(f"Unsupported render profile: {render_profile}")
+    if optimize_context and profile == "full":
+        return "compact"
+    return profile
+
+
+def _is_comment_line(path: Path, line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if path.suffix == ".py":
+        return stripped.startswith("#")
+    if path.suffix in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
+        return (
+            stripped.startswith("//")
+            or stripped.startswith("/*")
+            or stripped.startswith("*")
+            or stripped.startswith("*/")
+        )
+    return False
+
+
+def _render_source_block(
+    source: dict[str, Any],
+    *,
+    render_profile: str,
+    optimize_context: bool,
+) -> dict[str, Any]:
+    block = str(source.get("source", ""))
+    path = Path(str(source["file"]))
+    normalized_profile = _normalize_render_profile(render_profile, optimize_context)
+    diagnostics = {
+        "original_line_count": 0,
+        "rendered_line_count": 0,
+        "removed_line_count": 0,
+        "removed_comment_lines": 0,
+        "removed_blank_lines": 0,
+    }
+    line_map: list[dict[str, int]] = []
+
+    original_lines = block.splitlines()
+    diagnostics["original_line_count"] = len(original_lines)
+    if normalized_profile == "full":
+        rendered_source = block
+        if original_lines:
+            line_map.append(
+                {
+                    "rendered_start_line": 1,
+                    "rendered_end_line": len(original_lines),
+                    "original_start_line": int(source["start_line"]),
+                    "original_end_line": int(source["end_line"]),
+                }
+            )
+        diagnostics["rendered_line_count"] = len(original_lines)
+    else:
+        kept_lines: list[str] = []
+        current_segment: dict[str, int] | None = None
+        rendered_line_number = 1
+        original_start = int(source["start_line"])
+        for index, line in enumerate(original_lines):
+            original_line_number = original_start + index
+            if not line.strip():
+                diagnostics["removed_blank_lines"] += 1
+                continue
+            if _is_comment_line(path, line):
+                diagnostics["removed_comment_lines"] += 1
+                continue
+
+            kept_lines.append(line)
+            if (
+                current_segment is None
+                or original_line_number != current_segment["original_end_line"] + 1
+            ):
+                current_segment = {
+                    "rendered_start_line": rendered_line_number,
+                    "rendered_end_line": rendered_line_number,
+                    "original_start_line": original_line_number,
+                    "original_end_line": original_line_number,
+                }
+                line_map.append(current_segment)
+            else:
+                current_segment["rendered_end_line"] = rendered_line_number
+                current_segment["original_end_line"] = original_line_number
+            rendered_line_number += 1
+
+        rendered_source = "\n".join(kept_lines)
+        if kept_lines and block.endswith("\n"):
+            rendered_source += "\n"
+        diagnostics["rendered_line_count"] = len(kept_lines)
+        diagnostics["removed_line_count"] = (
+            diagnostics["original_line_count"] - diagnostics["rendered_line_count"]
+        )
+
+    rendered = dict(source)
+    rendered["render_profile"] = normalized_profile
+    rendered["optimize_context"] = optimize_context
+    rendered["rendered_source"] = rendered_source
+    rendered["line_map"] = line_map
+    rendered["render_diagnostics"] = diagnostics
+    return rendered
+
+
 def _confidence_from_score(score: int) -> float:
     if score <= 0:
         return 0.0
@@ -1519,6 +1628,8 @@ def build_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
 ) -> dict[str, Any]:
     repo_map = build_repo_map(path)
     return build_context_render_from_map(
@@ -1528,6 +1639,8 @@ def build_context_render(
         max_sources=max_sources,
         max_symbols_per_file=max_symbols_per_file,
         max_render_chars=max_render_chars,
+        optimize_context=optimize_context,
+        render_profile=render_profile,
     )
 
 
@@ -1539,8 +1652,11 @@ def build_context_render_from_map(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
 ) -> dict[str, Any]:
     context_payload = build_context_pack_from_map(repo_map, query)
+    normalized_profile = _normalize_render_profile(render_profile, optimize_context)
     max_files = max(1, max_files)
     max_sources = max(1, max_sources)
     max_symbols_per_file = max(1, max_symbols_per_file)
@@ -1559,7 +1675,13 @@ def build_context_render_from_map(
         for source in symbol_sources:
             if str(source["file"]) != current_file:
                 continue
-            sources.append(source)
+            sources.append(
+                _render_source_block(
+                    source,
+                    render_profile=normalized_profile,
+                    optimize_context=optimize_context,
+                )
+            )
             break
         if len(sources) >= max_sources:
             break
@@ -1580,6 +1702,8 @@ def build_context_render_from_map(
     payload["max_sources"] = max_sources
     payload["max_symbols_per_file"] = max_symbols_per_file
     payload["max_render_chars"] = max_render_chars
+    payload["optimize_context"] = optimize_context
+    payload["render_profile"] = normalized_profile
     rendered_context, sections, truncated = _render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
@@ -1658,6 +1782,8 @@ def build_context_render_json(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
 ) -> str:
     return json.dumps(
         build_context_render(
@@ -1667,6 +1793,8 @@ def build_context_render_json(
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
         ),
         indent=2,
     )

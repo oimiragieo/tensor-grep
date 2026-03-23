@@ -123,7 +123,25 @@
       "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
       "start_line": 1,
       "end_line": 2,
-      "source": "class PaymentService:\n    pass\n"
+      "source": "class PaymentService:\n    pass\n",
+      "render_profile": "full",
+      "optimize_context": false,
+      "rendered_source": "class PaymentService:\n    pass\n",
+      "line_map": [
+        {
+          "rendered_start_line": 1,
+          "rendered_end_line": 2,
+          "original_start_line": 1,
+          "original_end_line": 2
+        }
+      ],
+      "render_diagnostics": {
+        "original_line_count": 2,
+        "rendered_line_count": 2,
+        "removed_line_count": 0,
+        "removed_comment_lines": 0,
+        "removed_blank_lines": 0
+      }
     },
     {
       "name": "create_invoice",
@@ -131,7 +149,25 @@
       "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
       "start_line": 4,
       "end_line": 5,
-      "source": "def create_invoice(total, tax):\n    return total + tax\n"
+      "source": "def create_invoice(total, tax):\n    return total + tax\n",
+      "render_profile": "full",
+      "optimize_context": false,
+      "rendered_source": "def create_invoice(total, tax):\n    return total + tax\n",
+      "line_map": [
+        {
+          "rendered_start_line": 1,
+          "rendered_end_line": 2,
+          "original_start_line": 4,
+          "original_end_line": 5
+        }
+      ],
+      "render_diagnostics": {
+        "original_line_count": 2,
+        "rendered_line_count": 2,
+        "removed_line_count": 0,
+        "removed_comment_lines": 0,
+        "removed_blank_lines": 0
+      }
     },
     {
       "name": "test_create_invoice",
@@ -139,13 +175,33 @@
       "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
       "start_line": 3,
       "end_line": 4,
-      "source": "def test_create_invoice():\n    assert create_invoice(1, 2) == 3\n"
+      "source": "def test_create_invoice():\n    assert create_invoice(1, 2) == 3\n",
+      "render_profile": "full",
+      "optimize_context": false,
+      "rendered_source": "def test_create_invoice():\n    assert create_invoice(1, 2) == 3\n",
+      "line_map": [
+        {
+          "rendered_start_line": 1,
+          "rendered_end_line": 2,
+          "original_start_line": 3,
+          "original_end_line": 4
+        }
+      ],
+      "render_diagnostics": {
+        "original_line_count": 2,
+        "rendered_line_count": 2,
+        "removed_line_count": 0,
+        "removed_comment_lines": 0,
+        "removed_blank_lines": 0
+      }
     }
   ],
   "max_files": 3,
   "max_sources": 5,
   "max_symbols_per_file": 6,
   "max_render_chars": null,
+  "optimize_context": false,
+  "render_profile": "full",
   "rendered_context": "Query: invoice payment\n\nTests:\n- C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py\n\nFile: C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py\nSummary:\n- class PaymentService @ line 1\n- function create_invoice @ line 4\n\nSource:\n```text\nclass PaymentService:\n    pass\n```\n\nSource:\n```text\ndef create_invoice(total, tax):\n    return total + tax\n```\n\nFile: C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py\nSummary:\n- function test_create_invoice @ line 3\n\nSource:\n```text\ndef test_create_invoice():\n    assert create_invoice(1, 2) == 3\n```",
   "sections": [
     {
