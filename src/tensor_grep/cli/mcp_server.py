@@ -472,7 +472,14 @@ def tg_context_pack(query: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_context_render(query: str, path: str = ".") -> str:
+def tg_context_render(
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+) -> str:
     """
     Return a prompt-ready repository context bundle for edit planning.
 
@@ -481,7 +488,17 @@ def tg_context_render(query: str, path: str = ".") -> str:
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_context_render(query, path), indent=2)
+        return json.dumps(
+            build_context_render(
+                query,
+                path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+            ),
+            indent=2,
+        )
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),
@@ -490,6 +507,62 @@ def tg_context_render(query: str, path: str = ".") -> str:
             "sidecar_used": False,
             "query": query,
             "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_context_render(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+) -> str:
+    """
+    Return a prompt-ready repository context bundle derived from a cached session.
+
+    Args:
+        session_id: Session ID to query.
+        query: Query text used to rank and render repo context.
+        path: File or directory rooted at the session scope.
+        max_files: Maximum files to include in the render bundle.
+        max_sources: Maximum exact source blocks to include.
+        max_symbols_per_file: Maximum summary symbols to include per file.
+        max_render_chars: Maximum characters to emit in rendered_context.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_context_render
+
+    try:
+        return json.dumps(
+            session_context_render(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+        return json.dumps(payload, indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
             "error": {
                 "code": "invalid_input",
                 "message": f"Path not found: {Path(path).expanduser().resolve()}",

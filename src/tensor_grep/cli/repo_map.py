@@ -1370,7 +1370,7 @@ def build_context_pack_json(query: str, path: str | Path = ".") -> str:
     return json.dumps(build_context_pack(query, path), indent=2)
 
 
-def _render_context_string(payload: dict[str, Any]) -> str:
+def _render_context_string(payload: dict[str, Any], *, max_render_chars: int | None = None) -> str:
     lines = [f"Query: {payload['query']}"]
     tests = [str(current) for current in payload.get("tests", [])]
     if tests:
@@ -1400,17 +1400,46 @@ def _render_context_string(payload: dict[str, Any]) -> str:
                 lines.append(
                     f"```text\n{str(source['source']).rstrip()}\n```"
                 )
-    return "\n".join(lines).strip()
+    rendered = "\n".join(lines).strip()
+    if max_render_chars is not None and max_render_chars > 0 and len(rendered) > max_render_chars:
+        return rendered[:max_render_chars].rstrip()
+    return rendered
 
 
-def build_context_render(query: str, path: str | Path = ".") -> dict[str, Any]:
+def build_context_render(
+    query: str,
+    path: str | Path = ".",
+    *,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+) -> dict[str, Any]:
     repo_map = build_repo_map(path)
-    return build_context_render_from_map(repo_map, query)
+    return build_context_render_from_map(
+        repo_map,
+        query,
+        max_files=max_files,
+        max_sources=max_sources,
+        max_symbols_per_file=max_symbols_per_file,
+        max_render_chars=max_render_chars,
+    )
 
 
-def build_context_render_from_map(repo_map: dict[str, Any], query: str) -> dict[str, Any]:
+def build_context_render_from_map(
+    repo_map: dict[str, Any],
+    query: str,
+    *,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+) -> dict[str, Any]:
     context_payload = build_context_pack_from_map(repo_map, query)
-    top_files = {str(current) for current in context_payload.get("files", [])[:3]}
+    max_files = max(1, max_files)
+    max_sources = max(1, max_sources)
+    max_symbols_per_file = max(1, max_symbols_per_file)
+    top_files = {str(current) for current in context_payload.get("files", [])[:max_files]}
     sources: list[dict[str, Any]] = []
     seen_symbols: set[tuple[str, str]] = set()
     for symbol in context_payload.get("symbols", []):
@@ -1427,18 +1456,54 @@ def build_context_render_from_map(repo_map: dict[str, Any], query: str) -> dict[
                 continue
             sources.append(source)
             break
-        if len(sources) >= 5:
+        if len(sources) >= max_sources:
             break
 
     payload = dict(context_payload)
     payload["routing_reason"] = "context-render"
+    payload["files"] = list(payload.get("files", []))[:max_files]
+    payload["file_matches"] = list(payload.get("file_matches", []))[:max_files]
+    payload["file_summaries"] = [
+        {
+            "path": str(summary["path"]),
+            "symbols": list(summary.get("symbols", []))[:max_symbols_per_file],
+        }
+        for summary in list(payload.get("file_summaries", []))[:max_files]
+    ]
     payload["sources"] = sources
-    payload["rendered_context"] = _render_context_string(payload)
+    payload["max_files"] = max_files
+    payload["max_sources"] = max_sources
+    payload["max_symbols_per_file"] = max_symbols_per_file
+    payload["max_render_chars"] = max_render_chars
+    payload["rendered_context"] = _render_context_string(payload, max_render_chars=max_render_chars)
+    payload["truncated"] = (
+        max_render_chars is not None
+        and max_render_chars > 0
+        and len(payload["rendered_context"]) >= max_render_chars
+    )
     return payload
 
 
-def build_context_render_json(query: str, path: str | Path = ".") -> str:
-    return json.dumps(build_context_render(query, path), indent=2)
+def build_context_render_json(
+    query: str,
+    path: str | Path = ".",
+    *,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+) -> str:
+    return json.dumps(
+        build_context_render(
+            query,
+            path,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+        ),
+        indent=2,
+    )
 
 
 def build_context_pack_from_map(repo_map: dict[str, Any], query: str) -> dict[str, Any]:

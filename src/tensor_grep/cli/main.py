@@ -1553,6 +1553,14 @@ def context_render(
     query: str = typer.Option(
         ..., "--query", help="Query text used to rank and render repo context."
     ),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
+    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
@@ -1560,10 +1568,26 @@ def context_render(
 
     try:
         if json_output:
-            typer.echo(build_context_render_json(query, path))
+            typer.echo(
+                build_context_render_json(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                )
+            )
             return
 
-        payload = build_context_render(query, path)
+        payload = build_context_render(
+            query,
+            path,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -1814,6 +1838,55 @@ def session_context_cmd(
     typer.echo(f"Session context for {payload['session_id']}")
     typer.echo(f"query={payload['query']}")
     typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+
+
+@session_app.command("context-render")
+def session_context_render_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank and render repo context."
+    ),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
+    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready render bundle derived from a cached session."""
+    from tensor_grep.cli.session_store import SessionStaleError, session_context_render
+
+    try:
+        payload = session_context_render(
+            session_id,
+            query,
+            path,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+        )
+    except SessionStaleError as exc:
+        error_payload = {
+            "version": 1,
+            "session_id": session_id,
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+        typer.echo(json.dumps(error_payload, indent=2))
+        raise typer.Exit(1) from exc
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(payload["rendered_context"])
 
 
 @session_app.command("serve")

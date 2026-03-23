@@ -465,6 +465,11 @@ struct ContextRenderExample {
     test_matches: Vec<RankedPathMatchExample>,
     related_paths: Vec<PathBuf>,
     sources: Vec<SymbolSourceBlockExample>,
+    max_files: usize,
+    max_sources: usize,
+    max_symbols_per_file: usize,
+    max_render_chars: Option<usize>,
+    truncated: bool,
     rendered_context: String,
 }
 
@@ -1747,6 +1752,29 @@ fn assert_context_render_example(path: &Path) {
         "{} should include rendered source blocks",
         path.display()
     );
+    assert!(
+        example.max_files > 0,
+        "{} max_files must be positive",
+        path.display()
+    );
+    assert!(
+        example.max_sources > 0,
+        "{} max_sources must be positive",
+        path.display()
+    );
+    assert!(
+        example.max_symbols_per_file > 0,
+        "{} max_symbols_per_file must be positive",
+        path.display()
+    );
+    if let Some(max_render_chars) = example.max_render_chars {
+        assert!(
+            max_render_chars > 0,
+            "{} max_render_chars must be positive when present",
+            path.display()
+        );
+    }
+    let _ = example.truncated;
     assert!(
         !example.rendered_context.is_empty(),
         "{} rendered_context must not be empty",

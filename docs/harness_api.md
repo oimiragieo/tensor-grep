@@ -211,6 +211,11 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `test_matches` | `array<object>` | Ranked related test metadata with `path`, `score`, optional `graph_score`, and `reasons`. |
 | `related_paths` | `array<string>` | Stable merged order of rendered source and test paths. |
 | `sources` | `array<object>` | Exact source blocks selected from the highest-value ranked symbols. |
+| `max_files` | `integer` | Maximum files allowed in the render bundle. |
+| `max_sources` | `integer` | Maximum exact source blocks allowed in the render bundle. |
+| `max_symbols_per_file` | `integer` | Maximum summary symbols emitted per file. |
+| `max_render_chars` | `integer \| null` | Optional render-text budget applied to `rendered_context`. |
+| `truncated` | `boolean` | Whether `rendered_context` was clipped to satisfy `max_render_chars`. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
 
 ## Rewrite Plan JSON
@@ -645,6 +650,7 @@ Current tool set:
 - `tg_session_show(session_id, path=".")`
 - `tg_session_refresh(session_id, path=".")`
 - `tg_session_context(session_id, query, path=".")`
+- `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None)`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
@@ -662,6 +668,7 @@ Response mapping:
 - `tg_session_open(...)` returns the same payload shape as [`examples/session_open.json`](examples/session_open.json)
 - `tg_session_refresh(...)` returns the same payload shape as Session Refresh JSON
 - `tg_session_context(...)` returns the same payload shape as [`examples/session_context.json`](examples/session_context.json)
+- `tg_session_context_render(...)` returns the same payload shape as [`examples/context_render.json`](examples/context_render.json) plus `session_id` and `routing_reason = "session-context-render"`
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 - `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 - `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text

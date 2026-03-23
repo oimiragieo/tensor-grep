@@ -592,6 +592,29 @@ def test_tg_session_mcp_tools_wrap_session_store(tmp_path):
     assert context["files"] == [str((src_dir / "sample.py").resolve())]
 
 
+def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    sample_path = src_dir / "sample.py"
+    sample_path.write_text(
+        "def add(x):\n    return x + 1\n",
+        encoding="utf-8",
+    )
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    rendered = json.loads(mcp_server.tg_session_context_render(session_id, "add", str(project)))
+
+    assert rendered["session_id"] == session_id
+    assert rendered["routing_reason"] == "session-context-render"
+    assert rendered["sources"][0]["name"] == "add"
+    assert "rendered_context" in rendered
+
+
 def test_tg_session_refresh_updates_cached_session_payload(tmp_path):
     from tensor_grep.cli import mcp_server
 
@@ -944,6 +967,33 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert payload["sources"][0]["name"] == "create_invoice"
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
+
+
+def test_tg_context_render_honors_max_render_chars(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    subtotal = total + tax\n"
+        "    fee = subtotal + 5\n"
+        "    grand_total = fee + 10\n"
+        "    return grand_total\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_context_render("create invoice", str(project), max_render_chars=120)
+    )
+
+    assert payload["truncated"] is True
+    assert payload["max_render_chars"] == 120
+    assert len(payload["rendered_context"]) <= 120
+    assert payload["sources"][0]["name"] == "create_invoice"
 
 
 def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):

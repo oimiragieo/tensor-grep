@@ -9,6 +9,7 @@ from typing import Any, TextIO, cast
 
 from tensor_grep.cli.repo_map import (
     build_context_pack_from_map,
+    build_context_render_from_map,
     build_repo_map,
     build_symbol_callers_from_map,
     build_symbol_defs_from_map,
@@ -238,6 +239,33 @@ def session_context(session_id: str, query: str, path: str = ".") -> dict[str, A
     return context
 
 
+def session_context_render(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    *,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+) -> dict[str, Any]:
+    payload = get_session(session_id, path)
+    reason = _stale_reason(payload)
+    if reason:
+        raise SessionStaleError(reason)
+    context = build_context_render_from_map(
+        payload["repo_map"],
+        query,
+        max_files=max_files,
+        max_sources=max_sources,
+        max_symbols_per_file=max_symbols_per_file,
+        max_render_chars=max_render_chars,
+    )
+    context["session_id"] = session_id
+    context["routing_reason"] = "session-context-render"
+    return context
+
+
 def serve_session_request(session_id: str, request: dict[str, Any], path: str = ".") -> dict[str, Any]:
     payload = get_session(session_id, path)
     repo_map = cast(dict[str, Any], payload["repo_map"])
@@ -268,6 +296,26 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
         response = build_context_pack_from_map(repo_map, query)
         response["session_id"] = session_id
         response["routing_reason"] = "session-context"
+        return response
+
+    if command == "context_render":
+        query = str(request.get("query", "")).strip()
+        if not query:
+            raise ValueError("context_render requests require a non-empty query")
+        response = build_context_render_from_map(
+            repo_map,
+            query,
+            max_files=int(request.get("max_files", 3)),
+            max_sources=int(request.get("max_sources", 5)),
+            max_symbols_per_file=int(request.get("max_symbols_per_file", 6)),
+            max_render_chars=(
+                None
+                if request.get("max_render_chars") in (None, "")
+                else int(request["max_render_chars"])
+            ),
+        )
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-context-render"
         return response
 
     if command == "defs":
