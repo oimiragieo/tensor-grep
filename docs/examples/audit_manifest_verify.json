@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "routing_backend": "AuditManifest",
+  "routing_reason": "audit-manifest-verify",
+  "sidecar_used": false,
+  "manifest_path": "C:\\repo\\rewrite-audit.json",
+  "signing_key_path": "C:\\repo\\audit.key",
+  "previous_manifest_path": "C:\\repo\\rewrite-audit.previous.json",
+  "kind": "rewrite-audit-manifest",
+  "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+  "previous_manifest_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "checks": {
+    "digest_valid": true,
+    "chain_valid": true,
+    "signature_valid": true
+  },
+  "signature_kind": "hmac-sha256",
+  "valid": true,
+  "errors": []
+}

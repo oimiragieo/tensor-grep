@@ -2639,6 +2639,66 @@ def upgrade() -> None:
         sys.exit(1)
 
 
+@app.command(name="audit-verify")
+def audit_verify(
+    manifest_path: str = typer.Argument(..., help="Path to the rewrite audit manifest JSON file."),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        help="Optional HMAC signing key path for signed manifests.",
+    ),
+    previous_manifest: str | None = typer.Option(
+        None,
+        "--previous-manifest",
+        help="Optional previous manifest path for validating manifest chaining.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured JSON verification output.",
+    ),
+) -> None:
+    """Verify a rewrite audit manifest digest, chain, and optional signature."""
+    from tensor_grep.cli.audit_manifest import (
+        verify_audit_manifest,
+        verify_audit_manifest_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(
+                verify_audit_manifest_json(
+                    manifest_path,
+                    signing_key=signing_key,
+                    previous_manifest=previous_manifest,
+                )
+            )
+            return
+
+        payload = verify_audit_manifest(
+            manifest_path,
+            signing_key=signing_key,
+            previous_manifest=previous_manifest,
+        )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Manifest: {payload['manifest_path']}")
+    typer.echo(f"valid={payload['valid']}")
+    checks = payload["checks"]
+    typer.echo(
+        "checks="
+        f"digest:{checks['digest_valid']} "
+        f"chain:{checks['chain_valid']} "
+        f"signature:{checks['signature_valid']}"
+    )
+    for error in payload["errors"]:
+        typer.echo(f"- {error}")
+    if not payload["valid"]:
+        raise typer.Exit(code=1)
+
+
 @app.command("update")
 def update() -> None:
     """Alias for upgrade."""

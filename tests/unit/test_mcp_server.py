@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -6,6 +8,54 @@ from unittest.mock import MagicMock, patch
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
+
+
+def _canonical_manifest_bytes(manifest: dict[str, object]) -> bytes:
+    canonical = dict(manifest)
+    canonical.pop("manifest_sha256", None)
+    canonical.pop("signature", None)
+    return json.dumps(canonical, indent=2).encode("utf-8")
+
+
+def _write_audit_manifest(
+    path: Path,
+    *,
+    previous_manifest_sha256: str | None = None,
+    signing_key: bytes | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "version": 1,
+        "kind": "rewrite-audit-manifest",
+        "created_at": "2026-03-23T12:00:00Z",
+        "lang": "python",
+        "path": str(path.parent),
+        "plan_total_edits": 1,
+        "applied_edit_ids": ["edit-1"],
+        "checkpoint": None,
+        "validation": None,
+        "files": [
+            {
+                "path": "src/sample.py",
+                "edit_ids": ["edit-1"],
+                "before_sha256": "a" * 64,
+                "after_sha256": "b" * 64,
+            }
+        ],
+        "previous_manifest_sha256": previous_manifest_sha256,
+    }
+    payload["manifest_sha256"] = hashlib.sha256(_canonical_manifest_bytes(payload)).hexdigest()
+    if signing_key is not None:
+        payload["signature"] = {
+            "kind": "hmac-sha256",
+            "key_path": str(path.with_suffix(".key")),
+            "value": hmac.new(
+                signing_key,
+                _canonical_manifest_bytes(payload),
+                hashlib.sha256,
+            ).hexdigest(),
+        }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
 
 
 def test_tg_ast_search_accepts_ast_wrapper_backend():
@@ -656,6 +706,64 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
+
+
+def test_tg_audit_manifest_verify_supports_signed_manifests(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    manifest_path = tmp_path / "rewrite-audit.json"
+    signing_key_path = tmp_path / "audit.key"
+    signing_key = b"top-secret"
+    signing_key_path.write_bytes(signing_key)
+    payload = _write_audit_manifest(manifest_path, signing_key=signing_key)
+
+    out = mcp_server.tg_audit_manifest_verify(
+        str(manifest_path),
+        signing_key=str(signing_key_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["routing_reason"] == "audit-manifest-verify"
+    assert parsed["manifest_sha256"] == payload["manifest_sha256"]
+    assert parsed["checks"] == {
+        "digest_valid": True,
+        "chain_valid": True,
+        "signature_valid": True,
+    }
+    assert parsed["valid"] is True
+    assert parsed["errors"] == []
+
+
+def test_tg_audit_manifest_verify_reports_invalid_input_for_empty_path():
+    from tensor_grep.cli import mcp_server
+
+    out = mcp_server.tg_audit_manifest_verify("")
+
+    parsed = json.loads(out)
+    assert parsed["routing_reason"] == "audit-manifest-verify"
+    assert parsed["error"]["code"] == "invalid_input"
+
+
+def test_tg_audit_manifest_verify_reports_chain_failure(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    previous_manifest_path = tmp_path / "previous-audit.json"
+    _write_audit_manifest(previous_manifest_path)
+    manifest_path = tmp_path / "rewrite-audit.json"
+    wrong_previous = "f" * 64
+    _write_audit_manifest(manifest_path, previous_manifest_sha256=wrong_previous)
+
+    out = mcp_server.tg_audit_manifest_verify(
+        str(manifest_path),
+        previous_manifest=str(previous_manifest_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["checks"]["digest_valid"] is True
+    assert parsed["checks"]["chain_valid"] is False
+    assert parsed["checks"]["signature_valid"] is True
+    assert parsed["valid"] is False
+    assert "Previous manifest digest does not match previous_manifest_sha256." in parsed["errors"]
 
 
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):

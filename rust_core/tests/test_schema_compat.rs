@@ -19,6 +19,7 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "callers.json",
     "blast_radius.json",
     "blast_radius_render.json",
+    "audit_manifest_verify.json",
     "session_open.json",
     "session_context.json",
     "rewrite_apply_verify.json",
@@ -378,6 +379,33 @@ struct AuditManifestExample {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct AuditManifestVerifyChecksExample {
+    digest_valid: bool,
+    chain_valid: bool,
+    signature_valid: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuditManifestVerifyExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    manifest_path: String,
+    signing_key_path: Option<String>,
+    previous_manifest_path: Option<String>,
+    kind: Option<String>,
+    manifest_sha256: Option<String>,
+    previous_manifest_sha256: Option<String>,
+    checks: AuditManifestVerifyChecksExample,
+    signature_kind: Option<String>,
+    valid: bool,
+    errors: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct VerifyResultExample {
     total_edits: usize,
     verified: usize,
@@ -707,6 +735,7 @@ fn test_docs_examples_match_v1_schema() {
             "search.json" | "index_search.json" => assert_search_example(path),
             "rewrite_plan.json" => assert_rewrite_plan_example(path),
             "rewrite_apply_verify.json" => assert_apply_verify_example(path),
+            "audit_manifest_verify.json" => assert_audit_manifest_verify_example(path),
             "gpu_sidecar_search.json" => assert_gpu_sidecar_example(path),
             "calibrate.json" => assert_calibrate_example(path),
             "mcp_rewrite_diff.json" => assert_mcp_rewrite_diff_example(path),
@@ -992,6 +1021,90 @@ fn assert_apply_verify_example(path: &Path) {
         assert!(
             !mismatch.actual.is_empty(),
             "{} mismatch missing actual text",
+            path.display()
+        );
+    }
+}
+
+fn assert_audit_manifest_verify_example(path: &Path) {
+    let example: AuditManifestVerifyExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "audit-manifest-verify",
+        "{} should keep audit-manifest-verify routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should be native audit-manifest verification output",
+        path.display()
+    );
+    assert!(
+        !example.manifest_path.is_empty(),
+        "{} manifest_path must not be empty",
+        path.display()
+    );
+    if let Some(signing_key_path) = &example.signing_key_path {
+        assert!(
+            !signing_key_path.is_empty(),
+            "{} signing_key_path must not be empty when present",
+            path.display()
+        );
+    }
+    if let Some(previous_manifest_path) = &example.previous_manifest_path {
+        assert!(
+            !previous_manifest_path.is_empty(),
+            "{} previous_manifest_path must not be empty when present",
+            path.display()
+        );
+    }
+    if let Some(kind) = &example.kind {
+        assert!(
+            !kind.is_empty(),
+            "{} kind must not be empty when present",
+            path.display()
+        );
+    }
+    if let Some(manifest_sha256) = &example.manifest_sha256 {
+        assert_eq!(
+            manifest_sha256.len(),
+            64,
+            "{} manifest_sha256 should be a 64-character hex digest",
+            path.display()
+        );
+    }
+    if let Some(previous_manifest_sha256) = &example.previous_manifest_sha256 {
+        assert_eq!(
+            previous_manifest_sha256.len(),
+            64,
+            "{} previous_manifest_sha256 should be a 64-character hex digest",
+            path.display()
+        );
+    }
+    if let Some(signature_kind) = &example.signature_kind {
+        assert_eq!(
+            signature_kind,
+            "hmac-sha256",
+            "{} signature_kind should currently be hmac-sha256",
+            path.display()
+        );
+    }
+    assert_eq!(
+        example.valid,
+        example.checks.digest_valid && example.checks.chain_valid && example.checks.signature_valid,
+        "{} valid should match combined digest/chain/signature checks",
+        path.display()
+    );
+    if example.valid {
+        assert!(
+            example.errors.is_empty(),
+            "{} valid audit verification examples should not report errors",
             path.display()
         );
     }

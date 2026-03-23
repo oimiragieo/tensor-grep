@@ -67,6 +67,17 @@ def _rewrite_error(message: str, *, code: str) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _audit_manifest_error(message: str, *, code: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-verify",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
 def _index_search_envelope() -> dict[str, Any]:
     return {
         "version": _json_output_version(),
@@ -1315,6 +1326,39 @@ def tg_rewrite_apply(
         test_cmd=test_cmd,
     )
     return _execute_rewrite_json_command(command)
+
+
+@mcp.tool()  # type: ignore
+def tg_audit_manifest_verify(
+    manifest_path: str,
+    signing_key: str | None = None,
+    previous_manifest: str | None = None,
+) -> str:
+    """
+    Verify a rewrite audit manifest digest, chain, and optional signature.
+
+    Args:
+        manifest_path: Path to the rewrite audit manifest JSON file.
+        signing_key: Optional HMAC signing key path for signed manifests.
+        previous_manifest: Optional previous manifest path for validating manifest chaining.
+    """
+    from tensor_grep.cli.audit_manifest import verify_audit_manifest_json
+
+    if not manifest_path.strip():
+        return _audit_manifest_error("manifest_path must not be empty.", code="invalid_input")
+
+    try:
+        return verify_audit_manifest_json(
+            manifest_path,
+            signing_key=signing_key,
+            previous_manifest=previous_manifest,
+        )
+    except FileNotFoundError as exc:
+        return _audit_manifest_error(str(exc), code="not_found")
+    except ValueError as exc:
+        return _audit_manifest_error(str(exc), code="invalid_input")
+    except Exception as exc:
+        return _audit_manifest_error(str(exc), code="internal_error")
 
 
 @mcp.tool()  # type: ignore

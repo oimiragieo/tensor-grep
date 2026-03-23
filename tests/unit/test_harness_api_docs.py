@@ -36,6 +36,7 @@ EXPECTED_EXAMPLES = {
     "session_context.json": ("query", "files", "session_id"),
     "rewrite_plan.json": ("total_edits", "edits"),
     "rewrite_apply_verify.json": ("checkpoint", "plan", "verification", "validation"),
+    "audit_manifest_verify.json": ("manifest_path", "checks", "valid"),
     "gpu_sidecar_search.json": ("sidecar_used", "matches"),
     "calibrate.json": ("corpus_size_breakpoint_bytes", "measurements"),
     "mcp_rewrite_diff.json": ("sidecar_used", "diff"),
@@ -54,6 +55,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Rewrite Plan JSON" in doc
     assert "## Batch Rewrite Config" in doc
     assert "## Apply + Verify JSON" in doc
+    assert "## Audit Manifest Verify JSON" in doc
     assert "## GPU Sidecar JSON" in doc
     assert "## Calibrate JSON" in doc
     assert "## Search NDJSON" in doc
@@ -96,6 +98,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_session_refresh" in doc
     assert "tg_session_context" in doc
     assert "tg_session_context_render" in doc
+    assert "tg_audit_manifest_verify" in doc
     assert "tg_checkpoint_create" in doc
     assert "tg_checkpoint_list" in doc
     assert "tg_checkpoint_undo" in doc
@@ -178,6 +181,7 @@ def test_harness_api_examples_are_non_trivial_single_document_json() -> None:
         files = payload.get("files")
         symbols = payload.get("symbols")
         file_count = payload.get("file_count")
+        checks = payload.get("checks")
 
         assert (
             total_matches
@@ -188,6 +192,7 @@ def test_harness_api_examples_are_non_trivial_single_document_json() -> None:
             or files
             or symbols
             or file_count
+            or checks
         ), f"{path.name} should include matches, edits, repo inventory, or session metadata"
 
 

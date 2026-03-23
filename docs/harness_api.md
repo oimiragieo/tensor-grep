@@ -28,6 +28,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Context render JSON | `tg.exe context-render --query ... --json ...` | [`examples/context_render.json`](examples/context_render.json) |
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
+| Audit manifest verify JSON | `tg.exe audit-verify <manifest> --json` | [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.json) |
 | GPU sidecar JSON | `tg.exe search --gpu-device-ids ... --json ...` | [`examples/gpu_sidecar_search.json`](examples/gpu_sidecar_search.json) |
 | Calibrate JSON | `tg.exe calibrate` | [`examples/calibrate.json`](examples/calibrate.json) |
 | Search NDJSON | `tg.exe search --ndjson ...` | [`examples/search.ndjson`](examples/search.ndjson) |
@@ -377,6 +378,31 @@ The on-disk audit manifest itself is a deterministic JSON document that includes
 - `manifest_sha256`: self-digest over the canonical manifest JSON without the digest field
 - `previous_manifest_sha256`: digest of the previous manifest written to the same path, when present
 - `signature`: optional keyed signature block when `--audit-signing-key <path>` is used
+
+## Audit Manifest Verify JSON
+
+Emitted by `tg.exe audit-verify <manifest> --json`.
+
+Example: [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.json)
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `AuditManifest`. |
+| `routing_reason` | `string` | `audit-manifest-verify`. |
+| `sidecar_used` | `boolean` | Always `false`. |
+| `manifest_path` | `string` | Resolved path to the manifest being verified. |
+| `signing_key_path` | `string \| null` | Signing key path used for signature verification when present. |
+| `previous_manifest_path` | `string \| null` | Previous manifest used for chain validation when present. |
+| `kind` | `string \| null` | Manifest kind from the on-disk payload. |
+| `manifest_sha256` | `string \| null` | Recorded manifest self-digest from the payload. |
+| `previous_manifest_sha256` | `string \| null` | Recorded previous-manifest digest from the payload. |
+| `checks` | `object` | Structured verification results. |
+| `signature_kind` | `string \| null` | Signature algorithm summary, currently `hmac-sha256` when signed. |
+| `valid` | `boolean` | `true` only when digest, chain, and signature checks all pass. |
+| `errors` | `array<string>` | Ordered list of verification failures. |
+
+`checks` currently contains `digest_valid`, `chain_valid`, and `signature_valid`.
 
 ## GPU Sidecar JSON
 
@@ -747,6 +773,7 @@ Current tool set:
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
+- `tg_audit_manifest_verify(manifest_path, signing_key=None, previous_manifest=None)`
 - `tg_rewrite_diff(pattern, replacement, lang, path=".")`
 
 Response mapping:
@@ -768,6 +795,7 @@ Response mapping:
 - `tg_session_blast_radius_render(...)` returns the same payload shape as [`examples/blast_radius_render.json`](examples/blast_radius_render.json) plus `session_id` and `routing_reason = "session-blast-radius-render"`
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 - `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
+- `tg_audit_manifest_verify(...)` returns the same v1 envelope and payload shape as [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.json)
 - `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text
 
 Example diff wrapper: [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json)
