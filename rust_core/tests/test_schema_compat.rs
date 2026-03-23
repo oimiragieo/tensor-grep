@@ -338,6 +338,8 @@ struct AuditManifestExample {
     path: String,
     file_count: usize,
     applied_edit_count: usize,
+    signed: bool,
+    signature_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -825,6 +827,14 @@ fn assert_apply_verify_example(path: &Path) {
             "{} audit manifest applied_edit_count must be positive",
             path.display()
         );
+        if audit_manifest.signed {
+            assert_eq!(
+                audit_manifest.signature_kind.as_deref(),
+                Some("hmac-sha256"),
+                "{} signed audit manifests must report hmac-sha256",
+                path.display()
+            );
+        }
     }
 
     if let Some(validation) = &example.validation {

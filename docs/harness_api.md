@@ -367,11 +367,14 @@ When `--audit-manifest <path>` is present, the payload also includes:
 | `audit_manifest.path` | `string` | Absolute or caller-provided output path written for the manifest. |
 | `audit_manifest.file_count` | `integer` | Number of files included in the manifest. |
 | `audit_manifest.applied_edit_count` | `integer` | Number of applied edit IDs recorded in the manifest. |
+| `audit_manifest.signed` | `boolean` | Whether the manifest was signed. |
+| `audit_manifest.signature_kind` | `string \| null` | Signature algorithm summary, currently `hmac-sha256` when signed. |
 
 The on-disk audit manifest itself is a deterministic JSON document that includes:
 
 - `manifest_sha256`: self-digest over the canonical manifest JSON without the digest field
 - `previous_manifest_sha256`: digest of the previous manifest written to the same path, when present
+- `signature`: optional keyed signature block when `--audit-signing-key <path>` is used
 
 ## GPU Sidecar JSON
 

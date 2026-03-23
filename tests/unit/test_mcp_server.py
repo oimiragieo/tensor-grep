@@ -551,6 +551,8 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
             "path": "C:/repo/rewrite-audit.json",
             "file_count": 1,
             "applied_edit_count": 1,
+            "signed": False,
+            "signature_kind": None,
         },
         "plan": {"total_edits": 1},
         "verification": None,
@@ -589,6 +591,67 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
         "--apply",
         "--audit-manifest",
         "C:/repo/rewrite-audit.json",
+        "--json",
+        "def $F($$$ARGS): return $EXPR",
+        "src",
+    ]
+
+
+def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
+    from tensor_grep.cli import mcp_server
+
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "audit_manifest": {
+            "path": "C:/repo/rewrite-audit.json",
+            "file_count": 1,
+            "applied_edit_count": 1,
+            "signed": True,
+            "signature_kind": "hmac-sha256",
+        },
+        "plan": {"total_edits": 1},
+        "verification": None,
+        "validation": None,
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ) as mock_run,
+    ):
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            audit_manifest="C:/repo/rewrite-audit.json",
+            audit_signing_key="C:/repo/audit.key",
+        )
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_run.call_args.args[0] == [
+        "tg.exe",
+        "run",
+        "--lang",
+        "python",
+        "--rewrite",
+        "lambda $$$ARGS: $EXPR",
+        "--apply",
+        "--audit-manifest",
+        "C:/repo/rewrite-audit.json",
+        "--audit-signing-key",
+        "C:/repo/audit.key",
         "--json",
         "def $F($$$ARGS): return $EXPR",
         "src",

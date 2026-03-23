@@ -2,6 +2,7 @@ use anyhow::Context;
 #[cfg(feature = "cuda")]
 use clap::ValueEnum;
 use clap::{Args, Parser, Subcommand};
+use hmac::{Hmac, Mac};
 #[cfg(feature = "cuda")]
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
@@ -222,6 +223,10 @@ pub struct RunArgs {
     /// Write a deterministic rewrite audit manifest for applied edits
     #[arg(long = "audit-manifest")]
     pub audit_manifest: Option<PathBuf>,
+
+    /// Sign the audit manifest using an HMAC-SHA256 key file
+    #[arg(long = "audit-signing-key", requires = "audit_manifest")]
+    pub audit_signing_key: Option<PathBuf>,
 
     /// Apply only the specified comma-delimited rewrite edit IDs
     #[arg(
@@ -1463,6 +1468,8 @@ struct AuditManifestSummary {
     path: String,
     file_count: usize,
     applied_edit_count: usize,
+    signed: bool,
+    signature_kind: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1480,6 +1487,7 @@ struct RewriteAuditManifest {
     files: Vec<RewriteAuditManifestFile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_sha256: Option<String>,
+    signature: Option<AuditManifestSignature>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1488,6 +1496,13 @@ struct RewriteAuditManifestFile {
     edit_ids: Vec<String>,
     before_sha256: String,
     after_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestSignature {
+    kind: &'static str,
+    key_path: String,
+    value: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2090,6 +2105,10 @@ fn canonical_manifest_bytes(manifest: &RewriteAuditManifest) -> anyhow::Result<V
         .as_object_mut()
         .expect("rewrite audit manifest should serialize as an object")
         .remove("manifest_sha256");
+    value
+        .as_object_mut()
+        .expect("rewrite audit manifest should serialize as an object")
+        .remove("signature");
     Ok(serde_json::to_vec_pretty(&value)?)
 }
 
@@ -2118,6 +2137,7 @@ fn write_audit_manifest_for_plan(
     checkpoint: Option<&CheckpointCreateSummary>,
     validation: Option<&ValidationSummary>,
     before_hashes: &BTreeMap<String, String>,
+    signing_key_path: Option<&Path>,
 ) -> anyhow::Result<AuditManifestSummary> {
     let previous_manifest_sha256 = if path.exists() {
         let previous_bytes = std::fs::read(path).with_context(|| {
@@ -2174,11 +2194,33 @@ fn write_audit_manifest_for_plan(
         validation: validation.cloned(),
         files,
         manifest_sha256: None,
+        signature: None,
     };
 
     let mut manifest = manifest;
     let canonical_bytes = canonical_manifest_bytes(&manifest)?;
     manifest.manifest_sha256 = Some(sha256_hex(&canonical_bytes));
+    if let Some(signing_key_path) = signing_key_path {
+        let key_bytes = std::fs::read(signing_key_path).with_context(|| {
+            format!(
+                "failed to read audit signing key {}",
+                signing_key_path.display()
+            )
+        })?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&key_bytes)
+            .map_err(|_| anyhow::anyhow!("invalid audit signing key"))?;
+        mac.update(&canonical_bytes);
+        let signature_bytes = mac.finalize().into_bytes();
+        let mut signature_value = String::with_capacity(signature_bytes.len() * 2);
+        for byte in signature_bytes {
+            signature_value.push_str(&format!("{byte:02x}"));
+        }
+        manifest.signature = Some(AuditManifestSignature {
+            kind: "hmac-sha256",
+            key_path: signing_key_path.to_string_lossy().to_string(),
+            value: signature_value,
+        });
+    }
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -2191,6 +2233,8 @@ fn write_audit_manifest_for_plan(
         path: path.to_string_lossy().to_string(),
         file_count: manifest.files.len(),
         applied_edit_count: manifest.applied_edit_ids.len(),
+        signed: manifest.signature.is_some(),
+        signature_kind: manifest.signature.as_ref().map(|signature| signature.kind),
     })
 }
 
@@ -2415,6 +2459,7 @@ fn handle_ast_rewrite_apply(
             before_hashes
                 .as_ref()
                 .expect("pre-apply hashes should exist when audit manifest requested"),
+            args.audit_signing_key.as_deref(),
         )?)
     } else {
         None
@@ -2584,6 +2629,7 @@ fn handle_ast_batch_rewrite_apply(
             before_hashes
                 .as_ref()
                 .expect("pre-apply hashes should exist when audit manifest requested"),
+            args.audit_signing_key.as_deref(),
         )?)
     } else {
         None

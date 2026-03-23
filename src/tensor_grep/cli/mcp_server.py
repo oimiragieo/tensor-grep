@@ -172,6 +172,7 @@ def _build_rewrite_command(
     verify: bool = False,
     checkpoint: bool = False,
     audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
 ) -> list[str]:
@@ -194,6 +195,8 @@ def _build_rewrite_command(
             command.append("--checkpoint")
         if audit_manifest:
             command.extend(["--audit-manifest", audit_manifest])
+        if audit_signing_key:
+            command.extend(["--audit-signing-key", audit_signing_key])
         if lint_cmd:
             command.extend(["--lint-cmd", lint_cmd])
         if test_cmd:
@@ -1065,6 +1068,7 @@ def tg_rewrite_apply(
     verify: bool = False,
     checkpoint: bool = False,
     audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
 ) -> str:
@@ -1079,6 +1083,7 @@ def tg_rewrite_apply(
         verify: When true, request post-apply verification from the native CLI.
         checkpoint: When true, create a rollback checkpoint before applying edits.
         audit_manifest: Optional path for a deterministic rewrite audit manifest.
+        audit_signing_key: Optional path to an HMAC signing key for the audit manifest.
         lint_cmd: Optional command to run after apply/verify for structured lint validation.
         test_cmd: Optional command to run after apply/verify for structured test validation.
     """
@@ -1095,6 +1100,7 @@ def tg_rewrite_apply(
         verify=verify,
         checkpoint=checkpoint,
         audit_manifest=audit_manifest,
+        audit_signing_key=audit_signing_key,
         lint_cmd=lint_cmd,
         test_cmd=test_cmd,
     )

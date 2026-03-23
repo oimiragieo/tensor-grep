@@ -1333,6 +1333,52 @@ fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
 }
 
 #[test]
+fn test_tg_run_apply_verify_json_can_sign_audit_manifest() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+    let signing_key_path = file_path.parent().unwrap().join("audit.key");
+    fs::write(&signing_key_path, b"super-secret-key").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("--audit-signing-key")
+        .arg(&signing_key_path)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let manifest_summary = parsed["audit_manifest"].as_object().unwrap();
+    assert_eq!(manifest_summary["signed"], true);
+    assert_eq!(manifest_summary["signature_kind"], "hmac-sha256");
+
+    let manifest_json: Value =
+        serde_json::from_slice(&fs::read(&audit_manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest_json["signature"]["kind"], "hmac-sha256");
+    assert_eq!(
+        manifest_json["signature"]["key_path"].as_str().unwrap(),
+        signing_key_path.to_str().unwrap()
+    );
+    assert!(manifest_json["signature"]["value"].as_str().unwrap().len() >= 32);
+}
+
+#[test]
 fn test_tg_run_apply_verify_json_reports_failed_validation_and_exits_non_zero() {
     let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
 
