@@ -784,6 +784,95 @@ def test_tg_session_blast_radius_uses_cached_repo_map(tmp_path):
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
+def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_symbol_blast_radius_render(
+            "create_invoice",
+            str(project),
+            max_depth=1,
+            max_render_chars=400,
+        )
+    )
+
+    assert payload["routing_reason"] == "symbol-blast-radius-render"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["sources"][0]["name"] == "create_invoice"
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert "create_invoice" in payload["rendered_context"]
+
+
+def test_tg_session_blast_radius_render_uses_cached_repo_map(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    payload = json.loads(
+        mcp_server.tg_session_blast_radius_render(
+            session_id,
+            "create_invoice",
+            str(project),
+            max_depth=1,
+            max_render_chars=400,
+        )
+    )
+
+    assert payload["session_id"] == session_id
+    assert payload["routing_reason"] == "session-blast-radius-render"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["sources"][0]["name"] == "create_invoice"
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert "create_invoice" in payload["rendered_context"]
+
+
 def test_tg_session_refresh_updates_cached_session_payload(tmp_path):
     from tensor_grep.cli import mcp_server
 

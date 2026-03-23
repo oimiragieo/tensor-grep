@@ -37,6 +37,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Symbol refs JSON | `tg.exe refs --symbol <name> --json ...` | [`examples/refs.json`](examples/refs.json) |
 | Symbol callers JSON | `tg.exe callers --symbol <name> --json ...` | [`examples/callers.json`](examples/callers.json) |
 | Symbol blast radius JSON | `tg.exe blast-radius --symbol <name> --json ...` | [`examples/blast_radius.json`](examples/blast_radius.json) |
+| Symbol blast radius render JSON | `tg.exe blast-radius-render --symbol <name> --json ...` | [`examples/blast_radius_render.json`](examples/blast_radius_render.json) |
 | Session open JSON | `tg.exe session open ... --json` | [`examples/session_open.json`](examples/session_open.json) |
 | Session context JSON | `tg.exe session context <id> --query ... --json` | [`examples/session_context.json`](examples/session_context.json) |
 | MCP rewrite diff JSON | `tg_rewrite_diff(...)` | [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_diff.json) |
@@ -611,6 +612,26 @@ Use this shape when an agent needs an explicit downstream change radius instead 
 | `symbols` | `array<object>` | Ranked symbol matches reused from the impact surface. |
 | `related_paths` | `array<string>` | Stable union of radius files and tests. |
 
+## Symbol Blast Radius Render JSON
+
+Emitted by `tg.exe blast-radius-render --symbol <name> --json ...`.
+
+Example: [`examples/blast_radius_render.json`](examples/blast_radius_render.json)
+
+Use this shape when an agent needs a prompt-ready transitive impact bundle seeded from a specific symbol instead of a free-text query.
+
+The shape matches Context Render JSON and additionally includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `routing_reason` | `string` | `symbol-blast-radius-render`. |
+| `symbol` | `string` | Exact symbol used to seed the blast radius. |
+| `max_depth` | `integer` | Maximum reverse-import depth included in the rendered radius. |
+| `definitions` | `array<object>` | Exact symbol definitions. |
+| `callers` | `array<object>` | Exact caller rows. |
+| `caller_tree` | `array<object>` | Depth-indexed radius tree. |
+| `rendered_caller_tree` | `string` | Deterministic text rendering of the same tree. |
+
 ## Session Open JSON
 
 Emitted by `tg.exe session open ... --json`.
@@ -711,6 +732,7 @@ Current tool set:
 - `tg_symbol_refs(symbol, path=".")`
 - `tg_symbol_callers(symbol, path=".")`
 - `tg_symbol_blast_radius(symbol, path=".", max_depth=3)`
+- `tg_symbol_blast_radius_render(symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_checkpoint_create(path=".")`
 - `tg_checkpoint_list(path=".")`
 - `tg_checkpoint_undo(checkpoint_id, path=".")`
@@ -721,6 +743,7 @@ Current tool set:
 - `tg_session_context(session_id, query, path=".")`
 - `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_session_blast_radius(session_id, symbol, path=".", max_depth=3)`
+- `tg_session_blast_radius_render(session_id, symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
@@ -736,11 +759,13 @@ Response mapping:
 - `tg_symbol_refs(...)` returns the same v1 envelope and payload shape as [`examples/refs.json`](examples/refs.json)
 - `tg_symbol_callers(...)` returns the same v1 envelope and payload shape as [`examples/callers.json`](examples/callers.json)
 - `tg_symbol_blast_radius(...)` returns the same v1 envelope and payload shape as [`examples/blast_radius.json`](examples/blast_radius.json)
+- `tg_symbol_blast_radius_render(...)` returns the same v1 envelope and payload shape as [`examples/blast_radius_render.json`](examples/blast_radius_render.json)
 - `tg_session_open(...)` returns the same payload shape as [`examples/session_open.json`](examples/session_open.json)
 - `tg_session_refresh(...)` returns the same payload shape as Session Refresh JSON
 - `tg_session_context(...)` returns the same payload shape as [`examples/session_context.json`](examples/session_context.json)
 - `tg_session_context_render(...)` returns the same payload shape as [`examples/context_render.json`](examples/context_render.json) plus `session_id` and `routing_reason = "session-context-render"`
 - `tg_session_blast_radius(...)` returns the same payload shape as [`examples/blast_radius.json`](examples/blast_radius.json) plus `session_id` and `routing_reason = "session-blast-radius"`
+- `tg_session_blast_radius_render(...)` returns the same payload shape as [`examples/blast_radius_render.json`](examples/blast_radius_render.json) plus `session_id` and `routing_reason = "session-blast-radius-render"`
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 - `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 - `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text

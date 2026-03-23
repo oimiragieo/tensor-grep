@@ -24,6 +24,14 @@ EXPECTED_EXAMPLES = {
     "refs.json": ("symbol", "references"),
     "callers.json": ("symbol", "callers"),
     "blast_radius.json": ("symbol", "callers", "caller_tree", "rendered_caller_tree"),
+    "blast_radius_render.json": (
+        "symbol",
+        "rendered_context",
+        "sources",
+        "callers",
+        "caller_tree",
+        "edit_plan_seed",
+    ),
     "session_open.json": ("session_id", "file_count"),
     "session_context.json": ("query", "files", "session_id"),
     "rewrite_plan.json": ("total_edits", "edits"),
@@ -55,6 +63,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Symbol Refs JSON" in doc
     assert "## Symbol Callers JSON" in doc
     assert "## Symbol Blast Radius JSON" in doc
+    assert "## Symbol Blast Radius Render JSON" in doc
     assert "## Session Open JSON" in doc
     assert "## Session Refresh JSON" in doc
     assert "## Session Context JSON" in doc
@@ -78,7 +87,9 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_symbol_refs" in doc
     assert "tg_symbol_callers" in doc
     assert "tg_symbol_blast_radius" in doc
+    assert "tg_symbol_blast_radius_render" in doc
     assert "tg_session_blast_radius" in doc
+    assert "tg_session_blast_radius_render" in doc
     assert "tg_session_open" in doc
     assert "tg_session_list" in doc
     assert "tg_session_show" in doc
@@ -140,6 +151,8 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 "impact.json",
                 "refs.json",
                 "callers.json",
+                "blast_radius.json",
+                "blast_radius_render.json",
                 "session_context.json",
             }:
                 assert payload["coverage"]["language_scope"] == "python-js-ts-rust"

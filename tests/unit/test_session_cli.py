@@ -292,6 +292,60 @@ def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
+def test_session_blast_radius_render_reuses_cached_repo_map(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "blast-radius-render",
+            opened["session_id"],
+            str(project),
+            "--symbol",
+            "create_invoice",
+            "--max-depth",
+            "1",
+            "--max-render-chars",
+            "400",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["routing_reason"] == "session-blast-radius-render"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["sources"][0]["name"] == "create_invoice"
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert "create_invoice" in payload["rendered_context"]
+
+
 
 
 

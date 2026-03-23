@@ -543,6 +543,59 @@ def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
+def test_blast_radius_render_json_returns_prompt_ready_radius_bundle(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "blast-radius-render",
+            "--symbol",
+            "create_invoice",
+            "--max-depth",
+            "1",
+            "--max-render-chars",
+            "400",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "symbol-blast-radius-render"
+    assert payload["symbol"] == "create_invoice"
+    assert payload["max_depth"] == 1
+    assert payload["sources"][0]["name"] == "create_invoice"
+    assert any(section["kind"] == "source" for section in payload["sections"])
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "create_invoice"
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert str(module_path.resolve()) in payload["rendered_context"]
+    assert "create_invoice" in payload["rendered_context"]
+
+
 def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):
     from tensor_grep.cli import main as cli_main
 
@@ -2176,6 +2229,7 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "refs" in result.stdout
     assert "callers" in result.stdout
     assert "blast-radius" in result.stdout
+    assert "blast-radius-render" in result.stdout
     assert "Run semantic log classification" in result.stdout
 
 

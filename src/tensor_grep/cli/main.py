@@ -1759,6 +1759,77 @@ def blast_radius(
     )
 
 
+@app.command(name="blast-radius-render")
+def blast_radius_render(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
+    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready blast-radius bundle for a symbol."""
+    from tensor_grep.cli.repo_map import (
+        build_symbol_blast_radius_render,
+        build_symbol_blast_radius_render_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(
+                build_symbol_blast_radius_render_json(
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                )
+            )
+            return
+
+        payload = build_symbol_blast_radius_render(
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(payload["rendered_context"])
+
+
 @session_app.command("open")
 def session_open(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
@@ -1977,6 +2048,64 @@ def session_blast_radius_cmd(
         return
 
     typer.echo(payload["rendered_caller_tree"])
+
+
+@session_app.command("blast-radius-render")
+def session_blast_radius_render_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
+    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready cached-session blast radius bundle."""
+    from tensor_grep.cli.session_store import session_blast_radius_render
+
+    try:
+        payload = session_blast_radius_render(
+            session_id,
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
+        )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(payload["rendered_context"])
 
 
 @session_app.command("serve")

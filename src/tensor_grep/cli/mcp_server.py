@@ -13,6 +13,7 @@ from tensor_grep.cli.repo_map import (
     build_context_render,
     build_repo_map,
     build_symbol_blast_radius,
+    build_symbol_blast_radius_render,
     build_symbol_callers,
     build_symbol_defs,
     build_symbol_impact,
@@ -635,6 +636,78 @@ def tg_session_blast_radius(
 
 
 @mcp.tool()  # type: ignore
+def tg_session_blast_radius_render(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+) -> str:
+    """
+    Return a prompt-ready cached-session blast radius bundle for a symbol.
+
+    Args:
+        session_id: Session ID to query.
+        symbol: Exact symbol name to resolve.
+        path: File or directory rooted at the session scope.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the render bundle.
+        max_sources: Maximum exact source blocks to include.
+        max_symbols_per_file: Maximum summary symbols to include per file.
+        max_render_chars: Maximum characters to emit in rendered_context.
+        optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
+        render_profile: Render profile to use: full, compact, or llm.
+    """
+    from tensor_grep.cli.session_store import (
+        SessionStaleError,
+        session_blast_radius_render,
+    )
+
+    try:
+        return json.dumps(
+            session_blast_radius_render(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+        return json.dumps(payload, indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
 def tg_symbol_defs(symbol: str, path: str = ".") -> str:
     """
     Return exact definition locations for a symbol.
@@ -789,6 +862,64 @@ def tg_symbol_blast_radius(symbol: str, path: str = ".", max_depth: int = 3) -> 
             "version": _json_output_version(),
             "routing_backend": "RepoMap",
             "routing_reason": "symbol-blast-radius",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()
+def tg_symbol_blast_radius_render(
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+) -> str:
+    """
+    Return a prompt-ready blast-radius bundle for a symbol.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the render bundle.
+        max_sources: Maximum exact source blocks to include.
+        max_symbols_per_file: Maximum summary symbols to include per file.
+        max_render_chars: Maximum characters to emit in rendered_context.
+        optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
+        render_profile: Render profile to use: full, compact, or llm.
+    """
+    try:
+        return json.dumps(
+            build_symbol_blast_radius_render(
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-blast-radius-render",
             "sidecar_used": False,
             "symbol": symbol,
             "max_depth": max(0, int(max_depth)),

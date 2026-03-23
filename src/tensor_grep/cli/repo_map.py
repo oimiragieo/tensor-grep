@@ -2347,5 +2347,191 @@ def build_symbol_blast_radius_json(
     )
 
 
+def build_symbol_blast_radius_render(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+) -> dict[str, Any]:
+    repo_map = build_repo_map(path)
+    return build_symbol_blast_radius_render_from_map(
+        repo_map,
+        symbol,
+        max_depth=max_depth,
+        max_files=max_files,
+        max_sources=max_sources,
+        max_symbols_per_file=max_symbols_per_file,
+        max_render_chars=max_render_chars,
+        optimize_context=optimize_context,
+        render_profile=render_profile,
+    )
+
+
+def build_symbol_blast_radius_render_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+) -> dict[str, Any]:
+    radius_payload = build_symbol_blast_radius_from_map(repo_map, symbol, max_depth=max_depth)
+    normalized_profile = _normalize_render_profile(render_profile, optimize_context)
+    max_files = max(1, max_files)
+    max_sources = max(1, max_sources)
+    max_symbols_per_file = max(1, max_symbols_per_file)
+
+    top_files = {str(current) for current in radius_payload.get("files", [])[:max_files]}
+    sources: list[dict[str, Any]] = []
+    seen_symbols: set[tuple[str, str]] = set()
+    ranked_symbols = sorted(
+        radius_payload.get("symbols", []),
+        key=lambda current: (
+            -int(current.get("score", 0)),
+            0 if str(current.get("kind")) == "function" else 1,
+            str(current.get("file")),
+            int(current.get("line", 0)),
+            str(current.get("name")),
+        ),
+    )
+    for current_symbol in ranked_symbols:
+        current_file = str(current_symbol["file"])
+        if current_file not in top_files:
+            continue
+        symbol_key = (current_file, str(current_symbol["name"]))
+        if symbol_key in seen_symbols:
+            continue
+        seen_symbols.add(symbol_key)
+        symbol_sources = build_symbol_source_from_map(repo_map, str(current_symbol["name"])).get(
+            "sources", []
+        )
+        for source in symbol_sources:
+            if str(source["file"]) != current_file:
+                continue
+            sources.append(
+                _render_source_block(
+                    source,
+                    render_profile=normalized_profile,
+                    optimize_context=optimize_context,
+                )
+            )
+            break
+        if len(sources) >= max_sources:
+            break
+
+    payload = dict(radius_payload)
+    payload["routing_reason"] = "symbol-blast-radius-render"
+    payload["query"] = f"blast radius: {symbol}"
+    payload["files"] = list(payload.get("files", []))[:max_files]
+    payload["file_matches"] = list(payload.get("file_matches", []))[:max_files]
+    payload["file_summaries"] = [
+        {
+            "path": str(summary["path"]),
+            "symbols": list(summary.get("symbols", []))[:max_symbols_per_file],
+        }
+        for summary in list(payload.get("file_summaries", []))[:max_files]
+    ]
+    payload["sources"] = sources
+    payload["max_files"] = max_files
+    payload["max_sources"] = max_sources
+    payload["max_symbols_per_file"] = max_symbols_per_file
+    payload["max_render_chars"] = max_render_chars
+    payload["optimize_context"] = optimize_context
+    payload["render_profile"] = normalized_profile
+    rendered_context, sections, truncated = _render_context_string_and_sections(
+        payload,
+        max_render_chars=max_render_chars,
+    )
+    payload["rendered_context"] = rendered_context
+    payload["sections"] = sections
+    payload["truncated"] = truncated
+    payload["candidate_edit_targets"] = {
+        "files": list(payload.get("files", []))[:max_files],
+        "symbols": ranked_symbols[:max_sources],
+        "tests": list(payload.get("tests", []))[:max_files],
+    }
+    primary_file = next(iter(payload.get("files", [])), None)
+    primary_symbol = None
+    if primary_file is not None:
+        primary_file_symbols = [
+            current for current in ranked_symbols if str(current.get("file")) == str(primary_file)
+        ]
+        primary_symbol = next(iter(primary_file_symbols), None)
+    if primary_symbol is None:
+        primary_symbol = next(iter(ranked_symbols), None)
+    primary_file_match = next(
+        (
+            match
+            for match in payload.get("file_matches", [])
+            if str(match.get("path")) == str(primary_file)
+        ),
+        payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+    )
+    primary_test = next(iter(payload.get("tests", [])), None)
+    primary_test_match = next(
+        (
+            match
+            for match in payload.get("test_matches", [])
+            if str(match.get("path")) == str(primary_test)
+        ),
+        payload.get("test_matches", [{}])[0] if payload.get("test_matches") else {},
+    )
+    validation_tests = list(payload.get("tests", []))[: max(1, min(max_files, 3))]
+    payload["edit_plan_seed"] = {
+        "primary_file": primary_file,
+        "primary_symbol": primary_symbol,
+        "primary_test": primary_test,
+        "validation_tests": validation_tests,
+        "validation_commands": _validation_commands_for_tests(validation_tests),
+        "reasons": list(primary_file_match.get("reasons", [])),
+        "confidence": {
+            "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
+            "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
+            if primary_symbol is not None
+            else 0.0,
+            "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
+        },
+    }
+    return payload
+
+
+def build_symbol_blast_radius_render_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+) -> str:
+    return json.dumps(
+        build_symbol_blast_radius_render(
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
+        ),
+        indent=2,
+    )
+
+
 
 

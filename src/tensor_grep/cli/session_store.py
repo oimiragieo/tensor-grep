@@ -12,6 +12,7 @@ from tensor_grep.cli.repo_map import (
     build_context_render_from_map,
     build_repo_map,
     build_symbol_blast_radius_from_map,
+    build_symbol_blast_radius_render_from_map,
     build_symbol_callers_from_map,
     build_symbol_defs_from_map,
     build_symbol_impact_from_map,
@@ -292,6 +293,39 @@ def session_blast_radius(
     return response
 
 
+def session_blast_radius_render(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+) -> dict[str, Any]:
+    payload = get_session(session_id, path)
+    reason = _stale_reason(payload)
+    if reason:
+        raise SessionStaleError(reason)
+    response = build_symbol_blast_radius_render_from_map(
+        payload["repo_map"],
+        symbol,
+        max_depth=max_depth,
+        max_files=max_files,
+        max_sources=max_sources,
+        max_symbols_per_file=max_symbols_per_file,
+        max_render_chars=max_render_chars,
+        optimize_context=optimize_context,
+        render_profile=render_profile,
+    )
+    response["session_id"] = session_id
+    response["routing_reason"] = "session-blast-radius-render"
+    return response
+
+
 def serve_session_request(session_id: str, request: dict[str, Any], path: str = ".") -> dict[str, Any]:
     payload = get_session(session_id, path)
     repo_map = cast(dict[str, Any], payload["repo_map"])
@@ -393,6 +427,29 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius"
+        return response
+
+    if command == "blast_radius_render":
+        symbol = str(request.get("symbol", "")).strip()
+        if not symbol:
+            raise ValueError("blast_radius_render requests require a non-empty symbol")
+        response = build_symbol_blast_radius_render_from_map(
+            repo_map,
+            symbol,
+            max_depth=int(request.get("max_depth", 3)),
+            max_files=int(request.get("max_files", 3)),
+            max_sources=int(request.get("max_sources", 5)),
+            max_symbols_per_file=int(request.get("max_symbols_per_file", 6)),
+            max_render_chars=(
+                None
+                if request.get("max_render_chars") in (None, "")
+                else int(request["max_render_chars"])
+            ),
+            optimize_context=bool(request.get("optimize_context", False)),
+            render_profile=str(request.get("render_profile", "full")),
+        )
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-blast-radius-render"
         return response
 
     raise ValueError(f"unknown session command: {command or '<empty>'}")

@@ -18,6 +18,7 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "refs.json",
     "callers.json",
     "blast_radius.json",
+    "blast_radius_render.json",
     "session_open.json",
     "session_context.json",
     "rewrite_apply_verify.json",
@@ -603,6 +604,44 @@ struct ContextRenderExample {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct BlastRadiusRenderExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    coverage: CoverageExample,
+    query: String,
+    path: PathBuf,
+    symbol: String,
+    max_depth: usize,
+    definitions: Vec<RepoSymbolExample>,
+    callers: Vec<SymbolReferenceExample>,
+    files: Vec<PathBuf>,
+    file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
+    symbols: Vec<RankedRepoSymbolExample>,
+    imports: Vec<RankedRepoImportExample>,
+    tests: Vec<PathBuf>,
+    test_matches: Vec<RankedPathMatchExample>,
+    related_paths: Vec<PathBuf>,
+    sources: Vec<SymbolSourceBlockExample>,
+    max_files: usize,
+    max_sources: usize,
+    max_symbols_per_file: usize,
+    max_render_chars: Option<usize>,
+    optimize_context: bool,
+    render_profile: String,
+    truncated: bool,
+    sections: Vec<RenderSectionExample>,
+    candidate_edit_targets: CandidateEditTargetsExample,
+    edit_plan_seed: EditPlanSeedExample,
+    rendered_context: String,
+    caller_tree: Vec<BlastRadiusTreeLevelExample>,
+    rendered_caller_tree: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SessionOpenExample {
     session_id: String,
     root: PathBuf,
@@ -680,6 +719,7 @@ fn test_docs_examples_match_v1_schema() {
             "refs.json" => assert_symbol_refs_example(path),
             "callers.json" => assert_symbol_callers_example(path),
             "blast_radius.json" => assert_symbol_blast_radius_example(path),
+            "blast_radius_render.json" => assert_blast_radius_render_example(path),
             "session_open.json" => assert_session_open_example(path),
             "session_context.json" => assert_session_context_example(path),
             other => panic!("missing schema validation for {other}"),
@@ -2253,6 +2293,91 @@ fn assert_context_render_example(path: &Path) {
             path.display()
         );
     }
+}
+
+fn assert_blast_radius_render_example(path: &Path) {
+    let example: BlastRadiusRenderExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "symbol-blast-radius-render",
+        "{} should keep symbol-blast-radius-render routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should stay native",
+        path.display()
+    );
+    assert_repo_map_coverage(path, &example.coverage);
+    assert!(
+        !example.query.is_empty(),
+        "{} query must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.callers.is_empty(),
+        "{} callers must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.sources.is_empty(),
+        "{} sources must not be empty",
+        path.display()
+    );
+    for source in &example.sources {
+        assert_symbol_source_block(path, source);
+    }
+    assert!(
+        !example.caller_tree.is_empty(),
+        "{} caller_tree must not be empty",
+        path.display()
+    );
+    assert!(
+        example.rendered_caller_tree.contains("Depth 0:"),
+        "{} rendered_caller_tree must include depth headers",
+        path.display()
+    );
+    assert!(
+        !example.rendered_context.trim().is_empty(),
+        "{} rendered_context must not be empty",
+        path.display()
+    );
+    let _ = &example.path;
+    let _ = &example.files;
+    let _ = &example.file_matches;
+    let _ = &example.file_summaries;
+    let _ = &example.symbols;
+    let _ = &example.imports;
+    let _ = &example.tests;
+    let _ = &example.test_matches;
+    let _ = &example.related_paths;
+    let _ = &example.max_depth;
+    let _ = &example.max_files;
+    let _ = &example.max_sources;
+    let _ = &example.max_symbols_per_file;
+    let _ = &example.max_render_chars;
+    let _ = &example.optimize_context;
+    let _ = &example.render_profile;
+    let _ = &example.truncated;
+    let _ = &example.sections;
+    let _ = &example.candidate_edit_targets;
+    let _ = &example.edit_plan_seed;
 }
 
 fn assert_session_open_example(path: &Path) {
