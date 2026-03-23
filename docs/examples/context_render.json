@@ -84,6 +84,58 @@
   "max_symbols_per_file": 6,
   "max_render_chars": null,
   "truncated": false,
+  "sections": [
+    {
+      "kind": "query",
+      "start": 0,
+      "end": 22
+    },
+    {
+      "kind": "tests",
+      "start": 22,
+      "end": 136,
+      "paths": [
+        "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+      ]
+    },
+    {
+      "kind": "summary",
+      "start": 136,
+      "end": 284,
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py"
+    },
+    {
+      "kind": "source",
+      "start": 284,
+      "end": 351,
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "symbol": "create_invoice"
+    }
+  ],
+  "candidate_edit_targets": {
+    "files": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py"
+    ],
+    "symbols": [
+      {
+        "name": "PaymentService",
+        "kind": "class",
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+        "line": 3,
+        "score": 4
+      },
+      {
+        "name": "create_invoice",
+        "kind": "function",
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+        "line": 6,
+        "score": 6
+      }
+    ],
+    "tests": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+    ]
+  },
   "rendered_context": "Query: invoice payment\nTests:\n- C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py\n\nFile: C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py\nSummary:\n- class PaymentService @ line 3\n- function create_invoice @ line 6\nSource:\n```text\ndef create_invoice(total, tax):\n    return total + tax\n```",
   "coverage": {
     "language_scope": "python-js-ts-rust",

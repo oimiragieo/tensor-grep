@@ -428,6 +428,28 @@ struct FileSummaryExample {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RenderSectionExample {
+    kind: String,
+    start: usize,
+    end: usize,
+    #[serde(default)]
+    path: Option<PathBuf>,
+    #[serde(default)]
+    symbol: Option<String>,
+    #[serde(default)]
+    paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateEditTargetsExample {
+    files: Vec<PathBuf>,
+    symbols: Vec<RankedRepoSymbolExample>,
+    tests: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ContextPackExample {
     version: u32,
     routing_backend: String,
@@ -470,6 +492,8 @@ struct ContextRenderExample {
     max_symbols_per_file: usize,
     max_render_chars: Option<usize>,
     truncated: bool,
+    sections: Vec<RenderSectionExample>,
+    candidate_edit_targets: CandidateEditTargetsExample,
     rendered_context: String,
 }
 
@@ -1775,6 +1799,65 @@ fn assert_context_render_example(path: &Path) {
         );
     }
     let _ = example.truncated;
+    assert!(
+        !example.sections.is_empty(),
+        "{} sections must not be empty",
+        path.display()
+    );
+    for section in &example.sections {
+        assert!(
+            !section.kind.is_empty(),
+            "{} section kind must not be empty",
+            path.display()
+        );
+        assert!(
+            section.end >= section.start,
+            "{} section offsets must be ordered",
+            path.display()
+        );
+        if let Some(section_path) = &section.path {
+            assert!(
+                is_portable_absolute_path(section_path),
+                "{} section path should be absolute or an absolute Windows path literal",
+                path.display()
+            );
+        }
+        if let Some(symbol) = &section.symbol {
+            assert!(
+                !symbol.is_empty(),
+                "{} section symbol must not be empty",
+                path.display()
+            );
+        }
+        for section_path in &section.paths {
+            assert!(
+                is_portable_absolute_path(section_path),
+                "{} section paths should be absolute or an absolute Windows path literal",
+                path.display()
+            );
+        }
+    }
+    for candidate_file in &example.candidate_edit_targets.files {
+        assert!(
+            is_portable_absolute_path(candidate_file),
+            "{} candidate file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for candidate_symbol in &example.candidate_edit_targets.symbols {
+        assert!(
+            !candidate_symbol.name.is_empty(),
+            "{} candidate symbol name must not be empty",
+            path.display()
+        );
+    }
+    for candidate_test in &example.candidate_edit_targets.tests {
+        assert!(
+            is_portable_absolute_path(candidate_test),
+            "{} candidate test should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
     assert!(
         !example.rendered_context.is_empty(),
         "{} rendered_context must not be empty",

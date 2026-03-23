@@ -1370,13 +1370,12 @@ def build_context_pack_json(query: str, path: str | Path = ".") -> str:
     return json.dumps(build_context_pack(query, path), indent=2)
 
 
-def _render_context_string(payload: dict[str, Any], *, max_render_chars: int | None = None) -> str:
-    lines = [f"Query: {payload['query']}"]
+def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    parts: list[dict[str, Any]] = [{"kind": "query", "text": f"Query: {payload['query']}"}]
     tests = [str(current) for current in payload.get("tests", [])]
     if tests:
-        lines.append("Tests:")
-        for current in tests[:3]:
-            lines.append(f"- {current}")
+        test_lines = ["Tests:", *[f"- {current}" for current in tests[:3]]]
+        parts.append({"kind": "tests", "text": "\n".join(test_lines), "paths": tests[:3]})
 
     sources_by_file: dict[str, list[dict[str, Any]]] = {}
     for source in payload.get("sources", []):
@@ -1384,26 +1383,67 @@ def _render_context_string(payload: dict[str, Any], *, max_render_chars: int | N
         current_sources = sources_by_file.setdefault(current, [])
         current_sources.append(source)
 
-    for summary in payload.get("file_summaries", [])[:3]:
+    for summary in payload.get("file_summaries", [])[: int(payload.get("max_files", 3))]:
         current_path = str(summary["path"])
-        lines.append("")
-        lines.append(f"File: {current_path}")
-        lines.append("Summary:")
-        for symbol in summary.get("symbols", [])[:6]:
-            lines.append(
-                f"- {symbol['kind']} {symbol['name']} @ line {symbol['line']}"
+        summary_lines = [f"File: {current_path}", "Summary:"]
+        for symbol in summary.get("symbols", [])[: int(payload.get("max_symbols_per_file", 6))]:
+            summary_lines.append(f"- {symbol['kind']} {symbol['name']} @ line {symbol['line']}")
+        parts.append({"kind": "summary", "path": current_path, "text": "\n".join(summary_lines)})
+        for source in sources_by_file.get(current_path, [])[:2]:
+            parts.append(
+                {
+                    "kind": "source",
+                    "path": current_path,
+                    "symbol": str(source["name"]),
+                    "text": f"Source:\n```text\n{str(source['source']).rstrip()}\n```",
+                }
             )
-        selected_sources = sources_by_file.get(current_path, [])
-        if selected_sources:
-            lines.append("Source:")
-            for source in selected_sources[:2]:
-                lines.append(
-                    f"```text\n{str(source['source']).rstrip()}\n```"
+    return parts
+
+
+def _render_context_string_and_sections(
+    payload: dict[str, Any],
+    *,
+    max_render_chars: int | None = None,
+) -> tuple[str, list[dict[str, Any]], bool]:
+    parts = _render_context_parts(payload)
+    sections: list[dict[str, Any]] = []
+    rendered_parts: list[str] = []
+    offset = 0
+    truncated = False
+    for part in parts:
+        text = str(part["text"]).strip()
+        if not text:
+            continue
+        prefix = "" if not rendered_parts else "\n\n"
+        chunk = f"{prefix}{text}"
+        if max_render_chars is not None and max_render_chars > 0 and offset + len(chunk) > max_render_chars:
+            remaining = max_render_chars - offset
+            if remaining > 0:
+                chunk = chunk[:remaining]
+                rendered_parts.append(chunk)
+                sections.append(
+                    {
+                        "kind": str(part["kind"]),
+                        "start": offset,
+                        "end": offset + len(chunk),
+                        **{key: value for key, value in part.items() if key != "text"},
+                    }
                 )
-    rendered = "\n".join(lines).strip()
-    if max_render_chars is not None and max_render_chars > 0 and len(rendered) > max_render_chars:
-        return rendered[:max_render_chars].rstrip()
-    return rendered
+                offset += len(chunk)
+            truncated = True
+            break
+        rendered_parts.append(chunk)
+        sections.append(
+            {
+                "kind": str(part["kind"]),
+                "start": offset,
+                "end": offset + len(chunk),
+                **{key: value for key, value in part.items() if key != "text"},
+            }
+        )
+        offset += len(chunk)
+    return "".join(rendered_parts).rstrip(), sections, truncated
 
 
 def build_context_render(
@@ -1475,12 +1515,18 @@ def build_context_render_from_map(
     payload["max_sources"] = max_sources
     payload["max_symbols_per_file"] = max_symbols_per_file
     payload["max_render_chars"] = max_render_chars
-    payload["rendered_context"] = _render_context_string(payload, max_render_chars=max_render_chars)
-    payload["truncated"] = (
-        max_render_chars is not None
-        and max_render_chars > 0
-        and len(payload["rendered_context"]) >= max_render_chars
+    rendered_context, sections, truncated = _render_context_string_and_sections(
+        payload,
+        max_render_chars=max_render_chars,
     )
+    payload["rendered_context"] = rendered_context
+    payload["sections"] = sections
+    payload["truncated"] = truncated
+    payload["candidate_edit_targets"] = {
+        "files": list(payload.get("files", []))[:max_files],
+        "symbols": list(payload.get("symbols", []))[:max_sources],
+        "tests": list(payload.get("tests", []))[:max_files],
+    }
     return payload
 
 

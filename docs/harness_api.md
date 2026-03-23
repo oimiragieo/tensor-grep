@@ -216,6 +216,8 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `max_symbols_per_file` | `integer` | Maximum summary symbols emitted per file. |
 | `max_render_chars` | `integer \| null` | Optional render-text budget applied to `rendered_context`. |
 | `truncated` | `boolean` | Whether `rendered_context` was clipped to satisfy `max_render_chars`. |
+| `sections` | `array<object>` | Machine-readable section metadata for the rendered bundle, including byte offsets and section type. |
+| `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
 
 ## Rewrite Plan JSON

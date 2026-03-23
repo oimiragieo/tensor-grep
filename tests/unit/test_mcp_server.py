@@ -965,6 +965,10 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert payload["routing_reason"] == "context-render"
     assert payload["files"][0] == str(module_path.resolve())
     assert payload["sources"][0]["name"] == "create_invoice"
+    assert any(section["kind"] == "tests" for section in payload["sections"])
+    assert any(section["kind"] == "source" for section in payload["sections"])
+    assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
+    assert payload["candidate_edit_targets"]["symbols"][0]["name"] == "create_invoice"
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
 
