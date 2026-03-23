@@ -6,6 +6,7 @@ use std::process::Command;
 use std::time::{Duration, UNIX_EPOCH};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tempfile::{tempdir, TempDir};
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewriteRule};
 
@@ -1275,6 +1276,60 @@ fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
     );
     assert!(files[0]["before_sha256"].as_str().unwrap().len() >= 32);
     assert!(files[0]["after_sha256"].as_str().unwrap().len() >= 32);
+    assert_eq!(manifest_json["previous_manifest_sha256"], Value::Null);
+    let manifest_digest = manifest_json["manifest_sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut canonical_manifest = manifest_json.clone();
+    canonical_manifest
+        .as_object_mut()
+        .unwrap()
+        .remove("manifest_sha256");
+    let mut hasher = Sha256::new();
+    hasher.update(serde_json::to_vec_pretty(&canonical_manifest).unwrap());
+    assert_eq!(manifest_digest, format!("{:x}", hasher.finalize()));
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: ($EXPR)")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        second_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let second_manifest: Value =
+        serde_json::from_slice(&fs::read(&audit_manifest_path).unwrap()).unwrap();
+    let second_digest = second_manifest["manifest_sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut second_canonical = second_manifest.clone();
+    second_canonical
+        .as_object_mut()
+        .unwrap()
+        .remove("manifest_sha256");
+    let mut second_hasher = Sha256::new();
+    second_hasher.update(serde_json::to_vec_pretty(&second_canonical).unwrap());
+    assert_eq!(second_digest, format!("{:x}", second_hasher.finalize()));
+    assert_eq!(
+        second_manifest["previous_manifest_sha256"],
+        Value::String(manifest_digest)
+    );
 }
 
 #[test]

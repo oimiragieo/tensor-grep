@@ -368,6 +368,11 @@ When `--audit-manifest <path>` is present, the payload also includes:
 | `audit_manifest.file_count` | `integer` | Number of files included in the manifest. |
 | `audit_manifest.applied_edit_count` | `integer` | Number of applied edit IDs recorded in the manifest. |
 
+The on-disk audit manifest itself is a deterministic JSON document that includes:
+
+- `manifest_sha256`: self-digest over the canonical manifest JSON without the digest field
+- `previous_manifest_sha256`: digest of the previous manifest written to the same path, when present
+
 ## GPU Sidecar JSON
 
 Emitted by `tg.exe search --gpu-device-ids <ids> --json ...`.

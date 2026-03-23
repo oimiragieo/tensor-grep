@@ -1474,9 +1474,12 @@ struct RewriteAuditManifest {
     path: String,
     plan_total_edits: usize,
     applied_edit_ids: Vec<String>,
+    previous_manifest_sha256: Option<String>,
     checkpoint: Option<CheckpointCreateSummary>,
     validation: Option<ValidationSummary>,
     files: Vec<RewriteAuditManifestFile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2081,6 +2084,15 @@ fn sha256_hex(bytes: &[u8]) -> String {
     output
 }
 
+fn canonical_manifest_bytes(manifest: &RewriteAuditManifest) -> anyhow::Result<Vec<u8>> {
+    let mut value = serde_json::to_value(manifest)?;
+    value
+        .as_object_mut()
+        .expect("rewrite audit manifest should serialize as an object")
+        .remove("manifest_sha256");
+    Ok(serde_json::to_vec_pretty(&value)?)
+}
+
 fn collect_pre_apply_hashes(
     edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
 ) -> anyhow::Result<BTreeMap<String, String>> {
@@ -2107,6 +2119,24 @@ fn write_audit_manifest_for_plan(
     validation: Option<&ValidationSummary>,
     before_hashes: &BTreeMap<String, String>,
 ) -> anyhow::Result<AuditManifestSummary> {
+    let previous_manifest_sha256 = if path.exists() {
+        let previous_bytes = std::fs::read(path).with_context(|| {
+            format!("failed to read previous audit manifest {}", path.display())
+        })?;
+        let previous_value: Option<serde_json::Value> =
+            serde_json::from_slice(&previous_bytes).ok();
+        Some(
+            previous_value
+                .as_ref()
+                .and_then(|value| value.get("manifest_sha256"))
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| sha256_hex(&previous_bytes)),
+        )
+    } else {
+        None
+    };
+
     let mut by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for edit in edits {
         by_file
@@ -2139,10 +2169,16 @@ fn write_audit_manifest_for_plan(
         path: root_path.to_string(),
         plan_total_edits,
         applied_edit_ids: edits.iter().map(|edit| edit.id.clone()).collect(),
+        previous_manifest_sha256,
         checkpoint: checkpoint.cloned(),
         validation: validation.cloned(),
         files,
+        manifest_sha256: None,
     };
+
+    let mut manifest = manifest;
+    let canonical_bytes = canonical_manifest_bytes(&manifest)?;
+    manifest.manifest_sha256 = Some(sha256_hex(&canonical_bytes));
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
