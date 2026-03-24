@@ -466,6 +466,7 @@ def tg_ruleset_scan(
     language: str | None = None,
     baseline_path: str | None = None,
     write_baseline: str | None = None,
+    suppressions_path: str | None = None,
 ) -> str:
     """
     Execute a built-in ruleset scan and return structured findings.
@@ -500,6 +501,7 @@ def tg_ruleset_scan(
             ruleset_name=ruleset_meta["name"],
             baseline_path=baseline_path,
             write_baseline_path=write_baseline,
+            suppressions_path=suppressions_path,
         ),
         indent=2,
     )

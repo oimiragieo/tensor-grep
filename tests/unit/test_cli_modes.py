@@ -1809,6 +1809,56 @@ def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
     assert written["fingerprints"] == [payload["findings"][0]["fingerprint"]]
 
 
+def test_scan_builtin_ruleset_can_apply_suppressions(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "rule_id": "python-hashlib-md5",
+                    "language": "python",
+                    "files": ["a.py"],
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        Path("suppressions.json").write_text(
+            json.dumps(
+                {"version": 1, "kind": "ruleset-scan-suppressions", "fingerprints": [fingerprint]},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--ruleset",
+                "crypto-safe",
+                "--language",
+                "python",
+                "--path",
+                ".",
+                "--json",
+                "--suppressions",
+                "suppressions.json",
+            ],
+        )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["findings"][0]["status"] == "suppressed"
+    assert payload["findings"][1]["status"] == "clear"
+    assert payload["suppressions"]["suppressed_findings"] == 1
+
+
 def test_scan_executes_secrets_ruleset(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)

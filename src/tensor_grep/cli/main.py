@@ -557,11 +557,30 @@ def _load_ruleset_baseline(path: str) -> dict[str, object]:
     }
 
 
+def _load_ruleset_suppressions(path: str) -> dict[str, object]:
+    suppressions_path = Path(path).expanduser().resolve()
+    payload = json.loads(suppressions_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Ruleset suppressions must be a JSON object.")
+    fingerprints = payload.get("fingerprints")
+    if not isinstance(fingerprints, list) or not all(
+        isinstance(item, str) and item.strip() for item in fingerprints
+    ):
+        raise ValueError(
+            "Ruleset suppressions must include a non-empty 'fingerprints' string list."
+        )
+    return {
+        "path": str(suppressions_path),
+        "fingerprints": sorted(dict.fromkeys(fingerprints)),
+    }
+
+
 def _apply_ruleset_baseline(
     payload: dict[str, object],
     *,
     baseline_path: str | None = None,
     write_baseline_path: str | None = None,
+    suppressions_path: str | None = None,
 ) -> None:
     findings = cast(list[dict[str, object]], payload["findings"])
     matched_fingerprints = sorted(
@@ -593,6 +612,12 @@ def _apply_ruleset_baseline(
             "resolved_findings": len(baseline_fingerprints - current_fingerprints),
             "resolved_fingerprints": sorted(baseline_fingerprints - current_fingerprints),
         }
+    else:
+        for finding in findings:
+            if cast(int, finding["matches"]) <= 0:
+                finding["status"] = "clear"
+            else:
+                finding["status"] = "new"
     if write_baseline_path is not None:
         write_path = Path(write_baseline_path).expanduser().resolve()
         baseline_payload = {
@@ -608,6 +633,20 @@ def _apply_ruleset_baseline(
             "fingerprints": matched_fingerprints,
             "count": len(matched_fingerprints),
         }
+    if suppressions_path is not None:
+        suppressions = _load_ruleset_suppressions(suppressions_path)
+        suppressed_fingerprints = set(cast(list[str], suppressions["fingerprints"]))
+        for finding in findings:
+            if cast(int, finding["matches"]) <= 0:
+                continue
+            if cast(str, finding["fingerprint"]) in suppressed_fingerprints:
+                finding["status"] = "suppressed"
+        payload["suppressions"] = {
+            "path": suppressions["path"],
+            "suppressed_findings": sum(
+                1 for finding in findings if finding.get("status") == "suppressed"
+            ),
+        }
 
 
 def _run_ast_scan_payload(
@@ -618,6 +657,7 @@ def _run_ast_scan_payload(
     ruleset_name: str | None = None,
     baseline_path: str | None = None,
     write_baseline_path: str | None = None,
+    suppressions_path: str | None = None,
 ) -> dict[str, object]:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -710,6 +750,7 @@ def _run_ast_scan_payload(
         payload,
         baseline_path=baseline_path,
         write_baseline_path=write_baseline_path,
+        suppressions_path=suppressions_path,
     )
     return payload
 
@@ -2579,6 +2620,11 @@ def scan(
         "--write-baseline",
         help="Write the current matched finding fingerprints to a baseline file.",
     ),
+    suppressions: str | None = typer.Option(
+        None,
+        "--suppressions",
+        help="Mark matched findings present in a suppression fingerprint file as suppressed.",
+    ),
 ) -> None:
     """Scan and rewrite code by configuration."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
@@ -2624,6 +2670,7 @@ def scan(
         ruleset_name=ruleset_meta["name"] if ruleset else None,
         baseline_path=baseline,
         write_baseline_path=write_baseline,
+        suppressions_path=suppressions,
     )
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -2654,6 +2701,12 @@ def scan(
         typer.echo(
             f"Baseline written to {baseline_written['path']} "
             f"(count={baseline_written['count']})."
+        )
+    if payload.get("suppressions"):
+        suppressions_summary = cast(dict[str, object], payload["suppressions"])
+        typer.echo(
+            f"Suppressions applied from {suppressions_summary['path']} "
+            f"(suppressed={suppressions_summary['suppressed_findings']})."
         )
 
 

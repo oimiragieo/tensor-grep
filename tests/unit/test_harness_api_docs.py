@@ -175,10 +175,16 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert isinstance(payload["findings"], list)
                 assert payload["findings"]
                 assert payload["findings"][0]["fingerprint"]
-                assert payload["findings"][0]["status"] in {"new", "existing", "clear"}
+                assert payload["findings"][0]["status"] in {
+                    "new",
+                    "existing",
+                    "suppressed",
+                    "clear",
+                }
                 assert "evidence" in payload["findings"][0]
                 assert payload["baseline"]["existing_findings"] >= 0
                 assert payload["baseline_written"]["count"] >= 0
+                assert payload["suppressions"]["suppressed_findings"] >= 0
 
         for key in required_keys:
             assert key in payload

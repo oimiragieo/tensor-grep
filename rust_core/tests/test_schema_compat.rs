@@ -103,6 +103,7 @@ struct RulesetScanExample {
     findings: Vec<RulesetFindingExample>,
     baseline: Option<RulesetBaselineSummaryExample>,
     baseline_written: Option<RulesetBaselineWrittenExample>,
+    suppressions: Option<RulesetSuppressionsSummaryExample>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +122,13 @@ struct RulesetBaselineWrittenExample {
     path: String,
     fingerprints: Vec<String>,
     count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetSuppressionsSummaryExample {
+    path: String,
+    suppressed_findings: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1093,8 +1101,8 @@ fn assert_ruleset_scan_example(path: &Path) {
         );
         if let Some(status) = &finding.status {
             assert!(
-                matches!(status.as_str(), "new" | "existing" | "clear"),
-                "{} finding status must be new, existing, or clear",
+                matches!(status.as_str(), "new" | "existing" | "suppressed" | "clear"),
+                "{} finding status must be new, existing, suppressed, or clear",
                 path.display()
             );
         }
@@ -1162,6 +1170,23 @@ fn assert_ruleset_scan_example(path: &Path) {
         assert!(
             written.count == written.fingerprints.len(),
             "{} baseline_written count must match fingerprint length",
+            path.display()
+        );
+    }
+    if let Some(suppressions) = &example.suppressions {
+        assert!(
+            !suppressions.path.is_empty(),
+            "{} suppressions path must not be empty",
+            path.display()
+        );
+        let suppressed = example
+            .findings
+            .iter()
+            .filter(|finding| finding.status.as_deref() == Some("suppressed"))
+            .count();
+        assert!(
+            suppressions.suppressed_findings == suppressed,
+            "{} suppressed_findings must match the number of suppressed findings",
             path.display()
         );
     }
