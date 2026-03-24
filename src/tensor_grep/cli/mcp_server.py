@@ -8,6 +8,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from tensor_grep.cli.main import _build_rulesets_payload, _run_ast_scan_payload
 from tensor_grep.cli.repo_map import (
     build_context_pack,
     build_context_render,
@@ -20,6 +21,7 @@ from tensor_grep.cli.repo_map import (
     build_symbol_refs,
     build_symbol_source,
 )
+from tensor_grep.cli.rule_packs import resolve_rule_pack
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 from tensor_grep.core.pipeline import Pipeline
@@ -73,6 +75,19 @@ def _audit_manifest_error(message: str, *, code: str) -> str:
         "routing_backend": "AuditManifest",
         "routing_reason": "audit-manifest-verify",
         "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _ruleset_scan_error(message: str, *, code: str, ruleset: str, path: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AstBackend",
+        "routing_reason": "builtin-ruleset-scan",
+        "sidecar_used": False,
+        "ruleset": ruleset,
+        "path": str(Path(path).expanduser()),
         "error": {"code": code, "message": message},
     }
     return json.dumps(payload, indent=2)
@@ -436,6 +451,50 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
             all_results.match_counts_by_file[match.file] = (
                 all_results.match_counts_by_file.get(match.file, 0) + 1
             )
+
+
+@mcp.tool()  # type: ignore
+def tg_rulesets() -> str:
+    """Return metadata for built-in security and compliance rulesets."""
+    return json.dumps(_build_rulesets_payload(), indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_ruleset_scan(ruleset: str, path: str = ".", language: str | None = None) -> str:
+    """
+    Execute a built-in ruleset scan and return structured findings.
+
+    Args:
+        ruleset: Built-in ruleset name to execute.
+        path: Root path to scan.
+        language: Optional language override for the ruleset.
+    """
+    try:
+        ruleset_meta, rules = resolve_rule_pack(ruleset, language)
+    except ValueError as exc:
+        return _ruleset_scan_error(
+            str(exc),
+            code="invalid_input",
+            ruleset=ruleset,
+            path=path,
+        )
+
+    project_cfg: dict[str, object] = {
+        "config_path": f"builtin:{ruleset_meta['name']}",
+        "root_dir": Path(path).expanduser().resolve(),
+        "rule_dirs": [],
+        "test_dirs": [],
+        "language": ruleset_meta["language"],
+    }
+    return json.dumps(
+        _run_ast_scan_payload(
+            project_cfg,
+            rules,
+            routing_reason="builtin-ruleset-scan",
+            ruleset_name=ruleset_meta["name"],
+        ),
+        indent=2,
+    )
 
 
 @mcp.tool()  # type: ignore

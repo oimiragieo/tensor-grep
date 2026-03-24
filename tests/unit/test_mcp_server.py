@@ -346,6 +346,37 @@ def test_tg_devices_text_mode_returns_human_inventory_lines():
     assert "- gpu:3 vram_mb=24576" in out
 
 
+def test_tg_rulesets_returns_builtin_ruleset_metadata():
+    from tensor_grep.cli import mcp_server
+
+    payload = json.loads(mcp_server.tg_rulesets())
+    assert payload["routing_reason"] == "builtin-rulesets"
+    assert payload["rulesets"][0]["name"] == "crypto-safe"
+    assert payload["rulesets"][0]["category"] == "security"
+
+
+def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
+
+    payload = json.loads(mcp_server.tg_ruleset_scan("crypto-safe", path=".", language="python"))
+
+    assert payload["routing_reason"] == "builtin-ruleset-scan"
+    assert payload["ruleset"] == "crypto-safe"
+    assert payload["rule_count"] == 2
+    assert payload["matched_rules"] == 1
+    assert payload["total_matches"] == 1
+    assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
+    assert payload["findings"][0]["files"] == ["a.py"]
+
+
 def test_tg_rewrite_plan_returns_native_plan_json_shape():
     from tensor_grep.cli import mcp_server
 

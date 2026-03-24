@@ -67,6 +67,19 @@ def _read_project_version_fallback() -> str:
     return "0.0.0"
 
 
+@lru_cache(maxsize=1)
+def _json_output_version() -> int:
+    try:
+        main_rs = Path(__file__).resolve().parents[3] / "rust_core" / "src" / "main.rs"
+        match = re.search(
+            r"const\s+JSON_OUTPUT_VERSION\s*:\s*u32\s*=\s*(\d+)\s*;",
+            main_rs.read_text(encoding="utf-8"),
+        )
+    except OSError:
+        match = None
+    return int(match.group(1)) if match else 1
+
+
 _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "regexp",
     "file_patterns",
@@ -495,6 +508,93 @@ def _suffix_for_language(language: str) -> str:
     if normalized in {"ts", "typescript"}:
         return ".ts"
     return ".py"
+
+
+def _build_rulesets_payload() -> dict[str, object]:
+    from tensor_grep.cli.rule_packs import list_rule_packs
+
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AstBackend",
+        "routing_reason": "builtin-rulesets",
+        "sidecar_used": False,
+        "rulesets": list_rule_packs(),
+    }
+
+
+def _run_ast_scan_payload(
+    project_cfg: dict[str, object],
+    rules: list[dict[str, str]],
+    *,
+    routing_reason: str,
+    ruleset_name: str | None = None,
+) -> dict[str, object]:
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    cfg = SearchConfig(
+        ast=True,
+        ast_prefer_native=True,
+        lang=cast(str, project_cfg["language"]),
+    )
+    root_dir = cast(Path, project_cfg["root_dir"])
+    scanner: DirectoryScanner | None = None
+    candidate_files: list[str] | None = None
+    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
+    backend_names_used: set[str] = set()
+
+    total_matches = 0
+    matched_rules = 0
+    findings: list[dict[str, object]] = []
+    for rule in rules:
+        rule_cfg = replace(cfg, lang=rule["language"])
+        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        backend_names_used.add(type(backend).__name__)
+        matched_files: set[str] = set()
+        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
+            rule_matches = result.total_matches
+            matched_files.update(result.matched_file_paths)
+            if not matched_files and result.total_files > 0:
+                matched_files.update(match.file for match in result.matches if match.file)
+        else:
+            if scanner is None:
+                scanner = DirectoryScanner(cfg)
+            if candidate_files is None:
+                candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+            rule_matches = 0
+            for current_file in candidate_files:
+                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                rule_matches += result.total_matches
+                if result.total_files > 0 or result.total_matches > 0:
+                    matched_files.add(current_file)
+        total_matches += rule_matches
+        if rule_matches > 0:
+            matched_rules += 1
+        findings.append(
+            {
+                "rule_id": rule["id"],
+                "language": rule["language"],
+                "matches": rule_matches,
+                "files": sorted(matched_files),
+            }
+        )
+
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AstBackend",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "config_path": str(project_cfg["config_path"]),
+        "path": str(root_dir),
+        "ruleset": ruleset_name,
+        "language": str(project_cfg["language"]),
+        "rule_count": len(rules),
+        "matched_rules": matched_rules,
+        "total_matches": total_matches,
+        "backends": sorted(backend_names_used),
+        "findings": findings,
+    }
 
 
 def _search_ast_test_snippets_with_wrapper(
@@ -2309,9 +2409,7 @@ def rulesets(
     json_output: bool = typer.Option(False, "--json", help="Emit structured ruleset metadata."),
 ) -> None:
     """List built-in security and compliance rule packs."""
-    from tensor_grep.cli.rule_packs import list_rule_packs
-
-    payload = {"rulesets": list_rule_packs()}
+    payload = _build_rulesets_payload()
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -2320,11 +2418,12 @@ def rulesets(
         typer.echo("No built-in rulesets are currently registered.")
         return
 
-    for ruleset in payload["rulesets"]:
+    for ruleset in cast(list[dict[str, object]], payload["rulesets"]):
         typer.echo(
             f"{ruleset['name']}: {ruleset['description']} "
             f"[category={ruleset['category']} status={ruleset['status']} "
-            f"languages={','.join(ruleset['languages'])} rules={ruleset['rule_count']}]"
+            f"languages={','.join(cast(list[str], ruleset['languages']))} "
+            f"rules={ruleset['rule_count']}]"
         )
 
 
@@ -2348,11 +2447,14 @@ def scan(
         "--language",
         help="Language override when using a built-in ruleset.",
     ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured scan findings.",
+    ),
 ) -> None:
     """Scan and rewrite code by configuration."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
-    from tensor_grep.core.config import SearchConfig
-    from tensor_grep.io.directory_scanner import DirectoryScanner
 
     if ruleset:
         try:
@@ -2371,6 +2473,7 @@ def scan(
             "Scanning project using built-in ruleset "
             f"{ruleset_meta['name']} ({ruleset_meta['language']})"
         )
+        routing_reason = "builtin-ruleset-scan"
     else:
         try:
             project_cfg = _load_sg_project_config(config)
@@ -2383,56 +2486,31 @@ def scan(
             typer.echo("Error: No valid rules found in configured rule directories.", err=True)
             sys.exit(1)
         scan_banner = "Scanning project using adaptive AST routing"
+        routing_reason = "ast-project-scan"
 
-    cfg = SearchConfig(
-        ast=True,
-        ast_prefer_native=True,
-        lang=cast(str, project_cfg["language"]),
+    if not json_output:
+        typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
+    payload = _run_ast_scan_payload(
+        project_cfg,
+        rules,
+        routing_reason=routing_reason,
+        ruleset_name=ruleset_meta["name"] if ruleset else None,
     )
-    root_dir = cast(Path, project_cfg["root_dir"])
-    scanner: DirectoryScanner | None = None
-    candidate_files: list[str] | None = None
-    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
-    backend_names_used: set[str] = set()
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
 
-    typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
-
-    total_matches = 0
-    matched_rules = 0
-    for rule in rules:
-        rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
-        backend_names_used.add(type(backend).__name__)
-        matched_files: set[str] = set()
-        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
-            rule_matches = result.total_matches
-            matched_files.update(result.matched_file_paths)
-            if not matched_files and result.total_files > 0:
-                matched_files.update(match.file for match in result.matches if match.file)
-        else:
-            if scanner is None:
-                scanner = DirectoryScanner(cfg)
-            if candidate_files is None:
-                candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
-            rule_matches = 0
-            for current_file in candidate_files:
-                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    matched_files.add(current_file)
-        total_matches += rule_matches
-        if rule_matches > 0:
-            matched_rules += 1
+    for finding in cast(list[dict[str, object]], payload["findings"]):
         typer.echo(
-            f"[scan] rule={rule['id']} lang={rule['language']} "
-            f"matches={rule_matches} files={len(matched_files)}"
+            f"[scan] rule={finding['rule_id']} lang={finding['language']} "
+            f"matches={finding['matches']} files={len(cast(list[str], finding['files']))}"
         )
 
     typer.echo(
         "Scan completed. "
-        f"rules={len(rules)} matched_rules={matched_rules} total_matches={total_matches} "
-        f"backends={','.join(sorted(backend_names_used)) or 'none'}"
+        f"rules={payload['rule_count']} matched_rules={payload['matched_rules']} "
+        f"total_matches={payload['total_matches']} "
+        f"backends={','.join(cast(list[str], payload['backends'])) or 'none'}"
     )
 
 

@@ -1690,6 +1690,42 @@ def test_scan_executes_builtin_ruleset(monkeypatch):
     assert "Scan completed. rules=2 matched_rules=1 total_matches=1" in result.output
 
 
+def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--ruleset",
+                "crypto-safe",
+                "--language",
+                "python",
+                "--path",
+                ".",
+                "--json",
+            ],
+        )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["routing_reason"] == "builtin-ruleset-scan"
+    assert payload["ruleset"] == "crypto-safe"
+    assert payload["rule_count"] == 2
+    assert payload["matched_rules"] == 1
+    assert payload["total_matches"] == 1
+    assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
+    assert payload["findings"][0]["files"] == ["a.py"]
+
+
 def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):
     _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
