@@ -1654,6 +1654,42 @@ def test_scan_executes_rules_from_sgconfig(monkeypatch):
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
+def test_rulesets_json_lists_builtin_rule_packs():
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["rulesets", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["rulesets"][0]["name"] == "crypto-safe"
+    assert payload["rulesets"][0]["category"] == "security"
+    assert "python" in payload["rulesets"][0]["languages"]
+    assert payload["rulesets"][0]["rule_count"] >= 1
+
+
+def test_scan_executes_builtin_ruleset(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["scan", "--ruleset", "crypto-safe", "--language", "python", "--path", "."],
+        )
+
+    assert result.exit_code == 0
+    assert "Scanning project using built-in ruleset crypto-safe (python)" in result.output
+    assert "[scan] rule=python-hashlib-md5 lang=python matches=1 files=1" in result.output
+    assert "[scan] rule=python-hashlib-sha1 lang=python matches=0 files=0" in result.output
+    assert "Scan completed. rules=2 matched_rules=1 total_matches=1" in result.output
+
+
 def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):
     _patch_direct_wrapper_selection(monkeypatch)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -2281,6 +2317,7 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "blast-radius" in result.stdout
     assert "blast-radius-render" in result.stdout
     assert "audit-verify" in result.stdout
+    assert "rulesets" in result.stdout
     assert "Run semantic log classification" in result.stdout
 
 

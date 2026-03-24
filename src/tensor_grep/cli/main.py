@@ -2305,25 +2305,84 @@ def run(
 
 
 @app.command()
+def rulesets(
+    json_output: bool = typer.Option(False, "--json", help="Emit structured ruleset metadata."),
+) -> None:
+    """List built-in security and compliance rule packs."""
+    from tensor_grep.cli.rule_packs import list_rule_packs
+
+    payload = {"rulesets": list_rule_packs()}
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not payload["rulesets"]:
+        typer.echo("No built-in rulesets are currently registered.")
+        return
+
+    for ruleset in payload["rulesets"]:
+        typer.echo(
+            f"{ruleset['name']}: {ruleset['description']} "
+            f"[category={ruleset['category']} status={ruleset['status']} "
+            f"languages={','.join(ruleset['languages'])} rules={ruleset['rule_count']}]"
+        )
+
+
+@app.command()
 def scan(
     config: str | None = typer.Option(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
     ),
+    ruleset: str | None = typer.Option(
+        None,
+        "--ruleset",
+        help="Built-in security/compliance ruleset to scan without sgconfig.",
+    ),
+    path: str = typer.Option(
+        ".",
+        "--path",
+        help="Scan root when using a built-in ruleset.",
+    ),
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        help="Language override when using a built-in ruleset.",
+    ),
 ) -> None:
     """Scan and rewrite code by configuration."""
+    from tensor_grep.cli.rule_packs import resolve_rule_pack
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
-    try:
-        project_cfg = _load_sg_project_config(config)
-    except (FileNotFoundError, ValueError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
+    if ruleset:
+        try:
+            ruleset_meta, rules = resolve_rule_pack(ruleset, language)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        project_cfg: dict[str, object] = {
+            "config_path": f"builtin:{ruleset_meta['name']}",
+            "root_dir": Path(path).resolve(),
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": ruleset_meta["language"],
+        }
+        scan_banner = (
+            "Scanning project using built-in ruleset "
+            f"{ruleset_meta['name']} ({ruleset_meta['language']})"
+        )
+    else:
+        try:
+            project_cfg = _load_sg_project_config(config)
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
 
-    rules = _load_rule_specs(project_cfg)
-    if not rules:
-        typer.echo("Error: No valid rules found in configured rule directories.", err=True)
-        sys.exit(1)
+        rules = _load_rule_specs(project_cfg)
+        if not rules:
+            typer.echo("Error: No valid rules found in configured rule directories.", err=True)
+            sys.exit(1)
+        scan_banner = "Scanning project using adaptive AST routing"
 
     cfg = SearchConfig(
         ast=True,
@@ -2336,7 +2395,6 @@ def scan(
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
 
-    scan_banner = "Scanning project using adaptive AST routing"
     typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
 
     total_matches = 0
