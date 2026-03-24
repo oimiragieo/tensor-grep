@@ -67,7 +67,58 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                 }
             ],
         },
-    }
+    },
+    "secrets-basic": {
+        "description": "Preview rules for obvious hardcoded secret assignments.",
+        "category": "security",
+        "status": "preview",
+        "default_language": "python",
+        "languages": {
+            "python": [
+                {
+                    "id": "python-hardcoded-password",
+                    "pattern": 'password = "$SECRET"',
+                    "language": "python",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding password literals in source files.",
+                },
+                {
+                    "id": "python-hardcoded-api-key",
+                    "pattern": 'api_key = "$SECRET"',
+                    "language": "python",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding API key literals in source files.",
+                },
+            ],
+            "javascript": [
+                {
+                    "id": "javascript-hardcoded-password",
+                    "pattern": 'const password = "$SECRET"',
+                    "language": "javascript",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding password literals in source files.",
+                }
+            ],
+            "typescript": [
+                {
+                    "id": "typescript-hardcoded-password",
+                    "pattern": 'const password = "$SECRET"',
+                    "language": "typescript",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding password literals in source files.",
+                }
+            ],
+            "rust": [
+                {
+                    "id": "rust-hardcoded-password",
+                    "pattern": 'let password = "$SECRET";',
+                    "language": "rust",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding password literals in source files.",
+                }
+            ],
+        },
+    },
 }
 
 
