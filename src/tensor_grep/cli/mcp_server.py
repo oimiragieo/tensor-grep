@@ -460,7 +460,13 @@ def tg_rulesets() -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_ruleset_scan(ruleset: str, path: str = ".", language: str | None = None) -> str:
+def tg_ruleset_scan(
+    ruleset: str,
+    path: str = ".",
+    language: str | None = None,
+    baseline_path: str | None = None,
+    write_baseline: str | None = None,
+) -> str:
     """
     Execute a built-in ruleset scan and return structured findings.
 
@@ -492,6 +498,8 @@ def tg_ruleset_scan(ruleset: str, path: str = ".", language: str | None = None) 
             rules,
             routing_reason="builtin-ruleset-scan",
             ruleset_name=ruleset_meta["name"],
+            baseline_path=baseline_path,
+            write_baseline_path=write_baseline,
         ),
         indent=2,
     )

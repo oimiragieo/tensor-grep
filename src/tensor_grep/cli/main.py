@@ -541,12 +541,83 @@ def _ruleset_finding_fingerprint(
     return hashlib.sha256(fingerprint_input).hexdigest()
 
 
+def _load_ruleset_baseline(path: str) -> dict[str, object]:
+    baseline_path = Path(path).expanduser().resolve()
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Ruleset baseline must be a JSON object.")
+    fingerprints = payload.get("fingerprints")
+    if not isinstance(fingerprints, list) or not all(
+        isinstance(item, str) and item.strip() for item in fingerprints
+    ):
+        raise ValueError("Ruleset baseline must include a non-empty 'fingerprints' string list.")
+    return {
+        "path": str(baseline_path),
+        "fingerprints": sorted(dict.fromkeys(fingerprints)),
+    }
+
+
+def _apply_ruleset_baseline(
+    payload: dict[str, object],
+    *,
+    baseline_path: str | None = None,
+    write_baseline_path: str | None = None,
+) -> None:
+    findings = cast(list[dict[str, object]], payload["findings"])
+    matched_fingerprints = sorted(
+        {
+            cast(str, finding["fingerprint"])
+            for finding in findings
+            if cast(int, finding["matches"]) > 0
+        }
+    )
+    if baseline_path is not None:
+        baseline = _load_ruleset_baseline(baseline_path)
+        baseline_fingerprints = set(cast(list[str], baseline["fingerprints"]))
+        current_fingerprints = set(matched_fingerprints)
+        for finding in findings:
+            if cast(int, finding["matches"]) <= 0:
+                finding["status"] = "clear"
+                continue
+            finding["status"] = (
+                "existing"
+                if cast(str, finding["fingerprint"]) in baseline_fingerprints
+                else "new"
+            )
+        payload["baseline"] = {
+            "path": baseline["path"],
+            "new_findings": sum(1 for finding in findings if finding.get("status") == "new"),
+            "existing_findings": sum(
+                1 for finding in findings if finding.get("status") == "existing"
+            ),
+            "resolved_findings": len(baseline_fingerprints - current_fingerprints),
+            "resolved_fingerprints": sorted(baseline_fingerprints - current_fingerprints),
+        }
+    if write_baseline_path is not None:
+        write_path = Path(write_baseline_path).expanduser().resolve()
+        baseline_payload = {
+            "version": _json_output_version(),
+            "kind": "ruleset-scan-baseline",
+            "ruleset": payload.get("ruleset"),
+            "language": payload.get("language"),
+            "fingerprints": matched_fingerprints,
+        }
+        write_path.write_text(json.dumps(baseline_payload, indent=2), encoding="utf-8")
+        payload["baseline_written"] = {
+            "path": str(write_path),
+            "fingerprints": matched_fingerprints,
+            "count": len(matched_fingerprints),
+        }
+
+
 def _run_ast_scan_payload(
     project_cfg: dict[str, object],
     rules: list[dict[str, str]],
     *,
     routing_reason: str,
     ruleset_name: str | None = None,
+    baseline_path: str | None = None,
+    write_baseline_path: str | None = None,
 ) -> dict[str, object]:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -620,7 +691,7 @@ def _run_ast_scan_payload(
             }
         )
 
-    return {
+    payload = {
         "version": _json_output_version(),
         "routing_backend": "AstBackend",
         "routing_reason": routing_reason,
@@ -635,6 +706,12 @@ def _run_ast_scan_payload(
         "backends": sorted(backend_names_used),
         "findings": findings,
     }
+    _apply_ruleset_baseline(
+        payload,
+        baseline_path=baseline_path,
+        write_baseline_path=write_baseline_path,
+    )
+    return payload
 
 
 def _search_ast_test_snippets_with_wrapper(
@@ -2492,6 +2569,16 @@ def scan(
         "--json",
         help="Emit structured scan findings.",
     ),
+    baseline: str | None = typer.Option(
+        None,
+        "--baseline",
+        help="Compare matched findings against a saved baseline fingerprint file.",
+    ),
+    write_baseline: str | None = typer.Option(
+        None,
+        "--write-baseline",
+        help="Write the current matched finding fingerprints to a baseline file.",
+    ),
 ) -> None:
     """Scan and rewrite code by configuration."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
@@ -2535,6 +2622,8 @@ def scan(
         rules,
         routing_reason=routing_reason,
         ruleset_name=ruleset_meta["name"] if ruleset else None,
+        baseline_path=baseline,
+        write_baseline_path=write_baseline,
     )
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -2552,6 +2641,20 @@ def scan(
         f"total_matches={payload['total_matches']} "
         f"backends={','.join(cast(list[str], payload['backends'])) or 'none'}"
     )
+    if payload.get("baseline"):
+        baseline_summary = cast(dict[str, object], payload["baseline"])
+        typer.echo(
+            "Baseline compared. "
+            f"new={baseline_summary['new_findings']} "
+            f"existing={baseline_summary['existing_findings']} "
+            f"resolved={baseline_summary['resolved_findings']}"
+        )
+    if payload.get("baseline_written"):
+        baseline_written = cast(dict[str, object], payload["baseline_written"])
+        typer.echo(
+            f"Baseline written to {baseline_written['path']} "
+            f"(count={baseline_written['count']})."
+        )
 
 
 @app.command()

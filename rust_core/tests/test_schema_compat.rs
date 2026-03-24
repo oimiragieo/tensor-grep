@@ -72,6 +72,7 @@ struct RulesetFindingExample {
     severity: String,
     message: String,
     fingerprint: String,
+    status: Option<String>,
     matches: usize,
     files: Vec<String>,
     evidence: Vec<RulesetEvidenceExample>,
@@ -100,6 +101,26 @@ struct RulesetScanExample {
     total_matches: usize,
     backends: Vec<String>,
     findings: Vec<RulesetFindingExample>,
+    baseline: Option<RulesetBaselineSummaryExample>,
+    baseline_written: Option<RulesetBaselineWrittenExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetBaselineSummaryExample {
+    path: String,
+    new_findings: usize,
+    existing_findings: usize,
+    resolved_findings: usize,
+    resolved_fingerprints: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetBaselineWrittenExample {
+    path: String,
+    fingerprints: Vec<String>,
+    count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1070,6 +1091,13 @@ fn assert_ruleset_scan_example(path: &Path) {
             "{} finding fingerprint must not be empty",
             path.display()
         );
+        if let Some(status) = &finding.status {
+            assert!(
+                matches!(status.as_str(), "new" | "existing" | "clear"),
+                "{} finding status must be new, existing, or clear",
+                path.display()
+            );
+        }
         assert_eq!(
             finding.files.len(),
             finding.evidence.len(),
@@ -1107,6 +1135,35 @@ fn assert_ruleset_scan_example(path: &Path) {
                 path.display()
             );
         }
+    }
+    if let Some(baseline) = &example.baseline {
+        assert!(
+            !baseline.path.is_empty(),
+            "{} baseline path must not be empty",
+            path.display()
+        );
+        assert!(
+            baseline.new_findings + baseline.existing_findings >= example.matched_rules,
+            "{} baseline counts should cover current matched rules",
+            path.display()
+        );
+        assert!(
+            baseline.resolved_findings == baseline.resolved_fingerprints.len(),
+            "{} resolved_findings must match resolved_fingerprints length",
+            path.display()
+        );
+    }
+    if let Some(written) = &example.baseline_written {
+        assert!(
+            !written.path.is_empty(),
+            "{} baseline_written path must not be empty",
+            path.display()
+        );
+        assert!(
+            written.count == written.fingerprints.len(),
+            "{} baseline_written count must match fingerprint length",
+            path.display()
+        );
     }
 }
 

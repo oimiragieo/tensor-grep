@@ -391,6 +391,57 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
+def test_tg_ruleset_scan_can_compare_and_write_baseline(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("baseline.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "kind": "ruleset-scan-baseline",
+                "ruleset": "crypto-safe",
+                "language": "python",
+                "fingerprints": [
+                    hashlib.sha256(
+                        json.dumps(
+                            {
+                                "rule_id": "python-hashlib-md5",
+                                "language": "python",
+                                "files": ["a.py"],
+                            },
+                            sort_keys=True,
+                        ).encode("utf-8")
+                    ).hexdigest()
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            "crypto-safe",
+            path=".",
+            language="python",
+            baseline_path="baseline.json",
+            write_baseline="written-baseline.json",
+        )
+    )
+    written = json.loads(Path("written-baseline.json").read_text(encoding="utf-8"))
+
+    assert payload["findings"][0]["status"] == "existing"
+    assert payload["baseline"]["existing_findings"] == 1
+    assert payload["baseline_written"]["count"] == 1
+    assert written["fingerprints"] == [payload["findings"][0]["fingerprint"]]
+
+
 def test_tg_rewrite_plan_returns_native_plan_json_shape():
     from tensor_grep.cli import mcp_server
 

@@ -20,6 +20,7 @@
       "severity": "high",
       "message": "Prefer a modern password or integrity primitive instead of hashlib.md5.",
       "fingerprint": "88ac067807ffca0f121fe31aa8e7c4cb0d319560719c4bc480c3fa757d3fa7eb",
+      "status": "existing",
       "matches": 1,
       "files": [
         "C:\\repo\\sample\\a.py"
@@ -37,9 +38,26 @@
       "severity": "high",
       "message": "Prefer a collision-resistant hash instead of hashlib.sha1.",
       "fingerprint": "df0e6255de70b1c33f194f0df6945e93bd84c0270eb9bbf0528f6af0c0bc6453",
+      "status": "clear",
       "matches": 0,
       "files": [],
       "evidence": []
     }
-  ]
+  ],
+  "baseline": {
+    "path": "C:\\repo\\sample\\baseline.json",
+    "new_findings": 0,
+    "existing_findings": 1,
+    "resolved_findings": 1,
+    "resolved_fingerprints": [
+      "resolved-fingerprint"
+    ]
+  },
+  "baseline_written": {
+    "path": "C:\\repo\\sample\\written-baseline.json",
+    "fingerprints": [
+      "88ac067807ffca0f121fe31aa8e7c4cb0d319560719c4bc480c3fa757d3fa7eb"
+    ],
+    "count": 1
+  }
 }

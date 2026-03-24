@@ -151,9 +151,17 @@ Each `findings[]` object has:
 | `severity` | `string` | Built-in severity label. |
 | `message` | `string` | Remediation guidance for the rule. |
 | `fingerprint` | `string` | Deterministic SHA-256 fingerprint derived from the rule identity and matched file set. |
+| `status` | `string` | Optional finding lifecycle state: `new`, `existing`, or `clear` when baseline comparison is enabled. |
 | `matches` | `integer` | Match count produced by the rule. |
 | `files` | `array<string>` | Stable list of files matched by the rule. |
 | `evidence` | `array<object>` | Stable per-file evidence rows with `file` and `match_count`. |
+
+Optional top-level baseline fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `baseline` | `object` | Present when `--baseline` is used. Includes `path`, `new_findings`, `existing_findings`, `resolved_findings`, and `resolved_fingerprints`. |
+| `baseline_written` | `object` | Present when `--write-baseline` is used. Includes the output `path`, written `fingerprints`, and `count`. |
 
 ## Repo Map JSON
 

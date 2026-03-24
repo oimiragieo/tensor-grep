@@ -1740,6 +1740,74 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
+def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+        Path("old-baseline.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "kind": "ruleset-scan-baseline",
+                    "ruleset": "crypto-safe",
+                    "language": "python",
+                    "fingerprints": [
+                        hashlib.sha256(
+                            json.dumps(
+                                {
+                                    "rule_id": "python-hashlib-md5",
+                                    "language": "python",
+                                    "files": ["a.py"],
+                                },
+                                sort_keys=True,
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                        "resolved-fingerprint",
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--ruleset",
+                "crypto-safe",
+                "--language",
+                "python",
+                "--path",
+                ".",
+                "--json",
+                "--baseline",
+                "old-baseline.json",
+                "--write-baseline",
+                "new-baseline.json",
+            ],
+        )
+
+        written = json.loads(Path("new-baseline.json").read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["findings"][0]["status"] == "existing"
+    assert payload["findings"][1]["status"] == "clear"
+    assert payload["baseline"]["new_findings"] == 0
+    assert payload["baseline"]["existing_findings"] == 1
+    assert payload["baseline"]["resolved_findings"] == 1
+    assert payload["baseline"]["resolved_fingerprints"] == ["resolved-fingerprint"]
+    assert payload["baseline_written"]["count"] == 1
+    assert written["kind"] == "ruleset-scan-baseline"
+    assert written["fingerprints"] == [payload["findings"][0]["fingerprint"]]
+
+
 def test_scan_executes_secrets_ruleset(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
