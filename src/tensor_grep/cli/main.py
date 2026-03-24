@@ -581,6 +581,7 @@ def _apply_ruleset_baseline(
     baseline_path: str | None = None,
     write_baseline_path: str | None = None,
     suppressions_path: str | None = None,
+    write_suppressions_path: str | None = None,
 ) -> None:
     findings = cast(list[dict[str, object]], payload["findings"])
     matched_fingerprints = sorted(
@@ -647,6 +648,21 @@ def _apply_ruleset_baseline(
                 1 for finding in findings if finding.get("status") == "suppressed"
             ),
         }
+    if write_suppressions_path is not None:
+        write_path = Path(write_suppressions_path).expanduser().resolve()
+        suppressions_payload = {
+            "version": _json_output_version(),
+            "kind": "ruleset-scan-suppressions",
+            "ruleset": payload.get("ruleset"),
+            "language": payload.get("language"),
+            "fingerprints": matched_fingerprints,
+        }
+        write_path.write_text(json.dumps(suppressions_payload, indent=2), encoding="utf-8")
+        payload["suppressions_written"] = {
+            "path": str(write_path),
+            "fingerprints": matched_fingerprints,
+            "count": len(matched_fingerprints),
+        }
 
 
 def _run_ast_scan_payload(
@@ -658,6 +674,7 @@ def _run_ast_scan_payload(
     baseline_path: str | None = None,
     write_baseline_path: str | None = None,
     suppressions_path: str | None = None,
+    write_suppressions_path: str | None = None,
 ) -> dict[str, object]:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -751,6 +768,7 @@ def _run_ast_scan_payload(
         baseline_path=baseline_path,
         write_baseline_path=write_baseline_path,
         suppressions_path=suppressions_path,
+        write_suppressions_path=write_suppressions_path,
     )
     return payload
 
@@ -2625,6 +2643,11 @@ def scan(
         "--suppressions",
         help="Mark matched findings present in a suppression fingerprint file as suppressed.",
     ),
+    write_suppressions: str | None = typer.Option(
+        None,
+        "--write-suppressions",
+        help="Write the current matched finding fingerprints to a suppression file.",
+    ),
 ) -> None:
     """Scan and rewrite code by configuration."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
@@ -2671,6 +2694,7 @@ def scan(
         baseline_path=baseline,
         write_baseline_path=write_baseline,
         suppressions_path=suppressions,
+        write_suppressions_path=write_suppressions,
     )
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -2707,6 +2731,12 @@ def scan(
         typer.echo(
             f"Suppressions applied from {suppressions_summary['path']} "
             f"(suppressed={suppressions_summary['suppressed_findings']})."
+        )
+    if payload.get("suppressions_written"):
+        suppressions_written = cast(dict[str, object], payload["suppressions_written"])
+        typer.echo(
+            f"Suppressions written to {suppressions_written['path']} "
+            f"(count={suppressions_written['count']})."
         )
 
 

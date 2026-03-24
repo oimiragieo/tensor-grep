@@ -163,6 +163,7 @@ Optional top-level baseline fields:
 | `baseline` | `object` | Present when `--baseline` is used. Includes `path`, `new_findings`, `existing_findings`, `resolved_findings`, and `resolved_fingerprints`. |
 | `baseline_written` | `object` | Present when `--write-baseline` is used. Includes the output `path`, written `fingerprints`, and `count`. |
 | `suppressions` | `object` | Present when `--suppressions` is used. Includes the suppression file `path` and `suppressed_findings`. |
+| `suppressions_written` | `object` | Present when `--write-suppressions` is used. Includes the written suppression file `path`, `fingerprints`, and `count`. |
 
 ## Repo Map JSON
 
@@ -826,7 +827,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 Current tool set:
 
 - `tg_rulesets()`
-- `tg_ruleset_scan(ruleset, path=".", language=None)`
+- `tg_ruleset_scan(ruleset, path=".", language=None, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None)`
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`

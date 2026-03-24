@@ -1859,6 +1859,41 @@ def test_scan_builtin_ruleset_can_apply_suppressions(monkeypatch):
     assert payload["suppressions"]["suppressed_findings"] == 1
 
 
+def test_scan_builtin_ruleset_can_write_suppressions(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--ruleset",
+                "crypto-safe",
+                "--language",
+                "python",
+                "--path",
+                ".",
+                "--json",
+                "--write-suppressions",
+                "written-suppressions.json",
+            ],
+        )
+
+        written = json.loads(Path("written-suppressions.json").read_text(encoding="utf-8"))
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["suppressions_written"]["count"] == 1
+    assert written["kind"] == "ruleset-scan-suppressions"
+    assert written["fingerprints"] == [payload["findings"][0]["fingerprint"]]
+
+
 def test_scan_executes_secrets_ruleset(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)

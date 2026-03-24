@@ -63,5 +63,12 @@
   "suppressions": {
     "path": "C:\\repo\\sample\\suppressions.json",
     "suppressed_findings": 0
+  },
+  "suppressions_written": {
+    "path": "C:\\repo\\sample\\written-suppressions.json",
+    "fingerprints": [
+      "88ac067807ffca0f121fe31aa8e7c4cb0d319560719c4bc480c3fa757d3fa7eb"
+    ],
+    "count": 1
   }
 }

@@ -104,6 +104,7 @@ struct RulesetScanExample {
     baseline: Option<RulesetBaselineSummaryExample>,
     baseline_written: Option<RulesetBaselineWrittenExample>,
     suppressions: Option<RulesetSuppressionsSummaryExample>,
+    suppressions_written: Option<RulesetBaselineWrittenExample>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1187,6 +1188,18 @@ fn assert_ruleset_scan_example(path: &Path) {
         assert!(
             suppressions.suppressed_findings == suppressed,
             "{} suppressed_findings must match the number of suppressed findings",
+            path.display()
+        );
+    }
+    if let Some(written) = &example.suppressions_written {
+        assert!(
+            !written.path.is_empty(),
+            "{} suppressions_written path must not be empty",
+            path.display()
+        );
+        assert!(
+            written.count == written.fingerprints.len(),
+            "{} suppressions_written count must match fingerprint length",
             path.display()
         );
     }

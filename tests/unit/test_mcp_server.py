@@ -483,6 +483,30 @@ def test_tg_ruleset_scan_can_apply_suppressions(monkeypatch, tmp_path):
     assert payload["suppressions"]["suppressed_findings"] == 1
 
 
+def test_tg_ruleset_scan_can_write_suppressions(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            "crypto-safe",
+            path=".",
+            language="python",
+            write_suppressions="written-suppressions.json",
+        )
+    )
+    written = json.loads(Path("written-suppressions.json").read_text(encoding="utf-8"))
+
+    assert payload["suppressions_written"]["count"] == 1
+    assert written["fingerprints"] == [payload["findings"][0]["fingerprint"]]
+
+
 def test_tg_rewrite_plan_returns_native_plan_json_shape():
     from tensor_grep.cli import mcp_server
 
