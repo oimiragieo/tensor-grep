@@ -1666,6 +1666,7 @@ def test_rulesets_json_lists_builtin_rule_packs():
     assert "python" in payload["rulesets"][0]["languages"]
     assert payload["rulesets"][0]["rule_count"] >= 1
     assert any(ruleset["name"] == "secrets-basic" for ruleset in payload["rulesets"])
+    assert any(ruleset["name"] == "tls-safe" for ruleset in payload["rulesets"])
 
 
 def test_scan_executes_builtin_ruleset(monkeypatch):
@@ -1828,6 +1829,32 @@ def test_scan_executes_secrets_ruleset(monkeypatch):
     assert "Scanning project using built-in ruleset secrets-basic (python)" in result.output
     assert "[scan] rule=python-hardcoded-password lang=python matches=1 files=1" in result.output
     assert "[scan] rule=python-hardcoded-api-key lang=python matches=0 files=0" in result.output
+    assert "Scan completed. rules=2 matched_rules=1 total_matches=1" in result.output
+
+
+def test_scan_executes_tls_ruleset(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("ssl._create_unverified_context()\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["scan", "--ruleset", "tls-safe", "--language", "python", "--path", "."],
+        )
+
+    assert result.exit_code == 0
+    assert "Scanning project using built-in ruleset tls-safe (python)" in result.output
+    assert (
+        "[scan] rule=python-unverified-ssl-context lang=python matches=1 files=1"
+        in result.output
+    )
+    assert "[scan] rule=python-requests-verify-false lang=python matches=0 files=0" in result.output
     assert "Scan completed. rules=2 matched_rules=1 total_matches=1" in result.output
 
 

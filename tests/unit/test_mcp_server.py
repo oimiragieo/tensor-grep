@@ -354,6 +354,7 @@ def test_tg_rulesets_returns_builtin_ruleset_metadata():
     assert payload["rulesets"][0]["name"] == "crypto-safe"
     assert payload["rulesets"][0]["category"] == "security"
     assert any(ruleset["name"] == "secrets-basic" for ruleset in payload["rulesets"])
+    assert any(ruleset["name"] == "tls-safe" for ruleset in payload["rulesets"])
 
 
 def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):

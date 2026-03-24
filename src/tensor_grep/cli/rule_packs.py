@@ -119,6 +119,57 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
             ],
         },
     },
+    "tls-safe": {
+        "description": "Preview TLS hygiene checks for certificate verification bypasses.",
+        "category": "security",
+        "status": "preview",
+        "default_language": "python",
+        "languages": {
+            "python": [
+                {
+                    "id": "python-unverified-ssl-context",
+                    "pattern": "ssl._create_unverified_context()",
+                    "language": "python",
+                    "severity": "high",
+                    "message": "Do not disable TLS certificate verification with ssl._create_unverified_context().",
+                },
+                {
+                    "id": "python-requests-verify-false",
+                    "pattern": "requests.get($URL, verify=False)",
+                    "language": "python",
+                    "severity": "high",
+                    "message": "Do not disable TLS certificate verification with verify=False.",
+                },
+            ],
+            "javascript": [
+                {
+                    "id": "javascript-reject-unauthorized-false",
+                    "pattern": "rejectUnauthorized: false",
+                    "language": "javascript",
+                    "severity": "high",
+                    "message": "Do not disable TLS certificate verification with rejectUnauthorized: false.",
+                }
+            ],
+            "typescript": [
+                {
+                    "id": "typescript-reject-unauthorized-false",
+                    "pattern": "rejectUnauthorized: false",
+                    "language": "typescript",
+                    "severity": "high",
+                    "message": "Do not disable TLS certificate verification with rejectUnauthorized: false.",
+                }
+            ],
+            "rust": [
+                {
+                    "id": "rust-danger-accept-invalid-certs",
+                    "pattern": "danger_accept_invalid_certs(true)",
+                    "language": "rust",
+                    "severity": "high",
+                    "message": "Do not disable TLS certificate verification with danger_accept_invalid_certs(true).",
+                }
+            ],
+        },
+    },
 }
 
 

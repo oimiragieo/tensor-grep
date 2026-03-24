@@ -31,6 +31,20 @@
         "typescript"
       ],
       "rule_count": 5
+    },
+    {
+      "name": "tls-safe",
+      "description": "Preview TLS hygiene checks for certificate verification bypasses.",
+      "category": "security",
+      "status": "preview",
+      "default_language": "python",
+      "languages": [
+        "javascript",
+        "python",
+        "rust",
+        "typescript"
+      ],
+      "rule_count": 5
     }
   ]
 }
