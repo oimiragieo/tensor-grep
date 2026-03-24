@@ -83,6 +83,15 @@ struct RulesetFindingExample {
 struct RulesetEvidenceExample {
     file: String,
     match_count: usize,
+    #[serde(default)]
+    snippets: Vec<RulesetEvidenceSnippetExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetEvidenceSnippetExample {
+    text: String,
+    truncated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1143,6 +1152,13 @@ fn assert_ruleset_scan_example(path: &Path) {
                 "{} evidence match_count must be positive",
                 path.display()
             );
+            for snippet in &evidence.snippets {
+                assert!(
+                    !snippet.text.is_empty() || snippet.truncated,
+                    "{} evidence snippet must carry text unless it is fully truncated",
+                    path.display()
+                );
+            }
         }
     }
     if let Some(baseline) = &example.baseline {

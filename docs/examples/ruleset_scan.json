@@ -28,7 +28,13 @@
       "evidence": [
         {
           "file": "C:\\repo\\sample\\a.py",
-          "match_count": 1
+          "match_count": 1,
+          "snippets": [
+            {
+              "text": "hashlib.md5(",
+              "truncated": true
+            }
+          ]
         }
       ]
     },

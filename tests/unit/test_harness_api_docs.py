@@ -182,6 +182,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                     "clear",
                 }
                 assert "evidence" in payload["findings"][0]
+                assert isinstance(payload["findings"][0]["evidence"][0].get("snippets", []), list)
                 assert payload["baseline"]["existing_findings"] >= 0
                 assert payload["baseline_written"]["count"] >= 0
                 assert payload["suppressions"]["suppressed_findings"] >= 0

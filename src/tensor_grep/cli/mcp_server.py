@@ -468,6 +468,9 @@ def tg_ruleset_scan(
     write_baseline: str | None = None,
     suppressions_path: str | None = None,
     write_suppressions: str | None = None,
+    include_evidence_snippets: bool = False,
+    max_evidence_snippets_per_file: int = 1,
+    max_evidence_snippet_chars: int = 120,
 ) -> str:
     """
     Execute a built-in ruleset scan and return structured findings.
@@ -504,6 +507,9 @@ def tg_ruleset_scan(
             write_baseline_path=write_baseline,
             suppressions_path=suppressions_path,
             write_suppressions_path=write_suppressions,
+            include_evidence_snippets=include_evidence_snippets,
+            max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+            max_evidence_snippet_chars=max_evidence_snippet_chars,
         ),
         indent=2,
     )

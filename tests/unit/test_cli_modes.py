@@ -1741,6 +1741,43 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
+def test_scan_builtin_ruleset_can_emit_evidence_snippets(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            [
+                "scan",
+                "--ruleset",
+                "crypto-safe",
+                "--language",
+                "python",
+                "--path",
+                ".",
+                "--json",
+                "--include-evidence-snippets",
+                "--max-evidence-snippets-per-file",
+                "1",
+                "--max-evidence-snippet-chars",
+                "12",
+            ],
+        )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["findings"][0]["evidence"][0]["snippets"] == [
+        {"text": "hashlib.md5(", "truncated": True}
+    ]
+
+
 def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)

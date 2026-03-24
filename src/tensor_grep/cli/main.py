@@ -541,6 +541,15 @@ def _ruleset_finding_fingerprint(
     return hashlib.sha256(fingerprint_input).hexdigest()
 
 
+def _truncate_evidence_snippet(text: str, max_chars: int) -> dict[str, object]:
+    normalized = " ".join(text.split())
+    if max_chars <= 0:
+        return {"text": "", "truncated": bool(normalized)}
+    if len(normalized) <= max_chars:
+        return {"text": normalized, "truncated": False}
+    return {"text": normalized[:max_chars], "truncated": True}
+
+
 def _load_ruleset_baseline(path: str) -> dict[str, object]:
     baseline_path = Path(path).expanduser().resolve()
     payload = json.loads(baseline_path.read_text(encoding="utf-8"))
@@ -675,6 +684,9 @@ def _run_ast_scan_payload(
     write_baseline_path: str | None = None,
     suppressions_path: str | None = None,
     write_suppressions_path: str | None = None,
+    include_evidence_snippets: bool = False,
+    max_evidence_snippets_per_file: int = 1,
+    max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
@@ -699,6 +711,7 @@ def _run_ast_scan_payload(
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
         match_counts_by_file: dict[str, int] = {}
+        snippets_by_file: dict[str, list[dict[str, object]]] = {}
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
             rule_matches = result.total_matches
@@ -708,6 +721,14 @@ def _run_ast_scan_payload(
             for match in result.matches:
                 if match.file:
                     match_counts_by_file[match.file] = match_counts_by_file.get(match.file, 0) + 1
+                    if (
+                        include_evidence_snippets
+                        and len(snippets_by_file.get(match.file, []))
+                        < max_evidence_snippets_per_file
+                    ):
+                        snippets_by_file.setdefault(match.file, []).append(
+                            _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                        )
             if not matched_files and result.total_files > 0:
                 matched_files.update(match.file for match in result.matches if match.file)
         else:
@@ -724,6 +745,14 @@ def _run_ast_scan_payload(
                     match_counts_by_file[current_file] = (
                         match_counts_by_file.get(current_file, 0) + result.total_matches
                     )
+                    if include_evidence_snippets:
+                        file_snippets = snippets_by_file.setdefault(current_file, [])
+                        for match in result.matches:
+                            if len(file_snippets) >= max_evidence_snippets_per_file:
+                                break
+                            file_snippets.append(
+                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                            )
         total_matches += rule_matches
         if rule_matches > 0:
             matched_rules += 1
@@ -742,7 +771,15 @@ def _run_ast_scan_payload(
                 "matches": rule_matches,
                 "files": sorted_files,
                 "evidence": [
-                    {"file": file_path, "match_count": match_counts_by_file.get(file_path, 0)}
+                    {
+                        "file": file_path,
+                        "match_count": match_counts_by_file.get(file_path, 0),
+                        **(
+                            {"snippets": snippets_by_file.get(file_path, [])}
+                            if include_evidence_snippets
+                            else {}
+                        ),
+                    }
                     for file_path in sorted_files
                 ],
             }
@@ -2648,6 +2685,23 @@ def scan(
         "--write-suppressions",
         help="Write the current matched finding fingerprints to a suppression file.",
     ),
+    include_evidence_snippets: bool = typer.Option(
+        False,
+        "--include-evidence-snippets",
+        help="Attach bounded raw match snippets to structured ruleset scan evidence rows.",
+    ),
+    max_evidence_snippets_per_file: int = typer.Option(
+        1,
+        "--max-evidence-snippets-per-file",
+        min=1,
+        help="Maximum number of snippets to keep per matched file when snippet evidence is enabled.",
+    ),
+    max_evidence_snippet_chars: int = typer.Option(
+        120,
+        "--max-evidence-snippet-chars",
+        min=1,
+        help="Maximum characters to keep per evidence snippet when snippet evidence is enabled.",
+    ),
 ) -> None:
     """Scan and rewrite code by configuration."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
@@ -2695,6 +2749,9 @@ def scan(
         write_baseline_path=write_baseline,
         suppressions_path=suppressions,
         write_suppressions_path=write_suppressions,
+        include_evidence_snippets=include_evidence_snippets,
+        max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+        max_evidence_snippet_chars=max_evidence_snippet_chars,
     )
     if json_output:
         typer.echo(json.dumps(payload, indent=2))

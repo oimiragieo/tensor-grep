@@ -154,7 +154,7 @@ Each `findings[]` object has:
 | `status` | `string` | Optional finding lifecycle state: `new`, `existing`, `suppressed`, or `clear` when baseline/suppression controls are enabled. |
 | `matches` | `integer` | Match count produced by the rule. |
 | `files` | `array<string>` | Stable list of files matched by the rule. |
-| `evidence` | `array<object>` | Stable per-file evidence rows with `file` and `match_count`. |
+| `evidence` | `array<object>` | Stable per-file evidence rows with `file`, `match_count`, and optional bounded `snippets[]` when snippet evidence is enabled. |
 
 Optional top-level baseline fields:
 
@@ -827,7 +827,7 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 Current tool set:
 
 - `tg_rulesets()`
-- `tg_ruleset_scan(ruleset, path=".", language=None, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None)`
+- `tg_ruleset_scan(ruleset, path=".", language=None, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)`
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`

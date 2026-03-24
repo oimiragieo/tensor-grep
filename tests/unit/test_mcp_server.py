@@ -392,6 +392,33 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
+def test_tg_ruleset_scan_can_emit_evidence_snippets(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    monkeypatch.chdir(tmp_path)
+
+    Path("a.py").write_text("hashlib.md5($$$ARGS)\n", encoding="utf-8")
+    Path("b.py").write_text("ok\n", encoding="utf-8")
+
+    payload = json.loads(
+        mcp_server.tg_ruleset_scan(
+            "crypto-safe",
+            path=".",
+            language="python",
+            include_evidence_snippets=True,
+            max_evidence_snippets_per_file=1,
+            max_evidence_snippet_chars=12,
+        )
+    )
+
+    assert payload["findings"][0]["evidence"][0]["snippets"] == [
+        {"text": "hashlib.md5(", "truncated": True}
+    ]
+
+
 def test_tg_ruleset_scan_can_compare_and_write_baseline(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
     from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
