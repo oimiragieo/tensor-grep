@@ -522,6 +522,25 @@ def _build_rulesets_payload() -> dict[str, object]:
     }
 
 
+def _ruleset_finding_fingerprint(
+    *,
+    rule_id: str,
+    language: str,
+    matched_files: list[str],
+) -> str:
+    import hashlib
+
+    fingerprint_input = json.dumps(
+        {
+            "rule_id": rule_id,
+            "language": language,
+            "files": matched_files,
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(fingerprint_input).hexdigest()
+
+
 def _run_ast_scan_payload(
     project_cfg: dict[str, object],
     rules: list[dict[str, str]],
@@ -577,6 +596,11 @@ def _run_ast_scan_payload(
                 "language": rule["language"],
                 "severity": rule.get("severity"),
                 "message": rule.get("message"),
+                "fingerprint": _ruleset_finding_fingerprint(
+                    rule_id=rule["id"],
+                    language=rule["language"],
+                    matched_files=sorted(matched_files),
+                ),
                 "matches": rule_matches,
                 "files": sorted(matched_files),
             }

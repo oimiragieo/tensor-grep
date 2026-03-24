@@ -1726,6 +1726,16 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
     assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
     assert payload["findings"][0]["severity"] == "high"
     assert "hashlib.md5" in payload["findings"][0]["message"]
+    assert payload["findings"][0]["fingerprint"] == hashlib.sha256(
+        json.dumps(
+            {
+                "rule_id": "python-hashlib-md5",
+                "language": "python",
+                "files": ["a.py"],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
     assert payload["findings"][0]["files"] == ["a.py"]
 
 
