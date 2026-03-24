@@ -575,6 +575,8 @@ def _run_ast_scan_payload(
             {
                 "rule_id": rule["id"],
                 "language": rule["language"],
+                "severity": rule.get("severity"),
+                "message": rule.get("message"),
                 "matches": rule_matches,
                 "files": sorted(matched_files),
             }

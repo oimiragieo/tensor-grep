@@ -1724,6 +1724,8 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
     assert payload["matched_rules"] == 1
     assert payload["total_matches"] == 1
     assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
+    assert payload["findings"][0]["severity"] == "high"
+    assert "hashlib.md5" in payload["findings"][0]["message"]
     assert payload["findings"][0]["files"] == ["a.py"]
 
 

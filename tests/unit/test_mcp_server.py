@@ -375,6 +375,8 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
     assert payload["matched_rules"] == 1
     assert payload["total_matches"] == 1
     assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
+    assert payload["findings"][0]["severity"] == "high"
+    assert "hashlib.md5" in payload["findings"][0]["message"]
     assert payload["findings"][0]["files"] == ["a.py"]
 
 

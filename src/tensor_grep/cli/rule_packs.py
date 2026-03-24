@@ -141,7 +141,9 @@ def list_rule_packs() -> list[dict[str, Any]]:
     return packs
 
 
-def resolve_rule_pack(name: str, language: str | None = None) -> tuple[dict[str, Any], list[dict[str, str]]]:
+def resolve_rule_pack(
+    name: str, language: str | None = None
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
     normalized_name = name.strip().lower()
     if normalized_name not in _RULE_PACKS:
         available = ", ".join(pack["name"] for pack in list_rule_packs())
@@ -162,6 +164,8 @@ def resolve_rule_pack(name: str, language: str | None = None) -> tuple[dict[str,
             "id": str(rule["id"]),
             "pattern": str(rule["pattern"]),
             "language": str(rule["language"]),
+            "severity": str(rule["severity"]),
+            "message": str(rule["message"]),
         }
         for rule in raw_rules
     ]
