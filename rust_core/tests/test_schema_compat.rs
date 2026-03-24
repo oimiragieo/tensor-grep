@@ -71,8 +71,17 @@ struct RulesetFindingExample {
     language: String,
     severity: String,
     message: String,
+    fingerprint: String,
     matches: usize,
     files: Vec<String>,
+    evidence: Vec<RulesetEvidenceExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetEvidenceExample {
+    file: String,
+    match_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1056,10 +1065,45 @@ fn assert_ruleset_scan_example(path: &Path) {
             "{} finding message must not be empty",
             path.display()
         );
+        assert!(
+            !finding.fingerprint.is_empty(),
+            "{} finding fingerprint must not be empty",
+            path.display()
+        );
+        assert_eq!(
+            finding.files.len(),
+            finding.evidence.len(),
+            "{} finding evidence rows must align with the matched file list",
+            path.display()
+        );
+        let evidence_total: usize = finding
+            .evidence
+            .iter()
+            .map(|evidence| evidence.match_count)
+            .sum();
+        assert_eq!(
+            finding.matches,
+            evidence_total,
+            "{} finding matches must equal the summed evidence match_count values",
+            path.display()
+        );
         for file in &finding.files {
             assert!(
                 Path::new(file).is_absolute() || is_windows_absolute_path_literal(file),
                 "{} finding file should be absolute or an absolute Windows path literal",
+                path.display()
+            );
+        }
+        for evidence in &finding.evidence {
+            assert!(
+                Path::new(&evidence.file).is_absolute()
+                    || is_windows_absolute_path_literal(&evidence.file),
+                "{} evidence file should be absolute or an absolute Windows path literal",
+                path.display()
+            );
+            assert!(
+                evidence.match_count > 0,
+                "{} evidence match_count must be positive",
                 path.display()
             );
         }

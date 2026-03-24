@@ -174,6 +174,8 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert payload["ruleset"]
                 assert isinstance(payload["findings"], list)
                 assert payload["findings"]
+                assert payload["findings"][0]["fingerprint"]
+                assert "evidence" in payload["findings"][0]
 
         for key in required_keys:
             assert key in payload

@@ -150,8 +150,10 @@ Each `findings[]` object has:
 | `language` | `string` | Rule language. |
 | `severity` | `string` | Built-in severity label. |
 | `message` | `string` | Remediation guidance for the rule. |
+| `fingerprint` | `string` | Deterministic SHA-256 fingerprint derived from the rule identity and matched file set. |
 | `matches` | `integer` | Match count produced by the rule. |
 | `files` | `array<string>` | Stable list of files matched by the rule. |
+| `evidence` | `array<object>` | Stable per-file evidence rows with `file` and `match_count`. |
 
 ## Repo Map JSON
 

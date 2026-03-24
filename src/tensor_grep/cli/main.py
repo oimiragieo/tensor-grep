@@ -570,10 +570,16 @@ def _run_ast_scan_payload(
         backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
+        match_counts_by_file: dict[str, int] = {}
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
             rule_matches = result.total_matches
             matched_files.update(result.matched_file_paths)
+            for file_path, count in result.match_counts_by_file.items():
+                match_counts_by_file[file_path] = match_counts_by_file.get(file_path, 0) + count
+            for match in result.matches:
+                if match.file:
+                    match_counts_by_file[match.file] = match_counts_by_file.get(match.file, 0) + 1
             if not matched_files and result.total_files > 0:
                 matched_files.update(match.file for match in result.matches if match.file)
         else:
@@ -587,9 +593,13 @@ def _run_ast_scan_payload(
                 rule_matches += result.total_matches
                 if result.total_files > 0 or result.total_matches > 0:
                     matched_files.add(current_file)
+                    match_counts_by_file[current_file] = (
+                        match_counts_by_file.get(current_file, 0) + result.total_matches
+                    )
         total_matches += rule_matches
         if rule_matches > 0:
             matched_rules += 1
+        sorted_files = sorted(matched_files)
         findings.append(
             {
                 "rule_id": rule["id"],
@@ -599,10 +609,14 @@ def _run_ast_scan_payload(
                 "fingerprint": _ruleset_finding_fingerprint(
                     rule_id=rule["id"],
                     language=rule["language"],
-                    matched_files=sorted(matched_files),
+                    matched_files=sorted_files,
                 ),
                 "matches": rule_matches,
-                "files": sorted(matched_files),
+                "files": sorted_files,
+                "evidence": [
+                    {"file": file_path, "match_count": match_counts_by_file.get(file_path, 0)}
+                    for file_path in sorted_files
+                ],
             }
         )
 

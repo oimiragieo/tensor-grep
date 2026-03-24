@@ -1737,6 +1737,7 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
         ).encode("utf-8")
     ).hexdigest()
     assert payload["findings"][0]["files"] == ["a.py"]
+    assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
 def test_scan_executes_secrets_ruleset(monkeypatch):

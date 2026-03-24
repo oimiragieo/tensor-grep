@@ -388,6 +388,7 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
         ).encode("utf-8")
     ).hexdigest()
     assert payload["findings"][0]["files"] == ["a.py"]
+    assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
 
 def test_tg_rewrite_plan_returns_native_plan_json_shape():
