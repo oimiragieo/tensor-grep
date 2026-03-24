@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "routing_backend": "AstBackend",
+  "routing_reason": "builtin-ruleset-scan",
+  "sidecar_used": false,
+  "config_path": "builtin:crypto-safe",
+  "path": "C:\\repo\\sample",
+  "ruleset": "crypto-safe",
+  "language": "python",
+  "rule_count": 2,
+  "matched_rules": 1,
+  "total_matches": 1,
+  "backends": [
+    "AstBackend"
+  ],
+  "findings": [
+    {
+      "rule_id": "python-hashlib-md5",
+      "language": "python",
+      "severity": "high",
+      "message": "Prefer a modern password or integrity primitive instead of hashlib.md5.",
+      "matches": 1,
+      "files": [
+        "C:\\repo\\sample\\a.py"
+      ]
+    },
+    {
+      "rule_id": "python-hashlib-sha1",
+      "language": "python",
+      "severity": "high",
+      "message": "Prefer a collision-resistant hash instead of hashlib.sha1.",
+      "matches": 0,
+      "files": []
+    }
+  ]
+}

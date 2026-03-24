@@ -6,6 +6,8 @@ EXAMPLES_DIR = Path("docs/examples")
 EXPECTED_EXAMPLES = {
     "search.json": ("total_matches", "matches"),
     "index_search.json": ("sidecar_used", "matches"),
+    "rulesets.json": ("rulesets",),
+    "ruleset_scan.json": ("ruleset", "findings", "total_matches"),
     "repo_map.json": ("files", "symbols"),
     "context_pack.json": ("query", "files"),
     "context_render.json": (
@@ -49,6 +51,8 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "# Harness API" in doc
     assert "## Search JSON" in doc
     assert "## Index Search JSON" in doc
+    assert "## Rulesets JSON" in doc
+    assert "## Ruleset Scan JSON" in doc
     assert "## Repo Map JSON" in doc
     assert "## Context Pack JSON" in doc
     assert "## Context Render JSON" in doc
@@ -83,6 +87,8 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
     assert "tg_context_render" in doc
+    assert "tg_rulesets" in doc
+    assert "tg_ruleset_scan" in doc
     assert "tg_symbol_defs" in doc
     assert "tg_symbol_source" in doc
     assert "tg_symbol_impact" in doc
@@ -161,6 +167,13 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert payload["coverage"]["language_scope"] == "python-js-ts-rust"
                 assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
                 assert payload["coverage"]["test_matching"] == "filename+import+graph-heuristic"
+            if file_name == "rulesets.json":
+                assert isinstance(payload["rulesets"], list)
+                assert payload["rulesets"]
+            if file_name == "ruleset_scan.json":
+                assert payload["ruleset"]
+                assert isinstance(payload["findings"], list)
+                assert payload["findings"]
 
         for key in required_keys:
             assert key in payload
@@ -179,6 +192,8 @@ def test_harness_api_examples_are_non_trivial_single_document_json() -> None:
         measurements = payload.get("measurements")
         diff = payload.get("diff")
         files = payload.get("files")
+        findings = payload.get("findings")
+        rulesets = payload.get("rulesets")
         symbols = payload.get("symbols")
         file_count = payload.get("file_count")
         checks = payload.get("checks")
@@ -190,6 +205,8 @@ def test_harness_api_examples_are_non_trivial_single_document_json() -> None:
             or measurements
             or diff
             or files
+            or findings
+            or rulesets
             or symbols
             or file_count
             or checks

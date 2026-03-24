@@ -23,6 +23,8 @@ These top-level fields are shared across every JSON shape documented here.
 | --- | --- | --- |
 | Search JSON | `tg.exe search --json ...` | [`examples/search.json`](examples/search.json) |
 | Index search JSON | `tg.exe search --index --json ...` | [`examples/index_search.json`](examples/index_search.json) |
+| Rulesets JSON | `tg.exe rulesets --json` | [`examples/rulesets.json`](examples/rulesets.json) |
+| Ruleset scan JSON | `tg.exe scan --ruleset <name> --json ...` | [`examples/ruleset_scan.json`](examples/ruleset_scan.json) |
 | Repo map JSON | `tg.exe map --json ...` | [`examples/repo_map.json`](examples/repo_map.json) |
 | Context pack JSON | `tg.exe context --query ... --json ...` | [`examples/context_pack.json`](examples/context_pack.json) |
 | Context render JSON | `tg.exe context-render --query ... --json ...` | [`examples/context_render.json`](examples/context_render.json) |
@@ -87,6 +89,69 @@ The shape matches Search JSON exactly; only the routing envelope changes.
 | `matches[].file` | `string` | Absolute file path. |
 | `matches[].line` | `integer` | 1-based line number. |
 | `matches[].text` | `string` | Matching line text. |
+
+## Rulesets JSON
+
+Emitted by `tg.exe rulesets --json`.
+
+Example: [`examples/rulesets.json`](examples/rulesets.json)
+
+Use this shape when a harness needs to discover the built-in security or compliance packs before choosing a scan.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `AstBackend`. |
+| `routing_reason` | `string` | `builtin-rulesets`. |
+| `sidecar_used` | `boolean` | Always `false`. |
+| `rulesets` | `array<object>` | Registered built-in packs. |
+
+Each `rulesets[]` object has:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `name` | `string` | Stable built-in ruleset name. |
+| `description` | `string` | Human-readable summary. |
+| `category` | `string` | Current built-in packs use `security`. |
+| `status` | `string` | Lifecycle label such as `preview`. |
+| `default_language` | `string` | Default language used if the caller does not override it. |
+| `languages` | `array<string>` | Supported language identifiers. |
+| `rule_count` | `integer` | Total number of rules registered across the supported languages. |
+
+## Ruleset Scan JSON
+
+Emitted by `tg.exe scan --ruleset <name> --json ...`.
+
+Example: [`examples/ruleset_scan.json`](examples/ruleset_scan.json)
+
+Use this shape when a harness wants structured findings from a built-in security or compliance pack.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `AstBackend`. |
+| `routing_reason` | `string` | `builtin-ruleset-scan`. |
+| `sidecar_used` | `boolean` | Always `false`. |
+| `config_path` | `string` | Built-in config reference such as `builtin:crypto-safe`. |
+| `path` | `string` | Scan root. |
+| `ruleset` | `string` | Selected ruleset name. |
+| `language` | `string` | Effective language used to resolve the built-in pack. |
+| `rule_count` | `integer` | Total rules executed. |
+| `matched_rules` | `integer` | Number of rules that matched at least once. |
+| `total_matches` | `integer` | Aggregate matches across every rule. |
+| `backends` | `array<string>` | Backends used during the scan. |
+| `findings` | `array<object>` | Stable per-rule finding summaries. |
+
+Each `findings[]` object has:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `rule_id` | `string` | Stable built-in rule identifier. |
+| `language` | `string` | Rule language. |
+| `severity` | `string` | Built-in severity label. |
+| `message` | `string` | Remediation guidance for the rule. |
+| `matches` | `integer` | Match count produced by the rule. |
+| `files` | `array<string>` | Stable list of files matched by the rule. |
 
 ## Repo Map JSON
 
@@ -749,6 +814,8 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 Current tool set:
 
+- `tg_rulesets()`
+- `tg_ruleset_scan(ruleset, path=".", language=None)`
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
@@ -778,6 +845,8 @@ Current tool set:
 
 Response mapping:
 
+- `tg_rulesets()` returns the same v1 envelope and payload shape as [`examples/rulesets.json`](examples/rulesets.json)
+- `tg_ruleset_scan(...)` returns the same v1 envelope and payload shape as [`examples/ruleset_scan.json`](examples/ruleset_scan.json)
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
 - `tg_context_render(...)` returns the same v1 envelope and payload shape as [`examples/context_render.json`](examples/context_render.json)
 - `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)

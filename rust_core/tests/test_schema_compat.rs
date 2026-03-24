@@ -12,6 +12,8 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "index_search.json",
     "mcp_rewrite_diff.json",
     "repo_map.json",
+    "ruleset_scan.json",
+    "rulesets.json",
     "defs.json",
     "source.json",
     "impact.json",
@@ -38,6 +40,57 @@ struct SearchExample {
     path: String,
     total_matches: usize,
     matches: Vec<SearchMatch>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetMetadataExample {
+    name: String,
+    description: String,
+    category: String,
+    status: String,
+    default_language: String,
+    languages: Vec<String>,
+    rule_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetsExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    rulesets: Vec<RulesetMetadataExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetFindingExample {
+    rule_id: String,
+    language: String,
+    severity: String,
+    message: String,
+    matches: usize,
+    files: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RulesetScanExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    config_path: String,
+    path: String,
+    ruleset: String,
+    language: String,
+    rule_count: usize,
+    matched_rules: usize,
+    total_matches: usize,
+    backends: Vec<String>,
+    findings: Vec<RulesetFindingExample>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -733,6 +786,8 @@ fn test_docs_examples_match_v1_schema() {
     for path in &example_paths {
         match example_file_name(path) {
             "search.json" | "index_search.json" => assert_search_example(path),
+            "rulesets.json" => assert_rulesets_example(path),
+            "ruleset_scan.json" => assert_ruleset_scan_example(path),
             "rewrite_plan.json" => assert_rewrite_plan_example(path),
             "rewrite_apply_verify.json" => assert_apply_verify_example(path),
             "audit_manifest_verify.json" => assert_audit_manifest_verify_example(path),
@@ -867,6 +922,147 @@ fn assert_search_example(path: &Path) {
             "{} match missing text",
             path.display()
         );
+    }
+}
+
+fn assert_rulesets_example(path: &Path) {
+    let example: RulesetsExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} rulesets example should stay native",
+        path.display()
+    );
+    assert!(
+        !example.rulesets.is_empty(),
+        "{} should include at least one built-in ruleset",
+        path.display()
+    );
+    for ruleset in &example.rulesets {
+        assert!(
+            !ruleset.name.is_empty(),
+            "{} ruleset name must not be empty",
+            path.display()
+        );
+        assert!(
+            !ruleset.description.is_empty(),
+            "{} ruleset description must not be empty",
+            path.display()
+        );
+        assert!(
+            !ruleset.category.is_empty(),
+            "{} ruleset category must not be empty",
+            path.display()
+        );
+        assert!(
+            !ruleset.status.is_empty(),
+            "{} ruleset status must not be empty",
+            path.display()
+        );
+        assert!(
+            !ruleset.default_language.is_empty(),
+            "{} default_language must not be empty",
+            path.display()
+        );
+        assert!(
+            !ruleset.languages.is_empty(),
+            "{} ruleset languages must not be empty",
+            path.display()
+        );
+        assert!(
+            ruleset.rule_count > 0,
+            "{} ruleset rule_count must be positive",
+            path.display()
+        );
+    }
+}
+
+fn assert_ruleset_scan_example(path: &Path) {
+    let example: RulesetScanExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} ruleset scan example should stay native",
+        path.display()
+    );
+    assert!(
+        example.config_path.starts_with("builtin:"),
+        "{} config_path should reference a built-in ruleset",
+        path.display()
+    );
+    assert!(
+        !example.path.is_empty(),
+        "{} path must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.ruleset.is_empty(),
+        "{} ruleset name must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.language.is_empty(),
+        "{} language must not be empty",
+        path.display()
+    );
+    assert!(
+        example.rule_count >= example.findings.len(),
+        "{} rule_count must cover the findings array",
+        path.display()
+    );
+    assert!(
+        example.total_matches >= example.matched_rules,
+        "{} total_matches must be at least matched_rules",
+        path.display()
+    );
+    assert!(
+        !example.backends.is_empty(),
+        "{} ruleset scan should record at least one backend",
+        path.display()
+    );
+    assert!(
+        !example.findings.is_empty(),
+        "{} ruleset scan should include findings",
+        path.display()
+    );
+    for finding in &example.findings {
+        assert!(
+            !finding.rule_id.is_empty(),
+            "{} finding rule_id must not be empty",
+            path.display()
+        );
+        assert!(
+            !finding.language.is_empty(),
+            "{} finding language must not be empty",
+            path.display()
+        );
+        assert!(
+            !finding.severity.is_empty(),
+            "{} finding severity must not be empty",
+            path.display()
+        );
+        assert!(
+            !finding.message.is_empty(),
+            "{} finding message must not be empty",
+            path.display()
+        );
+        for file in &finding.files {
+            assert!(
+                Path::new(file).is_absolute() || is_windows_absolute_path_literal(file),
+                "{} finding file should be absolute or an absolute Windows path literal",
+                path.display()
+            );
+        }
     }
 }
 

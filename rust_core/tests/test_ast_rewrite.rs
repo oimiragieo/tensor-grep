@@ -1286,7 +1286,10 @@ fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
         .as_object_mut()
         .unwrap()
         .remove("manifest_sha256");
-    canonical_manifest.as_object_mut().unwrap().remove("signature");
+    canonical_manifest
+        .as_object_mut()
+        .unwrap()
+        .remove("signature");
     let mut hasher = Sha256::new();
     hasher.update(serde_json::to_vec_pretty(&canonical_manifest).unwrap());
     assert_eq!(manifest_digest, format!("{:x}", hasher.finalize()));
@@ -1324,7 +1327,10 @@ fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
         .as_object_mut()
         .unwrap()
         .remove("manifest_sha256");
-    second_canonical.as_object_mut().unwrap().remove("signature");
+    second_canonical
+        .as_object_mut()
+        .unwrap()
+        .remove("signature");
     let mut second_hasher = Sha256::new();
     second_hasher.update(serde_json::to_vec_pretty(&second_canonical).unwrap());
     assert_eq!(second_digest, format!("{:x}", second_hasher.finalize()));
