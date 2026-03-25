@@ -89,6 +89,13 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "medium",
                     "message": "Avoid hardcoding API key literals in source files.",
                 },
+                {
+                    "id": "python-hardcoded-token",
+                    "pattern": 'token = "$SECRET"',
+                    "language": "python",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding access token literals in source files.",
+                },
             ],
             "javascript": [
                 {
@@ -97,6 +104,20 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "javascript",
                     "severity": "medium",
                     "message": "Avoid hardcoding password literals in source files.",
+                },
+                {
+                    "id": "javascript-hardcoded-api-key",
+                    "pattern": 'const apiKey = "$SECRET"',
+                    "language": "javascript",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding API key literals in source files.",
+                },
+                {
+                    "id": "javascript-hardcoded-token",
+                    "pattern": 'const token = "$SECRET"',
+                    "language": "javascript",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding access token literals in source files.",
                 }
             ],
             "typescript": [
@@ -106,6 +127,20 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "typescript",
                     "severity": "medium",
                     "message": "Avoid hardcoding password literals in source files.",
+                },
+                {
+                    "id": "typescript-hardcoded-api-key",
+                    "pattern": 'const apiKey = "$SECRET"',
+                    "language": "typescript",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding API key literals in source files.",
+                },
+                {
+                    "id": "typescript-hardcoded-token",
+                    "pattern": 'const token = "$SECRET"',
+                    "language": "typescript",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding access token literals in source files.",
                 }
             ],
             "rust": [
@@ -115,6 +150,20 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "rust",
                     "severity": "medium",
                     "message": "Avoid hardcoding password literals in source files.",
+                },
+                {
+                    "id": "rust-hardcoded-api-key",
+                    "pattern": 'let api_key = "$SECRET";',
+                    "language": "rust",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding API key literals in source files.",
+                },
+                {
+                    "id": "rust-hardcoded-token",
+                    "pattern": 'let token = "$SECRET";',
+                    "language": "rust",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding access token literals in source files.",
                 }
             ],
         },
