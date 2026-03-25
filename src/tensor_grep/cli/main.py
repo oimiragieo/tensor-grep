@@ -3388,6 +3388,16 @@ def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:
     }
 
 
+def _audit_history_error_payload(message: str, *, code: str) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-history",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+
+
 def _review_bundle_error_payload(
     message: str, *, code: str, routing_reason: str
 ) -> dict[str, object]:
@@ -3470,15 +3480,34 @@ def audit_history(
     ),
 ) -> None:
     """List known audit manifests in newest-first chain order."""
-    from tensor_grep.cli.audit_manifest import list_audit_history, list_audit_history_json
+    from tensor_grep.cli.audit_manifest import list_audit_history, list_audit_history_payload
 
     try:
         if json_output:
-            typer.echo(list_audit_history_json(path))
+            typer.echo(json.dumps(list_audit_history_payload(path), indent=2))
             return
         payload = list_audit_history(path)
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(json.dumps(_audit_history_error_payload(str(exc), code="not_found"), indent=2))
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(_audit_history_error_payload(str(exc), code="invalid_input"), indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     except Exception as exc:
-        typer.echo(str(exc), err=True)
+        if json_output:
+            typer.echo(
+                json.dumps(_audit_history_error_payload(str(exc), code="internal_error"), indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
 
     for entry in payload:
@@ -3507,11 +3536,11 @@ def audit_diff(
     ),
 ) -> None:
     """Compute a semantic diff between two audit manifests."""
-    from tensor_grep.cli.audit_manifest import diff_audit_manifests, diff_audit_manifests_json
+    from tensor_grep.cli.audit_manifest import diff_audit_manifests, diff_audit_manifests_payload
 
     try:
         if json_output:
-            typer.echo(diff_audit_manifests_json(previous_manifest, current_manifest))
+            typer.echo(json.dumps(diff_audit_manifests_payload(previous_manifest, current_manifest), indent=2))
             return
         payload = diff_audit_manifests(previous_manifest, current_manifest)
     except FileNotFoundError as exc:
@@ -3801,6 +3830,9 @@ def main_entry() -> None:
         "run",
         "scan",
         "test",
+        "audit-verify",
+        "audit-history",
+        "audit-diff",
         "review-bundle",
         "new",
         "lsp",

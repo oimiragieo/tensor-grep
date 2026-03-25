@@ -1606,13 +1606,13 @@ def tg_audit_history(path: str = ".") -> str:
     Args:
         path: Project root to inspect for audit manifests.
     """
-    from tensor_grep.cli.audit_manifest import list_audit_history_json
+    from tensor_grep.cli.audit_manifest import list_audit_history_payload
 
     if not path.strip():
         return _audit_history_error("path must not be empty.", code="invalid_input")
 
     try:
-        return list_audit_history_json(path)
+        return json.dumps(list_audit_history_payload(path), indent=2)
     except FileNotFoundError as exc:
         return _audit_history_error(str(exc), code="not_found")
     except ValueError as exc:
@@ -1630,7 +1630,7 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
         previous_manifest: Path to the previous audit manifest JSON file.
         current_manifest: Path to the current audit manifest JSON file.
     """
-    from tensor_grep.cli.audit_manifest import diff_audit_manifests_json
+    from tensor_grep.cli.audit_manifest import diff_audit_manifests_payload
 
     if not previous_manifest.strip() or not current_manifest.strip():
         return _audit_diff_error(
@@ -1639,7 +1639,10 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
         )
 
     try:
-        return diff_audit_manifests_json(previous_manifest, current_manifest)
+        return json.dumps(
+            diff_audit_manifests_payload(previous_manifest, current_manifest),
+            indent=2,
+        )
     except FileNotFoundError as exc:
         return _audit_diff_error(str(exc), code="not_found")
     except (json.JSONDecodeError, ValueError) as exc:

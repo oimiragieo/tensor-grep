@@ -85,6 +85,15 @@ def _write_scan_results(path: Path) -> dict[str, object]:
     return payload
 
 
+def _assert_audit_manifest_envelope(
+    payload: dict[str, object], *, routing_reason: str
+) -> None:
+    assert payload["version"] == 1
+    assert payload["routing_backend"] == "AuditManifest"
+    assert payload["routing_reason"] == routing_reason
+    assert payload["sidecar_used"] is False
+
+
 def _assert_enriched_edit_plan_seed(
     edit_plan_seed: dict[str, object],
     *,
@@ -1162,9 +1171,10 @@ def test_tg_audit_history_matches_cli_json_schema(tmp_path):
         previous_manifest_sha256=str(first_payload["manifest_sha256"]),
     )
 
-    assert json.loads(mcp_server.tg_audit_history(str(project))) == audit_manifest.list_audit_history(
-        project
-    )
+    payload = json.loads(mcp_server.tg_audit_history(str(project)))
+
+    _assert_audit_manifest_envelope(payload, routing_reason="audit-manifest-history")
+    assert payload["history"] == audit_manifest.list_audit_history(project)
 
 
 def test_tg_audit_history_returns_empty_array_for_empty_directory(tmp_path):
@@ -1173,7 +1183,10 @@ def test_tg_audit_history_returns_empty_array_for_empty_directory(tmp_path):
     project = tmp_path / "project"
     (project / ".tensor-grep" / "audit").mkdir(parents=True)
 
-    assert json.loads(mcp_server.tg_audit_history(str(project))) == []
+    payload = json.loads(mcp_server.tg_audit_history(str(project)))
+
+    _assert_audit_manifest_envelope(payload, routing_reason="audit-manifest-history")
+    assert payload["history"] == []
 
 
 def test_tg_audit_diff_matches_cli_json_schema(tmp_path):
@@ -1191,9 +1204,12 @@ def test_tg_audit_diff_matches_cli_json_schema(tmp_path):
     ).hexdigest()
     right_path.write_text(json.dumps(right_payload, indent=2), encoding="utf-8")
 
-    assert json.loads(mcp_server.tg_audit_diff(str(left_path), str(right_path))) == (
-        audit_manifest.diff_audit_manifests(left_path, right_path)
-    )
+    payload = json.loads(mcp_server.tg_audit_diff(str(left_path), str(right_path)))
+
+    _assert_audit_manifest_envelope(payload, routing_reason="audit-manifest-diff")
+    assert payload["added"] == {"reviewer": "alice"}
+    assert payload["removed"] == {}
+    assert payload["changed"] == audit_manifest.diff_audit_manifests(left_path, right_path)["changed"]
 
 
 def test_tg_audit_diff_reports_not_found(tmp_path):

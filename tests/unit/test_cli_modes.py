@@ -118,6 +118,15 @@ def _write_scan_results(path: Path) -> dict[str, object]:
     return payload
 
 
+def _assert_audit_manifest_envelope(
+    payload: dict[str, object], *, routing_reason: str
+) -> None:
+    assert payload["version"] == 1
+    assert payload["routing_backend"] == "AuditManifest"
+    assert payload["routing_reason"] == routing_reason
+    assert payload["sidecar_used"] is False
+
+
 def _assert_enriched_edit_plan_seed(
     edit_plan_seed: dict[str, object],
     *,
@@ -2848,7 +2857,8 @@ def test_audit_history_json_lists_manifests_newest_first_and_updates_index(tmp_p
 
     assert result.exit_code == 0
     parsed = json.loads(result.stdout)
-    assert [entry["manifest_sha256"] for entry in parsed] == [
+    _assert_audit_manifest_envelope(parsed, routing_reason="audit-manifest-history")
+    assert [entry["manifest_sha256"] for entry in parsed["history"]] == [
         second_payload["manifest_sha256"],
         first_payload["manifest_sha256"],
     ]
@@ -2864,7 +2874,9 @@ def test_audit_history_json_returns_empty_array_for_empty_audit_directory(tmp_pa
     result = runner.invoke(app, ["audit-history", str(project), "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout) == []
+    parsed = json.loads(result.stdout)
+    _assert_audit_manifest_envelope(parsed, routing_reason="audit-manifest-history")
+    assert parsed["history"] == []
 
 
 def test_audit_diff_json_reports_added_removed_and_changed_fields(tmp_path):
@@ -2889,6 +2901,7 @@ def test_audit_diff_json_reports_added_removed_and_changed_fields(tmp_path):
 
     assert result.exit_code == 0
     parsed = json.loads(result.stdout)
+    _assert_audit_manifest_envelope(parsed, routing_reason="audit-manifest-diff")
     assert parsed["added"] == {"reviewer": "alice"}
     assert parsed["removed"] == {}
     assert parsed["changed"] == {
@@ -2928,7 +2941,11 @@ def test_audit_diff_json_returns_empty_sections_for_identical_manifests(tmp_path
     result = runner.invoke(app, ["audit-diff", str(manifest_path), str(manifest_path), "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout) == {"added": {}, "removed": {}, "changed": {}}
+    parsed = json.loads(result.stdout)
+    _assert_audit_manifest_envelope(parsed, routing_reason="audit-manifest-diff")
+    assert parsed["added"] == {}
+    assert parsed["removed"] == {}
+    assert parsed["changed"] == {}
 
 
 def test_audit_diff_json_reports_not_found_error(tmp_path):

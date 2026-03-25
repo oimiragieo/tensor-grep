@@ -354,6 +354,15 @@ def diff_audit_manifests(
     return diff_manifest_objects(previous_manifest, current_manifest)
 
 
+def diff_audit_manifests_payload(
+    previous_manifest_path: str | Path,
+    current_manifest_path: str | Path,
+) -> dict[str, Any]:
+    payload = _envelope(routing_reason="audit-manifest-diff")
+    payload.update(diff_audit_manifests(previous_manifest_path, current_manifest_path))
+    return payload
+
+
 def diff_audit_manifests_json(
     previous_manifest_path: str | Path,
     current_manifest_path: str | Path,
@@ -604,6 +613,12 @@ def list_audit_history(path: str | Path = ".") -> list[dict[str, Any]]:
             }
         )
     return history
+
+
+def list_audit_history_payload(path: str | Path = ".") -> dict[str, Any]:
+    payload = _envelope(routing_reason="audit-manifest-history")
+    payload["history"] = list_audit_history(path)
+    return payload
 
 
 def list_audit_history_json(path: str | Path = ".") -> str:
