@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any, TextIO, cast
 
 from tensor_grep.cli.repo_map import (
@@ -25,6 +27,7 @@ _SESSION_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
 _SESSIONS_SUBDIR = "sessions"
 _INDEX_FILE = "index.json"
+_SESSION_SERVE_CACHE_MAX_ENTRIES = 32
 
 
 @dataclass
@@ -61,6 +64,65 @@ class SessionRefreshResult:
 
 class SessionStaleError(RuntimeError):
     pass
+
+
+@dataclass
+class _SessionServeCacheEntry:
+    payload: dict[str, Any]
+    size_bytes: int
+
+
+class _SessionServeCache:
+    def __init__(self, max_entries: int = _SESSION_SERVE_CACHE_MAX_ENTRIES) -> None:
+        self._max_entries = max(1, max_entries)
+        self._entries: OrderedDict[tuple[str, str], _SessionServeCacheEntry] = OrderedDict()
+        self._size_bytes = 0
+
+    def _key(self, session_id: str, path: str) -> tuple[str, str]:
+        return (str(_resolve_root(Path(path))), session_id)
+
+    def get(self, session_id: str, path: str) -> dict[str, Any] | None:
+        key = self._key(session_id, path)
+        entry = self._entries.pop(key, None)
+        if entry is None:
+            return None
+        self._entries[key] = entry
+        return entry.payload
+
+    def put(self, session_id: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        key = self._key(session_id, path)
+        previous = self._entries.pop(key, None)
+        if previous is not None:
+            self._size_bytes -= previous.size_bytes
+
+        entry = _SessionServeCacheEntry(
+            payload=payload,
+            size_bytes=len(
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            ),
+        )
+        self._entries[key] = entry
+        self._size_bytes += entry.size_bytes
+
+        while len(self._entries) > self._max_entries:
+            _, evicted = self._entries.popitem(last=False)
+            self._size_bytes -= evicted.size_bytes
+
+        return payload
+
+    def load(self, session_id: str, path: str) -> dict[str, Any]:
+        cached = self.get(session_id, path)
+        if cached is not None:
+            return cached
+        return self.put(session_id, path, get_session(session_id, path))
+
+    @property
+    def session_count(self) -> int:
+        return len(self._entries)
+
+    @property
+    def size_bytes(self) -> int:
+        return self._size_bytes
 
 
 def _resolve_root(path: Path) -> Path:
@@ -175,6 +237,15 @@ def _ensure_session_not_stale(payload: dict[str, Any]) -> None:
         raise SessionStaleError(_changeset_message(cast(dict[str, list[str]], changeset)))
 
 
+def _resolve_request_session_target(
+    request: dict[str, Any], session_id: str, path: str
+) -> tuple[str, str]:
+    requested_session_id = str(request.get("session_id", session_id)).strip() or session_id
+    requested_path = request.get("path", request.get("root", path))
+    resolved_path = str(requested_path).strip() if requested_path is not None else path
+    return requested_session_id, resolved_path or path
+
+
 def open_session(path: str = ".") -> SessionOpenResult:
     root = _resolve_root(Path(path))
     repo_map = build_repo_map(root)
@@ -217,7 +288,12 @@ def open_session(path: str = ".") -> SessionOpenResult:
     )
 
 
-def refresh_session(session_id: str, path: str = ".") -> SessionRefreshResult:
+def refresh_session(
+    session_id: str,
+    path: str = ".",
+    *,
+    payload_cache: _SessionServeCache | None = None,
+) -> SessionRefreshResult:
     root = _resolve_root(Path(path))
     existing = get_session(session_id, path)
     changeset = _stale_changeset(existing)
@@ -251,6 +327,8 @@ def refresh_session(session_id: str, path: str = ".") -> SessionRefreshResult:
     session_path = _session_payload_path(root, session_id)
     session_path.parent.mkdir(parents=True, exist_ok=True)
     session_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if payload_cache is not None:
+        payload_cache.put(session_id, str(root), payload)
 
     records = _load_index(root)
     for index, record in enumerate(records):
@@ -394,8 +472,11 @@ def session_blast_radius_render(
     return response
 
 
-def serve_session_request(session_id: str, request: dict[str, Any], path: str = ".") -> dict[str, Any]:
-    payload = get_session(session_id, path)
+def _serve_session_request_from_payload(
+    session_id: str,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     repo_map = cast(dict[str, Any], payload["repo_map"])
     command = str(request.get("command", "")).strip().lower()
 
@@ -527,6 +608,18 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
     raise ValueError(f"unknown session command: {command or '<empty>'}")
 
 
+def serve_session_request(
+    session_id: str,
+    request: dict[str, Any],
+    path: str = ".",
+    *,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    resolved_session_id, resolved_path = _resolve_request_session_target(request, session_id, path)
+    session_payload = payload if payload is not None else get_session(resolved_session_id, resolved_path)
+    return _serve_session_request_from_payload(resolved_session_id, request, session_payload)
+
+
 def serve_session_stream(
     session_id: str,
     path: str = ".",
@@ -538,30 +631,58 @@ def serve_session_stream(
     request_stream = input_stream or sys.stdin
     response_stream = output_stream or sys.stdout
     request_count = 0
+    started_at = monotonic()
+    payload_cache = _SessionServeCache()
 
     for raw_line in request_stream:
         line = raw_line.strip()
         if not line:
             continue
         request_count += 1
+        request_session_id = session_id
+        request_path = path
+        response: dict[str, Any]
         try:
             request = cast(dict[str, Any], json.loads(line))
-            response = serve_session_request(session_id, request, path)
+            request_session_id, request_path = _resolve_request_session_target(request, session_id, path)
+            command = str(request.get("command", "")).strip().lower()
+            if command == "stats":
+                response = {
+                    "version": _SESSION_VERSION,
+                    "ok": True,
+                    "session_count": payload_cache.session_count,
+                    "cache_size_bytes": payload_cache.size_bytes,
+                    "uptime_seconds": max(0.0, monotonic() - started_at),
+                    "request_count": request_count,
+                }
+            else:
+                payload = payload_cache.load(request_session_id, request_path)
+                response = serve_session_request(
+                    request_session_id,
+                    request,
+                    request_path,
+                    payload=payload,
+                )
         except SessionStaleError as exc:
             if refresh_on_stale:
-                refresh_session(session_id, path)
-                request = cast(dict[str, Any], json.loads(line))
-                response = serve_session_request(session_id, request, path)
+                refresh_session(request_session_id, request_path, payload_cache=payload_cache)
+                payload = payload_cache.load(request_session_id, request_path)
+                response = serve_session_request(
+                    request_session_id,
+                    request,
+                    request_path,
+                    payload=payload,
+                )
             else:
                 response = {
                     "version": _SESSION_VERSION,
-                    "session_id": session_id,
+                    "session_id": request_session_id,
                     "error": {"code": "stale_session", "message": str(exc)},
                 }
         except Exception as exc:
             response = {
                 "version": _SESSION_VERSION,
-                "session_id": session_id,
+                "session_id": request_session_id,
                 "error": {"code": "invalid_request", "message": str(exc)},
             }
         response_stream.write(json.dumps(response) + "\n")
