@@ -60,6 +60,31 @@ def _write_audit_manifest(
     return payload
 
 
+def _write_scan_results(path: Path) -> dict[str, object]:
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "builtin-ruleset-scan",
+        "sidecar_used": False,
+        "ruleset": "auth-safe",
+        "rule_count": 1,
+        "matched_rules": 1,
+        "total_matches": 1,
+        "findings": [
+            {
+                "rule_id": "python-eval",
+                "language": "python",
+                "severity": "high",
+                "matches": 1,
+                "files": ["src/sample.py"],
+                "evidence": [{"file": "src/sample.py", "match_count": 1}],
+            }
+        ],
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
 def _assert_enriched_edit_plan_seed(
     edit_plan_seed: dict[str, object],
     *,
@@ -1229,6 +1254,72 @@ def test_tg_audit_manifest_verify_reports_chain_failure(tmp_path):
     assert parsed["checks"]["signature_valid"] is True
     assert parsed["valid"] is False
     assert "Previous manifest digest does not match previous_manifest_sha256." in parsed["errors"]
+
+
+def test_tg_review_bundle_create_matches_bundle_schema(tmp_path):
+    from tensor_grep.cli import mcp_server
+    from tensor_grep.cli.checkpoint_store import create_checkpoint
+
+    project = tmp_path / "project"
+    audit_dir = project / ".tensor-grep" / "audit"
+    audit_dir.mkdir(parents=True)
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "sample.py").write_text("print('hello')\n", encoding="utf-8")
+
+    previous_path = audit_dir / "previous.json"
+    previous_payload = _write_audit_manifest(previous_path, project_root=project)
+    current_path = audit_dir / "current.json"
+    _write_audit_manifest(
+        current_path,
+        previous_manifest_sha256=str(previous_payload["manifest_sha256"]),
+        project_root=project,
+    )
+    scan_path = project / "scan.json"
+    scan_payload = _write_scan_results(scan_path)
+    checkpoint = create_checkpoint(str(project))
+
+    out = mcp_server.tg_review_bundle_create(
+        manifest_path=str(current_path),
+        scan_path=str(scan_path),
+        checkpoint_id=checkpoint.checkpoint_id,
+        previous_manifest=str(previous_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["routing_reason"] == "review-bundle-create"
+    assert parsed["scan_results"] == scan_payload
+    assert parsed["checkpoint_metadata"]["checkpoint_id"] == checkpoint.checkpoint_id
+    assert parsed["diff"]["changed"]["previous_manifest_sha256"] == {
+        "old": None,
+        "new": previous_payload["manifest_sha256"],
+    }
+
+
+def test_tg_review_bundle_verify_reports_invalid_integrity(tmp_path):
+    from tensor_grep.cli import audit_manifest as audit_manifest_module
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    audit_dir = project / ".tensor-grep" / "audit"
+    audit_dir.mkdir(parents=True)
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "sample.py").write_text("print('hello')\n", encoding="utf-8")
+    manifest_path = audit_dir / "current.json"
+    _write_audit_manifest(manifest_path, project_root=project)
+    bundle_path = tmp_path / "review-bundle.json"
+    audit_manifest_module.create_review_bundle(manifest_path, output_path=bundle_path)
+
+    tampered = json.loads(bundle_path.read_text(encoding="utf-8"))
+    tampered["bundle_sha256"] = "0" * 64
+    bundle_path.write_text(json.dumps(tampered, indent=2), encoding="utf-8")
+
+    out = mcp_server.tg_review_bundle_verify(str(bundle_path))
+
+    parsed = json.loads(out)
+    assert parsed["routing_reason"] == "review-bundle-verify"
+    assert parsed["checks"]["audit_manifest"]["valid"] is True
+    assert parsed["bundle_integrity"]["valid"] is False
+    assert parsed["valid"] is False
 
 
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path):

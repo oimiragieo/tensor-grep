@@ -54,6 +54,10 @@ session_app = typer.Typer(
     help="Open and reuse cached repository-map sessions.",
     no_args_is_help=True,
 )
+review_bundle_app = typer.Typer(
+    help="Create and verify enterprise review bundles.",
+    no_args_is_help=True,
+)
 
 
 def _read_project_version_fallback() -> str:
@@ -3298,6 +3302,7 @@ def lsp() -> None:
 
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(session_app, name="session")
+app.add_typer(review_bundle_app, name="review-bundle")
 
 
 @app.command(name="mcp")
@@ -3378,6 +3383,18 @@ def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:
         "version": _json_output_version(),
         "routing_backend": "AuditManifest",
         "routing_reason": "audit-manifest-diff",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+
+
+def _review_bundle_error_payload(
+    message: str, *, code: str, routing_reason: str
+) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": routing_reason,
         "sidecar_used": False,
         "error": {"code": code, "message": message},
     }
@@ -3537,6 +3554,204 @@ def audit_diff(
             typer.echo(f"  {key}: {json.dumps(value, sort_keys=True)}")
 
 
+@review_bundle_app.command("create")
+def review_bundle_create(
+    manifest_path: str = typer.Option(
+        ...,
+        "--manifest",
+        help="Path to the rewrite audit manifest JSON file.",
+    ),
+    scan_path: str | None = typer.Option(
+        None,
+        "--scan",
+        help="Optional path to the ruleset scan JSON file.",
+    ),
+    checkpoint_id: str | None = typer.Option(
+        None,
+        "--checkpoint-id",
+        help="Optional checkpoint ID to include in the bundle.",
+    ),
+    previous_manifest: str | None = typer.Option(
+        None,
+        "--previous-manifest",
+        help="Optional previous audit manifest JSON for diff generation.",
+    ),
+    output_path: str | None = typer.Option(
+        None,
+        "--output",
+        help="Optional file path where the review bundle JSON should be written.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the review bundle as structured JSON.",
+    ),
+) -> None:
+    """Create a review bundle for enterprise change review."""
+    from tensor_grep.cli.audit_manifest import create_review_bundle, create_review_bundle_json
+
+    try:
+        if json_output:
+            typer.echo(
+                create_review_bundle_json(
+                    manifest_path,
+                    scan_path=scan_path,
+                    checkpoint_id=checkpoint_id,
+                    previous_manifest=previous_manifest,
+                    output_path=output_path,
+                )
+            )
+            return
+        payload = create_review_bundle(
+            manifest_path,
+            scan_path=scan_path,
+            checkpoint_id=checkpoint_id,
+            previous_manifest=previous_manifest,
+            output_path=output_path,
+        )
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="not_found",
+                        routing_reason="review-bundle-create",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="invalid_json",
+                        routing_reason="review-bundle-create",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="internal_error",
+                        routing_reason="review-bundle-create",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    included_components = [
+        component
+        for component in (
+            "audit_manifest",
+            "scan_results",
+            "checkpoint_metadata",
+            "diff",
+        )
+        if payload[component] is not None
+    ]
+    target = output_path or "<not written>"
+    typer.echo(
+        f"Created review bundle {target} "
+        f"(components={','.join(included_components)}, bundle_sha256={payload['bundle_sha256']})"
+    )
+
+
+@review_bundle_app.command("verify")
+def review_bundle_verify(
+    bundle_path: str = typer.Argument(..., help="Path to the review bundle JSON file."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured verification JSON.",
+    ),
+) -> None:
+    """Verify review bundle integrity and component checksums."""
+    from tensor_grep.cli.audit_manifest import verify_review_bundle, verify_review_bundle_json
+
+    try:
+        if json_output:
+            typer.echo(verify_review_bundle_json(bundle_path))
+            return
+        payload = verify_review_bundle(bundle_path)
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="not_found",
+                        routing_reason="review-bundle-verify",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="invalid_json",
+                        routing_reason="review-bundle-verify",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="internal_error",
+                        routing_reason="review-bundle-verify",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Review bundle: {payload['bundle_path']}")
+    typer.echo(f"valid={payload['valid']}")
+    for component, check in cast(dict[str, dict[str, object]], payload["checks"]).items():
+        typer.echo(
+            f"{component}: valid={check['valid']} "
+            f"expected={check['expected']} actual={check['actual']}"
+        )
+    bundle_integrity = cast(dict[str, object], payload["bundle_integrity"])
+    typer.echo(
+        "bundle_integrity="
+        f"{bundle_integrity['valid']} "
+        f"expected={bundle_integrity['expected']} actual={bundle_integrity['actual']}"
+    )
+    if not payload["valid"]:
+        raise typer.Exit(code=1)
+
+
 @app.command("update")
 def update() -> None:
     """Alias for upgrade."""
@@ -3586,6 +3801,7 @@ def main_entry() -> None:
         "run",
         "scan",
         "test",
+        "review-bundle",
         "new",
         "lsp",
         "mcp",

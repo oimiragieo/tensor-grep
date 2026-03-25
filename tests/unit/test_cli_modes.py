@@ -55,6 +55,7 @@ def _write_audit_manifest(
     path: Path,
     *,
     previous_manifest_sha256: str | None = None,
+    project_root: Path | None = None,
     signing_key: bytes | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
@@ -62,7 +63,7 @@ def _write_audit_manifest(
         "kind": "rewrite-audit-manifest",
         "created_at": "2026-03-23T12:00:00Z",
         "lang": "python",
-        "path": str(path.parent),
+        "path": str(project_root or path.parent),
         "plan_total_edits": 1,
         "applied_edit_ids": ["edit-1"],
         "checkpoint": None,
@@ -88,6 +89,31 @@ def _write_audit_manifest(
                 hashlib.sha256,
             ).hexdigest(),
         }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def _write_scan_results(path: Path) -> dict[str, object]:
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "builtin-ruleset-scan",
+        "sidecar_used": False,
+        "ruleset": "auth-safe",
+        "rule_count": 1,
+        "matched_rules": 1,
+        "total_matches": 1,
+        "findings": [
+            {
+                "rule_id": "python-eval",
+                "language": "python",
+                "severity": "high",
+                "matches": 1,
+                "files": ["src/sample.py"],
+                "evidence": [{"file": "src/sample.py", "match_count": 1}],
+            }
+        ],
+    }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload
 
@@ -2960,6 +2986,88 @@ def test_audit_verify_json_reports_chain_failure(tmp_path):
     assert "Previous manifest digest does not match previous_manifest_sha256." in parsed["errors"]
     assert parsed["previous_manifest_sha256"] == wrong_previous
     assert previous_payload["manifest_sha256"] != wrong_previous
+
+
+def test_review_bundle_create_json_packages_artifacts_and_writes_bundle_file(tmp_path):
+    from tensor_grep.cli.checkpoint_store import create_checkpoint
+
+    runner = CliRunner()
+    project = tmp_path / "project"
+    audit_dir = project / ".tensor-grep" / "audit"
+    audit_dir.mkdir(parents=True)
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "sample.py").write_text("print('hello')\n", encoding="utf-8")
+
+    previous_path = audit_dir / "previous.json"
+    previous_payload = _write_audit_manifest(previous_path, project_root=project)
+    current_path = audit_dir / "current.json"
+    _write_audit_manifest(
+        current_path,
+        previous_manifest_sha256=str(previous_payload["manifest_sha256"]),
+        project_root=project,
+    )
+    scan_path = project / "scan.json"
+    scan_payload = _write_scan_results(scan_path)
+    checkpoint = create_checkpoint(str(project))
+    bundle_path = tmp_path / "review-bundle.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "review-bundle",
+            "create",
+            "--manifest",
+            str(current_path),
+            "--scan",
+            str(scan_path),
+            "--checkpoint-id",
+            checkpoint.checkpoint_id,
+            "--previous-manifest",
+            str(previous_path),
+            "--output",
+            str(bundle_path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "review-bundle-create"
+    assert payload["scan_results"] == scan_payload
+    assert payload["checkpoint_metadata"]["checkpoint_id"] == checkpoint.checkpoint_id
+    assert payload["diff"]["changed"]["previous_manifest_sha256"] == {
+        "old": None,
+        "new": previous_payload["manifest_sha256"],
+    }
+    assert json.loads(bundle_path.read_text(encoding="utf-8")) == payload
+
+
+def test_review_bundle_verify_json_reports_invalid_integrity(tmp_path):
+    from tensor_grep.cli import audit_manifest as audit_manifest_module
+
+    runner = CliRunner()
+    project = tmp_path / "project"
+    audit_dir = project / ".tensor-grep" / "audit"
+    audit_dir.mkdir(parents=True)
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "sample.py").write_text("print('hello')\n", encoding="utf-8")
+    manifest_path = audit_dir / "current.json"
+    _write_audit_manifest(manifest_path, project_root=project)
+    bundle_path = tmp_path / "review-bundle.json"
+    audit_manifest_module.create_review_bundle(manifest_path, output_path=bundle_path)
+
+    tampered = json.loads(bundle_path.read_text(encoding="utf-8"))
+    tampered["bundle_sha256"] = "0" * 64
+    bundle_path.write_text(json.dumps(tampered, indent=2), encoding="utf-8")
+
+    result = runner.invoke(app, ["review-bundle", "verify", str(bundle_path), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "review-bundle-verify"
+    assert payload["checks"]["audit_manifest"]["valid"] is True
+    assert payload["bundle_integrity"]["valid"] is False
+    assert payload["valid"] is False
 
 
 def test_calibrate_command_delegates_to_native_tg(monkeypatch):

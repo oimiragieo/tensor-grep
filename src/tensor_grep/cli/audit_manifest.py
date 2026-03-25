@@ -13,6 +13,13 @@ _TG_DIRNAME = ".tensor-grep"
 _AUDIT_SUBDIR = "audit"
 _AUDIT_INDEX_FILE = "index.json"
 _AUDIT_DIFF_IGNORED_KEYS = frozenset({"manifest_sha256", "signature"})
+_REVIEW_BUNDLE_COMPONENTS = (
+    "audit_manifest",
+    "scan_results",
+    "checkpoint_metadata",
+    "diff",
+)
+_REVIEW_BUNDLE_REQUIRED_COMPONENTS = frozenset({"audit_manifest"})
 
 
 def _json_output_version() -> int:
@@ -27,11 +34,11 @@ def _json_output_version() -> int:
     return int(match.group(1)) if match else 1
 
 
-def _envelope() -> dict[str, Any]:
+def _envelope(*, routing_reason: str = "audit-manifest-verify") -> dict[str, Any]:
     return {
         "version": _json_output_version(),
         "routing_backend": "AuditManifest",
-        "routing_reason": "audit-manifest-verify",
+        "routing_reason": routing_reason,
         "sidecar_used": False,
     }
 
@@ -45,6 +52,10 @@ def _canonical_manifest_bytes(manifest: dict[str, Any]) -> bytes:
 
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _canonical_json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _utc_now_iso() -> str:
@@ -79,6 +90,153 @@ def _read_manifest_object(manifest_path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Audit manifest must be a JSON object.")
     return payload
+
+
+def _read_json_value(path: str | Path, *, description: str) -> Any:
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"{description} not found: {resolved}")
+    return json.loads(resolved.read_text(encoding="utf-8"))
+
+
+def _read_review_bundle_object(bundle_path: str | Path) -> dict[str, Any]:
+    resolved = Path(bundle_path).expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Review bundle not found: {resolved}")
+    payload = json.loads(resolved.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Review bundle must be a JSON object.")
+    return payload
+
+
+def _canonical_review_bundle_bytes(bundle: dict[str, Any]) -> bytes:
+    canonical = dict(bundle)
+    canonical.pop("bundle_sha256", None)
+    return _canonical_json_bytes(canonical)
+
+
+def _component_checksum(value: Any) -> str:
+    return _sha256_hex(_canonical_json_bytes(value))
+
+
+def create_review_bundle(
+    manifest_path: str | Path,
+    *,
+    scan_path: str | Path | None = None,
+    checkpoint_id: str | None = None,
+    previous_manifest: str | Path | None = None,
+    output_path: str | Path | None = None,
+) -> dict[str, Any]:
+    from tensor_grep.cli.checkpoint_store import load_checkpoint_metadata
+
+    resolved_manifest = Path(manifest_path).expanduser().resolve()
+    manifest = _read_manifest_object(resolved_manifest)
+    root = _resolve_manifest_root(resolved_manifest, manifest)
+
+    scan_results = (
+        _read_json_value(scan_path, description="Scan results")
+        if scan_path is not None
+        else None
+    )
+    checkpoint_metadata = (
+        load_checkpoint_metadata(checkpoint_id, str(root))
+        if checkpoint_id is not None
+        else None
+    )
+    diff_payload = (
+        diff_audit_manifests(previous_manifest, resolved_manifest)
+        if previous_manifest is not None
+        else None
+    )
+
+    payload = _envelope(routing_reason="review-bundle-create")
+    payload["created_at"] = _utc_now_iso()
+    payload["audit_manifest"] = manifest
+    payload["scan_results"] = scan_results
+    payload["checkpoint_metadata"] = checkpoint_metadata
+    payload["diff"] = diff_payload
+
+    checksums = {
+        component: _component_checksum(payload[component])
+        for component in _REVIEW_BUNDLE_COMPONENTS
+        if payload[component] is not None
+    }
+    payload["checksums"] = checksums
+    payload["bundle_sha256"] = _sha256_hex(_canonical_review_bundle_bytes(payload))
+
+    if output_path is not None:
+        resolved_output = Path(output_path).expanduser().resolve()
+        resolved_output.parent.mkdir(parents=True, exist_ok=True)
+        resolved_output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    return payload
+
+
+def create_review_bundle_json(
+    manifest_path: str | Path,
+    *,
+    scan_path: str | Path | None = None,
+    checkpoint_id: str | None = None,
+    previous_manifest: str | Path | None = None,
+    output_path: str | Path | None = None,
+) -> str:
+    return json.dumps(
+        create_review_bundle(
+            manifest_path,
+            scan_path=scan_path,
+            checkpoint_id=checkpoint_id,
+            previous_manifest=previous_manifest,
+            output_path=output_path,
+        ),
+        indent=2,
+    )
+
+
+def verify_review_bundle(bundle_path: str | Path) -> dict[str, Any]:
+    resolved_bundle = Path(bundle_path).expanduser().resolve()
+    bundle = _read_review_bundle_object(resolved_bundle)
+    raw_checksums = bundle.get("checksums")
+    checksums = raw_checksums if isinstance(raw_checksums, dict) else {}
+
+    checks: dict[str, dict[str, str | bool | None]] = {}
+    for component in _REVIEW_BUNDLE_COMPONENTS:
+        expected = _normalize_optional_str(checksums.get(component))
+        value = bundle.get(component)
+        if value is None:
+            actual = None
+            valid = (
+                component not in _REVIEW_BUNDLE_REQUIRED_COMPONENTS and expected is None
+            )
+        else:
+            actual = _component_checksum(value)
+            valid = expected is not None and expected == actual
+        checks[component] = {
+            "expected": expected,
+            "actual": actual,
+            "valid": valid,
+        }
+
+    expected_bundle_sha256 = _normalize_optional_str(bundle.get("bundle_sha256"))
+    actual_bundle_sha256 = _sha256_hex(_canonical_review_bundle_bytes(bundle))
+    bundle_integrity = {
+        "expected": expected_bundle_sha256,
+        "actual": actual_bundle_sha256,
+        "valid": expected_bundle_sha256 is not None
+        and expected_bundle_sha256 == actual_bundle_sha256,
+    }
+
+    payload = _envelope(routing_reason="review-bundle-verify")
+    payload["bundle_path"] = str(resolved_bundle)
+    payload["valid"] = bundle_integrity["valid"] and all(
+        bool(component_check["valid"]) for component_check in checks.values()
+    )
+    payload["checks"] = checks
+    payload["bundle_integrity"] = bundle_integrity
+    return payload
+
+
+def verify_review_bundle_json(bundle_path: str | Path) -> str:
+    return json.dumps(verify_review_bundle(bundle_path), indent=2)
 
 
 def _resolve_history_root(path: str | Path) -> Path:

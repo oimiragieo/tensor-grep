@@ -114,6 +114,17 @@ def _audit_diff_error(message: str, *, code: str) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _review_bundle_error(message: str, *, code: str, routing_reason: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
 def _ruleset_scan_error(message: str, *, code: str, ruleset: str, path: str) -> str:
     payload = {
         "version": _json_output_version(),
@@ -1635,6 +1646,100 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
         return _audit_diff_error(str(exc), code="invalid_json")
     except Exception as exc:
         return _audit_diff_error(str(exc), code="internal_error")
+
+
+@mcp.tool()  # type: ignore
+def tg_review_bundle_create(
+    manifest_path: str,
+    scan_path: str | None = None,
+    checkpoint_id: str | None = None,
+    previous_manifest: str | None = None,
+    output_path: str | None = None,
+) -> str:
+    """
+    Create a review bundle containing audit, scan, checkpoint, and diff artifacts.
+
+    Args:
+        manifest_path: Path to the rewrite audit manifest JSON file.
+        scan_path: Optional path to the ruleset scan JSON file.
+        checkpoint_id: Optional checkpoint ID to include.
+        previous_manifest: Optional previous audit manifest JSON for diff generation.
+        output_path: Optional file path where the bundle JSON should be written.
+    """
+    from tensor_grep.cli.audit_manifest import create_review_bundle_json
+
+    if not manifest_path.strip():
+        return _review_bundle_error(
+            "manifest_path must not be empty.",
+            code="invalid_input",
+            routing_reason="review-bundle-create",
+        )
+
+    try:
+        return create_review_bundle_json(
+            manifest_path,
+            scan_path=scan_path,
+            checkpoint_id=checkpoint_id,
+            previous_manifest=previous_manifest,
+            output_path=output_path,
+        )
+    except FileNotFoundError as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="not_found",
+            routing_reason="review-bundle-create",
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="invalid_json",
+            routing_reason="review-bundle-create",
+        )
+    except Exception as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="internal_error",
+            routing_reason="review-bundle-create",
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_review_bundle_verify(bundle_path: str) -> str:
+    """
+    Verify review bundle integrity and component checksums.
+
+    Args:
+        bundle_path: Path to the review bundle JSON file.
+    """
+    from tensor_grep.cli.audit_manifest import verify_review_bundle_json
+
+    if not bundle_path.strip():
+        return _review_bundle_error(
+            "bundle_path must not be empty.",
+            code="invalid_input",
+            routing_reason="review-bundle-verify",
+        )
+
+    try:
+        return verify_review_bundle_json(bundle_path)
+    except FileNotFoundError as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="not_found",
+            routing_reason="review-bundle-verify",
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="invalid_json",
+            routing_reason="review-bundle-verify",
+        )
+    except Exception as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="internal_error",
+            routing_reason="review-bundle-verify",
+        )
 
 
 @mcp.tool()  # type: ignore

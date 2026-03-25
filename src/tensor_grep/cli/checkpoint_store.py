@@ -222,6 +222,18 @@ def list_checkpoints(path: str = ".") -> list[CheckpointRecord]:
     return _load_index(root)
 
 
+def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, Any]:
+    root, _mode = _detect_checkpoint_root(Path(path))
+    metadata_path = _metadata_path(root, checkpoint_id)
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_id}")
+
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Checkpoint metadata must be a JSON object.")
+    return payload
+
+
 def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult:
     root, mode = _detect_checkpoint_root(Path(path))
     metadata_path = _metadata_path(root, checkpoint_id)
