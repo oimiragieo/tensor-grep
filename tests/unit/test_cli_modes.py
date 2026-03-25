@@ -2725,6 +2725,7 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "callers" in result.stdout
     assert "blast-radius" in result.stdout
     assert "blast-radius-render" in result.stdout
+    assert "audit-history" in result.stdout
     assert "audit-verify" in result.stdout
     assert "rulesets" in result.stdout
     assert "Run semantic log classification" in result.stdout
@@ -2760,6 +2761,43 @@ def test_audit_verify_json_reports_valid_signed_manifest(tmp_path):
     }
     assert parsed["valid"] is True
     assert parsed["errors"] == []
+
+
+def test_audit_history_json_lists_manifests_newest_first_and_updates_index(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    audit_dir = project / ".tensor-grep" / "audit"
+    audit_dir.mkdir(parents=True)
+    first_payload = _write_audit_manifest(
+        audit_dir / "first.json",
+        previous_manifest_sha256=None,
+    )
+    second_payload = _write_audit_manifest(
+        audit_dir / "second.json",
+        previous_manifest_sha256=str(first_payload["manifest_sha256"]),
+    )
+
+    result = runner.invoke(app, ["audit-history", str(project), "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert [entry["manifest_sha256"] for entry in parsed] == [
+        second_payload["manifest_sha256"],
+        first_payload["manifest_sha256"],
+    ]
+    index_path = project / ".tensor-grep" / "audit" / "index.json"
+    assert index_path.exists()
+
+
+def test_audit_history_json_returns_empty_array_for_empty_audit_directory(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    (project / ".tensor-grep" / "audit").mkdir(parents=True)
+
+    result = runner.invoke(app, ["audit-history", str(project), "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == []
 
 
 def test_audit_verify_json_reports_chain_failure(tmp_path):

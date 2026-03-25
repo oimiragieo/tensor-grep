@@ -22,6 +22,7 @@ def _write_audit_manifest(
     path: Path,
     *,
     previous_manifest_sha256: str | None = None,
+    project_root: Path | None = None,
     signing_key: bytes | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
@@ -29,7 +30,7 @@ def _write_audit_manifest(
         "kind": "rewrite-audit-manifest",
         "created_at": "2026-03-23T12:00:00Z",
         "lang": "python",
-        "path": str(path.parent),
+        "path": str(project_root or path.parent),
         "plan_total_edits": 1,
         "applied_edit_ids": ["edit-1"],
         "checkpoint": None,
@@ -866,6 +867,65 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
     ]
 
 
+def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    audit_dir = project / ".tensor-grep" / "audit"
+    audit_dir.mkdir(parents=True)
+    manifest_path = audit_dir / "rewrite-audit.json"
+    manifest_payload = _write_audit_manifest(manifest_path, project_root=project)
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "audit_manifest": {
+            "path": str(manifest_path),
+            "file_count": 1,
+            "applied_edit_count": 1,
+            "signed": False,
+            "signature_kind": None,
+        },
+        "plan": {"total_edits": 1},
+        "verification": None,
+        "validation": None,
+    }
+
+    with (
+        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch(
+            "tensor_grep.cli.mcp_server.subprocess.run",
+            return_value=CompletedProcess(
+                args=["tg.exe"],
+                returncode=0,
+                stdout=json.dumps(payload),
+                stderr="",
+            ),
+        ),
+    ):
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path=str(project),
+            audit_manifest=str(manifest_path),
+        )
+
+    assert json.loads(out) == payload
+    index_payload = json.loads((audit_dir / "index.json").read_text(encoding="utf-8"))
+    assert index_payload["version"] == 1
+    assert index_payload["manifests"] == [
+        {
+            "manifest_sha256": manifest_payload["manifest_sha256"],
+            "kind": "rewrite-audit-manifest",
+            "created_at": "2026-03-23T12:00:00Z",
+            "file_path": str(manifest_path.resolve()),
+            "previous_manifest_sha256": None,
+        }
+    ]
+
+
 def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
     from tensor_grep.cli import mcp_server
 
@@ -951,6 +1011,32 @@ def test_tg_audit_manifest_verify_supports_signed_manifests(tmp_path):
     }
     assert parsed["valid"] is True
     assert parsed["errors"] == []
+
+
+def test_tg_audit_history_matches_cli_json_schema(tmp_path):
+    from tensor_grep.cli import audit_manifest, mcp_server
+
+    project = tmp_path / "project"
+    audit_dir = project / ".tensor-grep" / "audit"
+    audit_dir.mkdir(parents=True)
+    first_payload = _write_audit_manifest(audit_dir / "first.json")
+    _write_audit_manifest(
+        audit_dir / "second.json",
+        previous_manifest_sha256=str(first_payload["manifest_sha256"]),
+    )
+
+    assert json.loads(mcp_server.tg_audit_history(str(project))) == audit_manifest.list_audit_history(
+        project
+    )
+
+
+def test_tg_audit_history_returns_empty_array_for_empty_directory(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    (project / ".tensor-grep" / "audit").mkdir(parents=True)
+
+    assert json.loads(mcp_server.tg_audit_history(str(project))) == []
 
 
 def test_tg_audit_manifest_verify_reports_invalid_input_for_empty_path():

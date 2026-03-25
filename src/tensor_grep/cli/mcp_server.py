@@ -80,6 +80,17 @@ def _audit_manifest_error(message: str, *, code: str) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _audit_history_error(message: str, *, code: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-history",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
 def _ruleset_scan_error(message: str, *, code: str, ruleset: str, path: str) -> str:
     payload = {
         "version": _json_output_version(),
@@ -290,6 +301,7 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
             "Rewrite command produced invalid JSON output.", code="invalid_output"
         )
 
+    _record_generated_audit_manifest(payload)
     return _normalize_rewrite_json_payload(payload)
 
 
@@ -367,6 +379,23 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
         )
 
     return _normalize_index_search_json_payload(payload, pattern=pattern, path=path)
+
+
+def _record_generated_audit_manifest(payload: object) -> None:
+    if not isinstance(payload, dict):
+        return
+    audit_manifest = payload.get("audit_manifest")
+    if not isinstance(audit_manifest, dict):
+        return
+    manifest_path = audit_manifest.get("path")
+    if not isinstance(manifest_path, str) or not manifest_path.strip():
+        return
+    try:
+        from tensor_grep.cli.audit_manifest import record_audit_manifest
+
+        record_audit_manifest(manifest_path)
+    except Exception:
+        return
 
 
 def _routing_summary(result: SearchResult) -> str:
@@ -1444,6 +1473,29 @@ def tg_audit_manifest_verify(
         return _audit_manifest_error(str(exc), code="invalid_input")
     except Exception as exc:
         return _audit_manifest_error(str(exc), code="internal_error")
+
+
+@mcp.tool()  # type: ignore
+def tg_audit_history(path: str = ".") -> str:
+    """
+    List audit manifest history for a project root.
+
+    Args:
+        path: Project root to inspect for audit manifests.
+    """
+    from tensor_grep.cli.audit_manifest import list_audit_history_json
+
+    if not path.strip():
+        return _audit_history_error("path must not be empty.", code="invalid_input")
+
+    try:
+        return list_audit_history_json(path)
+    except FileNotFoundError as exc:
+        return _audit_history_error(str(exc), code="not_found")
+    except ValueError as exc:
+        return _audit_history_error(str(exc), code="invalid_input")
+    except Exception as exc:
+        return _audit_history_error(str(exc), code="internal_error")
 
 
 @mcp.tool()  # type: ignore

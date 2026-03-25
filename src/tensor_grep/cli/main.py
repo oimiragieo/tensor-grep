@@ -3136,6 +3136,42 @@ def audit_verify(
         raise typer.Exit(code=1)
 
 
+@app.command(name="audit-history")
+def audit_history(
+    path: str = typer.Argument(".", help="Project root to inspect for audit manifests."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured JSON history output.",
+    ),
+) -> None:
+    """List known audit manifests in newest-first chain order."""
+    from tensor_grep.cli.audit_manifest import list_audit_history, list_audit_history_json
+
+    try:
+        if json_output:
+            typer.echo(list_audit_history_json(path))
+            return
+        payload = list_audit_history(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    for entry in payload:
+        annotations: list[str] = []
+        if entry["missing_timestamp"]:
+            annotations.append("missing_timestamp")
+        if entry["chain_gap"]:
+            annotations.append("chain_gap")
+        if entry["signature_kind"] is not None:
+            annotations.append(f"signature={entry['signature_kind']}")
+        created_at = entry["created_at"] or "<missing>"
+        suffix = f" [{' '.join(annotations)}]" if annotations else ""
+        typer.echo(
+            f"{created_at}  {entry['manifest_sha256']}  {entry['file_path']}{suffix}"
+        )
+
+
 @app.command("update")
 def update() -> None:
     """Alias for upgrade."""

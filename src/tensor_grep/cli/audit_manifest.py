@@ -4,8 +4,14 @@ import hashlib
 import hmac
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+_AUDIT_INDEX_VERSION = 1
+_TG_DIRNAME = ".tensor-grep"
+_AUDIT_SUBDIR = "audit"
+_AUDIT_INDEX_FILE = "index.json"
 
 
 def _json_output_version() -> int:
@@ -38,6 +44,315 @@ def _canonical_manifest_bytes(manifest: dict[str, Any]) -> bytes:
 
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_optional_str(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _resolve_root(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    return resolved if resolved.is_dir() else resolved.parent
+
+
+def _audit_dir(root: Path) -> Path:
+    return root / _TG_DIRNAME / _AUDIT_SUBDIR
+
+
+def _history_index_path(root: Path) -> Path:
+    return _audit_dir(root) / _AUDIT_INDEX_FILE
+
+
+def _read_manifest_object(manifest_path: Path) -> dict[str, Any]:
+    resolved = manifest_path.expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Audit manifest not found: {resolved}")
+    payload = json.loads(resolved.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Audit manifest must be a JSON object.")
+    return payload
+
+
+def _resolve_history_root(path: str | Path) -> Path:
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path not found: {resolved}")
+    if resolved.is_file():
+        try:
+            return _resolve_manifest_root(resolved, _read_manifest_object(resolved))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return resolved.parent
+    if resolved.name == _AUDIT_SUBDIR and resolved.parent.name == _TG_DIRNAME:
+        return resolved.parent.parent
+    if resolved.name == _TG_DIRNAME:
+        return resolved.parent
+    return resolved
+
+
+def _resolve_manifest_root(manifest_path: Path, manifest: dict[str, Any]) -> Path:
+    manifest_root = _normalize_optional_str(manifest.get("path"))
+    if manifest_root is not None:
+        candidate = Path(manifest_root).expanduser().resolve()
+        if candidate.exists():
+            return _resolve_root(candidate)
+
+    for ancestor in manifest_path.expanduser().resolve().parents:
+        if ancestor.name == _AUDIT_SUBDIR and ancestor.parent.name == _TG_DIRNAME:
+            return ancestor.parent.parent
+    return manifest_path.expanduser().resolve().parent
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    raw = _normalize_optional_str(value)
+    if raw is None:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _manifest_entry(manifest_path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    manifest_sha256 = _normalize_optional_str(manifest.get("manifest_sha256"))
+    if manifest_sha256 is None:
+        manifest_sha256 = _sha256_hex(_canonical_manifest_bytes(manifest))
+    return {
+        "manifest_sha256": manifest_sha256,
+        "kind": _normalize_optional_str(manifest.get("kind")),
+        "created_at": _normalize_optional_str(manifest.get("created_at")),
+        "file_path": str(manifest_path.expanduser().resolve()),
+        "previous_manifest_sha256": _normalize_optional_str(
+            manifest.get("previous_manifest_sha256")
+        ),
+    }
+
+
+def _scan_audit_manifest_entries(root: Path) -> list[dict[str, Any]]:
+    audit_dir = _audit_dir(root)
+    if not audit_dir.exists():
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for manifest_path in sorted(audit_dir.rglob("*.json")):
+        if manifest_path.name == _AUDIT_INDEX_FILE:
+            continue
+        try:
+            manifest = _read_manifest_object(manifest_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        entries.append(_manifest_entry(manifest_path, manifest))
+    return entries
+
+
+def _history_sort_key(entry: dict[str, Any]) -> tuple[datetime, str, str]:
+    return (
+        _parse_timestamp(entry.get("created_at")) or datetime.min.replace(tzinfo=UTC),
+        str(entry.get("manifest_sha256") or ""),
+        str(entry.get("file_path") or ""),
+    )
+
+
+def _write_history_index(root: Path, entries: list[dict[str, Any]]) -> None:
+    index_path = _history_index_path(root)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": _AUDIT_INDEX_VERSION,
+        "manifests": sorted(entries, key=_history_sort_key, reverse=True),
+        "updated_at": _utc_now_iso(),
+    }
+    index_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _load_history_index(root: Path) -> list[dict[str, Any]] | None:
+    index_path = _history_index_path(root)
+    if not index_path.exists():
+        return None
+
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    manifests = payload.get("manifests")
+    if not isinstance(manifests, list):
+        return None
+
+    entries: list[dict[str, Any]] = []
+    for raw in manifests:
+        if not isinstance(raw, dict):
+            continue
+        manifest_sha256 = _normalize_optional_str(raw.get("manifest_sha256"))
+        file_path = _normalize_optional_str(raw.get("file_path"))
+        if manifest_sha256 is None or file_path is None:
+            continue
+        entries.append(
+            {
+                "manifest_sha256": manifest_sha256,
+                "kind": _normalize_optional_str(raw.get("kind")),
+                "created_at": _normalize_optional_str(raw.get("created_at")),
+                "file_path": file_path,
+                "previous_manifest_sha256": _normalize_optional_str(
+                    raw.get("previous_manifest_sha256")
+                ),
+            }
+        )
+    return entries
+
+
+def _ensure_history_index(root: Path) -> list[dict[str, Any]]:
+    entries = _load_history_index(root)
+    if entries is not None:
+        return entries
+
+    scanned_entries = _scan_audit_manifest_entries(root)
+    _write_history_index(root, scanned_entries)
+    return scanned_entries
+
+
+def _history_entry_identity(entry: dict[str, Any]) -> tuple[str, str, str | None, str | None, str | None]:
+    return (
+        str(entry["manifest_sha256"]),
+        str(entry["file_path"]),
+        _normalize_optional_str(entry.get("kind")),
+        _normalize_optional_str(entry.get("created_at")),
+        _normalize_optional_str(entry.get("previous_manifest_sha256")),
+    )
+
+
+def _upsert_history_entry(
+    entries: list[dict[str, Any]], entry: dict[str, Any]
+) -> list[dict[str, Any]]:
+    manifest_sha256 = str(entry["manifest_sha256"])
+    file_path = str(entry["file_path"])
+    filtered = [
+        existing
+        for existing in entries
+        if str(existing.get("manifest_sha256")) != manifest_sha256
+        and str(existing.get("file_path")) != file_path
+    ]
+    filtered.append(entry)
+    return filtered
+
+
+def _sync_history_index(root: Path) -> list[dict[str, Any]]:
+    entries = _ensure_history_index(root)
+    merged = entries
+    for scanned_entry in _scan_audit_manifest_entries(root):
+        merged = _upsert_history_entry(merged, scanned_entry)
+
+    if sorted(merged, key=_history_entry_identity) != sorted(entries, key=_history_entry_identity):
+        _write_history_index(root, merged)
+    return merged
+
+
+def record_audit_manifest(
+    manifest_path: str | Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+) -> None:
+    resolved_manifest = Path(manifest_path).expanduser().resolve()
+    manifest_payload = manifest if manifest is not None else _read_manifest_object(resolved_manifest)
+    root = _resolve_manifest_root(resolved_manifest, manifest_payload)
+    entries = _sync_history_index(root)
+    _write_history_index(
+        root,
+        _upsert_history_entry(entries, _manifest_entry(resolved_manifest, manifest_payload)),
+    )
+
+
+def _load_signature_kind(file_path: str) -> str | None:
+    try:
+        manifest = _read_manifest_object(Path(file_path))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    signature = manifest.get("signature")
+    if not isinstance(signature, dict):
+        return None
+    return _normalize_optional_str(signature.get("kind"))
+
+
+def _order_history_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_sha = {
+        str(entry["manifest_sha256"]): entry
+        for entry in entries
+        if _normalize_optional_str(entry.get("manifest_sha256")) is not None
+    }
+    referenced = {
+        previous_sha
+        for entry in entries
+        for previous_sha in [_normalize_optional_str(entry.get("previous_manifest_sha256"))]
+        if previous_sha is not None and previous_sha in by_sha
+    }
+    heads = [
+        entry
+        for entry in entries
+        if str(entry.get("manifest_sha256")) not in referenced
+    ]
+
+    ordered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def append_chain(start: dict[str, Any]) -> None:
+        current: dict[str, Any] | None = start
+        while current is not None:
+            current_sha = _normalize_optional_str(current.get("manifest_sha256"))
+            if current_sha is None or current_sha in seen:
+                return
+            seen.add(current_sha)
+            ordered.append(current)
+            previous_sha = _normalize_optional_str(current.get("previous_manifest_sha256"))
+            current = by_sha.get(previous_sha) if previous_sha is not None else None
+
+    for head in sorted(heads, key=_history_sort_key, reverse=True):
+        append_chain(head)
+
+    for entry in sorted(entries, key=_history_sort_key, reverse=True):
+        append_chain(entry)
+
+    return ordered
+
+
+def list_audit_history(path: str | Path = ".") -> list[dict[str, Any]]:
+    root = _resolve_history_root(path)
+    entries = _sync_history_index(root)
+    known_manifests = {
+        str(entry["manifest_sha256"])
+        for entry in entries
+        if _normalize_optional_str(entry.get("manifest_sha256")) is not None
+    }
+
+    history: list[dict[str, Any]] = []
+    for entry in _order_history_entries(entries):
+        previous_manifest_sha256 = _normalize_optional_str(entry.get("previous_manifest_sha256"))
+        created_at = _normalize_optional_str(entry.get("created_at"))
+        file_path = str(entry["file_path"])
+        history.append(
+            {
+                "manifest_sha256": str(entry["manifest_sha256"]),
+                "kind": _normalize_optional_str(entry.get("kind")),
+                "created_at": created_at,
+                "file_path": file_path,
+                "previous_manifest_sha256": previous_manifest_sha256,
+                "missing_timestamp": created_at is None,
+                "chain_gap": previous_manifest_sha256 is not None
+                and previous_manifest_sha256 not in known_manifests,
+                "signature_kind": _load_signature_kind(file_path),
+            }
+        )
+    return history
+
+
+def list_audit_history_json(path: str | Path = ".") -> str:
+    return json.dumps(list_audit_history(path), indent=2)
 
 
 def _previous_manifest_digest(path: Path) -> str:
@@ -155,6 +470,10 @@ def verify_audit_manifest(
     payload["signature_kind"] = signature_kind
     payload["valid"] = digest_valid and chain_valid and signature_valid
     payload["errors"] = errors
+    try:
+        record_audit_manifest(resolved_manifest, manifest=manifest)
+    except OSError:
+        pass
     return payload
 
 
