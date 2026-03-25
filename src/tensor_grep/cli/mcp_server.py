@@ -63,10 +63,22 @@ def _rewrite_envelope() -> dict[str, Any]:
     }
 
 
-def _rewrite_error(message: str, *, code: str) -> str:
+def _rewrite_error_payload(
+    message: str,
+    *,
+    code: str,
+    details: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     payload = _rewrite_envelope()
-    payload["error"] = {"code": code, "message": message}
-    return json.dumps(payload, indent=2)
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details:
+        error["details"] = details
+    payload["error"] = error
+    return payload
+
+
+def _rewrite_error(message: str, *, code: str) -> str:
+    return json.dumps(_rewrite_error_payload(message, code=code), indent=2)
 
 
 def _audit_manifest_error(message: str, *, code: str) -> str:
@@ -314,6 +326,89 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
 
     _record_generated_audit_manifest(payload)
     return _normalize_rewrite_json_payload(payload)
+
+
+def execute_rewrite_apply_json(
+    *,
+    pattern: str,
+    replacement: str,
+    lang: str,
+    path: str = ".",
+    verify: bool = False,
+    checkpoint: bool = False,
+    audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
+    policy: str | None = None,
+) -> tuple[str, int]:
+    from tensor_grep.cli.apply_policy import (
+        PolicyValidationError,
+        evaluate_apply_policy,
+        load_apply_policy,
+    )
+
+    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    if validation_error:
+        return _rewrite_error(validation_error, code="invalid_input"), 1
+
+    loaded_policy = None
+    if policy is not None:
+        try:
+            loaded_policy = load_apply_policy(
+                policy,
+                legacy_lint_cmd=lint_cmd,
+                legacy_test_cmd=test_cmd,
+            )
+        except FileNotFoundError as exc:
+            return _rewrite_error(str(exc), code="not_found"), 1
+        except PolicyValidationError as exc:
+            return (
+                json.dumps(
+                    _rewrite_error_payload(
+                        str(exc),
+                        code="invalid_policy",
+                        details=exc.details,
+                    ),
+                    indent=2,
+                ),
+                1,
+            )
+        if loaded_policy.on_failure == "rollback" and not checkpoint:
+            return (
+                _rewrite_error(
+                    "Policy on_failure=rollback requires checkpoint=true.",
+                    code="invalid_input",
+                ),
+                1,
+            )
+
+    command = _build_rewrite_command(
+        pattern=pattern,
+        replacement=replacement,
+        lang=lang,
+        path=path,
+        mode="apply",
+        verify=verify,
+        checkpoint=checkpoint,
+        audit_manifest=audit_manifest,
+        audit_signing_key=audit_signing_key,
+        lint_cmd=None if loaded_policy is not None else lint_cmd,
+        test_cmd=None if loaded_policy is not None else test_cmd,
+    )
+    rewrite_json = _execute_rewrite_json_command(command)
+    rewrite_payload = json.loads(rewrite_json)
+    if rewrite_payload.get("error"):
+        return rewrite_json, 1
+    if loaded_policy is None:
+        return rewrite_json, 0
+
+    policy_payload, exit_code = evaluate_apply_policy(
+        rewrite_payload,
+        loaded_policy,
+        path=path,
+    )
+    return json.dumps(policy_payload, indent=2), exit_code
 
 
 def _execute_rewrite_diff_command(command: list[str]) -> str:
@@ -1425,6 +1520,7 @@ def tg_rewrite_apply(
     audit_signing_key: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
+    policy: str | None = None,
 ) -> str:
     """
     Apply native AST rewrites and optionally verify the written bytes.
@@ -1440,25 +1536,22 @@ def tg_rewrite_apply(
         audit_signing_key: Optional path to an HMAC signing key for the audit manifest.
         lint_cmd: Optional command to run after apply/verify for structured lint validation.
         test_cmd: Optional command to run after apply/verify for structured test validation.
+        policy: Optional path to an apply policy JSON file for post-apply checks and rollback.
     """
-    validation_error = _validate_rewrite_inputs(pattern, lang, path)
-    if validation_error:
-        return _rewrite_error(validation_error, code="invalid_input")
-
-    command = _build_rewrite_command(
+    payload, _exit_code = execute_rewrite_apply_json(
         pattern=pattern,
         replacement=replacement,
         lang=lang,
         path=path,
-        mode="apply",
         verify=verify,
         checkpoint=checkpoint,
         audit_manifest=audit_manifest,
         audit_signing_key=audit_signing_key,
         lint_cmd=lint_cmd,
         test_cmd=test_cmd,
+        policy=policy,
     )
-    return _execute_rewrite_json_command(command)
+    return payload
 
 
 @mcp.tool()  # type: ignore

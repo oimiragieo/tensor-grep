@@ -785,6 +785,85 @@ def test_tg_rewrite_apply_supports_optional_validation_commands():
     ]
 
 
+def test_tg_rewrite_apply_supports_optional_policy_parameter(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    policy_path = tmp_path / "apply-policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "lint_cmd": None,
+                "test_cmd": None,
+                "ruleset_scan": None,
+                "on_failure": "warn",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "plan": {"total_edits": 1},
+        "verification": {"total_edits": 1, "verified": 1, "mismatches": []},
+        "policy_result": {
+            "policy_path": str(policy_path.resolve()),
+            "checks": [],
+            "all_passed": True,
+            "action_taken": "none",
+        },
+    }
+
+    with patch(
+        "tensor_grep.cli.mcp_server.execute_rewrite_apply_json",
+        return_value=(json.dumps(payload), 0),
+    ) as mock_execute:
+        out = mcp_server.tg_rewrite_apply(
+            pattern="def $F($$$ARGS): return $EXPR",
+            replacement="lambda $$$ARGS: $EXPR",
+            lang="python",
+            path="src",
+            policy=str(policy_path),
+        )
+
+    parsed = json.loads(out)
+    assert parsed == payload
+    assert mock_execute.call_args.kwargs["policy"] == str(policy_path)
+
+
+def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    policy_path = tmp_path / "apply-policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "lint_cmd": None,
+                "test_cmd": None,
+                "ruleset_scan": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out = mcp_server.tg_rewrite_apply(
+        pattern="def $F($$$ARGS): return $EXPR",
+        replacement="lambda $$$ARGS: $EXPR",
+        lang="python",
+        path=str(tmp_path),
+        policy=str(policy_path),
+    )
+
+    parsed = json.loads(out)
+    assert parsed["error"]["code"] == "invalid_policy"
+    assert parsed["error"]["details"]
+    assert any(detail["field"] == "on_failure" for detail in parsed["error"]["details"])
+
+
 def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
     from tensor_grep.cli import mcp_server
 
