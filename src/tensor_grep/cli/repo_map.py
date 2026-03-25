@@ -228,6 +228,23 @@ def _js_ts_named_import_bindings(source: str) -> list[dict[str, str]]:
     return bindings
 
 
+def _js_ts_namespace_import_bindings(source: str) -> list[dict[str, str]]:
+    bindings: list[dict[str, str]] = []
+    pattern = re.compile(
+        r"""(?x)
+        import\s+\*\s+as\s+(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s+from\s*["'](?P<module>[^"']+)["']
+        """
+    )
+    for match in pattern.finditer(source):
+        bindings.append(
+            {
+                "module": match.group("module").strip(),
+                "local": match.group("local").strip(),
+            }
+        )
+    return bindings
+
+
 def _split_top_level_list(text: str) -> list[str]:
     items: list[str] = []
     current: list[str] = []
@@ -316,6 +333,7 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
                     "module": module_name.strip(),
                     "imported": imported_name.strip(),
                     "local": local_name.strip(),
+                    "path": imported_path.strip(),
                     "wildcard": False,
                 }
             )
@@ -345,6 +363,67 @@ def _module_path_matches_definition(module_name: str, definition_path: str) -> b
     if not module_parts or not definition_parts:
         return False
     return definition_parts[-len(module_parts) :] == module_parts
+
+
+def _js_ts_module_matches_definition(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+) -> bool:
+    if module_name.startswith("."):
+        base = (importer_path.parent / module_name).resolve()
+        candidates: list[Path] = []
+        if base.suffix in _JS_TS_SUFFIXES:
+            candidates.append(base)
+        else:
+            candidates.extend(base.with_suffix(suffix) for suffix in sorted(_JS_TS_SUFFIXES))
+            candidates.extend(
+                (base / "index").with_suffix(suffix) for suffix in sorted(_JS_TS_SUFFIXES)
+            )
+        resolved_definition = str(Path(definition_path).resolve())
+        return any(str(candidate) == resolved_definition for candidate in candidates)
+    return _module_path_matches_definition(module_name, definition_path)
+
+
+def _rust_module_matches_definition(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+) -> bool:
+    parts = [part.strip() for part in module_name.split("::") if part.strip()]
+    if not parts:
+        return False
+
+    start = importer_path.parent.resolve()
+    while start.name == "":
+        start = start.parent
+
+    if parts[0] == "crate":
+        crate_root = next(
+            (parent for parent in [importer_path.parent, *importer_path.parents] if parent.name == "src"),
+            None,
+        )
+        if crate_root is not None:
+            start = crate_root.resolve()
+        parts = parts[1:]
+    else:
+        while parts and parts[0] == "super":
+            start = start.parent
+            parts = parts[1:]
+        if parts and parts[0] == "self":
+            parts = parts[1:]
+
+    if not parts:
+        return False
+
+    base = start.joinpath(*parts).resolve()
+    candidates = [base.with_suffix(".rs"), base / "mod.rs"]
+    resolved_definition = str(Path(definition_path).resolve())
+    if any(str(candidate) == resolved_definition for candidate in candidates):
+        return True
+    if module_name.startswith(("crate::", "self::", "super::")):
+        return False
+    return _module_path_matches_definition(module_name, definition_path)
 
 
 def _file_imports_symbol_from_definition(
@@ -378,20 +457,33 @@ def _file_imports_symbol_from_definition(
 
     if file_path.suffix in _JS_TS_SUFFIXES:
         bindings = _js_ts_named_import_bindings(source)
+        namespace_bindings = _js_ts_namespace_import_bindings(source)
         return any(
             binding["imported"] == symbol
-            and _module_path_matches_definition(binding["module"], definition_path)
+            and _js_ts_module_matches_definition(file_path, binding["module"], definition_path)
             for binding in bindings
+        ) or any(
+            _js_ts_module_matches_definition(file_path, binding["module"], definition_path)
+            for binding in namespace_bindings
         )
 
     if file_path.suffix in _RUST_SUFFIXES:
         bindings = _rust_use_bindings(source)
+        definition_stem = Path(definition_path).with_suffix("").name.lower()
         return any(
-            _module_path_matches_definition(str(binding.get("module", "")), definition_path)
+            (
+                _rust_module_matches_definition(
+                    file_path, str(binding.get("module", "")), definition_path
+                )
+                or _rust_module_matches_definition(
+                    file_path, str(binding.get("path", "")), definition_path
+                )
+            )
             and (
                 bool(binding.get("wildcard"))
-                or str(binding.get("imported", "")) == symbol
-                or str(binding.get("local", "")) == symbol
+                or str(binding.get("imported", "")).lower() == symbol.lower()
+                or str(binding.get("local", "")).lower() == symbol.lower()
+                or str(binding.get("imported", "")).lower() == definition_stem
             )
             for binding in bindings
         )

@@ -3073,6 +3073,156 @@ def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_pa
     assert consumer_calls[0]["line"] == 4
 
 
+def test_tg_symbol_callers_resolves_javascript_namespace_import_aliases(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    api_path = src_dir / "payments.js"
+    api_path.write_text(
+        "export function createInvoice(total) {\n"
+        "  return total;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    consumer_path = src_dir / "consumer.js"
+    consumer_path.write_text(
+        'import * as paymentsApi from "./payments";\n'
+        "export function renderInvoice() {\n"
+        "  return paymentsApi.createInvoice(3);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("createInvoice", str(project)))
+
+    consumer_calls = [
+        caller for caller in payload["callers"] if caller["file"] == str(consumer_path.resolve())
+    ]
+    assert len(consumer_calls) == 1
+    assert consumer_calls[0]["line"] == 3
+
+
+def test_tg_symbol_callers_resolves_rust_module_alias_use_chains(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    api_path = src_dir / "billing.rs"
+    api_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    consumer_path = src_dir / "consumer.rs"
+    consumer_path.write_text(
+        "use crate::billing as billing_api;\n\n"
+        "pub fn render_invoice() -> usize {\n"
+        "    billing_api::issue_invoice()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
+
+    consumer_calls = [
+        caller for caller in payload["callers"] if caller["file"] == str(consumer_path.resolve())
+    ]
+    assert len(consumer_calls) == 1
+    assert consumer_calls[0]["line"] == 4
+
+
+def test_tg_symbol_callers_prefers_typescript_definition_selected_by_namespace_import(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    admin_dir = src_dir / "admin"
+    src_dir.mkdir(parents=True)
+    admin_dir.mkdir()
+
+    preferred_path = src_dir / "payments.ts"
+    preferred_path.write_text(
+        "export function createInvoice(total: number) {\n"
+        "  return total;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    other_path = admin_dir / "payments.ts"
+    other_path.write_text(
+        "export function createInvoice(total: number) {\n"
+        "  return total * 2;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    consumer_path = src_dir / "consumer.ts"
+    consumer_path.write_text(
+        'import * as paymentsApi from "./payments";\n'
+        "export function renderInvoice() {\n"
+        "  return paymentsApi.createInvoice(3);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("createInvoice", str(project)))
+
+    assert len(payload["definitions"]) == 1
+    assert payload["definitions"][0]["name"] == "createInvoice"
+    assert payload["definitions"][0]["kind"] == "function"
+    assert payload["definitions"][0]["file"] == str(preferred_path.resolve())
+    assert payload["definitions"][0]["line"] == 1
+    assert any(caller["file"] == str(consumer_path.resolve()) for caller in payload["callers"])
+    assert all(definition["file"] != str(other_path.resolve()) for definition in payload["definitions"])
+
+
+def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_chain(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    other_dir = src_dir / "other"
+    src_dir.mkdir(parents=True)
+    other_dir.mkdir()
+
+    preferred_path = src_dir / "billing.rs"
+    preferred_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    other_path = other_dir / "billing.rs"
+    other_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    2\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    consumer_path = src_dir / "consumer.rs"
+    consumer_path.write_text(
+        "use crate::billing as billing_api;\n\n"
+        "pub fn render_invoice() -> usize {\n"
+        "    billing_api::issue_invoice()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
+
+    assert len(payload["definitions"]) == 1
+    assert payload["definitions"][0]["name"] == "issue_invoice"
+    assert payload["definitions"][0]["kind"] == "function"
+    assert payload["definitions"][0]["file"] == str(preferred_path.resolve())
+    assert payload["definitions"][0]["line"] == 1
+    assert any(caller["file"] == str(consumer_path.resolve()) for caller in payload["callers"])
+    assert all(definition["file"] != str(other_path.resolve()) for definition in payload["definitions"])
+
+
 def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path):
     from tensor_grep.cli import mcp_server
 
