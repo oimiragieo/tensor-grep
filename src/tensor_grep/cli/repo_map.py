@@ -5,7 +5,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
@@ -23,8 +23,17 @@ _SKIP_DIR_NAMES = {
     ".pytest_cache",
 }
 _JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+_TS_SUFFIXES = {".ts", ".tsx"}
 _RUST_SUFFIXES = {".rs"}
 _RENDER_PROFILES = {"full", "compact", "llm"}
+_JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
+
+
+class _ValidationRunnerInfo(NamedTuple):
+    has_python: bool
+    has_rust: bool
+    js_runners: tuple[str, ...]
+    ts_runners: tuple[str, ...]
 
 
 def _envelope(path: Path) -> dict[str, Any]:
@@ -1997,13 +2006,319 @@ def _primary_span_for_symbol(symbol: dict[str, Any] | None) -> dict[str, int] | 
     }
 
 
-def _validation_commands_for_tests(tests: list[str]) -> list[str]:
-    commands: list[str] = []
+def _validation_repo_root(repo_root: str | Path) -> Path:
+    root = Path(repo_root).expanduser().resolve()
+    return root.parent if root.is_file() else root
+
+
+def _package_json_dependency_names(package_json: dict[str, Any]) -> set[str]:
+    dependency_names: set[str] = set()
+    for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+        current = package_json.get(key)
+        if not isinstance(current, dict):
+            continue
+        dependency_names.update(str(name) for name in current.keys())
+    return dependency_names
+
+
+def _ts_jest_configured(
+    repo_root: Path,
+    package_json: dict[str, Any],
+    package_text: str,
+    dependency_names: set[str],
+) -> bool:
+    if "ts-jest" in dependency_names:
+        return True
+    if "ts-jest" in package_text:
+        return True
+    jest_config = package_json.get("jest")
+    if jest_config is not None and "ts-jest" in json.dumps(jest_config, sort_keys=True):
+        return True
+    for config_name in (
+        "jest.config.js",
+        "jest.config.cjs",
+        "jest.config.mjs",
+        "jest.config.ts",
+        "jest.config.json",
+    ):
+        config_path = repo_root / config_name
+        if not config_path.is_file():
+            continue
+        try:
+            if "ts-jest" in config_path.read_text(encoding="utf-8"):
+                return True
+        except (OSError, UnicodeDecodeError):
+            continue
+    return False
+
+
+@lru_cache(maxsize=64)
+def _detect_validation_runners(repo_root: str) -> _ValidationRunnerInfo:
+    root = _validation_repo_root(repo_root)
+    if not root.exists():
+        return _ValidationRunnerInfo(False, False, (), ())
+
+    all_files = _iter_repo_files(root)
+    has_python = any(current.suffix == ".py" for current in all_files)
+    has_rust = (root / "Cargo.toml").is_file() or any(
+        current.suffix in _RUST_SUFFIXES for current in all_files
+    )
+
+    package_json: dict[str, Any] = {}
+    package_text = ""
+    package_json_path = root / "package.json"
+    if package_json_path.is_file():
+        try:
+            package_text = package_json_path.read_text(encoding="utf-8")
+            loaded = json.loads(package_text)
+            if isinstance(loaded, dict):
+                package_json = loaded
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            package_json = {}
+            package_text = ""
+
+    dependency_names = _package_json_dependency_names(package_json)
+    js_runners = tuple(runner for runner in _JS_RUNNER_ORDER if runner in dependency_names)
+
+    ts_runners: list[str] = []
+    if "vitest" in dependency_names:
+        ts_runners.append("vitest")
+    if "jest" in dependency_names and _ts_jest_configured(
+        root, package_json, package_text, dependency_names
+    ):
+        ts_runners.append("jest")
+    if "mocha" in dependency_names and (
+        "ts-node" in dependency_names or "tsx" in dependency_names
+    ):
+        ts_runners.append("mocha")
+
+    return _ValidationRunnerInfo(
+        has_python=has_python,
+        has_rust=has_rust,
+        js_runners=js_runners,
+        ts_runners=tuple(ts_runners),
+    )
+
+
+def _relative_validation_path(path: Path, repo_root: Path) -> str:
+    try:
+        return path.resolve().relative_to(repo_root).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _append_unique_command(commands: list[str], command: str, seen: set[str]) -> None:
+    if command in seen:
+        return
+    seen.add(command)
+    commands.append(command)
+
+
+def _candidate_terms(value: str | None) -> list[str]:
+    if not value:
+        return []
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", value)
+    return _query_terms(normalized.replace("_", " "))
+
+
+def _best_test_function_candidate(
+    candidates: list[str],
+    *,
+    primary_symbol_name: str | None,
+    query: str | None,
+) -> str | None:
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    symbol_terms = _candidate_terms(primary_symbol_name)
+    query_terms = _candidate_terms(query)
+    best_name: str | None = None
+    best_score = 0
+    for candidate in candidates:
+        haystack = candidate.lower()
+        score = 0
+        if symbol_terms:
+            if all(term in haystack for term in symbol_terms):
+                score += 6
+            score += sum(2 for term in symbol_terms if term in haystack)
+        if query_terms:
+            score += sum(1 for term in query_terms if term in haystack)
+        if score > 0 and candidate.startswith("test_"):
+            score += 1
+        if score > best_score or (
+            score == best_score and score > 0 and best_name is not None and len(candidate) < len(best_name)
+        ):
+            best_name = candidate
+            best_score = score
+    if best_score <= 0:
+        return None
+    return best_name
+
+
+@lru_cache(maxsize=256)
+def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
+    path = Path(test_path)
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return ()
+
+    candidates: list[str] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            candidates.append(node.name)
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            for member in node.body:
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef)) and member.name.startswith(
+                    "test"
+                ):
+                    candidates.append(member.name)
+    return tuple(dict.fromkeys(candidates))
+
+
+@lru_cache(maxsize=256)
+def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
+    path = Path(test_path)
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ()
+    pattern = re.compile(
+        r"#\s*\[\s*test\s*]\s*(?:\r?\n\s*)*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+        re.MULTILINE,
+    )
+    return tuple(dict.fromkeys(match.group(1) for match in pattern.finditer(source)))
+
+
+def _javascript_runner_file_command(runner: str, relative_path: str) -> str:
+    if runner == "vitest":
+        return f"npx vitest run {relative_path}"
+    if runner == "mocha":
+        return f"npx mocha {relative_path}"
+    return f"npx jest {relative_path}"
+
+
+def _javascript_runner_fallback_command(runner: str) -> str:
+    if runner == "vitest":
+        return "npx vitest run"
+    if runner == "mocha":
+        return "npx mocha"
+    return "npx jest"
+
+
+def _rust_file_level_command(test_path: Path, repo_root: Path) -> str | None:
+    try:
+        relative = test_path.resolve().relative_to(repo_root)
+    except ValueError:
+        return None
+    if relative.suffix != ".rs" or "tests" not in relative.parts:
+        return None
+    return f"cargo test --test {relative.stem}"
+
+
+def _validation_commands_for_tests(
+    tests: list[str],
+    *,
+    repo_root: str | Path,
+    primary_test: str | None = None,
+    primary_symbol: dict[str, Any] | None = None,
+    query: str | None = None,
+) -> list[str]:
+    root = _validation_repo_root(repo_root)
+    detected = _detect_validation_runners(str(root))
+    primary_symbol_name = (
+        str(primary_symbol.get("name")) if isinstance(primary_symbol, dict) and primary_symbol.get("name") else None
+    )
+
+    specific_commands: list[str] = []
+    file_commands: list[str] = []
+    fallback_commands: list[str] = []
+    seen: set[str] = set()
+    requested_javascript_runners: list[str] = []
+    include_python_fallback = False
+    include_rust_fallback = False
+
+    def remember_runner(runner: str) -> None:
+        if runner not in requested_javascript_runners:
+            requested_javascript_runners.append(runner)
+
     for current in tests:
         path = Path(current)
-        if path.suffix == ".py":
-            commands.append(f"uv run pytest {path} -q")
-    return commands
+        suffix = path.suffix.lower()
+        relative_path = _relative_validation_path(path, root)
+
+        if suffix == ".py":
+            include_python_fallback = True
+            if primary_test is not None and str(path.resolve()) == str(Path(primary_test).resolve()):
+                test_filter = _best_test_function_candidate(
+                    list(_python_test_function_candidates(str(path.resolve()))),
+                    primary_symbol_name=primary_symbol_name,
+                    query=query,
+                )
+                if test_filter:
+                    _append_unique_command(
+                        specific_commands,
+                        f"uv run pytest {relative_path} -k {test_filter} -q",
+                        seen,
+                    )
+            _append_unique_command(file_commands, f"uv run pytest {relative_path} -q", seen)
+            continue
+
+        if suffix in _TS_SUFFIXES:
+            for runner in detected.ts_runners:
+                remember_runner(runner)
+                _append_unique_command(
+                    file_commands, _javascript_runner_file_command(runner, relative_path), seen
+                )
+            continue
+
+        if suffix in _JS_TS_SUFFIXES:
+            for runner in detected.js_runners:
+                remember_runner(runner)
+                _append_unique_command(
+                    file_commands, _javascript_runner_file_command(runner, relative_path), seen
+                )
+            continue
+
+        if suffix in _RUST_SUFFIXES:
+            include_rust_fallback = True
+            if primary_test is not None and str(path.resolve()) == str(Path(primary_test).resolve()):
+                test_filter = _best_test_function_candidate(
+                    list(_rust_test_function_candidates(str(path.resolve()))),
+                    primary_symbol_name=primary_symbol_name,
+                    query=query,
+                )
+                if test_filter:
+                    _append_unique_command(specific_commands, f"cargo test {test_filter}", seen)
+            file_level_command = _rust_file_level_command(path, root)
+            if file_level_command:
+                _append_unique_command(file_commands, file_level_command, seen)
+            continue
+
+    if not tests:
+        include_python_fallback = include_python_fallback or detected.has_python
+        include_rust_fallback = include_rust_fallback or detected.has_rust
+        for runner in (*detected.js_runners, *detected.ts_runners):
+            remember_runner(runner)
+
+    if not include_python_fallback and not include_rust_fallback and not requested_javascript_runners:
+        include_python_fallback = detected.has_python or (
+            not detected.js_runners and not detected.ts_runners and not detected.has_rust
+        )
+        include_rust_fallback = detected.has_rust
+        for runner in (*detected.js_runners, *detected.ts_runners):
+            remember_runner(runner)
+
+    if include_python_fallback:
+        _append_unique_command(fallback_commands, "uv run pytest -q", seen)
+    for runner in requested_javascript_runners:
+        _append_unique_command(fallback_commands, _javascript_runner_fallback_command(runner), seen)
+    if include_rust_fallback:
+        _append_unique_command(fallback_commands, "cargo test", seen)
+
+    return [*specific_commands, *file_commands, *fallback_commands]
 
 
 def build_context_render(
@@ -2148,7 +2463,13 @@ def build_context_render_from_map(
         "primary_span": _primary_span_for_symbol(primary_symbol),
         "primary_test": primary_test,
         "validation_tests": validation_tests,
-        "validation_commands": _validation_commands_for_tests(validation_tests),
+        "validation_commands": _validation_commands_for_tests(
+            validation_tests,
+            repo_root=payload.get("path", "."),
+            primary_test=primary_test,
+            primary_symbol=primary_symbol,
+            query=query,
+        ),
         "reasons": list(primary_file_match.get("reasons", [])),
         "confidence": {
             "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
@@ -2877,7 +3198,13 @@ def build_symbol_blast_radius_render_from_map(
         "primary_span": _primary_span_for_symbol(primary_symbol),
         "primary_test": primary_test,
         "validation_tests": validation_tests,
-        "validation_commands": _validation_commands_for_tests(validation_tests),
+        "validation_commands": _validation_commands_for_tests(
+            validation_tests,
+            repo_root=payload.get("path", "."),
+            primary_test=primary_test,
+            primary_symbol=primary_symbol,
+            query=symbol,
+        ),
         "reasons": list(primary_file_match.get("reasons", [])),
         "confidence": {
             "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
