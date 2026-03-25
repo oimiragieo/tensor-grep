@@ -2001,7 +2001,28 @@ def test_scan_executes_tls_ruleset(monkeypatch):
         in result.output
     )
     assert "[scan] rule=python-requests-verify-false lang=python matches=0 files=0" in result.output
-    assert "Scan completed. rules=2 matched_rules=1 total_matches=1" in result.output
+    assert "[scan] rule=python-requests-post-verify-false lang=python matches=0 files=0" in result.output
+    assert "Scan completed. rules=3 matched_rules=1 total_matches=1" in result.output
+
+
+def test_scan_executes_tls_ruleset_requests_post_pattern(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("requests.post($URL, verify=False)\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["scan", "--ruleset", "tls-safe", "--language", "python", "--path", "."],
+        )
+
+    assert result.exit_code == 0
+    assert "[scan] rule=python-requests-post-verify-false lang=python matches=1 files=1" in result.output
 
 
 def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):

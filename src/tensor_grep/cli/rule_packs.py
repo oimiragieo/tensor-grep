@@ -189,6 +189,13 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "severity": "high",
                     "message": "Do not disable TLS certificate verification with verify=False.",
                 },
+                {
+                    "id": "python-requests-post-verify-false",
+                    "pattern": "requests.post($URL, verify=False)",
+                    "language": "python",
+                    "severity": "high",
+                    "message": "Do not disable TLS certificate verification with verify=False.",
+                },
             ],
             "javascript": [
                 {
