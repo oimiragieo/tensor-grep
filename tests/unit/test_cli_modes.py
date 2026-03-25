@@ -2725,6 +2725,7 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "callers" in result.stdout
     assert "blast-radius" in result.stdout
     assert "blast-radius-render" in result.stdout
+    assert "audit-diff" in result.stdout
     assert "audit-history" in result.stdout
     assert "audit-verify" in result.stdout
     assert "rulesets" in result.stdout
@@ -2798,6 +2799,97 @@ def test_audit_history_json_returns_empty_array_for_empty_audit_directory(tmp_pa
 
     assert result.exit_code == 0
     assert json.loads(result.stdout) == []
+
+
+def test_audit_diff_json_reports_added_removed_and_changed_fields(tmp_path):
+    runner = CliRunner()
+    left_path = tmp_path / "left.json"
+    right_path = tmp_path / "right.json"
+    _write_audit_manifest(left_path)
+    right_payload = _write_audit_manifest(
+        right_path,
+        previous_manifest_sha256="f" * 64,
+    )
+    parsed_right = json.loads(right_path.read_text(encoding="utf-8"))
+    parsed_right["kind"] = "rewrite-plan-manifest"
+    parsed_right["reviewer"] = "alice"
+    parsed_right["files"][0]["after_sha256"] = "c" * 64
+    parsed_right["manifest_sha256"] = hashlib.sha256(
+        _canonical_manifest_bytes(parsed_right)
+    ).hexdigest()
+    right_path.write_text(json.dumps(parsed_right, indent=2), encoding="utf-8")
+
+    result = runner.invoke(app, ["audit-diff", str(left_path), str(right_path), "--json"])
+
+    assert result.exit_code == 0
+    parsed = json.loads(result.stdout)
+    assert parsed["added"] == {"reviewer": "alice"}
+    assert parsed["removed"] == {}
+    assert parsed["changed"] == {
+        "kind": {"old": "rewrite-audit-manifest", "new": "rewrite-plan-manifest"},
+        "files[0].after_sha256": {"old": "b" * 64, "new": "c" * 64},
+        "previous_manifest_sha256": {"old": None, "new": "f" * 64},
+    }
+    assert right_payload["manifest_sha256"] != parsed_right["manifest_sha256"]
+
+
+def test_audit_diff_default_output_is_human_readable(tmp_path):
+    runner = CliRunner()
+    left_path = tmp_path / "left.json"
+    right_path = tmp_path / "right.json"
+    _write_audit_manifest(left_path)
+    parsed_right = _write_audit_manifest(right_path)
+    parsed_right["reviewer"] = "alice"
+    parsed_right["manifest_sha256"] = hashlib.sha256(
+        _canonical_manifest_bytes(parsed_right)
+    ).hexdigest()
+    right_path.write_text(json.dumps(parsed_right, indent=2), encoding="utf-8")
+
+    result = runner.invoke(app, ["audit-diff", str(left_path), str(right_path)])
+
+    assert result.exit_code == 0
+    assert "Audit diff:" in result.stdout
+    assert "Added" in result.stdout
+    assert "reviewer" in result.stdout
+    assert "Changed" in result.stdout
+
+
+def test_audit_diff_json_returns_empty_sections_for_identical_manifests(tmp_path):
+    runner = CliRunner()
+    manifest_path = tmp_path / "rewrite-audit.json"
+    _write_audit_manifest(manifest_path)
+
+    result = runner.invoke(app, ["audit-diff", str(manifest_path), str(manifest_path), "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"added": {}, "removed": {}, "changed": {}}
+
+
+def test_audit_diff_json_reports_not_found_error(tmp_path):
+    runner = CliRunner()
+    missing_left = tmp_path / "missing-left.json"
+    missing_right = tmp_path / "missing-right.json"
+
+    result = runner.invoke(app, ["audit-diff", str(missing_left), str(missing_right), "--json"])
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.stdout)
+    assert parsed["error"]["code"] == "not_found"
+    assert "Audit manifest not found" in parsed["error"]["message"]
+
+
+def test_audit_diff_json_reports_invalid_json_error(tmp_path):
+    runner = CliRunner()
+    left_path = tmp_path / "left.json"
+    right_path = tmp_path / "right.json"
+    _write_audit_manifest(left_path)
+    right_path.write_text("{not valid json", encoding="utf-8")
+
+    result = runner.invoke(app, ["audit-diff", str(left_path), str(right_path), "--json"])
+
+    assert result.exit_code == 1
+    parsed = json.loads(result.stdout)
+    assert parsed["error"]["code"] == "invalid_json"
 
 
 def test_audit_verify_json_reports_chain_failure(tmp_path):

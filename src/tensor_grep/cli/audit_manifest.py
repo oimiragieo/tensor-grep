@@ -12,6 +12,7 @@ _AUDIT_INDEX_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
 _AUDIT_SUBDIR = "audit"
 _AUDIT_INDEX_FILE = "index.json"
+_AUDIT_DIFF_IGNORED_KEYS = frozenset({"manifest_sha256", "signature"})
 
 
 def _json_output_version() -> int:
@@ -107,6 +108,102 @@ def _resolve_manifest_root(manifest_path: Path, manifest: dict[str, Any]) -> Pat
         if ancestor.name == _AUDIT_SUBDIR and ancestor.parent.name == _TG_DIRNAME:
             return ancestor.parent.parent
     return manifest_path.expanduser().resolve().parent
+
+
+def _audit_diff_field_path(parent: str, field: str) -> str:
+    return f"{parent}.{field}" if parent else field
+
+
+def _audit_diff_index_path(parent: str, index: int) -> str:
+    return f"{parent}[{index}]" if parent else f"[{index}]"
+
+
+def _diff_manifest_values(
+    previous: Any,
+    current: Any,
+    *,
+    path: str,
+    added: dict[str, Any],
+    removed: dict[str, Any],
+    changed: dict[str, dict[str, Any]],
+) -> None:
+    if isinstance(previous, dict) and isinstance(current, dict):
+        for key in sorted(set(previous) | set(current)):
+            if key in _AUDIT_DIFF_IGNORED_KEYS:
+                continue
+            key_path = _audit_diff_field_path(path, key)
+            if key not in previous:
+                added[key_path] = current[key]
+                continue
+            if key not in current:
+                removed[key_path] = previous[key]
+                continue
+            _diff_manifest_values(
+                previous[key],
+                current[key],
+                path=key_path,
+                added=added,
+                removed=removed,
+                changed=changed,
+            )
+        return
+
+    if isinstance(previous, list) and isinstance(current, list):
+        shared_length = min(len(previous), len(current))
+        for index in range(shared_length):
+            _diff_manifest_values(
+                previous[index],
+                current[index],
+                path=_audit_diff_index_path(path, index),
+                added=added,
+                removed=removed,
+                changed=changed,
+            )
+        for index in range(shared_length, len(current)):
+            added[_audit_diff_index_path(path, index)] = current[index]
+        for index in range(shared_length, len(previous)):
+            removed[_audit_diff_index_path(path, index)] = previous[index]
+        return
+
+    if previous != current:
+        changed[path or "$"] = {"old": previous, "new": current}
+
+
+def diff_manifest_objects(
+    previous: dict[str, Any],
+    current: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    added: dict[str, Any] = {}
+    removed: dict[str, Any] = {}
+    changed: dict[str, dict[str, Any]] = {}
+    _diff_manifest_values(
+        previous,
+        current,
+        path="",
+        added=added,
+        removed=removed,
+        changed=changed,
+    )
+    return {"added": added, "removed": removed, "changed": changed}
+
+
+def diff_audit_manifests(
+    previous_manifest_path: str | Path,
+    current_manifest_path: str | Path,
+) -> dict[str, dict[str, Any]]:
+    previous_manifest = _read_manifest_object(Path(previous_manifest_path))
+    current_manifest = _read_manifest_object(Path(current_manifest_path))
+    return diff_manifest_objects(previous_manifest, current_manifest)
+
+
+def diff_audit_manifests_json(
+    previous_manifest_path: str | Path,
+    current_manifest_path: str | Path,
+) -> str:
+    return json.dumps(
+        diff_audit_manifests(previous_manifest_path, current_manifest_path),
+        indent=2,
+    )
 
 
 def _parse_timestamp(value: Any) -> datetime | None:

@@ -3076,6 +3076,16 @@ def upgrade() -> None:
         sys.exit(1)
 
 
+def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-diff",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+
+
 @app.command(name="audit-verify")
 def audit_verify(
     manifest_path: str = typer.Argument(..., help="Path to the rewrite audit manifest JSON file."),
@@ -3170,6 +3180,64 @@ def audit_history(
         typer.echo(
             f"{created_at}  {entry['manifest_sha256']}  {entry['file_path']}{suffix}"
         )
+
+
+@app.command(name="audit-diff")
+def audit_diff(
+    previous_manifest: str = typer.Argument(..., help="Path to the previous audit manifest JSON file."),
+    current_manifest: str = typer.Argument(..., help="Path to the current audit manifest JSON file."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured JSON diff output.",
+    ),
+) -> None:
+    """Compute a semantic diff between two audit manifests."""
+    from tensor_grep.cli.audit_manifest import diff_audit_manifests, diff_audit_manifests_json
+
+    try:
+        if json_output:
+            typer.echo(diff_audit_manifests_json(previous_manifest, current_manifest))
+            return
+        payload = diff_audit_manifests(previous_manifest, current_manifest)
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(json.dumps(_audit_diff_error_payload(str(exc), code="not_found"), indent=2))
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        if json_output:
+            typer.echo(json.dumps(_audit_diff_error_payload(str(exc), code="invalid_json"), indent=2))
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _audit_diff_error_payload(str(exc), code="internal_error"),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Audit diff: {previous_manifest} -> {current_manifest}")
+    for section_name in ("added", "removed", "changed"):
+        typer.echo(f"{section_name.capitalize()}:")
+        section = payload[section_name]
+        if not section:
+            typer.echo("  (none)")
+            continue
+        for key, value in section.items():
+            if section_name == "changed":
+                typer.echo(f"  {key}:")
+                typer.echo(f"    old: {json.dumps(value['old'], sort_keys=True)}")
+                typer.echo(f"    new: {json.dumps(value['new'], sort_keys=True)}")
+                continue
+            typer.echo(f"  {key}: {json.dumps(value, sort_keys=True)}")
 
 
 @app.command("update")

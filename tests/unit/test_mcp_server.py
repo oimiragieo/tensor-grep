@@ -1039,6 +1039,54 @@ def test_tg_audit_history_returns_empty_array_for_empty_directory(tmp_path):
     assert json.loads(mcp_server.tg_audit_history(str(project))) == []
 
 
+def test_tg_audit_diff_matches_cli_json_schema(tmp_path):
+    from tensor_grep.cli import audit_manifest, mcp_server
+
+    left_path = tmp_path / "left.json"
+    right_path = tmp_path / "right.json"
+    _write_audit_manifest(left_path)
+    right_payload = _write_audit_manifest(right_path)
+    right_payload["kind"] = "rewrite-plan-manifest"
+    right_payload["reviewer"] = "alice"
+    right_payload["files"][0]["after_sha256"] = "c" * 64
+    right_payload["manifest_sha256"] = hashlib.sha256(
+        _canonical_manifest_bytes(right_payload)
+    ).hexdigest()
+    right_path.write_text(json.dumps(right_payload, indent=2), encoding="utf-8")
+
+    assert json.loads(mcp_server.tg_audit_diff(str(left_path), str(right_path))) == (
+        audit_manifest.diff_audit_manifests(left_path, right_path)
+    )
+
+
+def test_tg_audit_diff_reports_not_found(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    missing_left = tmp_path / "missing-left.json"
+    missing_right = tmp_path / "missing-right.json"
+
+    out = mcp_server.tg_audit_diff(str(missing_left), str(missing_right))
+
+    parsed = json.loads(out)
+    assert parsed["routing_reason"] == "audit-manifest-diff"
+    assert parsed["error"]["code"] == "not_found"
+
+
+def test_tg_audit_diff_reports_invalid_json(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    left_path = tmp_path / "left.json"
+    right_path = tmp_path / "right.json"
+    _write_audit_manifest(left_path)
+    right_path.write_text("{not valid json", encoding="utf-8")
+
+    out = mcp_server.tg_audit_diff(str(left_path), str(right_path))
+
+    parsed = json.loads(out)
+    assert parsed["routing_reason"] == "audit-manifest-diff"
+    assert parsed["error"]["code"] == "invalid_json"
+
+
 def test_tg_audit_manifest_verify_reports_invalid_input_for_empty_path():
     from tensor_grep.cli import mcp_server
 

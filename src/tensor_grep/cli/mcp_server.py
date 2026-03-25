@@ -91,6 +91,17 @@ def _audit_history_error(message: str, *, code: str) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _audit_diff_error(message: str, *, code: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-diff",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
 def _ruleset_scan_error(message: str, *, code: str, ruleset: str, path: str) -> str:
     payload = {
         "version": _json_output_version(),
@@ -1496,6 +1507,33 @@ def tg_audit_history(path: str = ".") -> str:
         return _audit_history_error(str(exc), code="invalid_input")
     except Exception as exc:
         return _audit_history_error(str(exc), code="internal_error")
+
+
+@mcp.tool()  # type: ignore
+def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
+    """
+    Compute a semantic diff between two audit manifest JSON files.
+
+    Args:
+        previous_manifest: Path to the previous audit manifest JSON file.
+        current_manifest: Path to the current audit manifest JSON file.
+    """
+    from tensor_grep.cli.audit_manifest import diff_audit_manifests_json
+
+    if not previous_manifest.strip() or not current_manifest.strip():
+        return _audit_diff_error(
+            "previous_manifest and current_manifest must not be empty.",
+            code="invalid_input",
+        )
+
+    try:
+        return diff_audit_manifests_json(previous_manifest, current_manifest)
+    except FileNotFoundError as exc:
+        return _audit_diff_error(str(exc), code="not_found")
+    except (json.JSONDecodeError, ValueError) as exc:
+        return _audit_diff_error(str(exc), code="invalid_json")
+    except Exception as exc:
+        return _audit_diff_error(str(exc), code="internal_error")
 
 
 @mcp.tool()  # type: ignore
