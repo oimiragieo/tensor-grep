@@ -1735,12 +1735,18 @@ def test_rulesets_json_lists_builtin_rule_packs():
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["rulesets"][0]["name"] == "crypto-safe"
-    assert payload["rulesets"][0]["category"] == "security"
-    assert "python" in payload["rulesets"][0]["languages"]
-    assert payload["rulesets"][0]["rule_count"] >= 1
-    assert any(ruleset["name"] == "secrets-basic" for ruleset in payload["rulesets"])
-    assert any(ruleset["name"] == "tls-safe" for ruleset in payload["rulesets"])
+    rulesets = {ruleset["name"]: ruleset for ruleset in payload["rulesets"]}
+    assert set(rulesets) == {
+        "auth-safe",
+        "crypto-safe",
+        "deserialization-safe",
+        "secrets-basic",
+        "subprocess-safe",
+        "tls-safe",
+    }
+    assert rulesets["auth-safe"]["category"] == "security"
+    assert "python" in rulesets["auth-safe"]["languages"]
+    assert rulesets["auth-safe"]["rule_count"] >= 1
 
 
 def test_scan_executes_builtin_ruleset(monkeypatch):

@@ -383,10 +383,17 @@ def test_tg_rulesets_returns_builtin_ruleset_metadata():
 
     payload = json.loads(mcp_server.tg_rulesets())
     assert payload["routing_reason"] == "builtin-rulesets"
-    assert payload["rulesets"][0]["name"] == "crypto-safe"
-    assert payload["rulesets"][0]["category"] == "security"
-    assert any(ruleset["name"] == "secrets-basic" for ruleset in payload["rulesets"])
-    assert any(ruleset["name"] == "tls-safe" for ruleset in payload["rulesets"])
+    rulesets = {ruleset["name"]: ruleset for ruleset in payload["rulesets"]}
+    assert set(rulesets) == {
+        "auth-safe",
+        "crypto-safe",
+        "deserialization-safe",
+        "secrets-basic",
+        "subprocess-safe",
+        "tls-safe",
+    }
+    assert rulesets["auth-safe"]["category"] == "security"
+    assert "python" in rulesets["auth-safe"]["languages"]
 
 
 def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
