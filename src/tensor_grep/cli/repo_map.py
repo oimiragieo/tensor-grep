@@ -1893,6 +1893,68 @@ def _python_ast_omitted_relative_lines(block: str) -> tuple[set[int], set[int]]:
     return docstring_lines, boilerplate_lines
 
 
+def _js_ast_omitted_relative_lines(block: str) -> set[int]:
+    jsdoc_lines: set[int] = set()
+    in_jsdoc = False
+
+    for line_number, line in enumerate(block.splitlines(), start=1):
+        stripped = line.strip()
+        if not in_jsdoc:
+            if not stripped.startswith("/**"):
+                continue
+            in_jsdoc = True
+
+        if in_jsdoc:
+            jsdoc_lines.add(line_number)
+            if "*/" in stripped:
+                in_jsdoc = False
+
+    return jsdoc_lines
+
+
+def _ts_ast_omitted_relative_lines(block: str) -> tuple[set[int], set[int]]:
+    jsdoc_lines = _js_ast_omitted_relative_lines(block)
+    type_import_lines: set[int] = set()
+    in_type_import = False
+
+    for line_number, line in enumerate(block.splitlines(), start=1):
+        stripped = line.strip()
+        if not in_type_import:
+            if not stripped.startswith("import type"):
+                continue
+            in_type_import = True
+
+        type_import_lines.add(line_number)
+        if ";" in stripped:
+            in_type_import = False
+
+    return jsdoc_lines, type_import_lines
+
+
+def _rust_ast_omitted_relative_lines(block: str) -> tuple[set[int], set[int]]:
+    doc_comment_lines: set[int] = set()
+    attribute_lines: set[int] = set()
+    in_attribute = False
+    attribute_bracket_balance = 0
+
+    for line_number, line in enumerate(block.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("///") or stripped.startswith("//!"):
+            doc_comment_lines.add(line_number)
+
+        if not in_attribute and re.match(r"^#\[\s*(derive|cfg|allow)\b", stripped):
+            in_attribute = True
+            attribute_bracket_balance = 0
+
+        if in_attribute:
+            attribute_lines.add(line_number)
+            attribute_bracket_balance += line.count("[") - line.count("]")
+            if attribute_bracket_balance <= 0:
+                in_attribute = False
+
+    return doc_comment_lines, attribute_lines
+
+
 def _render_source_block(
     source: dict[str, Any],
     *,
@@ -1910,6 +1972,10 @@ def _render_source_block(
         "removed_blank_lines": 0,
         "removed_docstring_lines": 0,
         "removed_boilerplate_lines": 0,
+        "js_jsdoc_removed": 0,
+        "ts_type_imports_removed": 0,
+        "rust_doc_comments_removed": 0,
+        "rust_attributes_removed": 0,
     }
     line_map: list[dict[str, int]] = []
 
@@ -1934,15 +2000,44 @@ def _render_source_block(
         original_start = int(source["start_line"])
         omitted_docstring_lines: set[int] = set()
         omitted_boilerplate_lines: set[int] = set()
+        omitted_jsdoc_lines: set[int] = set()
+        omitted_ts_type_import_lines: set[int] = set()
+        omitted_rust_doc_comment_lines: set[int] = set()
+        omitted_rust_attribute_lines: set[int] = set()
         if path.suffix == ".py":
             omitted_docstring_lines, omitted_boilerplate_lines = _python_ast_omitted_relative_lines(
                 block
+            )
+        elif path.suffix in _TS_SUFFIXES:
+            omitted_jsdoc_lines, omitted_ts_type_import_lines = _ts_ast_omitted_relative_lines(
+                block
+            )
+        elif path.suffix in _JS_TS_SUFFIXES:
+            omitted_jsdoc_lines = _js_ast_omitted_relative_lines(block)
+        elif path.suffix in _RUST_SUFFIXES:
+            omitted_rust_doc_comment_lines, omitted_rust_attribute_lines = (
+                _rust_ast_omitted_relative_lines(block)
             )
         for index, line in enumerate(original_lines):
             original_line_number = original_start + index
             relative_line_number = index + 1
             if not line.strip():
                 diagnostics["removed_blank_lines"] += 1
+                continue
+            if relative_line_number in omitted_jsdoc_lines:
+                diagnostics["removed_comment_lines"] += 1
+                diagnostics["js_jsdoc_removed"] += 1
+                continue
+            if relative_line_number in omitted_ts_type_import_lines:
+                diagnostics["ts_type_imports_removed"] += 1
+                continue
+            if relative_line_number in omitted_rust_doc_comment_lines:
+                diagnostics["removed_comment_lines"] += 1
+                diagnostics["rust_doc_comments_removed"] += 1
+                continue
+            if relative_line_number in omitted_rust_attribute_lines:
+                diagnostics["removed_boilerplate_lines"] += 1
+                diagnostics["rust_attributes_removed"] += 1
                 continue
             if _is_comment_line(path, line):
                 diagnostics["removed_comment_lines"] += 1
