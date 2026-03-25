@@ -2,7 +2,7 @@
 
 ## Validation Surface
 
-This mission validates through CLI benchmarks and automated tests. No web UI.
+This mission validates through CLI commands, automated tests, and benchmark scripts. No web UI.
 
 Surfaces:
 - **AST parity check**: `python benchmarks/run_ast_parity_check.py` -- 40 patterns, 4 languages, tg vs sg byte-accurate
@@ -54,4 +54,27 @@ This surface relies exclusively on the CLI tools in the repository and benchmark
 - Functional tests (`cargo test`, `pytest`, `cargo build`) can be run normally.
 - Performance tests (benchmarks) MUST be run sequentially without any other CPU-intensive processes running in parallel to prevent noise.
 - Do NOT use agent-browser or tuistory.
+
+### New Validation Surfaces (World-Class Editor Mission)
+
+**Edit Planning validation:**
+- Test via `tg context-render --json` and `tg blast-radius-render --json` CLI commands
+- Verify edit_plan_seed fields: primary_span, related_spans, dependent_files, edit_ordering, rollback_risk
+- Create temp fixture repos with known call graphs for deterministic testing
+
+**Token Budget validation:**
+- Test via `tg context-render --max-tokens N --json` 
+- Verify token_estimate in output, omitted_sections when truncated
+
+**Session validation:**
+- Test via `tg session open/refresh/context-render` and session serve JSONL protocol
+- Incremental refresh: modify files, refresh, verify changeset detection
+
+**Audit/Trust validation:**
+- Test via `tg audit-history --json`, `tg audit-diff --json`, `tg review-bundle create/verify`
+- Policy testing: create policy JSON, apply rewrite with policy, verify rollback behavior
+
+**Ruleset validation:**
+- Test via `tg scan --ruleset <pack> --json` with temp fixture files containing violations
+- Suppression testing: add inline comments, verify inline-suppressed status
 
