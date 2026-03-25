@@ -92,6 +92,36 @@ def _write_audit_manifest(
     return payload
 
 
+def _assert_enriched_edit_plan_seed(
+    edit_plan_seed: dict[str, object],
+    *,
+    primary_file: Path | None = None,
+    primary_symbol_name: str | None = None,
+) -> None:
+    if primary_file is not None:
+        assert edit_plan_seed["primary_file"] == str(primary_file.resolve())
+    else:
+        assert isinstance(edit_plan_seed["primary_file"], str)
+    if primary_symbol_name is not None:
+        assert edit_plan_seed["primary_symbol"]["name"] == primary_symbol_name
+    else:
+        assert isinstance(edit_plan_seed["primary_symbol"]["name"], str)
+    assert {"start_line", "end_line"} <= set(edit_plan_seed["primary_span"])
+    assert edit_plan_seed["primary_span"]["start_line"] >= 1
+    assert edit_plan_seed["primary_span"]["end_line"] >= edit_plan_seed["primary_span"]["start_line"]
+    assert isinstance(edit_plan_seed["related_spans"], list)
+    for related_span in edit_plan_seed["related_spans"]:
+        assert {"file", "symbol", "start_line", "end_line"} <= set(related_span)
+        assert related_span["end_line"] >= related_span["start_line"]
+    assert isinstance(edit_plan_seed["dependent_files"], list)
+    assert isinstance(edit_plan_seed["edit_ordering"], list)
+    if primary_file is not None:
+        assert edit_plan_seed["edit_ordering"][0] == str(primary_file.resolve())
+    else:
+        assert all(isinstance(path, str) for path in edit_plan_seed["edit_ordering"])
+    assert 0.0 <= edit_plan_seed["rollback_risk"] <= 1.0
+
+
 class _FakeScanner:
     def __init__(self, config=None):
         pass
@@ -593,6 +623,46 @@ def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
+def test_context_render_json_includes_enriched_edit_plan_seed_fields(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["context-render", "--query", "create invoice", "--json", str(project)],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "context-render"
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
+
+
 def test_blast_radius_render_json_returns_prompt_ready_radius_bundle(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
@@ -640,8 +710,12 @@ def test_blast_radius_render_json_returns_prompt_ready_radius_bundle(tmp_path):
     assert payload["max_depth"] == 1
     assert payload["sources"][0]["name"] == "create_invoice"
     assert any(section["kind"] == "source" for section in payload["sections"])
-    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
 

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+from io import StringIO
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import MagicMock, patch
@@ -56,6 +57,36 @@ def _write_audit_manifest(
         }
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return payload
+
+
+def _assert_enriched_edit_plan_seed(
+    edit_plan_seed: dict[str, object],
+    *,
+    primary_file: Path | None = None,
+    primary_symbol_name: str | None = None,
+) -> None:
+    if primary_file is not None:
+        assert edit_plan_seed["primary_file"] == str(primary_file.resolve())
+    else:
+        assert isinstance(edit_plan_seed["primary_file"], str)
+    if primary_symbol_name is not None:
+        assert edit_plan_seed["primary_symbol"]["name"] == primary_symbol_name
+    else:
+        assert isinstance(edit_plan_seed["primary_symbol"]["name"], str)
+    assert {"start_line", "end_line"} <= set(edit_plan_seed["primary_span"])
+    assert edit_plan_seed["primary_span"]["start_line"] >= 1
+    assert edit_plan_seed["primary_span"]["end_line"] >= edit_plan_seed["primary_span"]["start_line"]
+    assert isinstance(edit_plan_seed["related_spans"], list)
+    for related_span in edit_plan_seed["related_spans"]:
+        assert {"file", "symbol", "start_line", "end_line"} <= set(related_span)
+        assert related_span["end_line"] >= related_span["start_line"]
+    assert isinstance(edit_plan_seed["dependent_files"], list)
+    assert isinstance(edit_plan_seed["edit_ordering"], list)
+    if primary_file is not None:
+        assert edit_plan_seed["edit_ordering"][0] == str(primary_file.resolve())
+    else:
+        assert all(isinstance(path, str) for path in edit_plan_seed["edit_ordering"])
+    assert 0.0 <= edit_plan_seed["rollback_risk"] <= 1.0
 
 
 def test_tg_ast_search_accepts_ast_wrapper_backend():
@@ -1027,8 +1058,12 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
     assert rendered["session_id"] == session_id
     assert rendered["routing_reason"] == "session-context-render"
     assert rendered["sources"][0]["name"] == "add"
-    assert rendered["edit_plan_seed"]["primary_symbol"]["name"] == "add"
     assert rendered["edit_plan_seed"]["validation_commands"] == ["uv run pytest -q"]
+    _assert_enriched_edit_plan_seed(
+        rendered["edit_plan_seed"],
+        primary_file=sample_path,
+        primary_symbol_name="add",
+    )
     assert 0.0 <= rendered["edit_plan_seed"]["confidence"]["symbol"] <= 1.0
     assert "rendered_context" in rendered
 
@@ -1119,6 +1154,11 @@ def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_pa
     assert payload["symbol"] == "create_invoice"
     assert payload["sources"][0]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
     assert "create_invoice" in payload["rendered_context"]
 
 
@@ -1166,7 +1206,75 @@ def test_tg_session_blast_radius_render_uses_cached_repo_map(tmp_path):
     assert payload["symbol"] == "create_invoice"
     assert payload["sources"][0]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
     assert "create_invoice" in payload["rendered_context"]
+
+
+def test_session_serve_render_commands_include_enriched_edit_plan_seed(tmp_path):
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_service.py").write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    session_id = session_store.open_session(str(project)).session_id
+    stdin = StringIO(
+        "\n".join(
+            [
+                json.dumps({"command": "context_render", "query": "create invoice"}),
+                json.dumps(
+                    {
+                        "command": "blast_radius_render",
+                        "symbol": "create_invoice",
+                        "max_depth": 1,
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    stdout = StringIO()
+
+    served = session_store.serve_session_stream(
+        session_id,
+        str(project),
+        input_stream=stdin,
+        output_stream=stdout,
+    )
+
+    assert served == 2
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+    assert responses[0]["routing_reason"] == "session-context-render"
+    _assert_enriched_edit_plan_seed(responses[0]["edit_plan_seed"])
+    assert responses[1]["routing_reason"] == "session-blast-radius-render"
+    _assert_enriched_edit_plan_seed(
+        responses[1]["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
+    assert str(service_path.resolve()) in responses[1]["edit_plan_seed"]["dependent_files"]
 
 
 def test_tg_session_refresh_updates_cached_session_payload(tmp_path):
@@ -1538,6 +1646,11 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
         "uv run pytest tests/test_payments.py -q",
         "uv run pytest -q",
     ]
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
     assert payload["edit_plan_seed"]["confidence"]["file"] >= 0.5
     assert payload["edit_plan_seed"]["confidence"]["symbol"] >= 0.5
     assert payload["edit_plan_seed"]["confidence"]["test"] >= 0.5
