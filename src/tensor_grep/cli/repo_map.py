@@ -1205,6 +1205,50 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     return sources
 
 
+def _imports_and_symbols_for_path(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    current_imports, current_symbols = _python_imports_and_symbols(path)
+    if path.suffix in _JS_TS_SUFFIXES:
+        current_imports, _ = _regex_imports_and_symbols(path)
+        current_symbols = _js_ts_parser_symbols(path)
+        if not current_symbols:
+            _, current_symbols = _regex_imports_and_symbols(path)
+    elif path.suffix in _RUST_SUFFIXES:
+        current_imports, _ = _regex_imports_and_symbols(path)
+        current_symbols = _rust_parser_symbols(path)
+        if not current_symbols:
+            _, current_symbols = _regex_imports_and_symbols(path)
+    elif not current_imports and not current_symbols:
+        current_imports, current_symbols = _regex_imports_and_symbols(path)
+    return current_imports, current_symbols
+
+
+def _group_symbols_by_file(symbols: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for symbol in symbols:
+        current_path = str(symbol["file"])
+        current_symbols = grouped.setdefault(current_path, [])
+        current_symbols.append(dict(symbol))
+    for current_symbols in grouped.values():
+        current_symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
+    return grouped
+
+
+def _normalized_changeset_paths(
+    root: Path,
+    changeset: dict[str, Any],
+) -> dict[str, list[str]]:
+    normalized: dict[str, list[str]] = {}
+    for key in ("added", "modified", "removed"):
+        entries: list[str] = []
+        for raw_path in changeset.get(key, []) or []:
+            current_path = Path(str(raw_path)).expanduser()
+            if not current_path.is_absolute():
+                current_path = root / current_path
+            entries.append(str(current_path.resolve()))
+        normalized[key] = sorted(dict.fromkeys(entries))
+    return normalized
+
+
 def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
     if not root.exists():
@@ -1218,21 +1262,76 @@ def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     imports: list[dict[str, Any]] = []
     symbols: list[dict[str, Any]] = []
     for current in all_files:
-        current_imports, current_symbols = _python_imports_and_symbols(current)
-        if current.suffix in _JS_TS_SUFFIXES:
-            current_imports, _ = _regex_imports_and_symbols(current)
-            current_symbols = _js_ts_parser_symbols(current)
-            if not current_symbols:
-                _, current_symbols = _regex_imports_and_symbols(current)
-        elif current.suffix in _RUST_SUFFIXES:
-            current_imports, _ = _regex_imports_and_symbols(current)
-            current_symbols = _rust_parser_symbols(current)
-            if not current_symbols:
-                _, current_symbols = _regex_imports_and_symbols(current)
-        elif not current_imports and not current_symbols:
-            current_imports, current_symbols = _regex_imports_and_symbols(current)
+        current_imports, current_symbols = _imports_and_symbols_for_path(current)
         if current_imports:
             imports.append({"file": str(current), "imports": current_imports})
+        symbols.extend(current_symbols)
+
+    payload["files"] = source_files
+    payload["symbols"] = symbols
+    payload["imports"] = imports
+    payload["tests"] = tests
+    payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
+    return payload
+
+
+def build_repo_map_incremental(
+    previous_map: dict[str, Any],
+    changeset: dict[str, Any],
+) -> dict[str, Any]:
+    root = Path(str(previous_map.get("path", "."))).expanduser().resolve()
+    if not root.exists():
+        raise FileNotFoundError(f"Path not found: {root}")
+
+    normalized_changeset = _normalized_changeset_paths(root, changeset)
+    changed_files = set(normalized_changeset["added"]) | set(normalized_changeset["modified"])
+    previous_paths = {
+        str(Path(str(current)).expanduser().resolve())
+        for current in (
+            list(previous_map.get("related_paths", []))
+            or [*previous_map.get("files", []), *previous_map.get("tests", [])]
+        )
+    }
+    previous_imports_by_file = {
+        str(Path(str(entry["file"])).expanduser().resolve()): [str(item) for item in entry["imports"]]
+        for entry in previous_map.get("imports", [])
+    }
+    previous_symbols_by_file = _group_symbols_by_file(
+        [dict(symbol) for symbol in previous_map.get("symbols", [])]
+    )
+
+    all_files = _iter_repo_files(root)
+    current_files_by_path = {str(current): current for current in all_files}
+    parsed_imports_by_file: dict[str, list[str]] = {}
+    parsed_symbols_by_file: dict[str, list[dict[str, Any]]] = {}
+
+    for current_path in sorted(changed_files | (set(current_files_by_path) - previous_paths)):
+        path_obj = current_files_by_path.get(current_path)
+        if path_obj is None:
+            continue
+        current_imports, current_symbols = _imports_and_symbols_for_path(path_obj)
+        parsed_imports_by_file[current_path] = current_imports
+        parsed_symbols_by_file[current_path] = current_symbols
+
+    payload = _envelope(root)
+    tests = [str(current) for current in all_files if _is_test_file(current)]
+    source_files = [str(current) for current in all_files if not _is_test_file(current)]
+    imports: list[dict[str, Any]] = []
+    symbols: list[dict[str, Any]] = []
+    for current in all_files:
+        current_path = str(current)
+        current_imports = (
+            parsed_imports_by_file[current_path]
+            if current_path in parsed_imports_by_file
+            else previous_imports_by_file.get(current_path, [])
+        )
+        current_symbols = (
+            parsed_symbols_by_file[current_path]
+            if current_path in parsed_symbols_by_file
+            else previous_symbols_by_file.get(current_path, [])
+        )
+        if current_imports:
+            imports.append({"file": current_path, "imports": current_imports})
         symbols.extend(current_symbols)
 
     payload["files"] = source_files

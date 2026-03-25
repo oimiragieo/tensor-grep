@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any, TextIO, cast
 
 from tensor_grep.cli.repo_map import (
+    _iter_repo_files,
     build_context_pack_from_map,
     build_context_render_from_map,
     build_repo_map,
+    build_repo_map_incremental,
     build_symbol_blast_radius_from_map,
     build_symbol_blast_radius_render_from_map,
     build_symbol_callers_from_map,
@@ -42,6 +44,8 @@ class SessionOpenResult:
     created_at: str
     file_count: int
     symbol_count: int
+    refresh_type: str
+    changeset: dict[str, list[str]]
 
 
 @dataclass
@@ -51,6 +55,8 @@ class SessionRefreshResult:
     refreshed_at: str
     file_count: int
     symbol_count: int
+    refresh_type: str
+    changeset: dict[str, list[str]]
 
 
 class SessionStaleError(RuntimeError):
@@ -107,23 +113,66 @@ def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
     return snapshot
 
 
-def _stale_reason(payload: dict[str, Any]) -> str | None:
+def _empty_changeset() -> dict[str, list[str]]:
+    return {"added": [], "modified": [], "removed": []}
+
+
+def _changeset_has_entries(changeset: dict[str, list[str]] | None) -> bool:
+    return bool(changeset and any(changeset[key] for key in ("added", "modified", "removed")))
+
+
+def _changeset_message(changeset: dict[str, list[str]]) -> str:
+    details: list[str] = []
+    for key in ("modified", "added", "removed"):
+        paths = changeset.get(key, [])
+        if not paths:
+            continue
+        details.append(f"{key} {len(paths)}: {paths[0]}")
+    if not details:
+        return "cached session files changed on disk"
+    return f"cached session files changed on disk ({'; '.join(details)})"
+
+
+def _stale_changeset(payload: dict[str, Any]) -> dict[str, list[str]] | None:
     snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
     if not snapshot:
         return None
 
-    for entry in snapshot:
-        current_path = Path(str(entry["path"]))
-        if not current_path.exists():
-            return f"cached session file was removed: {current_path}"
-        try:
-            stat = current_path.stat()
-        except OSError:
-            return f"cached session file cannot be read: {current_path}"
-        if int(stat.st_size) != int(entry["size"]) or int(stat.st_mtime_ns) != int(entry["mtime_ns"]):
-            return f"cached session file changed on disk: {current_path}"
+    root = _resolve_root(Path(str(payload.get("root", payload.get("path", ".")))))
+    snapshot_by_path = {
+        str(Path(str(entry["path"])).expanduser().resolve()): entry for entry in snapshot
+    }
+    current_files = _iter_repo_files(root)
+    current_paths = {str(current): current for current in current_files}
 
-    return None
+    added = sorted(path for path in current_paths if path not in snapshot_by_path)
+    removed = sorted(path for path in snapshot_by_path if path not in current_paths)
+    modified: list[str] = []
+    for current_path, path_obj in current_paths.items():
+        snapshot_entry = snapshot_by_path.get(current_path)
+        if snapshot_entry is None:
+            continue
+        try:
+            stat = path_obj.stat()
+        except OSError:
+            modified.append(current_path)
+            continue
+        if int(stat.st_size) != int(snapshot_entry["size"]) or int(stat.st_mtime_ns) != int(
+            snapshot_entry["mtime_ns"]
+        ):
+            modified.append(current_path)
+
+    return {
+        "added": added,
+        "modified": sorted(dict.fromkeys(modified)),
+        "removed": removed,
+    }
+
+
+def _ensure_session_not_stale(payload: dict[str, Any]) -> None:
+    changeset = _stale_changeset(payload)
+    if _changeset_has_entries(changeset):
+        raise SessionStaleError(_changeset_message(cast(dict[str, list[str]], changeset)))
 
 
 def open_session(path: str = ".") -> SessionOpenResult:
@@ -131,13 +180,16 @@ def open_session(path: str = ".") -> SessionOpenResult:
     repo_map = build_repo_map(root)
     created_at = datetime.now(UTC).isoformat()
     session_id = f"session-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{root.name}"
+    changeset = _empty_changeset()
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
         "root": str(root),
         "created_at": created_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(repo_map["files"]),
+        "snapshot": _capture_snapshot(repo_map["related_paths"]),
+        "refresh_type": "full",
+        "changeset": changeset,
     }
     session_path = _session_payload_path(root, session_id)
     session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -160,13 +212,29 @@ def open_session(path: str = ".") -> SessionOpenResult:
         created_at=created_at,
         file_count=record.file_count,
         symbol_count=record.symbol_count,
+        refresh_type="full",
+        changeset=changeset,
     )
 
 
 def refresh_session(session_id: str, path: str = ".") -> SessionRefreshResult:
     root = _resolve_root(Path(path))
     existing = get_session(session_id, path)
-    repo_map = build_repo_map(root)
+    changeset = _stale_changeset(existing)
+    refresh_type = "full"
+    if changeset is not None:
+        try:
+            repo_map = build_repo_map_incremental(
+                cast(dict[str, Any], existing["repo_map"]),
+                changeset,
+            )
+            refresh_type = "incremental"
+        except Exception:
+            repo_map = build_repo_map(root)
+            refresh_type = "full"
+    else:
+        repo_map = build_repo_map(root)
+        changeset = _empty_changeset()
     refreshed_at = datetime.now(UTC).isoformat()
     created_at = str(existing.get("created_at", refreshed_at))
     payload = {
@@ -176,7 +244,9 @@ def refresh_session(session_id: str, path: str = ".") -> SessionRefreshResult:
         "created_at": created_at,
         "refreshed_at": refreshed_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(repo_map["files"]),
+        "snapshot": _capture_snapshot(repo_map["related_paths"]),
+        "refresh_type": refresh_type,
+        "changeset": changeset,
     }
     session_path = _session_payload_path(root, session_id)
     session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +284,8 @@ def refresh_session(session_id: str, path: str = ".") -> SessionRefreshResult:
         refreshed_at=refreshed_at,
         file_count=len(repo_map["files"]),
         symbol_count=len(repo_map["symbols"]),
+        refresh_type=refresh_type,
+        changeset=changeset,
     )
 
 
@@ -232,9 +304,7 @@ def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
 
 def session_context(session_id: str, query: str, path: str = ".") -> dict[str, Any]:
     payload = get_session(session_id, path)
-    reason = _stale_reason(payload)
-    if reason:
-        raise SessionStaleError(reason)
+    _ensure_session_not_stale(payload)
     context = build_context_pack_from_map(payload["repo_map"], query)
     context["session_id"] = session_id
     context["routing_reason"] = "session-context"
@@ -256,9 +326,7 @@ def session_context_render(
     render_profile: str = "full",
 ) -> dict[str, Any]:
     payload = get_session(session_id, path)
-    reason = _stale_reason(payload)
-    if reason:
-        raise SessionStaleError(reason)
+    _ensure_session_not_stale(payload)
     context = build_context_render_from_map(
         payload["repo_map"],
         query,
@@ -284,9 +352,7 @@ def session_blast_radius(
     max_depth: int = 3,
 ) -> dict[str, Any]:
     payload = get_session(session_id, path)
-    reason = _stale_reason(payload)
-    if reason:
-        raise SessionStaleError(reason)
+    _ensure_session_not_stale(payload)
     response = build_symbol_blast_radius_from_map(
         payload["repo_map"],
         symbol,
@@ -311,9 +377,7 @@ def session_blast_radius_render(
     render_profile: str = "full",
 ) -> dict[str, Any]:
     payload = get_session(session_id, path)
-    reason = _stale_reason(payload)
-    if reason:
-        raise SessionStaleError(reason)
+    _ensure_session_not_stale(payload)
     response = build_symbol_blast_radius_render_from_map(
         payload["repo_map"],
         symbol,
@@ -343,9 +407,7 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
         response["session_id"] = session_id
         return response
 
-    reason = _stale_reason(payload)
-    if reason:
-        raise SessionStaleError(reason)
+    _ensure_session_not_stale(payload)
 
     if command == "repo_map":
         response = dict(repo_map)
