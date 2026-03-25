@@ -21,6 +21,9 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_ast_parity_check.py",
     "benchmarks/run_compat_checks.py",
     "benchmarks/run_index_scaling_benchmark.py",
+    "benchmarks/run_context_render_benchmarks.py",
+    "benchmarks/run_blast_radius_benchmarks.py",
+    "benchmarks/run_session_benchmarks.py",
 ]
 
 
@@ -1146,6 +1149,237 @@ def test_run_index_scaling_benchmark_should_require_at_least_one_10k_scale(monke
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert payload["passed"] is False
     assert "10000" in payload["error"]
+
+
+def test_run_context_render_benchmarks_should_emit_fixture_rows(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_context_render_benchmarks_rows",
+        "benchmarks/run_context_render_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_context_render.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_context_render_benchmarks.py", "--output", str(output_path)],
+    )
+    monkeypatch.setattr(module, "resolve_editor_plane_bench_dir", lambda: tmp_path / "editor_plane")
+    monkeypatch.setattr(
+        module,
+        "ensure_editor_plane_fixture_set",
+        lambda bench_dir: {
+            "small": {"root": tmp_path / "small", "file_count": 12, "target_symbol": "create_invoice"},
+            "medium": {"root": tmp_path / "medium", "file_count": 48, "target_symbol": "create_invoice"},
+            "large": {"root": tmp_path / "large", "file_count": 128, "target_symbol": "create_invoice"},
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_context_render_fixture",
+        lambda fixture, *, repeats, session_repeats: {
+            "fixture": fixture["name"],
+            "file_count": fixture["file_count"],
+            "query": "create invoice",
+            "cold_samples_s": [0.12, 0.1, 0.11],
+            "cold_median_s": 0.11,
+            "warm_session_samples_s": [0.03, 0.02, 0.025],
+            "warm_session_median_s": 0.025,
+            "session_id": f"session-{fixture['name']}",
+        },
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_context_render"
+    assert payload["suite"] == "run_context_render_benchmarks"
+    assert payload["generated_at_epoch_s"] > 0
+    assert [row["fixture"] for row in payload["rows"]] == ["small", "medium", "large"]
+    assert all("cold_median_s" in row for row in payload["rows"])
+    assert all("warm_session_median_s" in row for row in payload["rows"])
+
+
+def test_run_blast_radius_benchmarks_should_emit_depth_rows(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_blast_radius_benchmarks_rows",
+        "benchmarks/run_blast_radius_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_blast_radius.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_blast_radius_benchmarks.py", "--output", str(output_path)],
+    )
+    monkeypatch.setattr(module, "resolve_editor_plane_bench_dir", lambda: tmp_path / "editor_plane")
+    monkeypatch.setattr(
+        module,
+        "ensure_editor_plane_fixture_set",
+        lambda bench_dir: {
+            "medium": {
+                "root": tmp_path / "medium",
+                "file_count": 48,
+                "blast_radius_symbols": [
+                    {"symbol": "create_invoice", "depth": 1},
+                    {"symbol": "create_invoice", "depth": 2},
+                    {"symbol": "create_invoice", "depth": 3},
+                ],
+            }
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_blast_radius_fixture",
+        lambda fixture, *, repeats: [
+            {
+                "fixture": fixture["name"],
+                "symbol": "create_invoice",
+                "graph_depth": 1,
+                "samples_s": [0.02, 0.018, 0.019],
+                "median_s": 0.019,
+                "file_count": fixture["file_count"],
+            },
+            {
+                "fixture": fixture["name"],
+                "symbol": "create_invoice",
+                "graph_depth": 2,
+                "samples_s": [0.03, 0.028, 0.029],
+                "median_s": 0.029,
+                "file_count": fixture["file_count"],
+            },
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_blast_radius"
+    assert payload["suite"] == "run_blast_radius_benchmarks"
+    assert payload["generated_at_epoch_s"] > 0
+    assert [row["graph_depth"] for row in payload["rows"]] == [1, 2]
+
+
+def test_run_session_benchmarks_should_emit_refresh_comparison_rows(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_session_benchmarks_rows",
+        "benchmarks/run_session_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_session.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_session_benchmarks.py", "--output", str(output_path)],
+    )
+    monkeypatch.setattr(module, "resolve_editor_plane_bench_dir", lambda: tmp_path / "editor_plane")
+    monkeypatch.setattr(
+        module,
+        "ensure_editor_plane_fixture_set",
+        lambda bench_dir: {
+            "medium": {"root": tmp_path / "medium", "file_count": 48, "target_symbol": "create_invoice"},
+            "large": {"root": tmp_path / "large", "file_count": 128, "target_symbol": "create_invoice"},
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_session_fixture",
+        lambda fixture, *, query_repeats: {
+            "fixture": fixture["name"],
+            "file_count": fixture["file_count"],
+            "open_session_s": 0.14,
+            "query_samples_s": [0.03, 0.025, 0.028],
+            "query_median_s": 0.028,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_incremental_refresh_comparison",
+        lambda fixture, *, modified_file_counts: [
+            {
+                "fixture": fixture["name"],
+                "modified_file_count": 1,
+                "incremental_refresh_s": 0.05,
+                "full_rebuild_s": 0.16,
+                "ratio": 0.3125,
+                "passed_ratio_gate": True,
+            },
+            {
+                "fixture": fixture["name"],
+                "modified_file_count": 5,
+                "incremental_refresh_s": 0.07,
+                "full_rebuild_s": 0.19,
+                "ratio": 0.3684,
+                "passed_ratio_gate": True,
+            },
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bench_session"
+    assert payload["suite"] == "run_session_benchmarks"
+    assert payload["generated_at_epoch_s"] > 0
+    assert payload["passed"] is True
+    assert payload["refresh_ratio_threshold"] == 0.5
+    assert len(payload["session_rows"]) == 2
+    assert len(payload["refresh_rows"]) == 2
+
+
+def test_run_session_benchmarks_should_fail_when_incremental_refresh_exceeds_threshold(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_session_benchmarks_ratio_gate",
+        "benchmarks/run_session_benchmarks.py",
+    )
+    output_path = tmp_path / "bench_session.json"
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_session_benchmarks.py", "--output", str(output_path)],
+    )
+    monkeypatch.setattr(module, "resolve_editor_plane_bench_dir", lambda: tmp_path / "editor_plane")
+    monkeypatch.setattr(
+        module,
+        "ensure_editor_plane_fixture_set",
+        lambda bench_dir: {
+            "medium": {"root": tmp_path / "medium", "file_count": 48, "target_symbol": "create_invoice"},
+            "large": {"root": tmp_path / "large", "file_count": 128, "target_symbol": "create_invoice"},
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_session_fixture",
+        lambda fixture, *, query_repeats: {
+            "fixture": fixture["name"],
+            "file_count": fixture["file_count"],
+            "open_session_s": 0.14,
+            "query_samples_s": [0.03, 0.025, 0.028],
+            "query_median_s": 0.028,
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "benchmark_incremental_refresh_comparison",
+        lambda fixture, *, modified_file_counts: [
+            {
+                "fixture": fixture["name"],
+                "modified_file_count": 3,
+                "incremental_refresh_s": 0.11,
+                "full_rebuild_s": 0.20,
+                "ratio": 0.55,
+                "passed_ratio_gate": False,
+            }
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 1
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["passed"] is False
+    assert payload["refresh_rows"][0]["passed_ratio_gate"] is False
 
 
 @pytest.mark.parametrize("rel_path", BENCHMARK_JSON_SCRIPTS)
