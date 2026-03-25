@@ -91,23 +91,27 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
                 imports.append(node.module)
                 for alias in node.names:
                     imports.append(f"{node.module}.{alias.name}")
-        elif isinstance(node, ast.ClassDef):
+
+    for symbol_node in ast.walk(tree):
+        if isinstance(symbol_node, ast.ClassDef):
             symbols.append(
-                {
-                    "name": node.name,
-                    "kind": "class",
-                    "file": str(path),
-                    "line": node.lineno,
-                }
+                _symbol_record(
+                    name=symbol_node.name,
+                    kind="class",
+                    file=path,
+                    start_line=symbol_node.lineno,
+                    end_line=getattr(symbol_node, "end_lineno", symbol_node.lineno),
+                )
             )
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        elif isinstance(symbol_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             symbols.append(
-                {
-                    "name": node.name,
-                    "kind": "function",
-                    "file": str(path),
-                    "line": node.lineno,
-                }
+                _symbol_record(
+                    name=symbol_node.name,
+                    kind="function",
+                    file=path,
+                    start_line=symbol_node.lineno,
+                    end_line=getattr(symbol_node, "end_lineno", symbol_node.lineno),
+                )
             )
 
     imports = sorted(dict.fromkeys(imports))
@@ -156,6 +160,287 @@ def _rust_parser() -> Any | None:
     return tree_sitter.Parser(language)
 
 
+def _symbol_record(
+    *,
+    name: str,
+    kind: str,
+    file: Path,
+    start_line: int,
+    end_line: int | None = None,
+) -> dict[str, Any]:
+    normalized_end_line = start_line if end_line is None else end_line
+    return {
+        "name": name,
+        "kind": kind,
+        "file": str(file),
+        "line": start_line,
+        "start_line": start_line,
+        "end_line": normalized_end_line,
+    }
+
+
+def _node_has_ancestor_type(node: Any, ancestor_types: set[str]) -> bool:
+    current = getattr(node, "parent", None)
+    while current is not None:
+        if current.type in ancestor_types:
+            return True
+        current = getattr(current, "parent", None)
+    return False
+
+
+def _js_ts_named_import_bindings(source: str) -> list[dict[str, str]]:
+    bindings: list[dict[str, str]] = []
+    pattern = re.compile(
+        r"(?:import|export)\s+(?:type\s+)?\{(?P<specifiers>[^}]+)\}\s*from\s*[\"'](?P<module>[^\"']+)[\"']",
+        re.MULTILINE | re.DOTALL,
+    )
+    for match in pattern.finditer(source):
+        module_name = match.group("module").strip()
+        specifiers = match.group("specifiers")
+        for raw_specifier in specifiers.split(","):
+            specifier = raw_specifier.strip()
+            if not specifier:
+                continue
+            if " as " in specifier:
+                imported, local = (part.strip() for part in specifier.split(" as ", 1))
+            else:
+                imported = specifier
+                local = specifier
+            if imported and local:
+                bindings.append(
+                    {
+                        "module": module_name,
+                        "imported": imported,
+                        "local": local,
+                    }
+                )
+    return bindings
+
+
+def _split_top_level_list(text: str) -> list[str]:
+    items: list[str] = []
+    current: list[str] = []
+    brace_depth = 0
+    for char in text:
+        if char == "{":
+            brace_depth += 1
+        elif char == "}":
+            brace_depth = max(0, brace_depth - 1)
+        if char == "," and brace_depth == 0:
+            item = "".join(current).strip()
+            if item:
+                items.append(item)
+            current = []
+            continue
+        current.append(char)
+    item = "".join(current).strip()
+    if item:
+        items.append(item)
+    return items
+
+
+def _flatten_rust_use_items(expression: str, prefix: str = "") -> list[str]:
+    normalized = expression.strip()
+    if not normalized:
+        return []
+
+    brace_index = normalized.find("{")
+    if brace_index < 0:
+        return [f"{prefix}::{normalized}".strip(":") if prefix else normalized]
+
+    prefix_part = normalized[:brace_index].rstrip(":").strip()
+    combined_prefix = prefix
+    if prefix_part:
+        combined_prefix = f"{prefix}::{prefix_part}".strip(":") if prefix else prefix_part
+
+    closing_index = normalized.rfind("}")
+    if closing_index < 0:
+        return [combined_prefix] if combined_prefix else []
+    inner = normalized[brace_index + 1 : closing_index]
+
+    flattened: list[str] = []
+    for item in _split_top_level_list(inner):
+        if item == "self":
+            if combined_prefix:
+                flattened.append(combined_prefix)
+            continue
+        if "{" in item:
+            flattened.extend(_flatten_rust_use_items(item, combined_prefix))
+            continue
+        flattened.append(f"{combined_prefix}::{item}".strip(":") if combined_prefix else item)
+    return flattened
+
+
+def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
+    bindings: list[dict[str, Any]] = []
+    pattern = re.compile(r"(?:pub\s+)?use\s+([^;]+);", re.MULTILINE | re.DOTALL)
+    for match in pattern.finditer(source):
+        for item in _flatten_rust_use_items(match.group(1)):
+            normalized = item.strip()
+            if not normalized:
+                continue
+            if normalized.endswith("::*"):
+                bindings.append(
+                    {
+                        "module": normalized[:-3].strip(),
+                        "wildcard": True,
+                    }
+                )
+                continue
+
+            if " as " in normalized:
+                imported_path, local_name = (part.strip() for part in normalized.rsplit(" as ", 1))
+            else:
+                imported_path = normalized
+                local_name = normalized.rsplit("::", 1)[-1].strip()
+
+            if "::" in imported_path:
+                module_name, imported_name = imported_path.rsplit("::", 1)
+            else:
+                module_name = ""
+                imported_name = imported_path
+
+            bindings.append(
+                {
+                    "module": module_name.strip(),
+                    "imported": imported_name.strip(),
+                    "local": local_name.strip(),
+                    "wildcard": False,
+                }
+            )
+    return bindings
+
+
+def _definition_module_parts(path: str) -> list[str]:
+    raw_parts = [part.lower() for part in Path(path).with_suffix("").parts if part]
+    parts = [part for part in raw_parts if part not in {".", ".."} and not part.endswith(":\\")]
+    if not parts:
+        return []
+    if parts[-1] in {"__init__", "index", "mod"} and len(parts) > 1:
+        parts = parts[:-1]
+    return parts
+
+
+def _normalized_module_parts(module_name: str) -> list[str]:
+    parts = [part.lower() for part in re.split(r"[^A-Za-z0-9_]+", module_name) if part]
+    while parts and parts[0] in {"crate", "self", "super"}:
+        parts = parts[1:]
+    return parts
+
+
+def _module_path_matches_definition(module_name: str, definition_path: str) -> bool:
+    module_parts = _normalized_module_parts(module_name)
+    definition_parts = _definition_module_parts(definition_path)
+    if not module_parts or not definition_parts:
+        return False
+    return definition_parts[-len(module_parts) :] == module_parts
+
+
+def _file_imports_symbol_from_definition(
+    file_path: Path,
+    symbol: str,
+    definition_path: str,
+) -> bool:
+    try:
+        source = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    if file_path.suffix == ".py":
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return False
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                if any(_module_path_matches_definition(alias.name, definition_path) for alias in node.names):
+                    return True
+            elif isinstance(node, ast.ImportFrom):
+                if not node.module or not _module_path_matches_definition(node.module, definition_path):
+                    continue
+                if any(
+                    alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names
+                ):
+                    return True
+        return False
+
+    if file_path.suffix in _JS_TS_SUFFIXES:
+        bindings = _js_ts_named_import_bindings(source)
+        return any(
+            binding["imported"] == symbol
+            and _module_path_matches_definition(binding["module"], definition_path)
+            for binding in bindings
+        )
+
+    if file_path.suffix in _RUST_SUFFIXES:
+        bindings = _rust_use_bindings(source)
+        return any(
+            _module_path_matches_definition(str(binding.get("module", "")), definition_path)
+            and (
+                bool(binding.get("wildcard"))
+                or str(binding.get("imported", "")) == symbol
+                or str(binding.get("local", "")) == symbol
+            )
+            for binding in bindings
+        )
+
+    return False
+
+
+def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[str]:
+    definitions = [
+        dict(current)
+        for current in repo_map.get("symbols", [])
+        if str(current.get("name")) == symbol
+    ]
+    definition_files = list(
+        dict.fromkeys(str(current["file"]) for current in definitions)
+    )
+    if len(definition_files) <= 1:
+        return definition_files
+
+    scores = dict.fromkeys(definition_files, 0)
+    for current in _iter_repo_files(Path(repo_map["path"])):
+        current_path = str(current)
+        if current_path in scores:
+            continue
+        for definition_file in definition_files:
+            if _file_imports_symbol_from_definition(current, symbol, definition_file):
+                scores[definition_file] += 2 if _is_test_file(current) else 1
+
+    preferred = [current for current, score in scores.items() if score > 0]
+    return preferred or definition_files
+
+
+def _relevant_tests_for_symbol(
+    repo_map: dict[str, Any],
+    symbol: str,
+    definition_files: list[str],
+    *,
+    caller_files: list[str] | None = None,
+    fallback_tests: list[str] | None = None,
+) -> list[str]:
+    tests = [str(current) for current in repo_map.get("tests", [])]
+    caller_set = set(caller_files or [])
+    related: list[str] = []
+    for current in tests:
+        if current in caller_set:
+            related.append(current)
+            continue
+        path = Path(current)
+        if any(
+            _file_imports_symbol_from_definition(path, symbol, definition_file)
+            for definition_file in definition_files
+        ):
+            related.append(current)
+    if related:
+        return related
+    if fallback_tests:
+        return list(dict.fromkeys(str(current) for current in fallback_tests))
+    return []
+
+
 def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
         return [], []
@@ -182,22 +467,26 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
             if export_from_match:
                 imports.append(export_from_match.group(1))
             if class_match:
+                end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
-                    {
-                        "name": class_match.group(1),
-                        "kind": "class",
-                        "file": str(path),
-                        "line": line_number,
-                    }
+                    _symbol_record(
+                        name=class_match.group(1),
+                        kind="class",
+                        file=path,
+                        start_line=line_number,
+                        end_line=end_line,
+                    )
                 )
             if function_match:
+                end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
-                    {
-                        "name": function_match.group(1),
-                        "kind": "function",
-                        "file": str(path),
-                        "line": line_number,
-                    }
+                    _symbol_record(
+                        name=function_match.group(1),
+                        kind="function",
+                        file=path,
+                        start_line=line_number,
+                        end_line=end_line,
+                    )
                 )
         elif path.suffix in _RUST_SUFFIXES:
             use_match = re.match(r"^\s*use\s+([^;]+);", line)
@@ -220,40 +509,48 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
             if use_match:
                 imports.append(use_match.group(1).strip())
             if fn_match:
+                end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
-                    {
-                        "name": fn_match.group(1),
-                        "kind": "function",
-                        "file": str(path),
-                        "line": line_number,
-                    }
+                    _symbol_record(
+                        name=fn_match.group(1),
+                        kind="function",
+                        file=path,
+                        start_line=line_number,
+                        end_line=end_line,
+                    )
                 )
             if struct_match:
+                end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
-                    {
-                        "name": struct_match.group(1),
-                        "kind": "struct",
-                        "file": str(path),
-                        "line": line_number,
-                    }
+                    _symbol_record(
+                        name=struct_match.group(1),
+                        kind="struct",
+                        file=path,
+                        start_line=line_number,
+                        end_line=end_line,
+                    )
                 )
             if enum_match:
+                end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
-                    {
-                        "name": enum_match.group(1),
-                        "kind": "enum",
-                        "file": str(path),
-                        "line": line_number,
-                    }
+                    _symbol_record(
+                        name=enum_match.group(1),
+                        kind="enum",
+                        file=path,
+                        start_line=line_number,
+                        end_line=end_line,
+                    )
                 )
             if trait_match:
+                end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
-                    {
-                        "name": trait_match.group(1),
-                        "kind": "trait",
-                        "file": str(path),
-                        "line": line_number,
-                    }
+                    _symbol_record(
+                        name=trait_match.group(1),
+                        kind="trait",
+                        file=path,
+                        start_line=line_number,
+                        end_line=end_line,
+                    )
                 )
 
     imports = sorted(dict.fromkeys(imports))
@@ -288,12 +585,13 @@ def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
             name_node = node.child_by_field_name("name")
             if name_node is not None:
                 symbols.append(
-                    {
-                        "name": _node_text(name_node),
-                        "kind": "class" if node.type == "class_declaration" else "function",
-                        "file": str(path),
-                        "line": node.start_point[0] + 1,
-                    }
+                    _symbol_record(
+                        name=_node_text(name_node),
+                        kind="class" if node.type == "class_declaration" else "function",
+                        file=path,
+                        start_line=node.start_point[0] + 1,
+                        end_line=node.end_point[0] + 1,
+                    )
                 )
         for child in node.children:
             _walk(child)
@@ -338,12 +636,13 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
                         break
             if name_node is not None:
                 symbols.append(
-                    {
-                        "name": _node_text(name_node),
-                        "kind": kind_map[node.type],
-                        "file": str(path),
-                        "line": node.start_point[0] + 1,
-                    }
+                    _symbol_record(
+                        name=_node_text(name_node),
+                        kind=kind_map[node.type],
+                        file=path,
+                        start_line=node.start_point[0] + 1,
+                        end_line=node.end_point[0] + 1,
+                    )
                 )
         for child in node.children:
             _walk(child)
@@ -486,6 +785,11 @@ def _js_ts_references_and_calls(
     lines = source.splitlines()
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
+    alias_names = {
+        binding["local"]
+        for binding in _js_ts_named_import_bindings(source)
+        if binding["imported"] == symbol
+    }
 
     def _node_text(node: Any) -> str:
         return source[node.start_byte : node.end_byte]
@@ -509,7 +813,11 @@ def _js_ts_references_and_calls(
 
     def _walk(node: Any) -> None:
         node_type = node.type
-        if node_type in {"identifier", "property_identifier"} and _node_text(node) == symbol:
+        node_text = _node_text(node) if node_type in {"identifier", "property_identifier"} else ""
+        matched_identifier = node_text == symbol or (
+            node_type == "identifier" and node_text in alias_names
+        )
+        if matched_identifier:
             if not _is_definition_identifier(node):
                 references.append(
                     {
@@ -525,7 +833,10 @@ def _js_ts_references_and_calls(
             matched = False
             if function_node is not None:
                 if function_node.type in {"identifier", "property_identifier"}:
-                    matched = _node_text(function_node) == symbol
+                    function_name = _node_text(function_node)
+                    matched = function_name == symbol or (
+                        function_node.type == "identifier" and function_name in alias_names
+                    )
                 elif function_node.type == "member_expression":
                     property_node = function_node.child_by_field_name("property")
                     matched = bool(
@@ -569,6 +880,14 @@ def _rust_references_and_calls(
     lines = source.splitlines()
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
+    bindings = _rust_use_bindings(source)
+    local_names = {
+        str(binding["local"])
+        for binding in bindings
+        if not bool(binding.get("wildcard")) and str(binding.get("imported", "")) == symbol
+    }
+    if any(bool(binding.get("wildcard")) for binding in bindings):
+        local_names.add(symbol)
 
     def _node_text(node: Any) -> str:
         return source[node.start_byte : node.end_byte]
@@ -585,8 +904,13 @@ def _rust_references_and_calls(
 
     def _walk(node: Any) -> None:
         node_type = node.type
-        if node_type == "identifier" and _node_text(node) == symbol:
-            if not _is_definition_identifier(node):
+        if node_type == "identifier":
+            node_text = _node_text(node)
+            if (
+                (node_text == symbol or node_text in local_names)
+                and not _is_definition_identifier(node)
+                and not _node_has_ancestor_type(node, {"use_declaration"})
+            ):
                 references.append(
                     {
                         "name": symbol,
@@ -601,7 +925,8 @@ def _rust_references_and_calls(
             matched = False
             if function_node is not None:
                 if function_node.type == "identifier":
-                    matched = _node_text(function_node) == symbol
+                    function_name = _node_text(function_node)
+                    matched = function_name == symbol or function_name in local_names
                 elif function_node.type == "field_expression":
                     field_node = function_node.child_by_field_name("field")
                     matched = bool(field_node is not None and _node_text(field_node) == symbol)
@@ -649,11 +974,13 @@ def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     lines = source.splitlines()
     sources: list[dict[str, Any]] = []
 
-    for node in tree.body:
-        if not isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if node.name != symbol:
-            continue
+    symbol_nodes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == symbol
+    ]
+    symbol_nodes.sort(key=lambda current: (current.lineno, getattr(current, "end_lineno", current.lineno)))
+    for node in symbol_nodes:
         end_lineno = getattr(node, "end_lineno", node.lineno)
         block = "\n".join(lines[node.lineno - 1 : end_lineno])
         if block:
@@ -1657,6 +1984,19 @@ def _confidence_from_score(score: int) -> float:
     return round(min(1.0, 0.35 + (score / 20.0)), 3)
 
 
+def _primary_span_for_symbol(symbol: dict[str, Any] | None) -> dict[str, int] | None:
+    if symbol is None:
+        return None
+    start_line = symbol.get("start_line", symbol.get("line"))
+    end_line = symbol.get("end_line", start_line)
+    if not isinstance(start_line, int) or not isinstance(end_line, int):
+        return None
+    return {
+        "start_line": start_line,
+        "end_line": end_line,
+    }
+
+
 def _validation_commands_for_tests(tests: list[str]) -> list[str]:
     commands: list[str] = []
     for current in tests:
@@ -1805,6 +2145,7 @@ def build_context_render_from_map(
     payload["edit_plan_seed"] = {
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
+        "primary_span": _primary_span_for_symbol(primary_symbol),
         "primary_test": primary_test,
         "validation_tests": validation_tests,
         "validation_commands": _validation_commands_for_tests(validation_tests),
@@ -1951,17 +2292,34 @@ def build_symbol_impact(symbol: str, path: str | Path = ".") -> dict[str, Any]:
 def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
     context_payload = build_context_pack_from_map(repo_map, symbol)
+    preferred_definition_files = _preferred_definition_files(repo_map, symbol)
+    preferred_definition_file_set = set(preferred_definition_files)
+    definitions = [
+        dict(current)
+        for current in defs_payload["definitions"]
+        if str(current["file"]) in preferred_definition_file_set
+    ] or [dict(current) for current in defs_payload["definitions"]]
+    definition_files = [str(current["file"]) for current in definitions]
+    unselected_definition_files = {
+        str(current)
+        for current in defs_payload["files"]
+        if str(current) not in set(definition_files)
+    }
 
     impacted_files: list[str] = []
     import_files = [str(entry["file"]) for entry in context_payload["imports"]]
-    for current in [*defs_payload["files"], *context_payload["files"], *import_files]:
+    for current in [*definition_files, *context_payload["files"], *import_files]:
+        if current in unselected_definition_files:
+            continue
         if current not in impacted_files:
             impacted_files.append(current)
 
-    related_tests: list[str] = []
-    for current in [*context_payload["tests"], *defs_payload["tests"]]:
-        if current not in related_tests:
-            related_tests.append(current)
+    related_tests = _relevant_tests_for_symbol(
+        repo_map,
+        symbol,
+        definition_files,
+        fallback_tests=list(context_payload.get("tests", [])),
+    )
 
     file_matches_by_path: dict[str, dict[str, Any]] = {
         str(item["path"]): {
@@ -1976,7 +2334,7 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
         }
         for item in context_payload.get("file_matches", [])
     }
-    for current in defs_payload["files"]:
+    for current in definition_files:
         entry = file_matches_by_path.setdefault(
             str(current),
             {"path": str(current), "score": 0, "reasons": []},
@@ -2004,10 +2362,10 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
         }
         for item in context_payload.get("test_matches", [])
     }
-    for current in defs_payload["tests"]:
+    for current in related_tests:
         test_matches_by_path.setdefault(
             str(current),
-            {"path": str(current), "score": 0, "reasons": ["filename"]},
+            {"path": str(current), "score": 1, "reasons": ["test-graph"]},
         )
 
     related_paths: list[str] = []
@@ -2018,7 +2376,7 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
     payload = _envelope(Path(defs_payload["path"]))
     payload["routing_reason"] = "symbol-impact"
     payload["symbol"] = symbol
-    payload["definitions"] = defs_payload["definitions"]
+    payload["definitions"] = definitions
     payload["files"] = impacted_files
     payload["file_matches"] = [file_matches_by_path[str(current)] for current in impacted_files]
     payload["file_summaries"] = _file_summaries(repo_map.get("symbols", []), impacted_files)
@@ -2047,8 +2405,12 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
             current_refs, _ = _python_references_and_calls(current, symbol)
         elif current.suffix in _JS_TS_SUFFIXES:
             current_refs, _ = _js_ts_references_and_calls(current, symbol)
+            if not current_refs:
+                current_refs, _ = _regex_references_and_calls(current, symbol)
         elif current.suffix in _RUST_SUFFIXES:
             current_refs, current_calls = _rust_references_and_calls(current, symbol)
+            if not current_refs and not current_calls:
+                current_refs, current_calls = _regex_references_and_calls(current, symbol)
             rust_call_refs = [
                 {
                     "name": str(call["name"]),
@@ -2088,34 +2450,49 @@ def build_symbol_callers(symbol: str, path: str | Path = ".") -> dict[str, Any]:
 
 def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    preferred_definition_files = _preferred_definition_files(repo_map, symbol)
+    preferred_definition_file_set = set(preferred_definition_files)
+    definitions = [
+        dict(current)
+        for current in defs_payload["definitions"]
+        if str(current["file"]) in preferred_definition_file_set
+    ] or [dict(current) for current in defs_payload["definitions"]]
+    definition_files = [str(current["file"]) for current in definitions]
     calls: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(defs_payload["path"])):
         if current.suffix == ".py":
             _, current_calls = _python_references_and_calls(current, symbol)
         elif current.suffix in _JS_TS_SUFFIXES:
             _, current_calls = _js_ts_references_and_calls(current, symbol)
+            if not current_calls:
+                _, current_calls = _regex_references_and_calls(current, symbol)
         elif current.suffix in _RUST_SUFFIXES:
             _, current_calls = _rust_references_and_calls(current, symbol)
+            if not current_calls:
+                _, current_calls = _regex_references_and_calls(current, symbol)
         else:
             _, current_calls = _regex_references_and_calls(current, symbol)
         calls.extend(current_calls)
 
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
     context_payload = build_context_pack_from_map(repo_map, symbol)
-    related_tests: list[str] = []
-    for current in [*context_payload["tests"], *defs_payload["tests"]]:
-        if current not in related_tests:
-            related_tests.append(current)
+    related_tests = _relevant_tests_for_symbol(
+        repo_map,
+        symbol,
+        definition_files,
+        caller_files=caller_files,
+        fallback_tests=list(context_payload.get("tests", [])),
+    )
 
     related_paths: list[str] = []
-    for current in [*defs_payload["files"], *caller_files, *related_tests]:
-        if current not in related_paths:
-            related_paths.append(current)
+    for related_path in [*definition_files, *caller_files, *related_tests]:
+        if related_path not in related_paths:
+            related_paths.append(related_path)
 
     payload = _envelope(Path(defs_payload["path"]))
     payload["routing_reason"] = "symbol-callers"
     payload["symbol"] = symbol
-    payload["definitions"] = defs_payload["definitions"]
+    payload["definitions"] = definitions
     payload["callers"] = calls
     payload["files"] = caller_files
     payload["tests"] = related_tests
@@ -2148,6 +2525,13 @@ def build_symbol_blast_radius_from_map(
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
     callers_payload = build_symbol_callers_from_map(repo_map, symbol)
     impact_payload = build_symbol_impact_from_map(repo_map, symbol)
+    preferred_definition_files = _preferred_definition_files(repo_map, symbol)
+    preferred_definition_file_set = set(preferred_definition_files)
+    definitions = [
+        dict(current)
+        for current in defs_payload["definitions"]
+        if str(current["file"]) in preferred_definition_file_set
+    ] or [dict(current) for current in defs_payload["definitions"]]
 
     normalized_depth = max(0, int(max_depth))
     all_files = [str(current) for current in repo_map.get("files", [])]
@@ -2160,7 +2544,7 @@ def build_symbol_blast_radius_from_map(
         for current in repo_map.get("imports", [])
     }
     reverse_importers = _reverse_importers(all_files, imports_by_file)
-    definition_files = [str(current) for current in defs_payload.get("files", [])]
+    definition_files = [str(current["file"]) for current in definitions]
     dependency_distances = _reverse_import_distances(definition_files, all_files, imports_by_file)
     reverse_graph_scores = _personalized_reverse_import_pagerank(
         definition_files,
@@ -2320,7 +2704,7 @@ def build_symbol_blast_radius_from_map(
     payload["routing_reason"] = "symbol-blast-radius"
     payload["symbol"] = symbol
     payload["max_depth"] = normalized_depth
-    payload["definitions"] = defs_payload["definitions"]
+    payload["definitions"] = definitions
     payload["callers"] = direct_callers
     payload["files"] = radius_files
     payload["file_matches"] = ranked_files
@@ -2490,6 +2874,7 @@ def build_symbol_blast_radius_render_from_map(
     payload["edit_plan_seed"] = {
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
+        "primary_span": _primary_span_for_symbol(primary_symbol),
         "primary_test": primary_test,
         "validation_tests": validation_tests,
         "validation_commands": _validation_commands_for_tests(validation_tests),
