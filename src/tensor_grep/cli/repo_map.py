@@ -526,6 +526,55 @@ def _relevant_tests_for_symbol(
 ) -> list[str]:
     tests = [str(current) for current in repo_map.get("tests", [])]
     caller_set = set(caller_files or [])
+    if caller_files:
+        source_files = list(
+            dict.fromkeys([*(str(current) for current in caller_files or []), *definition_files])
+        )
+        all_files = [str(current) for current in repo_map.get("files", [])]
+        imports_by_file = {
+            str(entry["file"]): [str(item) for item in entry["imports"]]
+            for entry in repo_map.get("imports", [])
+        }
+        reverse_importers = _reverse_importers(all_files, imports_by_file)
+        file_distances = _reverse_import_distances(source_files, all_files, imports_by_file)
+        graph_scores = _personalized_reverse_import_pagerank(
+            source_files,
+            all_files,
+            reverse_importers,
+        )
+        file_scores: dict[str, int] = {}
+        for current in source_files:
+            file_scores[current] = max(file_scores.get(current, 0), 5)
+        for current, depth in file_distances.items():
+            file_scores[current] = max(file_scores.get(current, 0), max(1, 5 - int(depth)))
+
+        test_matches = _context_tests(
+            source_files,
+            tests,
+            _query_terms(symbol),
+            imports_by_file,
+            file_distances,
+            graph_scores,
+            file_scores,
+        )
+        direct_definition_tests = []
+        for current in tests:
+            path = Path(current)
+            if any(
+                _file_imports_symbol_from_definition(path, symbol, definition_file)
+                for definition_file in definition_files
+            ):
+                direct_definition_tests.append(current)
+
+        ranked = [str(current["path"]) for current in test_matches]
+        ordered: list[str] = []
+        for current in [*direct_definition_tests, *ranked]:
+            if current in caller_set and current not in ordered:
+                ordered.append(current)
+            elif current not in ordered:
+                ordered.append(current)
+        if ordered:
+            return ordered
     related: list[str] = []
     for current in tests:
         if current in caller_set:

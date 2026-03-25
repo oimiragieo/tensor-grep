@@ -3223,6 +3223,116 @@ def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_
     assert all(definition["file"] != str(other_path.resolve()) for definition in payload["definitions"])
 
 
+def test_tg_symbol_callers_prefers_typescript_tests_importing_direct_callers(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.ts"
+    module_path.write_text(
+        "export function createInvoice(total: number) {\n"
+        "  return total;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    ui_path = src_dir / "ui.ts"
+    ui_path.write_text(
+        'import { createInvoice } from "./payments";\n'
+        "export function renderInvoice() {\n"
+        "  return createInvoice(3);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cli_path = src_dir / "cli.ts"
+    cli_path.write_text(
+        'import { renderInvoice } from "./ui";\n'
+        "export function runCli() {\n"
+        "  return renderInvoice();\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    ui_test = tests_dir / "ui_flow.spec.ts"
+    ui_test.write_text(
+        'import { renderInvoice } from "../src/ui";\n'
+        'test("invoice", () => expect(renderInvoice()).toBe(3));\n',
+        encoding="utf-8",
+    )
+    cli_test = tests_dir / "cli_flow.spec.ts"
+    cli_test.write_text(
+        'import { runCli } from "../src/cli";\n'
+        'test("invoice cli", () => expect(runCli()).toBe(3));\n',
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("createInvoice", str(project)))
+
+    assert payload["tests"].index(str(ui_test.resolve())) < payload["tests"].index(
+        str(cli_test.resolve())
+    )
+
+
+def test_tg_symbol_callers_prefers_rust_tests_importing_direct_callers(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "billing.rs"
+    module_path.write_text(
+        "pub fn issue_invoice() -> usize {\n"
+        "    1\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    ui_path = src_dir / "ui.rs"
+    ui_path.write_text(
+        "use crate::billing::issue_invoice;\n\n"
+        "pub fn render_invoice() -> usize {\n"
+        "    issue_invoice()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cli_path = src_dir / "cli.rs"
+    cli_path.write_text(
+        "use crate::ui::render_invoice;\n\n"
+        "pub fn run_cli() -> usize {\n"
+        "    render_invoice()\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    ui_test = tests_dir / "ui_flow.rs"
+    ui_test.write_text(
+        "use crate::ui::render_invoice;\n\n"
+        "#[test]\n"
+        "fn renders_invoice() {\n"
+        "    assert_eq!(render_invoice(), 1);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cli_test = tests_dir / "cli_flow.rs"
+    cli_test.write_text(
+        "use crate::cli::run_cli;\n\n"
+        "#[test]\n"
+        "fn runs_invoice_cli() {\n"
+        "    assert_eq!(run_cli(), 1);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
+
+    assert payload["tests"].index(str(ui_test.resolve())) < payload["tests"].index(
+        str(cli_test.resolve())
+    )
+
+
 def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path):
     from tensor_grep.cli import mcp_server
 
