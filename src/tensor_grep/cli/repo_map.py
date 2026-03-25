@@ -27,6 +27,7 @@ _TS_SUFFIXES = {".ts", ".tsx"}
 _RUST_SUFFIXES = {".rs"}
 _RENDER_PROFILES = {"full", "compact", "llm"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
+_DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
 
 
 class _ValidationRunnerInfo(NamedTuple):
@@ -2321,6 +2322,341 @@ def _validation_commands_for_tests(
     return [*specific_commands, *file_commands, *fallback_commands]
 
 
+def _symbol_sort_key(symbol: dict[str, Any]) -> tuple[int, int, str, str]:
+    start_line = int(symbol.get("start_line", symbol.get("line", 0)))
+    end_line = int(symbol.get("end_line", start_line))
+    return (
+        start_line,
+        end_line,
+        str(symbol.get("kind", "")),
+        str(symbol.get("name", "")),
+    )
+
+
+def _symbols_for_file(repo_map: dict[str, Any], file_path: str) -> list[dict[str, Any]]:
+    symbols = [
+        dict(current)
+        for current in repo_map.get("symbols", [])
+        if str(current.get("file")) == file_path
+    ]
+    symbols.sort(key=_symbol_sort_key)
+    return symbols
+
+
+def _enclosing_symbol_for_line(
+    repo_map: dict[str, Any],
+    file_path: str,
+    line_number: int,
+) -> dict[str, Any] | None:
+    candidates: list[dict[str, Any]] = []
+    for symbol in _symbols_for_file(repo_map, file_path):
+        start_line = symbol.get("start_line", symbol.get("line"))
+        end_line = symbol.get("end_line", start_line)
+        if not isinstance(start_line, int) or not isinstance(end_line, int):
+            continue
+        if start_line <= line_number <= end_line:
+            candidates.append(symbol)
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda symbol: (
+            int(symbol.get("end_line", symbol.get("line", 0)))
+            - int(symbol.get("start_line", symbol.get("line", 0))),
+            *_symbol_sort_key(symbol),
+        )
+    )
+    return candidates[0]
+
+
+def _related_span_record(symbol: dict[str, Any]) -> dict[str, Any] | None:
+    span = _primary_span_for_symbol(symbol)
+    file_path = symbol.get("file")
+    symbol_name = symbol.get("name")
+    if span is None or not file_path or not symbol_name:
+        return None
+    return {
+        "file": str(file_path),
+        "symbol": str(symbol_name),
+        "start_line": int(span["start_line"]),
+        "end_line": int(span["end_line"]),
+    }
+
+
+def _ordered_dependent_file_matches(
+    radius_payload: dict[str, Any],
+    *,
+    primary_file: str | None,
+    max_depth: int,
+) -> list[dict[str, Any]]:
+    definition_files = {
+        str(current.get("file"))
+        for current in radius_payload.get("definitions", [])
+        if current.get("file")
+    }
+    if primary_file:
+        definition_files.add(str(primary_file))
+
+    matches: list[dict[str, Any]] = []
+    for current in radius_payload.get("file_matches", []):
+        current_path = str(current.get("path", ""))
+        if not current_path or current_path in definition_files:
+            continue
+        if _is_test_file(Path(current_path)):
+            continue
+        depth = int(current.get("depth", max_depth + 1))
+        if depth > max_depth:
+            continue
+        matches.append(
+            {
+                "path": current_path,
+                "depth": depth,
+                "score": int(current.get("score", 0)),
+                "reasons": list(current.get("reasons", [])),
+                "graph_score": float(current.get("graph_score", 0.0)),
+            }
+        )
+
+    matches.sort(
+        key=lambda current: (
+            int(current["depth"]),
+            0 if "caller" in current["reasons"] else 1,
+            -int(current["score"]),
+            -float(current["graph_score"]),
+            str(current["path"]),
+        )
+    )
+    return matches
+
+
+def _related_spans_from_blast_radius(
+    repo_map: dict[str, Any],
+    radius_payload: dict[str, Any],
+    *,
+    primary_symbol: dict[str, Any] | None,
+    dependent_matches: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    if primary_symbol is None:
+        return [], 0
+
+    primary_key = (
+        str(primary_symbol.get("file", "")),
+        str(primary_symbol.get("name", "")),
+    )
+    seen: set[tuple[str, str]] = {primary_key}
+    related_spans: list[dict[str, Any]] = []
+    caller_keys: set[tuple[str, str]] = set()
+
+    def _add_symbol(symbol: dict[str, Any] | None, *, is_caller: bool = False) -> None:
+        if symbol is None:
+            return
+        key = (str(symbol.get("file", "")), str(symbol.get("name", "")))
+        if not key[0] or not key[1] or key in seen:
+            return
+        record = _related_span_record(symbol)
+        if record is None:
+            return
+        seen.add(key)
+        related_spans.append(record)
+        if is_caller:
+            caller_keys.add(key)
+
+    direct_callers = sorted(
+        (
+            dict(current)
+            for current in radius_payload.get("callers", [])
+            if current.get("file")
+            and isinstance(current.get("line"), int)
+            and not _is_test_file(Path(str(current.get("file"))))
+        ),
+        key=lambda current: (
+            str(current.get("file", "")),
+            int(current.get("line", 0)),
+            str(current.get("text", "")),
+        ),
+    )
+    for caller in direct_callers:
+        _add_symbol(
+            _enclosing_symbol_for_line(
+                repo_map,
+                str(caller["file"]),
+                int(caller["line"]),
+            ),
+            is_caller=True,
+        )
+
+    for match in dependent_matches:
+        for symbol in _symbols_for_file(repo_map, str(match["path"])):
+            _add_symbol(symbol)
+            break
+
+    return related_spans, len(caller_keys)
+
+
+def _deterministic_edit_ordering(
+    primary_file: str | None,
+    dependent_files: list[str],
+    tests: list[str],
+) -> list[str]:
+    ordering: list[str] = []
+    for current in [primary_file, *dependent_files, *tests]:
+        if not current or current in ordering:
+            continue
+        ordering.append(str(current))
+    return ordering
+
+
+def _preferred_edit_anchor_symbol(
+    primary_symbol: dict[str, Any] | None,
+    ranked_symbols: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if primary_symbol is not None:
+        primary_file = primary_symbol.get("file")
+        if primary_file and not _is_test_file(Path(str(primary_file))):
+            return primary_symbol
+    for symbol in ranked_symbols:
+        file_path = symbol.get("file")
+        if file_path and not _is_test_file(Path(str(file_path))):
+            return symbol
+    return primary_symbol
+
+
+def _rollback_risk_from_blast_radius(
+    *,
+    dependent_matches: list[dict[str, Any]],
+    caller_symbol_count: int,
+    test_count: int,
+    max_depth: int,
+) -> float:
+    if not dependent_matches and caller_symbol_count <= 0:
+        return 0.0
+
+    normalized_max_depth = max(1, int(max_depth))
+    observed_depth = max((int(current["depth"]) for current in dependent_matches), default=0)
+    dependent_count = len(dependent_matches)
+    depth_factor = min(1.0, observed_depth / normalized_max_depth)
+    caller_factor = min(1.0, caller_symbol_count / 5.0)
+    dependent_factor = min(1.0, dependent_count / 6.0)
+    coverage_factor = min(1.0, test_count / max(1, dependent_count + 1))
+    risk = (
+        0.1
+        + (0.3 * depth_factor)
+        + (0.25 * caller_factor)
+        + (0.15 * dependent_factor)
+        - (0.25 * coverage_factor)
+    )
+    return round(min(1.0, max(0.0, risk)), 3)
+
+
+def _build_edit_plan_seed(
+    repo_map: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    ranked_symbols: list[dict[str, Any]],
+    query: str,
+    max_files: int,
+    max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
+    blast_radius_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    primary_file = next(iter(payload.get("files", [])), None)
+    primary_symbol = None
+    if primary_file is not None:
+        primary_file_symbols = [
+            current for current in ranked_symbols if str(current.get("file")) == str(primary_file)
+        ]
+        primary_symbol = next(iter(primary_file_symbols), None)
+    if primary_symbol is None:
+        primary_symbol = next(iter(ranked_symbols), None)
+
+    primary_file_match = next(
+        (
+            match
+            for match in payload.get("file_matches", [])
+            if str(match.get("path")) == str(primary_file)
+        ),
+        payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+    )
+    primary_test = next(iter(payload.get("tests", [])), None)
+    primary_test_match = next(
+        (
+            match
+            for match in payload.get("test_matches", [])
+            if str(match.get("path")) == str(primary_test)
+        ),
+        payload.get("test_matches", [{}])[0] if payload.get("test_matches") else {},
+    )
+    validation_tests = list(payload.get("tests", []))[: max(1, min(max_files, 3))]
+
+    dependent_files: list[str] = []
+    related_spans: list[dict[str, Any]] = []
+    caller_symbol_count = 0
+    rollback_risk = 0.0
+    edit_anchor_symbol = _preferred_edit_anchor_symbol(primary_symbol, ranked_symbols)
+    edit_anchor_file = (
+        str(edit_anchor_symbol.get("file"))
+        if edit_anchor_symbol is not None and edit_anchor_symbol.get("file")
+        else None
+    )
+    radius_payload = blast_radius_payload
+    if edit_anchor_symbol is not None and radius_payload is None:
+        edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
+        if edit_symbol_name:
+            radius_payload = build_symbol_blast_radius_from_map(
+                repo_map,
+                edit_symbol_name,
+                max_depth=max_depth,
+            )
+    if edit_anchor_symbol is not None and radius_payload is not None:
+        dependent_matches = _ordered_dependent_file_matches(
+            radius_payload,
+            primary_file=edit_anchor_file,
+            max_depth=max_depth,
+        )
+        dependent_files = [str(current["path"]) for current in dependent_matches]
+        related_spans, caller_symbol_count = _related_spans_from_blast_radius(
+            repo_map,
+            radius_payload,
+            primary_symbol=edit_anchor_symbol,
+            dependent_matches=dependent_matches,
+        )
+        rollback_risk = _rollback_risk_from_blast_radius(
+            dependent_matches=dependent_matches,
+            caller_symbol_count=caller_symbol_count,
+            test_count=len(radius_payload.get("tests", payload.get("tests", []))),
+            max_depth=max_depth,
+        )
+
+    return {
+        "primary_file": primary_file,
+        "primary_symbol": primary_symbol,
+        "primary_span": _primary_span_for_symbol(primary_symbol),
+        "primary_test": primary_test,
+        "validation_tests": validation_tests,
+        "validation_commands": _validation_commands_for_tests(
+            validation_tests,
+            repo_root=payload.get("path", "."),
+            primary_test=primary_test,
+            primary_symbol=primary_symbol,
+            query=query,
+        ),
+        "reasons": list(primary_file_match.get("reasons", [])),
+        "confidence": {
+            "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
+            "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
+            if primary_symbol is not None
+            else 0.0,
+            "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
+        },
+        "related_spans": related_spans,
+        "dependent_files": dependent_files,
+        "edit_ordering": _deterministic_edit_ordering(
+            edit_anchor_file or (str(primary_file) if primary_file is not None else None),
+            dependent_files,
+            [str(current) for current in payload.get("tests", [])],
+        ),
+        "rollback_risk": rollback_risk,
+    }
+
+
 def build_context_render(
     query: str,
     path: str | Path = ".",
@@ -2427,58 +2763,14 @@ def build_context_render_from_map(
         "symbols": ranked_symbols[:max_sources],
         "tests": list(payload.get("tests", []))[:max_files],
     }
-    primary_file = next(iter(payload.get("files", [])), None)
-    primary_symbol = None
-    if primary_file is not None:
-        primary_file_symbols = [
-            symbol for symbol in ranked_symbols if str(symbol.get("file")) == str(primary_file)
-        ]
-        primary_symbol = next(
-            iter(primary_file_symbols),
-            None,
-        )
-    if primary_symbol is None:
-        primary_symbol = next(iter(ranked_symbols), None)
-    primary_file_match = next(
-        (
-            match
-            for match in payload.get("file_matches", [])
-            if str(match.get("path")) == str(primary_file)
-        ),
-        payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+    payload["edit_plan_seed"] = _build_edit_plan_seed(
+        repo_map,
+        payload,
+        ranked_symbols=ranked_symbols,
+        query=query,
+        max_files=max_files,
+        max_depth=_DEFAULT_EDIT_PLAN_MAX_DEPTH,
     )
-    primary_test = next(iter(payload.get("tests", [])), None)
-    primary_test_match = next(
-        (
-            match
-            for match in payload.get("test_matches", [])
-            if str(match.get("path")) == str(primary_test)
-        ),
-        payload.get("test_matches", [{}])[0] if payload.get("test_matches") else {},
-    )
-    validation_tests = list(payload.get("tests", []))[: max(1, min(max_files, 3))]
-    payload["edit_plan_seed"] = {
-        "primary_file": primary_file,
-        "primary_symbol": primary_symbol,
-        "primary_span": _primary_span_for_symbol(primary_symbol),
-        "primary_test": primary_test,
-        "validation_tests": validation_tests,
-        "validation_commands": _validation_commands_for_tests(
-            validation_tests,
-            repo_root=payload.get("path", "."),
-            primary_test=primary_test,
-            primary_symbol=primary_symbol,
-            query=query,
-        ),
-        "reasons": list(primary_file_match.get("reasons", [])),
-        "confidence": {
-            "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
-            "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
-            if primary_symbol is not None
-            else 0.0,
-            "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
-        },
-    }
     return payload
 
 
@@ -3165,55 +3457,15 @@ def build_symbol_blast_radius_render_from_map(
         "symbols": ranked_symbols[:max_sources],
         "tests": list(payload.get("tests", []))[:max_files],
     }
-    primary_file = next(iter(payload.get("files", [])), None)
-    primary_symbol = None
-    if primary_file is not None:
-        primary_file_symbols = [
-            current for current in ranked_symbols if str(current.get("file")) == str(primary_file)
-        ]
-        primary_symbol = next(iter(primary_file_symbols), None)
-    if primary_symbol is None:
-        primary_symbol = next(iter(ranked_symbols), None)
-    primary_file_match = next(
-        (
-            match
-            for match in payload.get("file_matches", [])
-            if str(match.get("path")) == str(primary_file)
-        ),
-        payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+    payload["edit_plan_seed"] = _build_edit_plan_seed(
+        repo_map,
+        payload,
+        ranked_symbols=ranked_symbols,
+        query=symbol,
+        max_files=max_files,
+        max_depth=max_depth,
+        blast_radius_payload=radius_payload,
     )
-    primary_test = next(iter(payload.get("tests", [])), None)
-    primary_test_match = next(
-        (
-            match
-            for match in payload.get("test_matches", [])
-            if str(match.get("path")) == str(primary_test)
-        ),
-        payload.get("test_matches", [{}])[0] if payload.get("test_matches") else {},
-    )
-    validation_tests = list(payload.get("tests", []))[: max(1, min(max_files, 3))]
-    payload["edit_plan_seed"] = {
-        "primary_file": primary_file,
-        "primary_symbol": primary_symbol,
-        "primary_span": _primary_span_for_symbol(primary_symbol),
-        "primary_test": primary_test,
-        "validation_tests": validation_tests,
-        "validation_commands": _validation_commands_for_tests(
-            validation_tests,
-            repo_root=payload.get("path", "."),
-            primary_test=primary_test,
-            primary_symbol=primary_symbol,
-            query=symbol,
-        ),
-        "reasons": list(primary_file_match.get("reasons", [])),
-        "confidence": {
-            "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
-            "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
-            if primary_symbol is not None
-            else 0.0,
-            "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
-        },
-    }
     return payload
 
 
