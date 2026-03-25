@@ -6,6 +6,7 @@ import sys
 import time
 from contextlib import nullcontext
 from dataclasses import replace
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -571,6 +572,67 @@ def _load_ruleset_suppressions(path: str) -> dict[str, object]:
     payload = json.loads(suppressions_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Ruleset suppressions must be a JSON object.")
+    entries_payload = payload.get("entries")
+    if entries_payload is not None:
+        if not isinstance(entries_payload, list):
+            raise ValueError("Ruleset suppressions 'entries' must be a list.")
+        entries: list[dict[str, object]] = []
+        for raw_entry in entries_payload:
+            if not isinstance(raw_entry, dict):
+                raise ValueError("Ruleset suppressions entries must be JSON objects.")
+            fingerprint = raw_entry.get("fingerprint")
+            if not isinstance(fingerprint, str) or not fingerprint.strip():
+                raise ValueError(
+                    "Ruleset suppressions entries must include a non-empty 'fingerprint' string."
+                )
+            justification = raw_entry.get("justification")
+            if not isinstance(justification, str) or not justification.strip():
+                raise ValueError(
+                    "Ruleset suppressions entries must include a non-empty 'justification' string."
+                )
+            created_at = raw_entry.get("created_at")
+            if not isinstance(created_at, str) or not created_at.strip():
+                raise ValueError(
+                    "Ruleset suppressions entries must include a non-empty 'created_at' timestamp."
+                )
+            try:
+                datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    "Ruleset suppressions entries must include ISO-8601 'created_at' timestamps."
+                ) from exc
+            entry: dict[str, object] = {
+                "fingerprint": fingerprint.strip(),
+                "justification": justification.strip(),
+                "created_at": created_at,
+            }
+            file_path = raw_entry.get("file")
+            if file_path is not None:
+                if not isinstance(file_path, str) or not file_path.strip():
+                    raise ValueError(
+                        "Ruleset suppressions entries must use non-empty strings for optional 'file'."
+                    )
+                entry["file"] = file_path
+            line = raw_entry.get("line")
+            if line is not None:
+                if isinstance(line, bool) or not isinstance(line, int) or line <= 0:
+                    raise ValueError(
+                        "Ruleset suppressions entries must use positive integers for optional 'line'."
+                    )
+                entry["line"] = line
+            rule_id = raw_entry.get("rule_id")
+            if rule_id is not None:
+                if not isinstance(rule_id, str) or not rule_id.strip():
+                    raise ValueError(
+                        "Ruleset suppressions entries must use non-empty strings for optional 'rule_id'."
+                    )
+                entry["rule_id"] = rule_id
+            entries.append(entry)
+        return {
+            "path": str(suppressions_path),
+            "entries": entries,
+            "warnings": [],
+        }
     fingerprints = payload.get("fingerprints")
     if not isinstance(fingerprints, list) or not all(
         isinstance(item, str) and item.strip() for item in fingerprints
@@ -580,8 +642,97 @@ def _load_ruleset_suppressions(path: str) -> dict[str, object]:
         )
     return {
         "path": str(suppressions_path),
-        "fingerprints": sorted(dict.fromkeys(fingerprints)),
+        "entries": [{"fingerprint": item} for item in sorted(dict.fromkeys(fingerprints))],
+        "warnings": [
+            "Legacy suppression format using 'fingerprints' is deprecated; use 'entries' instead."
+        ],
     }
+
+
+def _ruleset_suppression_timestamp() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_ruleset_source_path(file_path: str, root_dir: Path) -> Path:
+    candidate = Path(file_path)
+    if candidate.is_absolute():
+        return candidate
+    return (root_dir / candidate).resolve()
+
+
+def _ruleset_files_match(entry_file: str, occurrence_file: str, root_dir: Path) -> bool:
+    if entry_file == occurrence_file:
+        return True
+    return _resolve_ruleset_source_path(entry_file, root_dir) == _resolve_ruleset_source_path(
+        occurrence_file, root_dir
+    )
+
+
+def _inline_suppression_targets(line_text: str, language: str) -> set[str]:
+    comment_prefix = "#" if language == "python" else "//" if language in {
+        "javascript",
+        "typescript",
+        "rust",
+    } else None
+    if comment_prefix is None:
+        return set()
+    match = re.search(
+        rf"{re.escape(comment_prefix)}\s*tg-ignore\s*:\s*([^\r\n]+)",
+        line_text,
+    )
+    if not match:
+        return set()
+    return {token.strip() for token in match.group(1).split(",") if token.strip()}
+
+
+def _occurrence_has_inline_suppression(
+    *,
+    occurrence_file: str,
+    occurrence_line: int,
+    rule_id: str,
+    language: str,
+    root_dir: Path,
+    source_cache: dict[str, list[str]],
+) -> bool:
+    try:
+        source_path = _resolve_ruleset_source_path(occurrence_file, root_dir)
+        cache_key = str(source_path)
+        if cache_key not in source_cache:
+            source_cache[cache_key] = source_path.read_text(encoding="utf-8").splitlines()
+        source_lines = source_cache[cache_key]
+    except OSError:
+        return False
+    targets: set[str] = set()
+    for candidate_line in (occurrence_line - 1, occurrence_line):
+        if 1 <= candidate_line <= len(source_lines):
+            targets.update(_inline_suppression_targets(source_lines[candidate_line - 1], language))
+    return "*" in targets or rule_id in targets
+
+
+def _suppression_entry_matches(
+    *,
+    entry: dict[str, object],
+    fingerprint: str,
+    rule_id: str,
+    occurrence_file: str | None,
+    occurrence_line: int | None,
+    root_dir: Path,
+) -> bool:
+    if cast(str, entry["fingerprint"]) != fingerprint:
+        return False
+    entry_rule_id = entry.get("rule_id")
+    if entry_rule_id is not None and cast(str, entry_rule_id) != rule_id:
+        return False
+    entry_file = entry.get("file")
+    if entry_file is not None:
+        if occurrence_file is None or not _ruleset_files_match(
+            cast(str, entry_file), occurrence_file, root_dir
+        ):
+            return False
+    entry_line = entry.get("line")
+    if entry_line is not None and occurrence_line != cast(int, entry_line):
+        return False
+    return True
 
 
 def _apply_ruleset_baseline(
@@ -591,6 +742,7 @@ def _apply_ruleset_baseline(
     write_baseline_path: str | None = None,
     suppressions_path: str | None = None,
     write_suppressions_path: str | None = None,
+    suppression_justification: str | None = None,
 ) -> None:
     findings = cast(list[dict[str, object]], payload["findings"])
     matched_fingerprints = sorted(
@@ -643,28 +795,134 @@ def _apply_ruleset_baseline(
             "fingerprints": matched_fingerprints,
             "count": len(matched_fingerprints),
         }
+    suppressions_summary: dict[str, object] | None = None
+    suppression_entries: list[dict[str, object]] = []
+    suppression_warnings: list[str] = []
     if suppressions_path is not None:
         suppressions = _load_ruleset_suppressions(suppressions_path)
-        suppressed_fingerprints = set(cast(list[str], suppressions["fingerprints"]))
-        for finding in findings:
-            if cast(int, finding["matches"]) <= 0:
-                continue
-            if cast(str, finding["fingerprint"]) in suppressed_fingerprints:
-                finding["status"] = "suppressed"
-        payload["suppressions"] = {
-            "path": suppressions["path"],
-            "suppressed_findings": sum(
-                1 for finding in findings if finding.get("status") == "suppressed"
-            ),
-        }
+        suppressions_summary = {"path": suppressions["path"]}
+        suppression_entries = cast(list[dict[str, object]], suppressions["entries"])
+        suppression_warnings = cast(list[str], suppressions["warnings"])
+        if suppression_warnings:
+            suppressions_summary["warnings"] = suppression_warnings
+    root_dir = Path(str(payload["path"]))
+    source_cache: dict[str, list[str]] = {}
+    suppressed_occurrences = 0
+    inline_suppressed_occurrences = 0
+    for finding in findings:
+        raw_occurrences = cast(
+            list[dict[str, object]],
+            finding.pop("_raw_occurrences", []),
+        )
+        if cast(int, finding["matches"]) <= 0:
+            continue
+        base_status = cast(str, finding["status"])
+        occurrence_rows: list[dict[str, object]] = []
+        finding_suppressed_occurrences = 0
+        finding_inline_occurrences = 0
+        active_occurrences = 0
+        for occurrence in raw_occurrences:
+            occurrence_file = cast(str, occurrence["file"])
+            occurrence_line = cast(int, occurrence["line"])
+            occurrence_status = base_status
+            if any(
+                _suppression_entry_matches(
+                    entry=entry,
+                    fingerprint=cast(str, finding["fingerprint"]),
+                    rule_id=cast(str, finding["rule_id"]),
+                    occurrence_file=occurrence_file,
+                    occurrence_line=occurrence_line,
+                    root_dir=root_dir,
+                )
+                for entry in suppression_entries
+            ):
+                occurrence_status = "suppressed"
+                finding_suppressed_occurrences += 1
+            elif _occurrence_has_inline_suppression(
+                occurrence_file=occurrence_file,
+                occurrence_line=occurrence_line,
+                rule_id=cast(str, finding["rule_id"]),
+                language=cast(str, finding["language"]),
+                root_dir=root_dir,
+                source_cache=source_cache,
+            ):
+                occurrence_status = "inline-suppressed"
+                finding_inline_occurrences += 1
+            else:
+                active_occurrences += 1
+            occurrence_rows.append(
+                {
+                    "file": occurrence_file,
+                    "line": occurrence_line,
+                    "status": occurrence_status,
+                }
+            )
+        if not raw_occurrences and any(
+            _suppression_entry_matches(
+                entry=entry,
+                fingerprint=cast(str, finding["fingerprint"]),
+                rule_id=cast(str, finding["rule_id"]),
+                occurrence_file=None,
+                occurrence_line=None,
+                root_dir=root_dir,
+            )
+            for entry in suppression_entries
+        ):
+            finding["status"] = "suppressed"
+            finding_suppressed_occurrences += 1
+        elif occurrence_rows:
+            if active_occurrences == 0:
+                finding["status"] = (
+                    "inline-suppressed"
+                    if finding_inline_occurrences > 0
+                    else "suppressed"
+                    if finding_suppressed_occurrences > 0
+                    else base_status
+                )
+            else:
+                finding["status"] = base_status
+        if occurrence_rows and (
+            suppressions_path is not None
+            or finding_suppressed_occurrences > 0
+            or finding_inline_occurrences > 0
+        ):
+            finding["occurrences"] = sorted(
+                occurrence_rows,
+                key=lambda row: (str(row["file"]), cast(int, row["line"])),
+            )
+        suppressed_occurrences += finding_suppressed_occurrences
+        inline_suppressed_occurrences += finding_inline_occurrences
+    if suppressions_summary is not None or inline_suppressed_occurrences > 0:
+        if suppressions_summary is None:
+            suppressions_summary = {}
+        suppressions_summary["suppressed_findings"] = sum(
+            1 for finding in findings if finding.get("status") == "suppressed"
+        )
+        if suppressed_occurrences > 0:
+            suppressions_summary["suppressed_occurrences"] = suppressed_occurrences
+        if inline_suppressed_occurrences > 0:
+            suppressions_summary["inline_suppressed_findings"] = sum(
+                1 for finding in findings if finding.get("status") == "inline-suppressed"
+            )
+            suppressions_summary["inline_suppressed_occurrences"] = inline_suppressed_occurrences
+        payload["suppressions"] = suppressions_summary
     if write_suppressions_path is not None:
+        if not isinstance(suppression_justification, str) or not suppression_justification.strip():
+            raise ValueError("--write-suppressions requires a non-empty --justification value.")
         write_path = Path(write_suppressions_path).expanduser().resolve()
         suppressions_payload = {
             "version": _json_output_version(),
             "kind": "ruleset-scan-suppressions",
             "ruleset": payload.get("ruleset"),
             "language": payload.get("language"),
-            "fingerprints": matched_fingerprints,
+            "entries": [
+                {
+                    "fingerprint": fingerprint,
+                    "justification": suppression_justification.strip(),
+                    "created_at": _ruleset_suppression_timestamp(),
+                }
+                for fingerprint in matched_fingerprints
+            ],
         }
         write_path.write_text(json.dumps(suppressions_payload, indent=2), encoding="utf-8")
         payload["suppressions_written"] = {
@@ -684,6 +942,7 @@ def _run_ast_scan_payload(
     write_baseline_path: str | None = None,
     suppressions_path: str | None = None,
     write_suppressions_path: str | None = None,
+    suppression_justification: str | None = None,
     include_evidence_snippets: bool = False,
     max_evidence_snippets_per_file: int = 1,
     max_evidence_snippet_chars: int = 120,
@@ -712,6 +971,7 @@ def _run_ast_scan_payload(
         matched_files: set[str] = set()
         match_counts_by_file: dict[str, int] = {}
         snippets_by_file: dict[str, list[dict[str, object]]] = {}
+        rule_occurrences: list[dict[str, object]] = []
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
             rule_matches = result.total_matches
@@ -721,6 +981,7 @@ def _run_ast_scan_payload(
             for match in result.matches:
                 if match.file:
                     match_counts_by_file[match.file] = match_counts_by_file.get(match.file, 0) + 1
+                    rule_occurrences.append({"file": match.file, "line": match.line_number})
                     if (
                         include_evidence_snippets
                         and len(snippets_by_file.get(match.file, []))
@@ -745,6 +1006,10 @@ def _run_ast_scan_payload(
                     match_counts_by_file[current_file] = (
                         match_counts_by_file.get(current_file, 0) + result.total_matches
                     )
+                    for match in result.matches:
+                        rule_occurrences.append(
+                            {"file": match.file or current_file, "line": match.line_number}
+                        )
                     if include_evidence_snippets:
                         file_snippets = snippets_by_file.setdefault(current_file, [])
                         for match in result.matches:
@@ -782,8 +1047,21 @@ def _run_ast_scan_payload(
                     }
                     for file_path in sorted_files
                 ],
+                "_raw_occurrences": sorted(
+                    {
+                        (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
+                        for occurrence in rule_occurrences
+                    }
+                ),
             }
         )
+        if findings[-1]["_raw_occurrences"]:
+            findings[-1]["_raw_occurrences"] = [
+                {"file": file_path, "line": line_number}
+                for file_path, line_number in cast(
+                    list[tuple[str, int]], findings[-1]["_raw_occurrences"]
+                )
+            ]
 
     payload = {
         "version": _json_output_version(),
@@ -806,6 +1084,7 @@ def _run_ast_scan_payload(
         write_baseline_path=write_baseline_path,
         suppressions_path=suppressions_path,
         write_suppressions_path=write_suppressions_path,
+        suppression_justification=suppression_justification,
     )
     return payload
 
@@ -2703,6 +2982,11 @@ def scan(
         "--write-suppressions",
         help="Write the current matched finding fingerprints to a suppression file.",
     ),
+    justification: str | None = typer.Option(
+        None,
+        "--justification",
+        help="Required justification text when writing suppressions.",
+    ),
     include_evidence_snippets: bool = typer.Option(
         False,
         "--include-evidence-snippets",
@@ -2758,19 +3042,24 @@ def scan(
 
     if not json_output:
         typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
-    payload = _run_ast_scan_payload(
-        project_cfg,
-        rules,
-        routing_reason=routing_reason,
-        ruleset_name=ruleset_meta["name"] if ruleset else None,
-        baseline_path=baseline,
-        write_baseline_path=write_baseline,
-        suppressions_path=suppressions,
-        write_suppressions_path=write_suppressions,
-        include_evidence_snippets=include_evidence_snippets,
-        max_evidence_snippets_per_file=max_evidence_snippets_per_file,
-        max_evidence_snippet_chars=max_evidence_snippet_chars,
-    )
+    try:
+        payload = _run_ast_scan_payload(
+            project_cfg,
+            rules,
+            routing_reason=routing_reason,
+            ruleset_name=ruleset_meta["name"] if ruleset else None,
+            baseline_path=baseline,
+            write_baseline_path=write_baseline,
+            suppressions_path=suppressions,
+            write_suppressions_path=write_suppressions,
+            suppression_justification=justification,
+            include_evidence_snippets=include_evidence_snippets,
+            max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+            max_evidence_snippet_chars=max_evidence_snippet_chars,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -2803,10 +3092,18 @@ def scan(
         )
     if payload.get("suppressions"):
         suppressions_summary = cast(dict[str, object], payload["suppressions"])
-        typer.echo(
-            f"Suppressions applied from {suppressions_summary['path']} "
-            f"(suppressed={suppressions_summary['suppressed_findings']})."
-        )
+        if suppressions_summary.get("path"):
+            typer.echo(
+                f"Suppressions applied from {suppressions_summary['path']} "
+                f"(suppressed={suppressions_summary['suppressed_findings']})."
+            )
+        if suppressions_summary.get("inline_suppressed_findings"):
+            typer.echo(
+                "Inline suppressions applied "
+                f"(suppressed={suppressions_summary['inline_suppressed_findings']})."
+            )
+        for warning in cast(list[str], suppressions_summary.get("warnings", [])):
+            typer.echo(f"Warning: {warning}", err=True)
     if payload.get("suppressions_written"):
         suppressions_written = cast(dict[str, object], payload["suppressions_written"])
         typer.echo(
