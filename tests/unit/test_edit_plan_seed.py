@@ -356,6 +356,9 @@ def test_related_spans_use_symbol_catalog_lines(tmp_path: Path, renderer: Render
         "symbol": "build_receipt",
         "start_line": 3,
         "end_line": 5,
+        "depth": 1,
+        "score": 7,
+        "reasons": ["caller", "graph-depth"],
     }
 
 

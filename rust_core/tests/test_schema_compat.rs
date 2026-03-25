@@ -659,6 +659,20 @@ struct CandidateEditTargetsExample {
     files: Vec<PathBuf>,
     symbols: Vec<RankedRepoSymbolExample>,
     tests: Vec<PathBuf>,
+    #[serde(default)]
+    spans: Vec<RankedEditSpanExample>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RankedEditSpanExample {
+    file: PathBuf,
+    symbol: String,
+    start_line: usize,
+    end_line: usize,
+    depth: usize,
+    score: usize,
+    reasons: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -669,6 +683,8 @@ struct EditPlanSeedExample {
     primary_span: Option<EditPlanSpanExample>,
     primary_test: Option<PathBuf>,
     validation_tests: Vec<PathBuf>,
+    #[serde(default)]
+    validation_plan: Vec<ValidationPlanStepExample>,
     validation_commands: Vec<String>,
     reasons: Vec<String>,
     confidence: EditPlanSeedConfidenceExample,
@@ -700,11 +716,24 @@ struct EditPlanSpanExample {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RelatedEditSpanExample {
-    path: PathBuf,
+    file: PathBuf,
     symbol: String,
     start_line: usize,
     end_line: usize,
     depth: usize,
+    score: usize,
+    reasons: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ValidationPlanStepExample {
+    command: String,
+    scope: String,
+    runner: String,
+    confidence: f64,
+    #[serde(default)]
+    target: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2629,6 +2658,28 @@ fn assert_edit_plan_common(
             path.display()
         );
     }
+    for candidate_span in &candidate_edit_targets.spans {
+        assert!(
+            is_portable_absolute_path(&candidate_span.file),
+            "{} candidate span file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            !candidate_span.symbol.is_empty(),
+            "{} candidate span symbol must not be empty",
+            path.display()
+        );
+        assert!(
+            candidate_span.end_line >= candidate_span.start_line,
+            "{} candidate span lines must be ordered",
+            path.display()
+        );
+        assert!(
+            !candidate_span.reasons.is_empty(),
+            "{} candidate span reasons must not be empty",
+            path.display()
+        );
+    }
     if let Some(primary_file) = &edit_plan_seed.primary_file {
         assert!(
             is_portable_absolute_path(primary_file),
@@ -2672,6 +2723,33 @@ fn assert_edit_plan_common(
         );
     }
     assert!(
+        !edit_plan_seed.validation_plan.is_empty(),
+        "{} validation_plan must not be empty",
+        path.display()
+    );
+    for step in &edit_plan_seed.validation_plan {
+        assert!(
+            !step.command.is_empty(),
+            "{} validation_plan command must not be empty",
+            path.display()
+        );
+        assert!(
+            matches!(step.scope.as_str(), "symbol" | "file" | "repo"),
+            "{} validation_plan scope must be symbol, file, or repo",
+            path.display()
+        );
+        assert!(
+            !step.runner.is_empty(),
+            "{} validation_plan runner must not be empty",
+            path.display()
+        );
+        assert!(
+            (0.0..=1.0).contains(&step.confidence),
+            "{} validation_plan confidence must be normalized",
+            path.display()
+        );
+    }
+    assert!(
         !edit_plan_seed.reasons.is_empty(),
         "{} edit_plan_seed reasons must not be empty",
         path.display()
@@ -2693,7 +2771,7 @@ fn assert_edit_plan_common(
     );
     for related_span in &edit_plan_seed.related_spans {
         assert!(
-            is_portable_absolute_path(&related_span.path),
+            is_portable_absolute_path(&related_span.file),
             "{} related span path should be absolute or an absolute Windows path literal",
             path.display()
         );
@@ -2705,6 +2783,11 @@ fn assert_edit_plan_common(
         assert!(
             related_span.end_line >= related_span.start_line,
             "{} related span lines must be ordered",
+            path.display()
+        );
+        assert!(
+            !related_span.reasons.is_empty(),
+            "{} related span reasons must not be empty",
             path.display()
         );
     }

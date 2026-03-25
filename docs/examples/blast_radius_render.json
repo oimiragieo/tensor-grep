@@ -34,14 +34,21 @@
       "depth": 0,
       "score": 9,
       "graph_score": 0.5,
-      "reasons": ["definition", "symbol"]
+      "reasons": [
+        "definition",
+        "symbol"
+      ]
     },
     {
       "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
       "depth": 1,
       "score": 7,
       "graph_score": 0.35,
-      "reasons": ["caller", "graph-depth", "graph-centrality"]
+      "reasons": [
+        "caller",
+        "graph-depth",
+        "graph-centrality"
+      ]
     }
   ],
   "file_summaries": [
@@ -78,7 +85,9 @@
   "imports": [
     {
       "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
-      "imports": ["rewrite_fixture.add"],
+      "imports": [
+        "rewrite_fixture.add"
+      ],
       "score": 4
     }
   ],
@@ -90,7 +99,10 @@
       "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py",
       "score": 5,
       "graph_score": 0.35,
-      "reasons": ["import-graph", "blast-radius"]
+      "reasons": [
+        "import-graph",
+        "blast-radius"
+      ]
     }
   ],
   "related_paths": [
@@ -154,7 +166,10 @@
             "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py",
             "score": 5,
             "graph_score": 0.35,
-            "reasons": ["import-graph", "blast-radius"]
+            "reasons": [
+              "import-graph",
+              "blast-radius"
+            ]
           }
         ]
       }
@@ -168,7 +183,10 @@
         "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
         "score": 9,
         "graph_score": 0.5,
-        "reasons": ["definition", "symbol"]
+        "reasons": [
+          "definition",
+          "symbol"
+        ]
       }
     },
     {
@@ -182,7 +200,10 @@
         "symbol": "add",
         "score": 9,
         "graph_score": 0.5,
-        "reasons": ["definition", "symbol"],
+        "reasons": [
+          "definition",
+          "symbol"
+        ],
         "symbol_score": 3
       }
     }
@@ -203,6 +224,33 @@
     ],
     "tests": [
       "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py"
+    ],
+    "spans": [
+      {
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+        "symbol": "add",
+        "start_line": 1,
+        "end_line": 2,
+        "depth": 0,
+        "score": 12,
+        "reasons": [
+          "definition",
+          "symbol"
+        ]
+      },
+      {
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+        "symbol": "apply_add",
+        "start_line": 3,
+        "end_line": 4,
+        "depth": 1,
+        "score": 7,
+        "reasons": [
+          "caller",
+          "graph-depth",
+          "graph-centrality"
+        ]
+      }
     ]
   },
   "edit_plan_seed": {
@@ -219,14 +267,52 @@
       "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py"
     ],
     "validation_commands": [
-      "uv run pytest C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py -q"
+      "uv run pytest C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py -q",
+      "uv run pytest -q"
     ],
-    "reasons": ["definition", "symbol"],
+    "reasons": [
+      "definition",
+      "symbol"
+    ],
     "confidence": {
       "file": 0.8,
       "symbol": 0.5,
       "test": 0.6
-    }
+    },
+    "primary_span": {
+      "start_line": 1,
+      "end_line": 2
+    },
+    "related_spans": [
+      {
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+        "symbol": "apply_add",
+        "start_line": 3,
+        "end_line": 4,
+        "depth": 1,
+        "score": 7,
+        "reasons": [
+          "caller",
+          "graph-depth",
+          "graph-centrality"
+        ]
+      }
+    ],
+    "validation_plan": [
+      {
+        "command": "uv run pytest C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py -q",
+        "scope": "file",
+        "runner": "pytest",
+        "target": "test_rewrite_api.py",
+        "confidence": 0.82
+      },
+      {
+        "command": "uv run pytest -q",
+        "scope": "repo",
+        "runner": "pytest",
+        "confidence": 0.55
+      }
+    ]
   },
   "rendered_context": "Query: blast radius: add\n\nTests:\n- C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py\n\nFile: C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py\nSummary:\n- function add @ line 1\n\nSource:\n```text\ndef add(a, b):\n    return a + b\n```",
   "caller_tree": [

@@ -2473,6 +2473,15 @@ def _append_unique_command(commands: list[str], command: str, seen: set[str]) ->
     commands.append(command)
 
 
+def _shell_safe_arg(value: str) -> str:
+    if not value:
+        return '""'
+    if any(char.isspace() for char in value) or '"' in value:
+        escaped = value.replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
 def _candidate_terms(value: str | None) -> list[str]:
     if not value:
         return []
@@ -2551,12 +2560,49 @@ def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(match.group(1) for match in pattern.finditer(source)))
 
 
+@lru_cache(maxsize=256)
+def _javascript_test_function_candidates(test_path: str) -> tuple[str, ...]:
+    path = Path(test_path)
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ()
+    pattern = re.compile(
+        r"""(?x)
+        (?:
+            \b(?:test|it)\s*\(\s*["']([^"']+)["']
+            |
+            \b(?:test|it)\.each\s*\([^)]*\)\s*\(\s*["']([^"']+)["']
+            |
+            \bDeno\.test\s*\(\s*["']([^"']+)["']
+        )
+        """
+    )
+    return tuple(
+        dict.fromkeys(
+            candidate
+            for match in pattern.finditer(source)
+            for candidate in match.groups()
+            if candidate
+        )
+    )
+
+
 def _javascript_runner_file_command(runner: str, relative_path: str) -> str:
     if runner == "vitest":
         return f"npx vitest run {relative_path}"
     if runner == "mocha":
         return f"npx mocha {relative_path}"
     return f"npx jest {relative_path}"
+
+
+def _javascript_runner_specific_command(runner: str, relative_path: str, test_filter: str) -> str:
+    quoted_filter = _shell_safe_arg(test_filter)
+    if runner == "vitest":
+        return f"npx vitest run {relative_path} -t {quoted_filter}"
+    if runner == "mocha":
+        return f"npx mocha {relative_path} --grep {quoted_filter}"
+    return f"npx jest {relative_path} -t {quoted_filter}"
 
 
 def _javascript_runner_fallback_command(runner: str) -> str:
@@ -2585,15 +2631,32 @@ def _validation_commands_for_tests(
     primary_symbol: dict[str, Any] | None = None,
     query: str | None = None,
 ) -> list[str]:
+    return [
+        str(step["command"])
+        for step in _validation_plan_for_tests(
+            tests,
+            repo_root=repo_root,
+            primary_test=primary_test,
+            primary_symbol=primary_symbol,
+            query=query,
+        )
+    ]
+
+
+def _validation_plan_for_tests(
+    tests: list[str],
+    *,
+    repo_root: str | Path,
+    primary_test: str | None = None,
+    primary_symbol: dict[str, Any] | None = None,
+    query: str | None = None,
+) -> list[dict[str, Any]]:
     root = _validation_repo_root(repo_root)
     detected = _detect_validation_runners(str(root))
     primary_symbol_name = (
         str(primary_symbol.get("name")) if isinstance(primary_symbol, dict) and primary_symbol.get("name") else None
     )
-
-    specific_commands: list[str] = []
-    file_commands: list[str] = []
-    fallback_commands: list[str] = []
+    plan: list[dict[str, Any]] = []
     seen: set[str] = set()
     requested_javascript_runners: list[str] = []
     include_python_fallback = False
@@ -2603,57 +2666,140 @@ def _validation_commands_for_tests(
         if runner not in requested_javascript_runners:
             requested_javascript_runners.append(runner)
 
+    def add_step(
+        command: str,
+        *,
+        scope: str,
+        runner: str,
+        target: str | None = None,
+        confidence: float,
+    ) -> None:
+        if command in seen:
+            return
+        seen.add(command)
+        step: dict[str, Any] = {
+            "command": command,
+            "scope": scope,
+            "runner": runner,
+            "confidence": round(min(1.0, max(0.0, confidence)), 3),
+        }
+        if target:
+            step["target"] = target
+        plan.append(step)
+
     for current in tests:
         path = Path(current)
         suffix = path.suffix.lower()
+        absolute_path = str(path.resolve())
         relative_path = _relative_validation_path(path, root)
+        is_primary_test = primary_test is not None and absolute_path == str(Path(primary_test).resolve())
 
         if suffix == ".py":
             include_python_fallback = True
-            if primary_test is not None and str(path.resolve()) == str(Path(primary_test).resolve()):
+            if is_primary_test:
                 test_filter = _best_test_function_candidate(
-                    list(_python_test_function_candidates(str(path.resolve()))),
+                    list(_python_test_function_candidates(absolute_path)),
                     primary_symbol_name=primary_symbol_name,
                     query=query,
                 )
                 if test_filter:
-                    _append_unique_command(
-                        specific_commands,
+                    add_step(
                         f"uv run pytest {relative_path} -k {test_filter} -q",
-                        seen,
+                        scope="symbol",
+                        runner="pytest",
+                        target=relative_path,
+                        confidence=0.95,
                     )
-            _append_unique_command(file_commands, f"uv run pytest {relative_path} -q", seen)
+            add_step(
+                f"uv run pytest {relative_path} -q",
+                scope="file",
+                runner="pytest",
+                target=relative_path,
+                confidence=0.82,
+            )
             continue
 
         if suffix in _TS_SUFFIXES:
+            test_candidates = (
+                list(_javascript_test_function_candidates(absolute_path)) if is_primary_test else []
+            )
+            test_filter = _best_test_function_candidate(
+                test_candidates,
+                primary_symbol_name=primary_symbol_name,
+                query=query,
+            )
             for runner in detected.ts_runners:
                 remember_runner(runner)
-                _append_unique_command(
-                    file_commands, _javascript_runner_file_command(runner, relative_path), seen
+                if test_filter:
+                    add_step(
+                        _javascript_runner_specific_command(runner, relative_path, test_filter),
+                        scope="symbol",
+                        runner=runner,
+                        target=relative_path,
+                        confidence=0.9,
+                    )
+                add_step(
+                    _javascript_runner_file_command(runner, relative_path),
+                    scope="file",
+                    runner=runner,
+                    target=relative_path,
+                    confidence=0.78,
                 )
             continue
 
         if suffix in _JS_TS_SUFFIXES:
+            test_candidates = (
+                list(_javascript_test_function_candidates(absolute_path)) if is_primary_test else []
+            )
+            test_filter = _best_test_function_candidate(
+                test_candidates,
+                primary_symbol_name=primary_symbol_name,
+                query=query,
+            )
             for runner in detected.js_runners:
                 remember_runner(runner)
-                _append_unique_command(
-                    file_commands, _javascript_runner_file_command(runner, relative_path), seen
+                if test_filter:
+                    add_step(
+                        _javascript_runner_specific_command(runner, relative_path, test_filter),
+                        scope="symbol",
+                        runner=runner,
+                        target=relative_path,
+                        confidence=0.9,
+                    )
+                add_step(
+                    _javascript_runner_file_command(runner, relative_path),
+                    scope="file",
+                    runner=runner,
+                    target=relative_path,
+                    confidence=0.78,
                 )
             continue
 
         if suffix in _RUST_SUFFIXES:
             include_rust_fallback = True
-            if primary_test is not None and str(path.resolve()) == str(Path(primary_test).resolve()):
+            if is_primary_test:
                 test_filter = _best_test_function_candidate(
-                    list(_rust_test_function_candidates(str(path.resolve()))),
+                    list(_rust_test_function_candidates(absolute_path)),
                     primary_symbol_name=primary_symbol_name,
                     query=query,
                 )
                 if test_filter:
-                    _append_unique_command(specific_commands, f"cargo test {test_filter}", seen)
+                    add_step(
+                        f"cargo test {test_filter}",
+                        scope="symbol",
+                        runner="cargo",
+                        target=relative_path,
+                        confidence=0.88,
+                    )
             file_level_command = _rust_file_level_command(path, root)
             if file_level_command:
-                _append_unique_command(file_commands, file_level_command, seen)
+                add_step(
+                    file_level_command,
+                    scope="file",
+                    runner="cargo",
+                    target=relative_path,
+                    confidence=0.8,
+                )
             continue
 
     if not tests:
@@ -2671,13 +2817,18 @@ def _validation_commands_for_tests(
             remember_runner(runner)
 
     if include_python_fallback:
-        _append_unique_command(fallback_commands, "uv run pytest -q", seen)
+        add_step("uv run pytest -q", scope="repo", runner="pytest", confidence=0.55)
     for runner in requested_javascript_runners:
-        _append_unique_command(fallback_commands, _javascript_runner_fallback_command(runner), seen)
+        add_step(
+            _javascript_runner_fallback_command(runner),
+            scope="repo",
+            runner=runner,
+            confidence=0.5,
+        )
     if include_rust_fallback:
-        _append_unique_command(fallback_commands, "cargo test", seen)
+        add_step("cargo test", scope="repo", runner="cargo", confidence=0.55)
 
-    return [*specific_commands, *file_commands, *fallback_commands]
+    return plan
 
 
 def _symbol_sort_key(symbol: dict[str, Any]) -> tuple[int, int, str, str]:
@@ -2726,7 +2877,13 @@ def _enclosing_symbol_for_line(
     return candidates[0]
 
 
-def _related_span_record(symbol: dict[str, Any]) -> dict[str, Any] | None:
+def _related_span_record(
+    symbol: dict[str, Any],
+    *,
+    depth: int,
+    score: int,
+    reasons: list[str],
+) -> dict[str, Any] | None:
     span = _primary_span_for_symbol(symbol)
     file_path = symbol.get("file")
     symbol_name = symbol.get("name")
@@ -2737,6 +2894,9 @@ def _related_span_record(symbol: dict[str, Any]) -> dict[str, Any] | None:
         "symbol": str(symbol_name),
         "start_line": int(span["start_line"]),
         "end_line": int(span["end_line"]),
+        "depth": int(depth),
+        "score": int(score),
+        "reasons": list(reasons),
     }
 
 
@@ -2803,14 +2963,27 @@ def _related_spans_from_blast_radius(
     seen: set[tuple[str, str]] = {primary_key}
     related_spans: list[dict[str, Any]] = []
     caller_keys: set[tuple[str, str]] = set()
+    match_by_path = {str(match["path"]): match for match in dependent_matches}
 
-    def _add_symbol(symbol: dict[str, Any] | None, *, is_caller: bool = False) -> None:
+    def _add_symbol(
+        symbol: dict[str, Any] | None,
+        *,
+        is_caller: bool = False,
+        depth: int = 0,
+        score: int = 0,
+        reasons: list[str] | None = None,
+    ) -> None:
         if symbol is None:
             return
         key = (str(symbol.get("file", "")), str(symbol.get("name", "")))
         if not key[0] or not key[1] or key in seen:
             return
-        record = _related_span_record(symbol)
+        record = _related_span_record(
+            symbol,
+            depth=depth,
+            score=score,
+            reasons=list(reasons or []),
+        )
         if record is None:
             return
         seen.add(key)
@@ -2833,21 +3006,88 @@ def _related_spans_from_blast_radius(
         ),
     )
     for caller in direct_callers:
+        caller_path = str(caller["file"])
+        caller_match = match_by_path.get(
+            caller_path,
+            {
+                "depth": 1,
+                "score": 0,
+                "reasons": ["caller"],
+            },
+        )
         _add_symbol(
             _enclosing_symbol_for_line(
                 repo_map,
-                str(caller["file"]),
+                caller_path,
                 int(caller["line"]),
             ),
             is_caller=True,
+            depth=int(caller_match.get("depth", 1)),
+            score=int(caller_match.get("score", 0)),
+            reasons=list(caller_match.get("reasons", ["caller"])),
         )
 
     for match in dependent_matches:
         for symbol in _symbols_for_file(repo_map, str(match["path"])):
-            _add_symbol(symbol)
+            _add_symbol(
+                symbol,
+                depth=int(match.get("depth", 0)),
+                score=int(match.get("score", 0)),
+                reasons=list(match.get("reasons", [])),
+            )
             break
 
     return related_spans, len(caller_keys)
+
+
+def _candidate_edit_spans(
+    *,
+    primary_symbol: dict[str, Any] | None,
+    primary_file_match: dict[str, Any],
+    related_spans: list[dict[str, Any]],
+    max_spans: int,
+) -> list[dict[str, Any]]:
+    spans: list[dict[str, Any]] = []
+    if primary_symbol is not None:
+        span = _primary_span_for_symbol(primary_symbol)
+        if span is not None and primary_symbol.get("file") and primary_symbol.get("name"):
+            spans.append(
+                {
+                    "file": str(primary_symbol["file"]),
+                    "symbol": str(primary_symbol["name"]),
+                    "start_line": int(span["start_line"]),
+                    "end_line": int(span["end_line"]),
+                    "depth": 0,
+                    "score": int(primary_file_match.get("score", 0)) + int(primary_symbol.get("score", 0)),
+                    "reasons": list(primary_file_match.get("reasons", [])) or ["primary"],
+                }
+            )
+    spans.extend(dict(current) for current in related_spans)
+    spans.sort(
+        key=lambda current: (
+            int(current.get("depth", 0)),
+            -int(current.get("score", 0)),
+            str(current.get("file", "")),
+            int(current.get("start_line", 0)),
+            str(current.get("symbol", "")),
+        )
+    )
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int, int]] = set()
+    for current in spans:
+        key = (
+            str(current.get("file", "")),
+            str(current.get("symbol", "")),
+            int(current.get("start_line", 0)),
+            int(current.get("end_line", 0)),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(current)
+        if len(deduped) >= max(1, max_spans):
+            break
+    return deduped
 
 
 def _deterministic_edit_ordering(
@@ -3000,6 +3240,13 @@ def _build_edit_plan_seed(
             primary_symbol=primary_symbol,
             query=query,
         ),
+        "validation_plan": _validation_plan_for_tests(
+            validation_tests,
+            repo_root=payload.get("path", "."),
+            primary_test=primary_test,
+            primary_symbol=primary_symbol,
+            query=query,
+        ),
         "reasons": list(primary_file_match.get("reasons", [])),
         "confidence": {
             "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
@@ -3047,6 +3294,14 @@ def _attach_edit_plan_metadata(
         "files": list(payload.get("files", []))[:max_files],
         "symbols": ranked_symbols[:max_symbols],
         "tests": list(payload.get("tests", []))[:max_files],
+        "spans": _candidate_edit_spans(
+            primary_symbol=payload["edit_plan_seed"]["primary_symbol"]
+            if "edit_plan_seed" in payload
+            else None,
+            primary_file_match={},
+            related_spans=[],
+            max_spans=max(max_files, max_symbols),
+        ),
     }
     payload["edit_plan_seed"] = _build_edit_plan_seed(
         repo_map,
@@ -3056,6 +3311,21 @@ def _attach_edit_plan_metadata(
         max_files=max_files,
         max_depth=max_depth,
         blast_radius_payload=blast_radius_payload,
+    )
+    primary_file = payload["edit_plan_seed"].get("primary_file")
+    primary_file_match = next(
+        (
+            match
+            for match in payload.get("file_matches", [])
+            if str(match.get("path")) == str(primary_file)
+        ),
+        payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+    )
+    payload["candidate_edit_targets"]["spans"] = _candidate_edit_spans(
+        primary_symbol=payload["edit_plan_seed"].get("primary_symbol"),
+        primary_file_match=primary_file_match,
+        related_spans=list(payload["edit_plan_seed"].get("related_spans", [])),
+        max_spans=max(max_files, max_symbols),
     )
     return payload
 

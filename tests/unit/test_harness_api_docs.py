@@ -210,6 +210,10 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert isinstance(payload["edit_plan_seed"]["related_spans"], list)
                 assert isinstance(payload["edit_plan_seed"]["dependent_files"], list)
                 assert isinstance(payload["edit_plan_seed"]["edit_ordering"], list)
+                assert isinstance(payload["edit_plan_seed"]["validation_plan"], list)
+                assert payload["edit_plan_seed"]["validation_plan"]
+                assert isinstance(payload["candidate_edit_targets"]["spans"], list)
+                assert payload["candidate_edit_targets"]["spans"]
                 assert 0.0 <= payload["edit_plan_seed"]["rollback_risk"] <= 1.0
 
         for key in required_keys:

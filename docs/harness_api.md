@@ -282,8 +282,8 @@ It reuses the Context Pack JSON shape and adds:
 | `routing_reason` | `string` | `context-edit-plan`. |
 | `max_files` | `integer` | Maximum files retained in the plan payload. |
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
-| `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
-| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, validation commands, and rollback risk. |
+| `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
+| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
 
 ## Context Render JSON
 
@@ -319,8 +319,8 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, or `llm`. |
 | `truncated` | `boolean` | Whether `rendered_context` was clipped to satisfy `max_render_chars`. |
 | `sections` | `array<object>` | Machine-readable section metadata for the rendered bundle, including byte offsets, section type, and provenance for why each section was included. |
-| `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
-| `edit_plan_seed` | `object` | Default primary file/symbol/span, related spans, dependent files, edit ordering, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
+| `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
+| `edit_plan_seed` | `object` | Default primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
 
 `edit_plan_seed` currently includes:
@@ -330,6 +330,7 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 - `primary_span`
 - `primary_test`
 - `validation_tests`
+- `validation_plan`
 - `validation_commands`
 - `reasons`
 - `confidence`
@@ -766,8 +767,8 @@ The shape matches Symbol Blast Radius JSON and additionally includes:
 | `query` | `string` | Deterministic planning query used to seed the edit plan, currently `blast radius: <symbol>`. |
 | `max_files` | `integer` | Maximum files retained in the plan payload. |
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
-| `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
-| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, validation commands, and rollback risk. |
+| `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
+| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
 
 ## Symbol Blast Radius Render JSON
 

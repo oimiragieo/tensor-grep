@@ -146,7 +146,9 @@ def _assert_enriched_edit_plan_seed(
     assert edit_plan_seed["primary_span"]["end_line"] >= edit_plan_seed["primary_span"]["start_line"]
     assert isinstance(edit_plan_seed["related_spans"], list)
     for related_span in edit_plan_seed["related_spans"]:
-        assert {"file", "symbol", "start_line", "end_line"} <= set(related_span)
+        assert {"file", "symbol", "start_line", "end_line", "depth", "score", "reasons"} <= set(
+            related_span
+        )
         assert related_span["end_line"] >= related_span["start_line"]
     assert isinstance(edit_plan_seed["dependent_files"], list)
     assert isinstance(edit_plan_seed["edit_ordering"], list)
@@ -155,6 +157,14 @@ def _assert_enriched_edit_plan_seed(
     else:
         assert all(isinstance(path, str) for path in edit_plan_seed["edit_ordering"])
     assert 0.0 <= edit_plan_seed["rollback_risk"] <= 1.0
+    assert isinstance(edit_plan_seed["validation_plan"], list)
+    assert edit_plan_seed["validation_plan"]
+    for step in edit_plan_seed["validation_plan"]:
+        assert {"command", "scope", "runner", "confidence"} <= set(step)
+        assert isinstance(step["command"], str)
+        assert step["scope"] in {"symbol", "file", "repo"}
+        assert isinstance(step["runner"], str)
+        assert 0.0 <= step["confidence"] <= 1.0
 
 
 class _FakeScanner:
@@ -731,6 +741,9 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
     assert "rendered_context" not in payload
     assert "sources" not in payload
     assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
+    assert payload["candidate_edit_targets"]["spans"][0]["file"] == str(module_path.resolve())
+    assert payload["candidate_edit_targets"]["spans"][0]["symbol"] == "create_invoice"
+    assert payload["candidate_edit_targets"]["spans"][0]["depth"] == 0
     _assert_enriched_edit_plan_seed(
         payload["edit_plan_seed"],
         primary_file=module_path,
@@ -839,10 +852,72 @@ def test_blast_radius_plan_json_returns_machine_readable_radius_bundle(tmp_path)
     assert "rendered_context" not in payload
     assert "sources" not in payload
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert payload["candidate_edit_targets"]["spans"][0]["file"] == str(module_path.resolve())
+    assert payload["candidate_edit_targets"]["spans"][0]["symbol"] == "create_invoice"
     _assert_enriched_edit_plan_seed(
         payload["edit_plan_seed"],
         primary_file=module_path,
         primary_symbol_name="create_invoice",
+    )
+
+
+def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    (project / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    module_path = src_dir / "payments.ts"
+    module_path.write_text(
+        "export function createInvoice(total: number, tax: number): number {\n"
+        "  return total + tax;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "payments.test.ts"
+    test_path.write_text(
+        'import { describe, expect, test } from "vitest";\n'
+        'import { createInvoice } from "../src/payments";\n\n'
+        'describe("payments", () => {\n'
+        '  test("createInvoice adds tax", () => {\n'
+        "    expect(createInvoice(1, 2)).toBe(3);\n"
+        "  });\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "create invoice",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+
+    assert payload["edit_plan_seed"]["validation_plan"][0]["runner"] == "vitest"
+    assert payload["edit_plan_seed"]["validation_plan"][0]["scope"] == "symbol"
+    assert payload["edit_plan_seed"]["validation_plan"][0]["command"] == (
+        'npx vitest run tests/payments.test.ts -t "createInvoice adds tax"'
+    )
+    assert payload["edit_plan_seed"]["validation_commands"][0] == (
+        'npx vitest run tests/payments.test.ts -t "createInvoice adds tax"'
     )
 
 

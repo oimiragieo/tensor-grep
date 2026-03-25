@@ -180,16 +180,32 @@ def test_python_commands_use_relative_paths(
 
 
 @pytest.mark.parametrize(
-    ("dependencies", "expected_file_command", "expected_fallback"),
+    ("dependencies", "expected_specific_command", "expected_file_command", "expected_fallback"),
     [
-        ({"jest": "^29.0.0"}, "npx jest tests/widget.test.js", "npx jest"),
-        ({"vitest": "^2.0.0"}, "npx vitest run tests/widget.test.js", "npx vitest run"),
-        ({"mocha": "^10.0.0"}, "npx mocha tests/widget.test.js", "npx mocha"),
+        (
+            {"jest": "^29.0.0"},
+            'npx jest tests/widget.test.js -t widget',
+            "npx jest tests/widget.test.js",
+            "npx jest",
+        ),
+        (
+            {"vitest": "^2.0.0"},
+            'npx vitest run tests/widget.test.js -t widget',
+            "npx vitest run tests/widget.test.js",
+            "npx vitest run",
+        ),
+        (
+            {"mocha": "^10.0.0"},
+            'npx mocha tests/widget.test.js --grep widget',
+            "npx mocha tests/widget.test.js",
+            "npx mocha",
+        ),
     ],
 )
 def test_javascript_runner_detection(
     tmp_path: Path,
     dependencies: dict[str, str],
+    expected_specific_command: str,
     expected_file_command: str,
     expected_fallback: str,
 ) -> None:
@@ -202,27 +218,36 @@ def test_javascript_runner_detection(
 
     commands = _validation_commands(project, [test_path], primary_test=test_path, query="widget")
 
-    assert commands == [expected_file_command, expected_fallback]
+    assert commands == [expected_specific_command, expected_file_command, expected_fallback]
 
 
 @pytest.mark.parametrize(
-    ("dev_dependencies", "jest_config", "expected_file_command", "expected_fallback"),
+    (
+        "dev_dependencies",
+        "jest_config",
+        "expected_specific_command",
+        "expected_file_command",
+        "expected_fallback",
+    ),
     [
         (
             {"vitest": "^2.0.0"},
             None,
+            'npx vitest run tests/widget.spec.ts -t widget',
             "npx vitest run tests/widget.spec.ts",
             "npx vitest run",
         ),
         (
             {"jest": "^29.0.0", "ts-jest": "^29.0.0"},
             None,
+            'npx jest tests/widget.spec.ts -t widget',
             "npx jest tests/widget.spec.ts",
             "npx jest",
         ),
         (
             {"jest": "^29.0.0"},
             {"preset": "ts-jest"},
+            'npx jest tests/widget.spec.ts -t widget',
             "npx jest tests/widget.spec.ts",
             "npx jest",
         ),
@@ -232,6 +257,7 @@ def test_typescript_runner_detection(
     tmp_path: Path,
     dev_dependencies: dict[str, str],
     jest_config: dict[str, object] | None,
+    expected_specific_command: str,
     expected_file_command: str,
     expected_fallback: str,
 ) -> None:
@@ -244,7 +270,7 @@ def test_typescript_runner_detection(
 
     commands = _validation_commands(project, [test_path], primary_test=test_path, query="widget")
 
-    assert commands == [expected_file_command, expected_fallback]
+    assert commands == [expected_specific_command, expected_file_command, expected_fallback]
 
 
 def test_typescript_plain_jest_without_ts_jest_skips_file_target(tmp_path: Path) -> None:
