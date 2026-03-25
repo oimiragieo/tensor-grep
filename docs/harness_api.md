@@ -27,6 +27,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Ruleset scan JSON | `tg.exe scan --ruleset <name> --json ...` | [`examples/ruleset_scan.json`](examples/ruleset_scan.json) |
 | Repo map JSON | `tg.exe map --json ...` | [`examples/repo_map.json`](examples/repo_map.json) |
 | Context pack JSON | `tg.exe context --query ... --json ...` | [`examples/context_pack.json`](examples/context_pack.json) |
+| Edit plan JSON | `tg.exe edit-plan --query ... --json ...` | [`examples/edit_plan.json`](examples/edit_plan.json) |
 | Context render JSON | `tg.exe context-render --query ... --json ...` | [`examples/context_render.json`](examples/context_render.json) |
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
@@ -40,6 +41,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Symbol refs JSON | `tg.exe refs --symbol <name> --json ...` | [`examples/refs.json`](examples/refs.json) |
 | Symbol callers JSON | `tg.exe callers --symbol <name> --json ...` | [`examples/callers.json`](examples/callers.json) |
 | Symbol blast radius JSON | `tg.exe blast-radius --symbol <name> --json ...` | [`examples/blast_radius.json`](examples/blast_radius.json) |
+| Symbol blast radius plan JSON | `tg.exe blast-radius-plan --symbol <name> --json ...` | [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json) |
 | Symbol blast radius render JSON | `tg.exe blast-radius-render --symbol <name> --json ...` | [`examples/blast_radius_render.json`](examples/blast_radius_render.json) |
 | Session open JSON | `tg.exe session open ... --json` | [`examples/session_open.json`](examples/session_open.json) |
 | Session context JSON | `tg.exe session context <id> --query ... --json` | [`examples/session_context.json`](examples/session_context.json) |
@@ -265,6 +267,24 @@ Each ranked `imports[]` object extends the Repo Map JSON import shape with:
 | --- | --- | --- |
 | `score` | `integer` | Deterministic query relevance score. |
 
+## Edit Plan JSON
+
+Emitted by `tg.exe edit-plan --query ... --json ...`.
+
+Example: [`examples/edit_plan.json`](examples/edit_plan.json)
+
+Use this shape when an agent wants ranked edit targets and plan recommendations without the rendered prompt bundle.
+
+It reuses the Context Pack JSON shape and adds:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `routing_reason` | `string` | `context-edit-plan`. |
+| `max_files` | `integer` | Maximum files retained in the plan payload. |
+| `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
+| `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
+| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, validation commands, and rollback risk. |
+
 ## Context Render JSON
 
 Emitted by `tg.exe context-render --query ... --json ...`.
@@ -300,8 +320,23 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `truncated` | `boolean` | Whether `rendered_context` was clipped to satisfy `max_render_chars`. |
 | `sections` | `array<object>` | Machine-readable section metadata for the rendered bundle, including byte offsets, section type, and provenance for why each section was included. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
-| `edit_plan_seed` | `object` | Default primary file/symbol/test, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
+| `edit_plan_seed` | `object` | Default primary file/symbol/span, related spans, dependent files, edit ordering, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
+
+`edit_plan_seed` currently includes:
+
+- `primary_file`
+- `primary_symbol`
+- `primary_span`
+- `primary_test`
+- `validation_tests`
+- `validation_commands`
+- `reasons`
+- `confidence`
+- `related_spans`
+- `dependent_files`
+- `edit_ordering`
+- `rollback_risk`
 
 Each `sources[]` object may also include compact-render metadata when `optimize_context` is enabled:
 
@@ -715,6 +750,25 @@ Use this shape when an agent needs an explicit downstream change radius instead 
 | `symbols` | `array<object>` | Ranked symbol matches reused from the impact surface. |
 | `related_paths` | `array<string>` | Stable union of radius files and tests. |
 
+## Symbol Blast Radius Plan JSON
+
+Emitted by `tg.exe blast-radius-plan --symbol <name> --json ...`.
+
+Example: [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json)
+
+Use this shape when an agent needs the transitive blast radius plus ranked edit targets, but does not need the rendered prompt bundle.
+
+The shape matches Symbol Blast Radius JSON and additionally includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `routing_reason` | `string` | `symbol-blast-radius-plan`. |
+| `query` | `string` | Deterministic planning query used to seed the edit plan, currently `blast radius: <symbol>`. |
+| `max_files` | `integer` | Maximum files retained in the plan payload. |
+| `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
+| `candidate_edit_targets` | `object` | Highest-value files, symbols, and tests carried forward for downstream edit planning. |
+| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, validation commands, and rollback risk. |
+
 ## Symbol Blast Radius Render JSON
 
 Emitted by `tg.exe blast-radius-render --symbol <name> --json ...`.
@@ -803,10 +857,14 @@ Supported commands:
 - `show`
 - `repo_map`
 - `context`
+- `context_edit_plan`
 - `defs`
 - `impact`
 - `refs`
 - `callers`
+- `blast_radius`
+- `blast_radius_plan`
+- `blast_radius_render`
 
 Responses reuse the same public payload shapes as the one-shot session and repo-map-derived
 commands, with an added `session_id` field.
@@ -830,6 +888,7 @@ Current tool set:
 - `tg_ruleset_scan(ruleset, path=".", language=None, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)`
 - `tg_repo_map(path=".")`
 - `tg_context_pack(query, path=".")`
+- `tg_edit_plan(query, path=".", max_files=3, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
@@ -837,6 +896,7 @@ Current tool set:
 - `tg_symbol_refs(symbol, path=".")`
 - `tg_symbol_callers(symbol, path=".")`
 - `tg_symbol_blast_radius(symbol, path=".", max_depth=3)`
+- `tg_symbol_blast_radius_plan(symbol, path=".", max_depth=3, max_files=3, max_symbols=5)`
 - `tg_symbol_blast_radius_render(symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_checkpoint_create(path=".")`
 - `tg_checkpoint_list(path=".")`
@@ -846,8 +906,10 @@ Current tool set:
 - `tg_session_show(session_id, path=".")`
 - `tg_session_refresh(session_id, path=".")`
 - `tg_session_context(session_id, query, path=".")`
+- `tg_session_edit_plan(session_id, query, path=".", max_files=3, max_symbols=5)`
 - `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_session_blast_radius(session_id, symbol, path=".", max_depth=3)`
+- `tg_session_blast_radius_plan(session_id, symbol, path=".", max_depth=3, max_files=3, max_symbols=5)`
 - `tg_session_blast_radius_render(session_id, symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
@@ -860,6 +922,7 @@ Response mapping:
 - `tg_rulesets()` returns the same v1 envelope and payload shape as [`examples/rulesets.json`](examples/rulesets.json)
 - `tg_ruleset_scan(...)` returns the same v1 envelope and payload shape as [`examples/ruleset_scan.json`](examples/ruleset_scan.json)
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
+- `tg_edit_plan(...)` returns the same v1 envelope and payload shape as [`examples/edit_plan.json`](examples/edit_plan.json)
 - `tg_context_render(...)` returns the same v1 envelope and payload shape as [`examples/context_render.json`](examples/context_render.json)
 - `tg_symbol_defs(...)` returns the same v1 envelope and payload shape as [`examples/defs.json`](examples/defs.json)
 - `tg_symbol_source(...)` returns the same v1 envelope and payload shape as [`examples/source.json`](examples/source.json)
@@ -867,12 +930,15 @@ Response mapping:
 - `tg_symbol_refs(...)` returns the same v1 envelope and payload shape as [`examples/refs.json`](examples/refs.json)
 - `tg_symbol_callers(...)` returns the same v1 envelope and payload shape as [`examples/callers.json`](examples/callers.json)
 - `tg_symbol_blast_radius(...)` returns the same v1 envelope and payload shape as [`examples/blast_radius.json`](examples/blast_radius.json)
+- `tg_symbol_blast_radius_plan(...)` returns the same v1 envelope and payload shape as [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json)
 - `tg_symbol_blast_radius_render(...)` returns the same v1 envelope and payload shape as [`examples/blast_radius_render.json`](examples/blast_radius_render.json)
 - `tg_session_open(...)` returns the same payload shape as [`examples/session_open.json`](examples/session_open.json)
 - `tg_session_refresh(...)` returns the same payload shape as Session Refresh JSON
 - `tg_session_context(...)` returns the same payload shape as [`examples/session_context.json`](examples/session_context.json)
+- `tg_session_edit_plan(...)` returns the same payload shape as [`examples/edit_plan.json`](examples/edit_plan.json) plus `session_id` and `routing_reason = "session-context-edit-plan"`
 - `tg_session_context_render(...)` returns the same payload shape as [`examples/context_render.json`](examples/context_render.json) plus `session_id` and `routing_reason = "session-context-render"`
 - `tg_session_blast_radius(...)` returns the same payload shape as [`examples/blast_radius.json`](examples/blast_radius.json) plus `session_id` and `routing_reason = "session-blast-radius"`
+- `tg_session_blast_radius_plan(...)` returns the same payload shape as [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json) plus `session_id` and `routing_reason = "session-blast-radius-plan"`
 - `tg_session_blast_radius_render(...)` returns the same payload shape as [`examples/blast_radius_render.json`](examples/blast_radius_render.json) plus `session_id` and `routing_reason = "session-blast-radius-render"`
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
 - `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)

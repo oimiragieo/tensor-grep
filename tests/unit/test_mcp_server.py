@@ -1515,6 +1515,47 @@ def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_pa
     assert "create_invoice" in payload["rendered_context"]
 
 
+def test_tg_symbol_blast_radius_plan_returns_machine_readable_bundle(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_symbol_blast_radius_plan("create_invoice", str(project), max_depth=1)
+    )
+
+    assert payload["routing_reason"] == "symbol-blast-radius-plan"
+    assert "rendered_context" not in payload
+    assert "sources" not in payload
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
+
+
 def test_tg_session_blast_radius_render_uses_cached_repo_map(tmp_path):
     from tensor_grep.cli import mcp_server
 
@@ -2009,6 +2050,44 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert payload["edit_plan_seed"]["confidence"]["test"] >= 0.5
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
+
+
+def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_edit_plan("create invoice", str(project)))
+
+    assert payload["routing_reason"] == "context-edit-plan"
+    assert "rendered_context" not in payload
+    assert "sources" not in payload
+    assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
 
 
 def test_tg_context_render_honors_max_render_chars(tmp_path):

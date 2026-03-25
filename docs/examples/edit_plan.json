@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "context-edit-plan",
+  "sidecar_used": false,
+  "coverage": {
+    "language_scope": "python-js-ts-rust",
+    "symbol_navigation": "python-ast+parser-js-ts-rust",
+    "test_matching": "filename+import+graph-heuristic"
+  },
+  "query": "invoice payment",
+  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack",
+  "files": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+  ],
+  "file_matches": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "score": 32,
+      "reasons": [
+        "path",
+        "definition",
+        "symbol",
+        "graph-centrality"
+      ],
+      "graph_score": 1.0
+    },
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+      "score": 22,
+      "reasons": [
+        "definition",
+        "symbol",
+        "import"
+      ]
+    }
+  ],
+  "file_summaries": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "symbols": [
+        {
+          "name": "PaymentService",
+          "kind": "class",
+          "line": 1
+        },
+        {
+          "name": "create_invoice",
+          "kind": "function",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+      "symbols": [
+        {
+          "name": "test_create_invoice",
+          "kind": "function",
+          "line": 3
+        }
+      ]
+    }
+  ],
+  "symbols": [
+    {
+      "name": "PaymentService",
+      "kind": "class",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "line": 1,
+      "score": 5
+    },
+    {
+      "name": "create_invoice",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "line": 4,
+      "score": 5
+    },
+    {
+      "name": "test_create_invoice",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+      "line": 3,
+      "score": 5
+    }
+  ],
+  "imports": [
+    {
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+      "imports": [
+        "src.payments",
+        "src.payments.create_invoice"
+      ],
+      "score": 6
+    }
+  ],
+  "tests": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+  ],
+  "test_matches": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+      "score": 30,
+      "reasons": [
+        "path",
+        "filename",
+        "test-graph",
+        "graph-centrality"
+      ],
+      "graph_score": 2.0
+    }
+  ],
+  "related_paths": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+  ],
+  "max_files": 3,
+  "max_symbols": 5,
+  "candidate_edit_targets": {
+    "files": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+    ],
+    "symbols": [
+      {
+        "name": "create_invoice",
+        "kind": "function",
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+        "line": 4,
+        "score": 5
+      },
+      {
+        "name": "PaymentService",
+        "kind": "class",
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+        "line": 1,
+        "score": 5
+      }
+    ],
+    "tests": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+    ]
+  },
+  "edit_plan_seed": {
+    "primary_file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+    "primary_symbol": {
+      "name": "create_invoice",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "line": 4,
+      "score": 5
+    },
+    "primary_span": {
+      "start_line": 4,
+      "end_line": 5
+    },
+    "primary_test": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+    "validation_tests": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+    ],
+    "validation_commands": [
+      "uv run pytest C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py -q"
+    ],
+    "reasons": [
+      "definition",
+      "symbol"
+    ],
+    "confidence": {
+      "file": 0.8,
+      "symbol": 0.8,
+      "test": 0.6
+    },
+    "related_spans": [
+      {
+        "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+        "symbol": "PaymentService",
+        "start_line": 1,
+        "end_line": 2,
+        "depth": 0
+      },
+      {
+        "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+        "symbol": "test_create_invoice",
+        "start_line": 3,
+        "end_line": 4,
+        "depth": 1
+      }
+    ],
+    "dependent_files": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+    ],
+    "edit_ordering": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+    ],
+    "rollback_risk": 0.25
+  }
+}

@@ -52,6 +52,74 @@ def test_session_open_show_and_context_reuse_repo_map(tmp_path: Path) -> None:
     assert context["tests"][0] == str(test_path.resolve())
 
 
+def test_session_edit_plan_and_blast_radius_plan_reuse_cached_repo_map(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    edit_plan = runner.invoke(
+        app,
+        [
+            "session",
+            "edit-plan",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "create invoice",
+            "--json",
+        ],
+    )
+    assert edit_plan.exit_code == 0
+    edit_payload = json.loads(edit_plan.stdout)
+    assert edit_payload["routing_reason"] == "session-context-edit-plan"
+    assert edit_payload["session_id"] == opened["session_id"]
+    assert edit_payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    assert "rendered_context" not in edit_payload
+
+    radius_plan = runner.invoke(
+        app,
+        [
+            "session",
+            "blast-radius-plan",
+            opened["session_id"],
+            str(project),
+            "--symbol",
+            "create_invoice",
+            "--max-depth",
+            "1",
+            "--json",
+        ],
+    )
+    assert radius_plan.exit_code == 0
+    radius_payload = json.loads(radius_plan.stdout)
+    assert radius_payload["routing_reason"] == "session-blast-radius-plan"
+    assert radius_payload["session_id"] == opened["session_id"]
+    assert radius_payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert "rendered_context" not in radius_payload
+
+
 def test_session_list_returns_newest_first(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

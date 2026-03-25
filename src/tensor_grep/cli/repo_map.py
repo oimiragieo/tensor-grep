@@ -2915,15 +2915,19 @@ def _build_edit_plan_seed(
     max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
     blast_radius_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    primary_symbol = next(iter(ranked_symbols), None)
     primary_file = next(iter(payload.get("files", [])), None)
-    primary_symbol = None
-    if primary_file is not None:
+    if primary_symbol is not None:
+        preferred_files = _preferred_definition_files(repo_map, str(primary_symbol.get("name", "")))
+        if preferred_files:
+            primary_file = preferred_files[0]
+        elif primary_symbol.get("file"):
+            primary_file = str(primary_symbol["file"])
+    if primary_symbol is None and primary_file is not None:
         primary_file_symbols = [
             current for current in ranked_symbols if str(current.get("file")) == str(primary_file)
         ]
         primary_symbol = next(iter(primary_file_symbols), None)
-    if primary_symbol is None:
-        primary_symbol = next(iter(ranked_symbols), None)
 
     primary_file_match = next(
         (
@@ -3013,6 +3017,104 @@ def _build_edit_plan_seed(
         ),
         "rollback_risk": rollback_risk,
     }
+
+
+def _sorted_ranked_symbols(symbols: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        symbols,
+        key=lambda symbol: (
+            -int(symbol.get("score", 0)),
+            0 if str(symbol.get("kind")) == "function" else 1,
+            str(symbol.get("file")),
+            int(symbol.get("line", 0)),
+            str(symbol.get("name")),
+        ),
+    )
+
+
+def _attach_edit_plan_metadata(
+    repo_map: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    query: str,
+    max_files: int,
+    max_symbols: int,
+    max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
+    blast_radius_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    ranked_symbols = _sorted_ranked_symbols(list(payload.get("symbols", [])))
+    payload["candidate_edit_targets"] = {
+        "files": list(payload.get("files", []))[:max_files],
+        "symbols": ranked_symbols[:max_symbols],
+        "tests": list(payload.get("tests", []))[:max_files],
+    }
+    payload["edit_plan_seed"] = _build_edit_plan_seed(
+        repo_map,
+        payload,
+        ranked_symbols=ranked_symbols,
+        query=query,
+        max_files=max_files,
+        max_depth=max_depth,
+        blast_radius_payload=blast_radius_payload,
+    )
+    return payload
+
+
+def build_context_edit_plan(
+    query: str,
+    path: str | Path = ".",
+    *,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> dict[str, Any]:
+    repo_map = build_repo_map(path)
+    return build_context_edit_plan_from_map(
+        repo_map,
+        query,
+        max_files=max_files,
+        max_symbols=max_symbols,
+    )
+
+
+def build_context_edit_plan_from_map(
+    repo_map: dict[str, Any],
+    query: str,
+    *,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> dict[str, Any]:
+    payload = build_context_pack_from_map(repo_map, query)
+    normalized_max_files = max(1, max_files)
+    normalized_max_symbols = max(1, max_symbols)
+    payload["routing_reason"] = "context-edit-plan"
+    payload["files"] = list(payload.get("files", []))[:normalized_max_files]
+    payload["file_matches"] = list(payload.get("file_matches", []))[:normalized_max_files]
+    payload["file_summaries"] = list(payload.get("file_summaries", []))[:normalized_max_files]
+    payload["tests"] = list(payload.get("tests", []))[:normalized_max_files]
+    payload["test_matches"] = list(payload.get("test_matches", []))[:normalized_max_files]
+    payload["symbols"] = _sorted_ranked_symbols(list(payload.get("symbols", [])))[:normalized_max_symbols]
+    payload["max_files"] = normalized_max_files
+    payload["max_symbols"] = normalized_max_symbols
+    return _attach_edit_plan_metadata(
+        repo_map,
+        payload,
+        query=query,
+        max_files=normalized_max_files,
+        max_symbols=normalized_max_symbols,
+    )
+
+
+def build_context_edit_plan_json(
+    query: str,
+    path: str | Path = ".",
+    *,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> str:
+    return json.dumps(
+        build_context_edit_plan(query, path, max_files=max_files, max_symbols=max_symbols),
+        indent=2,
+    )
 
 
 def build_context_render(
@@ -3107,27 +3209,12 @@ def build_context_render_from_map(
     payload["model"] = model
     payload["optimize_context"] = optimize_context
     payload["render_profile"] = normalized_profile
-    ranked_symbols = sorted(
-        payload.get("symbols", []),
-        key=lambda symbol: (
-            -int(symbol.get("score", 0)),
-            0 if str(symbol.get("kind")) == "function" else 1,
-            str(symbol.get("file")),
-            int(symbol.get("line", 0)),
-            str(symbol.get("name")),
-        ),
-    )
-    payload["candidate_edit_targets"] = {
-        "files": list(payload.get("files", []))[:max_files],
-        "symbols": ranked_symbols[:max_sources],
-        "tests": list(payload.get("tests", []))[:max_files],
-    }
-    payload["edit_plan_seed"] = _build_edit_plan_seed(
+    payload = _attach_edit_plan_metadata(
         repo_map,
         payload,
-        ranked_symbols=ranked_symbols,
         query=query,
         max_files=max_files,
+        max_symbols=max_sources,
         max_depth=_DEFAULT_EDIT_PLAN_MAX_DEPTH,
     )
     (
@@ -3722,6 +3809,75 @@ def build_symbol_blast_radius_json(
     )
 
 
+def build_symbol_blast_radius_plan(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> dict[str, Any]:
+    repo_map = build_repo_map(path)
+    return build_symbol_blast_radius_plan_from_map(
+        repo_map,
+        symbol,
+        max_depth=max_depth,
+        max_files=max_files,
+        max_symbols=max_symbols,
+    )
+
+
+def build_symbol_blast_radius_plan_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> dict[str, Any]:
+    payload = build_symbol_blast_radius_from_map(repo_map, symbol, max_depth=max_depth)
+    normalized_max_files = max(1, max_files)
+    normalized_max_symbols = max(1, max_symbols)
+    payload["routing_reason"] = "symbol-blast-radius-plan"
+    payload["files"] = list(payload.get("files", []))[:normalized_max_files]
+    payload["file_matches"] = list(payload.get("file_matches", []))[:normalized_max_files]
+    payload["file_summaries"] = list(payload.get("file_summaries", []))[:normalized_max_files]
+    payload["tests"] = list(payload.get("tests", []))[:normalized_max_files]
+    payload["test_matches"] = list(payload.get("test_matches", []))[:normalized_max_files]
+    payload["symbols"] = _sorted_ranked_symbols(list(payload.get("symbols", [])))[:normalized_max_symbols]
+    payload["max_files"] = normalized_max_files
+    payload["max_symbols"] = normalized_max_symbols
+    return _attach_edit_plan_metadata(
+        repo_map,
+        payload,
+        query=symbol,
+        max_files=normalized_max_files,
+        max_symbols=normalized_max_symbols,
+        max_depth=max_depth,
+        blast_radius_payload=payload,
+    )
+
+
+def build_symbol_blast_radius_plan_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> str:
+    return json.dumps(
+        build_symbol_blast_radius_plan(
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_symbols=max_symbols,
+        ),
+        indent=2,
+    )
+
+
 def build_symbol_blast_radius_render(
     symbol: str,
     path: str | Path = ".",
@@ -3769,16 +3925,7 @@ def build_symbol_blast_radius_render_from_map(
     top_files = {str(current) for current in radius_payload.get("files", [])[:max_files]}
     sources: list[dict[str, Any]] = []
     seen_symbols: set[tuple[str, str]] = set()
-    ranked_symbols = sorted(
-        radius_payload.get("symbols", []),
-        key=lambda current: (
-            -int(current.get("score", 0)),
-            0 if str(current.get("kind")) == "function" else 1,
-            str(current.get("file")),
-            int(current.get("line", 0)),
-            str(current.get("name")),
-        ),
-    )
+    ranked_symbols = _sorted_ranked_symbols(list(radius_payload.get("symbols", [])))
     for current_symbol in ranked_symbols:
         current_file = str(current_symbol["file"])
         if current_file not in top_files:
@@ -3838,17 +3985,12 @@ def build_symbol_blast_radius_render_from_map(
     payload["truncated"] = truncated
     payload["token_estimate"] = token_estimate
     payload["omitted_sections"] = omitted_sections
-    payload["candidate_edit_targets"] = {
-        "files": list(payload.get("files", []))[:max_files],
-        "symbols": ranked_symbols[:max_sources],
-        "tests": list(payload.get("tests", []))[:max_files],
-    }
-    payload["edit_plan_seed"] = _build_edit_plan_seed(
+    payload = _attach_edit_plan_metadata(
         repo_map,
         payload,
-        ranked_symbols=ranked_symbols,
         query=symbol,
         max_files=max_files,
+        max_symbols=max_sources,
         max_depth=max_depth,
         blast_radius_payload=radius_payload,
     )

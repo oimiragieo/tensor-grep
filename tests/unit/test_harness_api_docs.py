@@ -10,6 +10,11 @@ EXPECTED_EXAMPLES = {
     "ruleset_scan.json": ("ruleset", "findings", "total_matches"),
     "repo_map.json": ("files", "symbols"),
     "context_pack.json": ("query", "files"),
+    "edit_plan.json": (
+        "query",
+        "candidate_edit_targets",
+        "edit_plan_seed",
+    ),
     "context_render.json": (
         "query",
         "rendered_context",
@@ -26,6 +31,11 @@ EXPECTED_EXAMPLES = {
     "refs.json": ("symbol", "references"),
     "callers.json": ("symbol", "callers"),
     "blast_radius.json": ("symbol", "callers", "caller_tree", "rendered_caller_tree"),
+    "blast_radius_plan.json": (
+        "symbol",
+        "candidate_edit_targets",
+        "edit_plan_seed",
+    ),
     "blast_radius_render.json": (
         "symbol",
         "rendered_context",
@@ -55,6 +65,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Ruleset Scan JSON" in doc
     assert "## Repo Map JSON" in doc
     assert "## Context Pack JSON" in doc
+    assert "## Edit Plan JSON" in doc
     assert "## Context Render JSON" in doc
     assert "## Rewrite Plan JSON" in doc
     assert "## Batch Rewrite Config" in doc
@@ -69,6 +80,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "## Symbol Refs JSON" in doc
     assert "## Symbol Callers JSON" in doc
     assert "## Symbol Blast Radius JSON" in doc
+    assert "## Symbol Blast Radius Plan JSON" in doc
     assert "## Symbol Blast Radius Render JSON" in doc
     assert "## Session Open JSON" in doc
     assert "## Session Refresh JSON" in doc
@@ -86,6 +98,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "filename+import+graph-heuristic" in doc
     assert "tg_repo_map" in doc
     assert "tg_context_pack" in doc
+    assert "tg_edit_plan" in doc
     assert "tg_context_render" in doc
     assert "tg_rulesets" in doc
     assert "tg_ruleset_scan" in doc
@@ -95,6 +108,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_symbol_refs" in doc
     assert "tg_symbol_callers" in doc
     assert "tg_symbol_blast_radius" in doc
+    assert "tg_symbol_blast_radius_plan" in doc
     assert "tg_symbol_blast_radius_render" in doc
     assert "tg_session_blast_radius" in doc
     assert "tg_session_blast_radius_render" in doc
@@ -103,7 +117,9 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_session_show" in doc
     assert "tg_session_refresh" in doc
     assert "tg_session_context" in doc
+    assert "tg_session_edit_plan" in doc
     assert "tg_session_context_render" in doc
+    assert "tg_session_blast_radius_plan" in doc
     assert "tg_audit_manifest_verify" in doc
     assert "tg_checkpoint_create" in doc
     assert "tg_checkpoint_list" in doc
@@ -154,6 +170,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
             if file_name in {
                 "repo_map.json",
                 "context_pack.json",
+                "edit_plan.json",
                 "context_render.json",
                 "defs.json",
                 "source.json",
@@ -161,6 +178,7 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 "refs.json",
                 "callers.json",
                 "blast_radius.json",
+                "blast_radius_plan.json",
                 "blast_radius_render.json",
                 "session_context.json",
             }:
@@ -187,6 +205,12 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert payload["baseline_written"]["count"] >= 0
                 assert payload["suppressions"]["suppressed_findings"] >= 0
                 assert payload["suppressions_written"]["count"] >= 0
+            if file_name in {"edit_plan.json", "blast_radius_plan.json"}:
+                assert payload["edit_plan_seed"]["primary_span"]["start_line"] >= 1
+                assert isinstance(payload["edit_plan_seed"]["related_spans"], list)
+                assert isinstance(payload["edit_plan_seed"]["dependent_files"], list)
+                assert isinstance(payload["edit_plan_seed"]["edit_ordering"], list)
+                assert 0.0 <= payload["edit_plan_seed"]["rollback_risk"] <= 1.0
 
         for key in required_keys:
             assert key in payload

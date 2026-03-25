@@ -698,6 +698,46 @@ def test_context_render_json_includes_enriched_edit_plan_seed_fields(tmp_path):
     )
 
 
+def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["edit-plan", "--query", "create invoice", "--json", str(project)],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "context-edit-plan"
+    assert "rendered_context" not in payload
+    assert "sources" not in payload
+    assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
+
+
 def test_blast_radius_render_json_returns_prompt_ready_radius_bundle(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
@@ -753,6 +793,57 @@ def test_blast_radius_render_json_returns_prompt_ready_radius_bundle(tmp_path):
     )
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
+
+
+def test_blast_radius_plan_json_returns_machine_readable_radius_bundle(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_service.py"
+    test_path.write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "blast-radius-plan",
+            "--symbol",
+            "create_invoice",
+            "--max-depth",
+            "1",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["routing_reason"] == "symbol-blast-radius-plan"
+    assert "rendered_context" not in payload
+    assert "sources" not in payload
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    _assert_enriched_edit_plan_seed(
+        payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
 
 
 def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):

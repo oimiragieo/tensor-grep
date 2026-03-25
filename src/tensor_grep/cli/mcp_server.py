@@ -722,6 +722,50 @@ def tg_context_pack(query: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
+def tg_edit_plan(
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> str:
+    """
+    Return a machine-readable edit-planning bundle without rendered source text.
+
+    Args:
+        query: Query text used to rank edit targets.
+        path: File or directory to inventory.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.repo_map import build_context_edit_plan
+
+    try:
+        return json.dumps(
+            build_context_edit_plan(
+                query,
+                path,
+                max_files=max_files,
+                max_symbols=max_symbols,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-edit-plan",
+            "sidecar_used": False,
+            "query": query,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
 def tg_context_render(
     query: str,
     path: str = ".",
@@ -765,6 +809,56 @@ def tg_context_render(
             "sidecar_used": False,
             "query": query,
             "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_edit_plan(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> str:
+    """
+    Return a cached-session edit-planning bundle without rendered source text.
+
+    Args:
+        session_id: Session ID to query.
+        query: Query text used to rank edit targets.
+        path: File or directory rooted at the session scope.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
+
+    try:
+        return json.dumps(
+            session_context_edit_plan(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_symbols=max_symbols,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+        return json.dumps(payload, indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
             "error": {
                 "code": "invalid_input",
                 "message": f"Path not found: {Path(path).expanduser().resolve()}",
@@ -886,6 +980,54 @@ def tg_session_blast_radius(
 
 
 @mcp.tool()  # type: ignore
+def tg_symbol_blast_radius_plan(
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> str:
+    """
+    Return a machine-readable blast-radius planning bundle without rendered source text.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius_plan
+
+    try:
+        return json.dumps(
+            build_symbol_blast_radius_plan(
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-blast-radius-plan",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
 def tg_session_blast_radius_render(
     session_id: str,
     symbol: str,
@@ -931,6 +1073,63 @@ def tg_session_blast_radius_render(
                 max_render_chars=max_render_chars,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+        return json.dumps(payload, indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "session_id": session_id,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_blast_radius_plan(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> str:
+    """
+    Return a cached-session blast-radius planning bundle without rendered source text.
+
+    Args:
+        session_id: Session ID to query.
+        symbol: Exact symbol name to resolve.
+        path: File or directory rooted at the session scope.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius_plan
+
+    try:
+        return json.dumps(
+            session_blast_radius_plan(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
             ),
             indent=2,
         )

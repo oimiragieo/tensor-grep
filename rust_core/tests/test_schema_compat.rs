@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 const EXPECTED_EXAMPLES: &[&str] = &[
     "calibrate.json",
     "context_pack.json",
+    "edit_plan.json",
     "context_render.json",
     "gpu_sidecar_search.json",
     "index_search.json",
@@ -20,6 +21,7 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "refs.json",
     "callers.json",
     "blast_radius.json",
+    "blast_radius_plan.json",
     "blast_radius_render.json",
     "audit_manifest_verify.json",
     "session_open.json",
@@ -664,11 +666,20 @@ struct CandidateEditTargetsExample {
 struct EditPlanSeedExample {
     primary_file: Option<PathBuf>,
     primary_symbol: Option<RankedRepoSymbolExample>,
+    primary_span: Option<EditPlanSpanExample>,
     primary_test: Option<PathBuf>,
     validation_tests: Vec<PathBuf>,
     validation_commands: Vec<String>,
     reasons: Vec<String>,
     confidence: EditPlanSeedConfidenceExample,
+    #[serde(default)]
+    related_spans: Vec<RelatedEditSpanExample>,
+    #[serde(default)]
+    dependent_files: Vec<PathBuf>,
+    #[serde(default)]
+    edit_ordering: Vec<PathBuf>,
+    #[serde(default)]
+    rollback_risk: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -677,6 +688,23 @@ struct EditPlanSeedConfidenceExample {
     file: f64,
     symbol: f64,
     test: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditPlanSpanExample {
+    start_line: usize,
+    end_line: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelatedEditSpanExample {
+    path: PathBuf,
+    symbol: String,
+    start_line: usize,
+    end_line: usize,
+    depth: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -697,6 +725,30 @@ struct ContextPackExample {
     tests: Vec<PathBuf>,
     test_matches: Vec<RankedPathMatchExample>,
     related_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContextEditPlanExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    coverage: CoverageExample,
+    query: String,
+    path: PathBuf,
+    files: Vec<PathBuf>,
+    file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
+    symbols: Vec<RankedRepoSymbolExample>,
+    imports: Vec<RankedRepoImportExample>,
+    tests: Vec<PathBuf>,
+    test_matches: Vec<RankedPathMatchExample>,
+    related_paths: Vec<PathBuf>,
+    max_files: usize,
+    max_symbols: usize,
+    candidate_edit_targets: CandidateEditTargetsExample,
+    edit_plan_seed: EditPlanSeedExample,
 }
 
 #[derive(Debug, Deserialize)]
@@ -765,6 +817,36 @@ struct BlastRadiusRenderExample {
     candidate_edit_targets: CandidateEditTargetsExample,
     edit_plan_seed: EditPlanSeedExample,
     rendered_context: String,
+    caller_tree: Vec<BlastRadiusTreeLevelExample>,
+    rendered_caller_tree: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlastRadiusPlanExample {
+    version: u32,
+    routing_backend: String,
+    routing_reason: String,
+    sidecar_used: bool,
+    coverage: CoverageExample,
+    query: String,
+    path: PathBuf,
+    symbol: String,
+    max_depth: usize,
+    definitions: Vec<RepoSymbolExample>,
+    callers: Vec<SymbolReferenceExample>,
+    files: Vec<PathBuf>,
+    file_matches: Vec<RankedPathMatchExample>,
+    file_summaries: Vec<FileSummaryExample>,
+    symbols: Vec<RankedRepoSymbolExample>,
+    imports: Vec<RankedRepoImportExample>,
+    tests: Vec<PathBuf>,
+    test_matches: Vec<RankedPathMatchExample>,
+    related_paths: Vec<PathBuf>,
+    max_files: usize,
+    max_symbols: usize,
+    candidate_edit_targets: CandidateEditTargetsExample,
+    edit_plan_seed: EditPlanSeedExample,
     caller_tree: Vec<BlastRadiusTreeLevelExample>,
     rendered_caller_tree: String,
 }
@@ -844,6 +926,7 @@ fn test_docs_examples_match_v1_schema() {
             "mcp_rewrite_diff.json" => assert_mcp_rewrite_diff_example(path),
             "repo_map.json" => assert_repo_map_example(path),
             "context_pack.json" => assert_context_pack_example(path),
+            "edit_plan.json" => assert_context_edit_plan_example(path),
             "context_render.json" => assert_context_render_example(path),
             "defs.json" => assert_symbol_defs_example(path),
             "source.json" => assert_symbol_source_example(path),
@@ -851,6 +934,7 @@ fn test_docs_examples_match_v1_schema() {
             "refs.json" => assert_symbol_refs_example(path),
             "callers.json" => assert_symbol_callers_example(path),
             "blast_radius.json" => assert_symbol_blast_radius_example(path),
+            "blast_radius_plan.json" => assert_blast_radius_plan_example(path),
             "blast_radius_render.json" => assert_blast_radius_render_example(path),
             "session_open.json" => assert_session_open_example(path),
             "session_context.json" => assert_session_context_example(path),
@@ -2515,6 +2599,165 @@ fn assert_context_pack_example(path: &Path) {
     }
 }
 
+fn assert_edit_plan_common(
+    path: &Path,
+    candidate_edit_targets: &CandidateEditTargetsExample,
+    edit_plan_seed: &EditPlanSeedExample,
+    imports: &[RankedRepoImportExample],
+    tests: &[PathBuf],
+    test_matches: &[RankedPathMatchExample],
+    related_paths: &[PathBuf],
+) {
+    for candidate_file in &candidate_edit_targets.files {
+        assert!(
+            is_portable_absolute_path(candidate_file),
+            "{} candidate file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for candidate_symbol in &candidate_edit_targets.symbols {
+        assert!(
+            !candidate_symbol.name.is_empty(),
+            "{} candidate symbol name must not be empty",
+            path.display()
+        );
+    }
+    for candidate_test in &candidate_edit_targets.tests {
+        assert!(
+            is_portable_absolute_path(candidate_test),
+            "{} candidate test should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    if let Some(primary_file) = &edit_plan_seed.primary_file {
+        assert!(
+            is_portable_absolute_path(primary_file),
+            "{} primary_file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    if let Some(primary_symbol) = &edit_plan_seed.primary_symbol {
+        assert!(
+            !primary_symbol.name.is_empty(),
+            "{} primary_symbol name must not be empty",
+            path.display()
+        );
+    }
+    if let Some(primary_span) = &edit_plan_seed.primary_span {
+        assert!(
+            primary_span.end_line >= primary_span.start_line,
+            "{} primary_span lines must be ordered",
+            path.display()
+        );
+    }
+    if let Some(primary_test) = &edit_plan_seed.primary_test {
+        assert!(
+            is_portable_absolute_path(primary_test),
+            "{} primary_test should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for validation_test in &edit_plan_seed.validation_tests {
+        assert!(
+            is_portable_absolute_path(validation_test),
+            "{} validation_tests should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for validation_command in &edit_plan_seed.validation_commands {
+        assert!(
+            !validation_command.is_empty(),
+            "{} validation_commands entries must not be empty",
+            path.display()
+        );
+    }
+    assert!(
+        !edit_plan_seed.reasons.is_empty(),
+        "{} edit_plan_seed reasons must not be empty",
+        path.display()
+    );
+    assert!(
+        (0.0..=1.0).contains(&edit_plan_seed.confidence.file),
+        "{} file confidence must be normalized",
+        path.display()
+    );
+    assert!(
+        (0.0..=1.0).contains(&edit_plan_seed.confidence.symbol),
+        "{} symbol confidence must be normalized",
+        path.display()
+    );
+    assert!(
+        (0.0..=1.0).contains(&edit_plan_seed.confidence.test),
+        "{} test confidence must be normalized",
+        path.display()
+    );
+    for related_span in &edit_plan_seed.related_spans {
+        assert!(
+            is_portable_absolute_path(&related_span.path),
+            "{} related span path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+        assert!(
+            !related_span.symbol.is_empty(),
+            "{} related span symbol must not be empty",
+            path.display()
+        );
+        assert!(
+            related_span.end_line >= related_span.start_line,
+            "{} related span lines must be ordered",
+            path.display()
+        );
+    }
+    for dependent_file in &edit_plan_seed.dependent_files {
+        assert!(
+            is_portable_absolute_path(dependent_file),
+            "{} dependent file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for ordered_path in &edit_plan_seed.edit_ordering {
+        assert!(
+            is_portable_absolute_path(ordered_path),
+            "{} edit_ordering path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    if let Some(rollback_risk) = edit_plan_seed.rollback_risk {
+        assert!(
+            (0.0..=1.0).contains(&rollback_risk),
+            "{} rollback_risk must be normalized",
+            path.display()
+        );
+    }
+    for import in imports {
+        assert!(
+            is_portable_absolute_path(&import.file),
+            "{} import file should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    for test_path in tests {
+        assert!(
+            is_portable_absolute_path(test_path),
+            "{} test path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+    assert_eq!(
+        tests.len(),
+        test_matches.len(),
+        "{} test_matches should align with tests",
+        path.display()
+    );
+    for related_path in related_paths {
+        assert!(
+            is_portable_absolute_path(related_path),
+            "{} related path should be absolute or an absolute Windows path literal",
+            path.display()
+        );
+    }
+}
+
 fn assert_context_render_example(path: &Path) {
     let example: ContextRenderExample = parse_json_document(path);
     assert_common_envelope(
@@ -2759,6 +3002,65 @@ fn assert_context_render_example(path: &Path) {
     }
 }
 
+fn assert_context_edit_plan_example(path: &Path) {
+    let example: ContextEditPlanExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "context-edit-plan",
+        "{} should keep context-edit-plan routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should stay native",
+        path.display()
+    );
+    assert_repo_map_coverage(path, &example.coverage);
+    assert!(
+        !example.query.is_empty(),
+        "{} query must not be empty",
+        path.display()
+    );
+    assert!(is_portable_absolute_path(&example.path));
+    assert!(
+        !example.files.is_empty(),
+        "{} should rank files",
+        path.display()
+    );
+    assert_eq!(example.files.len(), example.file_matches.len());
+    assert_eq!(example.files.len(), example.file_summaries.len());
+    assert!(
+        !example.symbols.is_empty(),
+        "{} should rank symbols",
+        path.display()
+    );
+    assert!(
+        example.max_files > 0,
+        "{} max_files must be positive",
+        path.display()
+    );
+    assert!(
+        example.max_symbols > 0,
+        "{} max_symbols must be positive",
+        path.display()
+    );
+    assert_edit_plan_common(
+        path,
+        &example.candidate_edit_targets,
+        &example.edit_plan_seed,
+        &example.imports,
+        &example.tests,
+        &example.test_matches,
+        &example.related_paths,
+    );
+}
+
 fn assert_blast_radius_render_example(path: &Path) {
     let example: BlastRadiusRenderExample = parse_json_document(path);
     assert_common_envelope(
@@ -2842,6 +3144,73 @@ fn assert_blast_radius_render_example(path: &Path) {
     let _ = &example.sections;
     let _ = &example.candidate_edit_targets;
     let _ = &example.edit_plan_seed;
+}
+
+fn assert_blast_radius_plan_example(path: &Path) {
+    let example: BlastRadiusPlanExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert_eq!(
+        example.routing_reason,
+        "symbol-blast-radius-plan",
+        "{} should keep symbol-blast-radius-plan routing reason",
+        path.display()
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should stay native",
+        path.display()
+    );
+    assert_repo_map_coverage(path, &example.coverage);
+    assert!(
+        !example.query.is_empty(),
+        "{} query must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.symbol.is_empty(),
+        "{} symbol must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    assert!(
+        example.max_files > 0,
+        "{} max_files must be positive",
+        path.display()
+    );
+    assert!(
+        example.max_symbols > 0,
+        "{} max_symbols must be positive",
+        path.display()
+    );
+    assert!(
+        !example.callers.is_empty(),
+        "{} callers must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.caller_tree.is_empty(),
+        "{} caller_tree must not be empty",
+        path.display()
+    );
+    assert!(!example.rendered_caller_tree.is_empty());
+    assert_edit_plan_common(
+        path,
+        &example.candidate_edit_targets,
+        &example.edit_plan_seed,
+        &example.imports,
+        &example.tests,
+        &example.test_matches,
+        &example.related_paths,
+    );
 }
 
 fn assert_session_open_example(path: &Path) {

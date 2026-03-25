@@ -11,11 +11,13 @@ from typing import Any, TextIO, cast
 
 from tensor_grep.cli.repo_map import (
     _iter_repo_files,
+    build_context_edit_plan_from_map,
     build_context_pack_from_map,
     build_context_render_from_map,
     build_repo_map,
     build_repo_map_incremental,
     build_symbol_blast_radius_from_map,
+    build_symbol_blast_radius_plan_from_map,
     build_symbol_blast_radius_render_from_map,
     build_symbol_callers_from_map,
     build_symbol_defs_from_map,
@@ -389,6 +391,27 @@ def session_context(session_id: str, query: str, path: str = ".") -> dict[str, A
     return context
 
 
+def session_context_edit_plan(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    *,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> dict[str, Any]:
+    payload = get_session(session_id, path)
+    _ensure_session_not_stale(payload)
+    context = build_context_edit_plan_from_map(
+        payload["repo_map"],
+        query,
+        max_files=max_files,
+        max_symbols=max_symbols,
+    )
+    context["session_id"] = session_id
+    context["routing_reason"] = "session-context-edit-plan"
+    return context
+
+
 def session_context_render(
     session_id: str,
     query: str,
@@ -438,6 +461,29 @@ def session_blast_radius(
     )
     response["session_id"] = session_id
     response["routing_reason"] = "session-blast-radius"
+    return response
+
+
+def session_blast_radius_plan(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    *,
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> dict[str, Any]:
+    payload = get_session(session_id, path)
+    _ensure_session_not_stale(payload)
+    response = build_symbol_blast_radius_plan_from_map(
+        payload["repo_map"],
+        symbol,
+        max_depth=max_depth,
+        max_files=max_files,
+        max_symbols=max_symbols,
+    )
+    response["session_id"] = session_id
+    response["routing_reason"] = "session-blast-radius-plan"
     return response
 
 
@@ -533,6 +579,20 @@ def _serve_session_request_from_payload(
         response["routing_reason"] = "session-context-render"
         return response
 
+    if command == "context_edit_plan":
+        query = str(request.get("query", "")).strip()
+        if not query:
+            raise ValueError("context_edit_plan requests require a non-empty query")
+        response = build_context_edit_plan_from_map(
+            repo_map,
+            query,
+            max_files=int(request.get("max_files", 3)),
+            max_symbols=int(request.get("max_symbols", 5)),
+        )
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-context-edit-plan"
+        return response
+
     if command == "defs":
         symbol = str(request.get("symbol", "")).strip()
         if not symbol:
@@ -603,6 +663,21 @@ def _serve_session_request_from_payload(
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius-render"
+        return response
+
+    if command == "blast_radius_plan":
+        symbol = str(request.get("symbol", "")).strip()
+        if not symbol:
+            raise ValueError("blast_radius_plan requests require a non-empty symbol")
+        response = build_symbol_blast_radius_plan_from_map(
+            repo_map,
+            symbol,
+            max_depth=int(request.get("max_depth", 3)),
+            max_files=int(request.get("max_files", 3)),
+            max_symbols=int(request.get("max_symbols", 5)),
+        )
+        response["session_id"] = session_id
+        response["routing_reason"] = "session-blast-radius-plan"
         return response
 
     raise ValueError(f"unknown session command: {command or '<empty>'}")

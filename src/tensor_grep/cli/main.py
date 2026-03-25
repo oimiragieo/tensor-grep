@@ -2215,6 +2215,48 @@ def context_render(
     typer.echo(payload["rendered_context"])
 
 
+@app.command(name="edit-plan")
+def edit_plan(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a machine-readable edit-planning bundle without rendered source text."""
+    from tensor_grep.cli.repo_map import build_context_edit_plan, build_context_edit_plan_json
+
+    try:
+        if json_output:
+            typer.echo(
+                build_context_edit_plan_json(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                )
+            )
+            return
+
+        payload = build_context_edit_plan(
+            query,
+            path,
+            max_files=max_files,
+            max_symbols=max_symbols,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Edit plan for {payload['path']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
+
+
 @app.command()
 def defs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
@@ -2436,6 +2478,58 @@ def blast_radius_render(
     typer.echo(payload["rendered_context"])
 
 
+@app.command(name="blast-radius-plan")
+def blast_radius_plan(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a machine-readable blast-radius planning bundle without rendered source text."""
+    from tensor_grep.cli.repo_map import (
+        build_symbol_blast_radius_plan,
+        build_symbol_blast_radius_plan_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(
+                build_symbol_blast_radius_plan_json(
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                )
+            )
+            return
+
+        payload = build_symbol_blast_radius_plan(
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_symbols=max_symbols,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Blast radius plan for {payload['symbol']} in {payload['path']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
+
+
 @session_app.command("open")
 def session_open(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
@@ -2635,6 +2729,43 @@ def session_context_render_cmd(
     typer.echo(payload["rendered_context"])
 
 
+@session_app.command("edit-plan")
+def session_edit_plan_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a cached-session edit-planning bundle without rendered source text."""
+    from tensor_grep.cli.session_store import session_context_edit_plan
+
+    try:
+        payload = session_context_edit_plan(
+            session_id,
+            query,
+            path,
+            max_files=max_files,
+            max_symbols=max_symbols,
+        )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session edit plan for {payload['session_id']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
+
+
 @session_app.command("blast-radius")
 def session_blast_radius_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
@@ -2720,6 +2851,50 @@ def session_blast_radius_render_cmd(
         return
 
     typer.echo(payload["rendered_context"])
+
+
+@session_app.command("blast-radius-plan")
+def session_blast_radius_plan_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a cached-session blast-radius planning bundle without rendered source text."""
+    from tensor_grep.cli.session_store import session_blast_radius_plan
+
+    try:
+        payload = session_blast_radius_plan(
+            session_id,
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_symbols=max_symbols,
+        )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session blast radius plan for {payload['session_id']}")
+    typer.echo(f"symbol={payload['symbol']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
 
 
 @session_app.command("serve")

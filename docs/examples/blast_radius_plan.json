@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "symbol-blast-radius-plan",
+  "sidecar_used": false,
+  "coverage": {
+    "language_scope": "python-js-ts-rust",
+    "symbol_navigation": "python-ast+parser-js-ts-rust",
+    "test_matching": "filename+import+graph-heuristic"
+  },
+  "query": "blast radius: add",
+  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite",
+  "symbol": "add",
+  "max_depth": 2,
+  "definitions": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    }
+  ],
+  "callers": [
+    {
+      "name": "add",
+      "kind": "call",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+      "line": 4,
+      "text": "    return add(value, 1)"
+    }
+  ],
+  "files": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py"
+  ],
+  "file_matches": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "depth": 0,
+      "score": 9,
+      "graph_score": 0.5,
+      "reasons": ["definition", "symbol"]
+    },
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+      "depth": 1,
+      "score": 7,
+      "graph_score": 0.35,
+      "reasons": ["caller", "graph-depth", "graph-centrality"]
+    },
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py",
+      "depth": 2,
+      "score": 4,
+      "graph_score": 0.18,
+      "reasons": ["graph-depth", "graph-centrality"]
+    }
+  ],
+  "file_summaries": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "symbols": [
+        {
+          "name": "add",
+          "kind": "function",
+          "line": 1
+        }
+      ]
+    },
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+      "symbols": [
+        {
+          "name": "apply_add",
+          "kind": "function",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py",
+      "symbols": [
+        {
+          "name": "handle_add",
+          "kind": "function",
+          "line": 3
+        }
+      ]
+    }
+  ],
+  "symbols": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "score": 3
+    }
+  ],
+  "imports": [
+    {
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+      "imports": ["rewrite_fixture.add"],
+      "score": 4
+    }
+  ],
+  "tests": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py"
+  ],
+  "test_matches": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py",
+      "score": 5,
+      "graph_score": 0.35,
+      "reasons": ["import-graph", "blast-radius"]
+    }
+  ],
+  "related_paths": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py"
+  ],
+  "max_files": 3,
+  "max_symbols": 5,
+  "candidate_edit_targets": {
+    "files": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py"
+    ],
+    "symbols": [
+      {
+        "name": "add",
+        "kind": "function",
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+        "line": 1,
+        "score": 3
+      }
+    ],
+    "tests": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py"
+    ]
+  },
+  "edit_plan_seed": {
+    "primary_file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+    "primary_symbol": {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "score": 3
+    },
+    "primary_span": {
+      "start_line": 1,
+      "end_line": 2
+    },
+    "primary_test": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py",
+    "validation_tests": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py"
+    ],
+    "validation_commands": [
+      "uv run pytest C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py -q"
+    ],
+    "reasons": ["definition", "symbol"],
+    "confidence": {
+      "file": 0.8,
+      "symbol": 0.5,
+      "test": 0.6
+    },
+    "related_spans": [
+      {
+        "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+        "symbol": "apply_add",
+        "start_line": 3,
+        "end_line": 4,
+        "depth": 1
+      },
+      {
+        "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py",
+        "symbol": "handle_add",
+        "start_line": 3,
+        "end_line": 4,
+        "depth": 2
+      }
+    ],
+    "dependent_files": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py"
+    ],
+    "edit_ordering": [
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py",
+      "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\test_rewrite_api.py"
+    ],
+    "rollback_risk": 0.4
+  },
+  "caller_tree": [
+    {
+      "depth": 0,
+      "files": [
+        "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+      ]
+    },
+    {
+      "depth": 1,
+      "files": [
+        "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py"
+      ]
+    },
+    {
+      "depth": 2,
+      "files": [
+        "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py"
+      ]
+    }
+  ],
+  "rendered_caller_tree": "Blast radius for add:\nDepth 0:\n- C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py\nDepth 1:\n- C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_api.py\nDepth 2:\n- C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_service.py"
+}
