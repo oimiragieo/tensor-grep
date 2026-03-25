@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -1792,49 +1793,212 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, math.ceil(len(text) / 3.5))
+
+
+def _render_part_score(part: dict[str, Any]) -> int:
+    provenance = part.get("provenance", {})
+    if not isinstance(provenance, dict):
+        return 0
+    if "score" in provenance:
+        return int(provenance.get("score", 0))
+    matches = provenance.get("matches", [])
+    if not isinstance(matches, list):
+        return 0
+    return max(
+        (
+            int(match.get("score", 0))
+            for match in matches
+            if isinstance(match, dict)
+        ),
+        default=0,
+    )
+
+
+def _render_part_path(part: dict[str, Any]) -> str | None:
+    current_path = part.get("path")
+    if current_path:
+        return str(current_path)
+    paths = part.get("paths", [])
+    if isinstance(paths, list) and paths:
+        return str(paths[0])
+    return None
+
+
+def _render_part_sort_key(
+    part: dict[str, Any],
+    *,
+    primary_file: str | None,
+    original_index: int,
+) -> tuple[int, int, int, str, str, int]:
+    kind = str(part.get("kind", ""))
+    path = _render_part_path(part) or ""
+    kind_priority = {
+        "summary": 0,
+        "source": 1,
+        "tests": 2,
+    }.get(kind, 3)
+    return (
+        0 if primary_file is not None and path == primary_file else 1,
+        -_render_part_score(part),
+        kind_priority,
+        path,
+        str(part.get("symbol", "")),
+        original_index,
+    )
+
+
+def _prepare_render_part(part: dict[str, Any], *, has_prior_content: bool) -> dict[str, Any] | None:
+    text = str(part.get("text", "")).strip()
+    if not text:
+        return None
+    prefix = "" if not has_prior_content else "\n\n"
+    chunk = f"{prefix}{text}"
+    prepared = {key: value for key, value in part.items() if key != "text"}
+    prepared["text"] = text
+    prepared["chunk"] = chunk
+    prepared["score"] = _render_part_score(part)
+    prepared["token_estimate"] = _estimate_tokens(chunk)
+    return prepared
+
+
+def _omitted_section_record(part: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "kind": str(part.get("kind", "")),
+        "file": _render_part_path(part),
+        "symbol": part.get("symbol"),
+        "score": int(part.get("score", 0)),
+        "token_estimate": int(part.get("token_estimate", 0)),
+    }
+
+
 def _render_context_string_and_sections(
     payload: dict[str, Any],
     *,
     max_render_chars: int | None = None,
-) -> tuple[str, list[dict[str, Any]], bool]:
-    parts = _render_context_parts(payload)
+    max_tokens: int | None = None,
+    model: str | None = None,
+) -> tuple[str, list[dict[str, Any]], bool, int, list[dict[str, Any]]]:
+    max_render_chars = (
+        max_render_chars if max_render_chars is not None and max_render_chars > 0 else None
+    )
+    resolved_max_tokens = max_tokens if max_tokens is not None else payload.get("max_tokens")
+    max_tokens = (
+        int(resolved_max_tokens)
+        if resolved_max_tokens is not None and int(resolved_max_tokens) > 0
+        else None
+    )
+    _ = model if model is not None else payload.get("model")
+    primary_file = None
+    edit_plan_seed = payload.get("edit_plan_seed")
+    if isinstance(edit_plan_seed, dict):
+        current_primary_file = edit_plan_seed.get("primary_file")
+        if current_primary_file:
+            primary_file = str(current_primary_file)
+    if primary_file is None:
+        files = payload.get("files", [])
+        if isinstance(files, list) and files:
+            primary_file = str(files[0])
+
+    raw_parts = _render_context_parts(payload)
+    query_parts: list[dict[str, Any]] = []
+    ranked_parts: list[tuple[dict[str, Any], int]] = []
+    for index, part in enumerate(raw_parts):
+        if str(part.get("kind", "")) == "query":
+            query_parts.append(part)
+            continue
+        ranked_parts.append((part, index))
+    ranked_parts.sort(
+        key=lambda item: _render_part_sort_key(
+            item[0],
+            primary_file=primary_file,
+            original_index=item[1],
+        )
+    )
+    parts = [*query_parts, *[part for part, _ in ranked_parts]]
+
+    selected_parts: list[dict[str, Any]] = []
+    omitted_parts: list[dict[str, Any]] = []
+    non_query_selected = 0
+    estimated_total_tokens = 0
+    budget_exhausted = False
+
+    for part in parts:
+        prepared = _prepare_render_part(part, has_prior_content=bool(selected_parts))
+        if prepared is None:
+            continue
+        if str(prepared.get("kind", "")) == "query":
+            selected_parts.append(prepared)
+            estimated_total_tokens += int(prepared["token_estimate"])
+            continue
+        if budget_exhausted:
+            omitted_parts.append(prepared)
+            continue
+        current_token_estimate = estimated_total_tokens + int(prepared["token_estimate"])
+        if max_tokens is None or current_token_estimate <= max_tokens:
+            selected_parts.append(prepared)
+            estimated_total_tokens = current_token_estimate
+            non_query_selected += 1
+            continue
+        if non_query_selected == 0 and estimated_total_tokens <= max_tokens:
+            selected_parts.append(prepared)
+            estimated_total_tokens = current_token_estimate
+            non_query_selected += 1
+            budget_exhausted = True
+            continue
+        omitted_parts.append(prepared)
+
     sections: list[dict[str, Any]] = []
     rendered_parts: list[str] = []
     offset = 0
-    truncated = False
-    for part in parts:
-        text = str(part["text"]).strip()
-        if not text:
-            continue
-        prefix = "" if not rendered_parts else "\n\n"
-        chunk = f"{prefix}{text}"
-        if max_render_chars is not None and max_render_chars > 0 and offset + len(chunk) > max_render_chars:
+    total_token_estimate = 0
+    truncated = bool(omitted_parts)
+    char_omitted_parts: list[dict[str, Any]] = []
+    for index, part in enumerate(selected_parts):
+        chunk = str(part["chunk"])
+        if max_render_chars is not None and offset + len(chunk) > max_render_chars:
             remaining = max_render_chars - offset
-            if remaining > 0:
+            partially_rendered_current = False
+            if offset == 0 and remaining > 0:
                 chunk = chunk[:remaining]
+                section_token_estimate = _estimate_tokens(chunk)
                 rendered_parts.append(chunk)
                 sections.append(
                     {
                         "kind": str(part["kind"]),
                         "start": offset,
                         "end": offset + len(chunk),
-                        **{key: value for key, value in part.items() if key != "text"},
+                        "token_estimate": section_token_estimate,
+                        **{key: value for key, value in part.items() if key not in {"text", "chunk", "score", "token_estimate"}},
                     }
                 )
                 offset += len(chunk)
+                total_token_estimate += section_token_estimate
+                partially_rendered_current = True
+            char_omitted_parts = selected_parts[index + (1 if partially_rendered_current else 0) :]
             truncated = True
             break
         rendered_parts.append(chunk)
+        section_token_estimate = int(part["token_estimate"])
         sections.append(
             {
                 "kind": str(part["kind"]),
                 "start": offset,
                 "end": offset + len(chunk),
-                **{key: value for key, value in part.items() if key != "text"},
+                "token_estimate": section_token_estimate,
+                **{key: value for key, value in part.items() if key not in {"text", "chunk", "score", "token_estimate"}},
             }
         )
         offset += len(chunk)
-    return "".join(rendered_parts).rstrip(), sections, truncated
+        total_token_estimate += section_token_estimate
+    omitted_sections = [
+        _omitted_section_record(part)
+        for part in [*char_omitted_parts, *omitted_parts]
+    ]
+    return "".join(rendered_parts).rstrip(), sections, truncated, total_token_estimate, omitted_sections
 
 
 def _normalize_render_profile(render_profile: str, optimize_context: bool) -> str:
@@ -2760,6 +2924,8 @@ def build_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
 ) -> dict[str, Any]:
@@ -2771,6 +2937,8 @@ def build_context_render(
         max_sources=max_sources,
         max_symbols_per_file=max_symbols_per_file,
         max_render_chars=max_render_chars,
+        max_tokens=max_tokens,
+        model=model,
         optimize_context=optimize_context,
         render_profile=render_profile,
     )
@@ -2784,6 +2952,8 @@ def build_context_render_from_map(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
 ) -> dict[str, Any]:
@@ -2834,15 +3004,10 @@ def build_context_render_from_map(
     payload["max_sources"] = max_sources
     payload["max_symbols_per_file"] = max_symbols_per_file
     payload["max_render_chars"] = max_render_chars
+    payload["max_tokens"] = max_tokens if max_tokens is not None and max_tokens > 0 else None
+    payload["model"] = model
     payload["optimize_context"] = optimize_context
     payload["render_profile"] = normalized_profile
-    rendered_context, sections, truncated = _render_context_string_and_sections(
-        payload,
-        max_render_chars=max_render_chars,
-    )
-    payload["rendered_context"] = rendered_context
-    payload["sections"] = sections
-    payload["truncated"] = truncated
     ranked_symbols = sorted(
         payload.get("symbols", []),
         key=lambda symbol: (
@@ -2866,6 +3031,21 @@ def build_context_render_from_map(
         max_files=max_files,
         max_depth=_DEFAULT_EDIT_PLAN_MAX_DEPTH,
     )
+    (
+        rendered_context,
+        sections,
+        truncated,
+        token_estimate,
+        omitted_sections,
+    ) = _render_context_string_and_sections(
+        payload,
+        max_render_chars=max_render_chars,
+    )
+    payload["rendered_context"] = rendered_context
+    payload["sections"] = sections
+    payload["truncated"] = truncated
+    payload["token_estimate"] = token_estimate
+    payload["omitted_sections"] = omitted_sections
     return payload
 
 
@@ -2877,6 +3057,8 @@ def build_context_render_json(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
 ) -> str:
@@ -2888,6 +3070,8 @@ def build_context_render_json(
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
+            max_tokens=max_tokens,
+            model=model,
             optimize_context=optimize_context,
             render_profile=render_profile,
         ),
@@ -3540,13 +3724,21 @@ def build_symbol_blast_radius_render_from_map(
     payload["max_render_chars"] = max_render_chars
     payload["optimize_context"] = optimize_context
     payload["render_profile"] = normalized_profile
-    rendered_context, sections, truncated = _render_context_string_and_sections(
+    (
+        rendered_context,
+        sections,
+        truncated,
+        token_estimate,
+        omitted_sections,
+    ) = _render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
     )
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
     payload["truncated"] = truncated
+    payload["token_estimate"] = token_estimate
+    payload["omitted_sections"] = omitted_sections
     payload["candidate_edit_targets"] = {
         "files": list(payload.get("files", []))[:max_files],
         "symbols": ranked_symbols[:max_sources],

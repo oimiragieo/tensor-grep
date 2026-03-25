@@ -250,6 +250,8 @@ def session_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
 ) -> dict[str, Any]:
@@ -264,6 +266,8 @@ def session_context_render(
         max_sources=max_sources,
         max_symbols_per_file=max_symbols_per_file,
         max_render_chars=max_render_chars,
+        max_tokens=max_tokens,
+        model=model,
         optimize_context=optimize_context,
         render_profile=render_profile,
     )
@@ -372,6 +376,12 @@ def serve_session_request(session_id: str, request: dict[str, Any], path: str = 
                 None
                 if request.get("max_render_chars") in (None, "")
                 else int(request["max_render_chars"])
+            ),
+            max_tokens=(
+                None if request.get("max_tokens") in (None, "") else int(request["max_tokens"])
+            ),
+            model=(
+                None if request.get("model") in (None, "") else str(request["model"])
             ),
             optimize_context=bool(request.get("optimize_context", False)),
             render_profile=str(request.get("render_profile", "full")),

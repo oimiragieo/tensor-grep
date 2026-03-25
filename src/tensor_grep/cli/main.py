@@ -1874,6 +1874,12 @@ def context_render(
     max_render_chars: int | None = typer.Option(
         None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
     ),
+    max_tokens: int | None = typer.Option(
+        None, "--max-tokens", min=1, help="Approximate maximum tokens to emit in rendered_context."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
+    ),
     optimize_context: bool = typer.Option(
         False,
         "--optimize-context",
@@ -1899,6 +1905,8 @@ def context_render(
                     max_sources=max_sources,
                     max_symbols_per_file=max_symbols_per_file,
                     max_render_chars=max_render_chars,
+                    max_tokens=max_tokens,
+                    model=model,
                     optimize_context=optimize_context,
                     render_profile=render_profile,
                 )
@@ -1912,6 +1920,8 @@ def context_render(
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
+            max_tokens=max_tokens,
+            model=model,
             optimize_context=optimize_context,
             render_profile=render_profile,
         )
@@ -2288,6 +2298,12 @@ def session_context_render_cmd(
     max_render_chars: int | None = typer.Option(
         None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
     ),
+    max_tokens: int | None = typer.Option(
+        None, "--max-tokens", min=1, help="Approximate maximum tokens to emit in rendered_context."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
+    ),
     optimize_context: bool = typer.Option(
         False,
         "--optimize-context",
@@ -2312,6 +2328,8 @@ def session_context_render_cmd(
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
+            max_tokens=max_tokens,
+            model=model,
             optimize_context=optimize_context,
             render_profile=render_profile,
         )

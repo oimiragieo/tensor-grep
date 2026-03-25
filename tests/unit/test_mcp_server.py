@@ -1685,6 +1685,45 @@ def test_tg_context_render_honors_max_render_chars(tmp_path):
     assert payload["sources"][0]["name"] == "create_invoice"
 
 
+def test_tg_context_render_accepts_max_tokens_and_model(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total, tax):\n"
+        "    subtotal = total + tax\n"
+        "    fee = subtotal + 5\n"
+        "    grand_total = fee + 10\n"
+        "    return grand_total\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_context_render(
+            "create invoice",
+            str(project),
+            max_files=1,
+            max_sources=1,
+            max_tokens=40,
+            model="gpt-test",
+        )
+    )
+
+    assert payload["files"][0] == str(module_path.resolve())
+    assert payload["max_tokens"] == 40
+    assert payload["model"] == "gpt-test"
+    assert isinstance(payload["token_estimate"], int)
+    assert all(isinstance(section["token_estimate"], int) for section in payload["sections"])
+    assert payload["token_estimate"] <= 40 + max(
+        (section["token_estimate"] for section in payload["sections"]),
+        default=0,
+    )
+
+
 def test_tg_context_render_can_optimize_source_blocks_for_llm_use(tmp_path):
     from tensor_grep.cli import mcp_server
 
@@ -1777,6 +1816,46 @@ def test_tg_context_render_strips_python_docstrings_and_pass_boilerplate(tmp_pat
     assert "subtotal = total + tax" in create_invoice["rendered_source"]
     assert create_invoice["line_map"][0]["original_start_line"] == 5
     assert create_invoice["line_map"][0]["rendered_start_line"] == 1
+
+
+def test_tg_session_context_render_accepts_max_tokens_and_model(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    sample_path = src_dir / "sample.py"
+    sample_path.write_text(
+        "def add(x):\n"
+        "    baseline = x + 1\n"
+        "    return baseline\n",
+        encoding="utf-8",
+    )
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    rendered = json.loads(
+        mcp_server.tg_session_context_render(
+            session_id,
+            "add",
+            str(project),
+            max_files=1,
+            max_sources=1,
+            max_tokens=32,
+            model="gpt-test",
+        )
+    )
+
+    assert rendered["session_id"] == session_id
+    assert rendered["files"][0] == str(sample_path.resolve())
+    assert rendered["max_tokens"] == 32
+    assert rendered["model"] == "gpt-test"
+    assert isinstance(rendered["token_estimate"], int)
+    assert rendered["omitted_sections"] == [] or all(
+        {"file", "symbol", "score", "token_estimate"} <= set(section)
+        for section in rendered["omitted_sections"]
+    )
 
 
 def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):

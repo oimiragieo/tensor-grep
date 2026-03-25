@@ -575,6 +575,8 @@ def tg_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
 ) -> str:
@@ -591,14 +593,16 @@ def tg_context_render(
                 query,
                 path,
                 max_files=max_files,
-            max_sources=max_sources,
-            max_symbols_per_file=max_symbols_per_file,
-            max_render_chars=max_render_chars,
-            optimize_context=optimize_context,
-            render_profile=render_profile,
-        ),
-        indent=2,
-    )
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                max_tokens=max_tokens,
+                model=model,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+            ),
+            indent=2,
+        )
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),
@@ -624,6 +628,8 @@ def tg_session_context_render(
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
 ) -> str:
@@ -653,6 +659,8 @@ def tg_session_context_render(
                 max_sources=max_sources,
                 max_symbols_per_file=max_symbols_per_file,
                 max_render_chars=max_render_chars,
+                max_tokens=max_tokens,
+                model=model,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
             ),
