@@ -114,6 +114,33 @@ def _audit_diff_error(message: str, *, code: str) -> str:
     return json.dumps(payload, indent=2)
 
 
+def _effective_auto_refresh(refresh_on_stale: bool, auto_refresh: bool | None) -> bool:
+    return bool(refresh_on_stale or auto_refresh)
+
+
+def _session_error_payload(
+    *,
+    session_id: str,
+    path: str,
+    code: str,
+    message: str,
+    detail: dict[str, Any] | None = None,
+    **extra: Any,
+) -> str:
+    payload: dict[str, Any] = {
+        "version": _json_output_version(),
+        "session_id": session_id,
+        "path": str(Path(path).expanduser()),
+        **extra,
+        "error": {
+            "code": code,
+            "message": message,
+            "detail": detail or {},
+        },
+    }
+    return json.dumps(payload, indent=2)
+
+
 def _review_bundle_error(message: str, *, code: str, routing_reason: str) -> str:
     payload = {
         "version": _json_output_version(),
@@ -825,6 +852,7 @@ def tg_session_edit_plan(
     max_files: int = 3,
     max_symbols: int = 5,
     refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
 ) -> str:
     """
     Return a cached-session edit-planning bundle without rendered source text.
@@ -838,6 +866,7 @@ def tg_session_edit_plan(
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
 
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
             session_context_edit_plan(
@@ -846,27 +875,28 @@ def tg_session_edit_plan(
                 path,
                 max_files=max_files,
                 max_symbols=max_symbols,
-                refresh_on_stale=refresh_on_stale,
+                refresh_on_stale=effective_refresh,
             ),
             indent=2,
         )
     except SessionStaleError as exc:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "error": {"code": "invalid_input", "message": str(exc)},
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+            query=query,
+        )
     except FileNotFoundError:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "error": {
-                "code": "invalid_input",
-                "message": f"Path not found: {Path(path).expanduser().resolve()}",
-            },
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+            query=query,
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -883,6 +913,7 @@ def tg_session_context_render(
     optimize_context: bool = False,
     render_profile: str = "full",
     refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
 ) -> str:
     """
     Return a prompt-ready repository context bundle derived from a cached session.
@@ -900,6 +931,7 @@ def tg_session_context_render(
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
             session_context_render(
@@ -914,27 +946,28 @@ def tg_session_context_render(
                 model=model,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
-                refresh_on_stale=refresh_on_stale,
+                refresh_on_stale=effective_refresh,
             ),
             indent=2,
         )
     except SessionStaleError as exc:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "error": {"code": "invalid_input", "message": str(exc)},
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query, "render_profile": render_profile},
+            query=query,
+        )
     except FileNotFoundError:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "error": {
-                "code": "invalid_input",
-                "message": f"Path not found: {Path(path).expanduser().resolve()}",
-            },
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"query": query, "render_profile": render_profile},
+            query=query,
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -944,6 +977,7 @@ def tg_session_blast_radius(
     path: str = ".",
     max_depth: int = 3,
     refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
 ) -> str:
     """
     Return a cached-session blast radius for a symbol.
@@ -956,6 +990,7 @@ def tg_session_blast_radius(
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius
 
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
             session_blast_radius(
@@ -963,31 +998,30 @@ def tg_session_blast_radius(
                 symbol,
                 path,
                 max_depth=max_depth,
-                refresh_on_stale=refresh_on_stale,
+                refresh_on_stale=effective_refresh,
             ),
             indent=2,
         )
     except SessionStaleError as exc:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "symbol": symbol,
-            "max_depth": max(0, int(max_depth)),
-            "error": {"code": "invalid_input", "message": str(exc)},
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
     except FileNotFoundError:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "symbol": symbol,
-            "max_depth": max(0, int(max_depth)),
-            "error": {
-                "code": "invalid_input",
-                "message": f"Path not found: {Path(path).expanduser().resolve()}",
-            },
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -1051,6 +1085,7 @@ def tg_session_blast_radius_render(
     optimize_context: bool = False,
     render_profile: str = "full",
     refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
 ) -> str:
     """
     Return a prompt-ready cached-session blast radius bundle for a symbol.
@@ -1072,6 +1107,7 @@ def tg_session_blast_radius_render(
         session_blast_radius_render,
     )
 
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
             session_blast_radius_render(
@@ -1085,31 +1121,30 @@ def tg_session_blast_radius_render(
                 max_render_chars=max_render_chars,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
-                refresh_on_stale=refresh_on_stale,
+                refresh_on_stale=effective_refresh,
             ),
             indent=2,
         )
     except SessionStaleError as exc:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "symbol": symbol,
-            "max_depth": max(0, int(max_depth)),
-            "error": {"code": "invalid_input", "message": str(exc)},
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "render_profile": render_profile},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
     except FileNotFoundError:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "symbol": symbol,
-            "max_depth": max(0, int(max_depth)),
-            "error": {
-                "code": "invalid_input",
-                "message": f"Path not found: {Path(path).expanduser().resolve()}",
-            },
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "render_profile": render_profile},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -1121,6 +1156,7 @@ def tg_session_blast_radius_plan(
     max_files: int = 3,
     max_symbols: int = 5,
     refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
 ) -> str:
     """
     Return a cached-session blast-radius planning bundle without rendered source text.
@@ -1135,6 +1171,7 @@ def tg_session_blast_radius_plan(
     """
     from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius_plan
 
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         return json.dumps(
             session_blast_radius_plan(
@@ -1144,31 +1181,30 @@ def tg_session_blast_radius_plan(
                 max_depth=max_depth,
                 max_files=max_files,
                 max_symbols=max_symbols,
-                refresh_on_stale=refresh_on_stale,
+                refresh_on_stale=effective_refresh,
             ),
             indent=2,
         )
     except SessionStaleError as exc:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "symbol": symbol,
-            "max_depth": max(0, int(max_depth)),
-            "error": {"code": "invalid_input", "message": str(exc)},
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "max_files": max_files, "max_symbols": max_symbols},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
     except FileNotFoundError:
-        payload = {
-            "version": _json_output_version(),
-            "session_id": session_id,
-            "symbol": symbol,
-            "max_depth": max(0, int(max_depth)),
-            "error": {
-                "code": "invalid_input",
-                "message": f"Path not found: {Path(path).expanduser().resolve()}",
-            },
-        }
-        return json.dumps(payload, indent=2)
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "max_files": max_files, "max_symbols": max_symbols},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
 
 
 @mcp.tool()  # type: ignore
@@ -2146,6 +2182,7 @@ def tg_session_context(
     query: str,
     path: str = ".",
     refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
 ) -> str:
     """
     Return a context pack derived from a cached session.
@@ -2157,18 +2194,17 @@ def tg_session_context(
     """
     from tensor_grep.cli.session_store import session_context
 
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
-        payload = session_context(session_id, query, path, refresh_on_stale=refresh_on_stale)
+        payload = session_context(session_id, query, path, refresh_on_stale=effective_refresh)
     except Exception as exc:
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "error": {"code": "invalid_input", "message": str(exc)},
-                "path": str(Path(path).expanduser()),
-                "session_id": session_id,
-                "query": query,
-            },
-            indent=2,
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query},
+            query=query,
         )
 
     return json.dumps(payload, indent=2)

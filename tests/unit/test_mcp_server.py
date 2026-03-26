@@ -420,6 +420,61 @@ def test_tg_devices_text_mode_returns_human_inventory_lines():
     assert "- gpu:3 vram_mb=24576" in out
 
 
+def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total):\n"
+        "    return total + 1\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_edit_plan("create invoice", str(project)))
+
+    assert payload["ranking_quality"] in {"strong", "moderate", "weak"}
+    assert {"heuristic_fields", "parser_backed_fields", "graph_completeness"} <= set(
+        payload["coverage_summary"]
+    )
+
+
+def test_tg_session_context_supports_auto_refresh_alias(tmp_path: Path):
+    from tensor_grep.cli import mcp_server, session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    opened = session_store.open_session(str(project))
+    module_path.write_text("def create_invoice():\n    return 2\n", encoding="utf-8")
+
+    payload = json.loads(
+        mcp_server.tg_session_context(
+            opened.session_id,
+            "invoice",
+            str(project),
+            auto_refresh=True,
+        )
+    )
+
+    assert payload["routing_reason"] == "session-context"
+    assert payload["files"] == [str(module_path.resolve())]
+
+
+def test_tg_session_context_returns_uniform_error_detail(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    missing_root = tmp_path / "missing"
+    payload = json.loads(mcp_server.tg_session_context("session-missing", "invoice", str(missing_root)))
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "detail" in payload["error"]
+
+
 def test_tg_rulesets_returns_builtin_ruleset_metadata():
     from tensor_grep.cli import mcp_server
 

@@ -257,6 +257,7 @@ def test_edit_plan_seed_includes_enrichment_keys(tmp_path: Path, renderer: Rende
     assert "primary_span" in seed
     assert "related_spans" in seed
     assert "dependent_files" in seed
+    assert "suggested_edits" in seed
     assert "edit_ordering" in seed
     assert "rollback_risk" in seed
 
@@ -330,6 +331,43 @@ def test_related_spans_deduplicate_multiple_calls_in_same_symbol(
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
+def test_suggested_edits_include_dependent_file_spans_and_rationale(
+    tmp_path: Path,
+    renderer: Renderer,
+) -> None:
+    paths = _build_linear_project(tmp_path)
+
+    seed = _edit_plan_seed(renderer(paths["project"]))
+
+    assert seed["suggested_edits"]
+    first = seed["suggested_edits"][0]
+    assert {"file", "symbol", "start_line", "end_line", "edit_kind", "rationale", "confidence"} <= set(first)
+    assert first["file"] == str(paths["service"].resolve())
+    assert first["edit_kind"] in {"caller-update", "dependency-update"}
+    assert isinstance(first["rationale"], str)
+    assert first["rationale"]
+    assert 0.0 <= first["confidence"] <= 1.0
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_related_spans_expose_provenance_and_span_rationale(
+    tmp_path: Path,
+    renderer: Renderer,
+) -> None:
+    paths = _build_linear_project(tmp_path)
+
+    seed = _edit_plan_seed(renderer(paths["project"]))
+
+    assert seed["related_spans"]
+    related = seed["related_spans"][0]
+    assert {"provenance", "rationale"} <= set(related)
+    assert isinstance(related["provenance"], list)
+    assert related["provenance"]
+    assert isinstance(related["rationale"], str)
+    assert related["rationale"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
 def test_related_spans_include_same_file_callers_and_importers(
     tmp_path: Path,
     renderer: Renderer,
@@ -359,6 +397,8 @@ def test_related_spans_use_symbol_catalog_lines(tmp_path: Path, renderer: Render
         "depth": 1,
         "score": 7,
         "reasons": ["caller", "graph-depth"],
+        "provenance": ["parser-backed", "graph-derived"],
+        "rationale": "Selected build_receipt because it directly calls the target symbol and sits at depth 1.",
     }
 
 

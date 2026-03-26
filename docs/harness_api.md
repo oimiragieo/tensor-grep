@@ -238,6 +238,8 @@ Use this shape when an agent needs a query-driven subset of the repository map b
 | `tests` | `array<string>` | Ranked test files related to the query. |
 | `test_matches` | `array<object>` | Ranked test metadata with stable `path`, `score`, and `reasons`. |
 | `related_paths` | `array<string>` | Stable merged order of the highest-value source and test paths. |
+| `ranking_quality` | `string` | Actionable ranking strength label: `strong`, `moderate`, or `weak`. |
+| `coverage_summary` | `object` | Query-time trust summary covering parser-backed fields, heuristic fields, and graph completeness. |
 
 Each ranked `symbols[]` object extends the Repo Map JSON symbol shape with:
 
@@ -253,6 +255,7 @@ Each `file_matches[]` and `test_matches[]` object uses:
 | `score` | `integer` | Deterministic rank score used for ordering. |
 | `graph_score` | `number` | Optional personalized reverse-import score when graph ranking contributes to file selection. |
 | `reasons` | `array<string>` | Stable provenance labels such as `path`, `symbol`, `definition`, `import`, `import-graph`, `graph-centrality`, `filename`, or `test-graph`. |
+| `provenance` | `array<string>` | Normalized trust labels such as `parser-backed`, `graph-derived`, `filename-convention`, or `heuristic`. |
 
 Each `file_summaries[]` object uses:
 
@@ -283,7 +286,26 @@ It reuses the Context Pack JSON shape and adds:
 | `max_files` | `integer` | Maximum files retained in the plan payload. |
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
-| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
+| `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, suggested edits, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
+
+Each ranked `candidate_edit_targets.spans[]` or `edit_plan_seed.related_spans[]` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `array<string>` | Normalized trust labels for the span ranking inputs. |
+| `rationale` | `string` | Deterministic span-selection explanation derived from the ranking reasons and graph depth. |
+
+Each `edit_plan_seed.suggested_edits[]` object uses:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `file` | `string` | Absolute path for the recommended follow-up edit. |
+| `symbol` | `string` | Symbol or enclosing region to edit. |
+| `start_line` | `integer` | Recommended start line for the edit. |
+| `end_line` | `integer` | Recommended end line for the edit. |
+| `edit_kind` | `string` | Stable label such as `caller-update` or `dependency-update`. |
+| `rationale` | `string` | Deterministic one-line explanation for the recommendation. |
+| `confidence` | `number` | Confidence score in the recommended edit target. |
 
 ## Context Render JSON
 

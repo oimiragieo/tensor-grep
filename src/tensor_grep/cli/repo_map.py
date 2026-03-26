@@ -1521,6 +1521,66 @@ def _append_reason(reason_map: dict[str, list[str]], path: str, reason: str) -> 
         current.append(reason)
 
 
+def _provenance_from_reasons(reasons: list[str]) -> list[str]:
+    provenance: list[str] = []
+    for reason in reasons:
+        if reason in {"definition", "symbol", "import", "caller"}:
+            label = "parser-backed"
+        elif reason in {"import-graph", "graph-depth", "graph-centrality", "test-graph"}:
+            label = "graph-derived"
+        elif reason in {"filename", "path"}:
+            label = "filename-convention"
+        else:
+            label = "heuristic"
+        if label not in provenance:
+            provenance.append(label)
+    return provenance or ["heuristic"]
+
+
+def _span_rationale(symbol_name: str, reasons: list[str], depth: int) -> str:
+    reason_text = ", ".join(reasons) if reasons else "ranked relevance"
+    if "caller" in reasons:
+        return f"Selected {symbol_name} because it directly calls the target symbol and sits at depth {depth}."
+    if "definition" in reasons:
+        return f"Selected {symbol_name} because it contains the defining behavior for the ranked edit target."
+    return f"Selected {symbol_name} because it is connected by {reason_text} at depth {depth}."
+
+
+def _ranking_quality(
+    file_matches: list[dict[str, Any]],
+    test_matches: list[dict[str, Any]],
+) -> str:
+    candidates = [int(current.get("score", 0)) for current in [*file_matches[:2], *test_matches[:1]] if current]
+    if not candidates:
+        return "weak"
+    top = candidates[0]
+    runner_up = candidates[1] if len(candidates) > 1 else 0
+    if top >= 10 and (top - runner_up) >= 3:
+        return "strong"
+    if top >= 5:
+        return "moderate"
+    return "weak"
+
+
+def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    coverage = dict(payload.get("coverage", {}))
+    language_scope = str(coverage.get("language_scope", ""))
+    return {
+        "language_scope": language_scope,
+        "parser_backed_fields": [
+            "defs",
+            "source",
+            "refs",
+            "callers",
+        ],
+        "heuristic_fields": [
+            "test-matching",
+            "graph-ranking",
+        ],
+        "graph_completeness": "moderate",
+    }
+
+
 def _match_record(
     path: str,
     score: int,
@@ -1531,6 +1591,7 @@ def _match_record(
         "path": path,
         "score": score,
         "reasons": list(reasons),
+        "provenance": _provenance_from_reasons(reasons),
     }
     if graph_score is not None:
         payload["graph_score"] = round(graph_score, 6)
@@ -1937,6 +1998,8 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     payload["tests"] = ranked_tests
     payload["test_matches"] = test_matches
     payload["related_paths"] = related_paths
+    payload["ranking_quality"] = _ranking_quality(file_matches, test_matches)
+    payload["coverage_summary"] = _coverage_summary(payload)
     return payload
 
 
@@ -3038,6 +3101,8 @@ def _related_span_record(
         "depth": int(depth),
         "score": int(score),
         "reasons": list(reasons),
+        "provenance": _provenance_from_reasons(reasons),
+        "rationale": _span_rationale(str(symbol_name), list(reasons), int(depth)),
     }
 
 
@@ -3201,6 +3266,14 @@ def _candidate_edit_spans(
                     "depth": 0,
                     "score": int(primary_file_match.get("score", 0)) + int(primary_symbol.get("score", 0)),
                     "reasons": list(primary_file_match.get("reasons", [])) or ["primary"],
+                    "provenance": _provenance_from_reasons(
+                        list(primary_file_match.get("reasons", [])) or ["primary"]
+                    ),
+                    "rationale": _span_rationale(
+                        str(primary_symbol["name"]),
+                        list(primary_file_match.get("reasons", [])) or ["primary"],
+                        0,
+                    ),
                 }
             )
     spans.extend(dict(current) for current in related_spans)
@@ -3242,6 +3315,40 @@ def _deterministic_edit_ordering(
             continue
         ordering.append(str(current))
     return ordering
+
+
+def _suggested_edits_from_related_spans(
+    related_spans: list[dict[str, Any]],
+    *,
+    max_edits: int,
+) -> list[dict[str, Any]]:
+    suggestions: list[dict[str, Any]] = []
+    for current in related_spans:
+        reasons = list(current.get("reasons", []))
+        edit_kind = "caller-update" if "caller" in reasons else "dependency-update"
+        suggestions.append(
+            {
+                "file": str(current.get("file", "")),
+                "symbol": str(current.get("symbol", "")),
+                "start_line": int(current.get("start_line", 0)),
+                "end_line": int(current.get("end_line", 0)),
+                "edit_kind": edit_kind,
+                "rationale": str(
+                    current.get(
+                        "rationale",
+                        _span_rationale(
+                            str(current.get("symbol", "")),
+                            reasons,
+                            int(current.get("depth", 0)),
+                        ),
+                    )
+                ),
+                "confidence": _confidence_from_score(int(current.get("score", 0))),
+            }
+        )
+        if len(suggestions) >= max(1, max_edits):
+            break
+    return suggestions
 
 
 def _preferred_edit_anchor_symbol(
@@ -3397,6 +3504,10 @@ def _build_edit_plan_seed(
             "test": _confidence_from_score(int(primary_test_match.get("score", 0))),
         },
         "related_spans": related_spans,
+        "suggested_edits": _suggested_edits_from_related_spans(
+            related_spans,
+            max_edits=max_files,
+        ),
         "dependent_files": dependent_files,
         "edit_ordering": _deterministic_edit_ordering(
             edit_anchor_file or (str(primary_file) if primary_file is not None else None),
@@ -4205,6 +4316,8 @@ def build_symbol_blast_radius_from_map(
     payload["imports"] = impact_payload["imports"]
     payload["symbols"] = impact_payload["symbols"]
     payload["related_paths"] = related_paths
+    payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
+    payload["coverage_summary"] = _coverage_summary(payload)
     return payload
 
 
