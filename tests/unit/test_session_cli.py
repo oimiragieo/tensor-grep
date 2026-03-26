@@ -344,6 +344,72 @@ def test_session_context_can_auto_refresh_stale_session(tmp_path: Path) -> None:
     assert any(symbol["name"] == "settle_invoice" for symbol in payload["symbols"])
 
 
+def test_session_serve_reports_cache_stats(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    opened = json.loads(CliRunner().invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    stdin = StringIO(
+        "\n".join(
+            [
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "stats"}),
+            ]
+        )
+        + "\n"
+    )
+    stdout = StringIO()
+
+    served = session_store.serve_session_stream(
+        opened["session_id"],
+        str(project),
+        input_stream=stdin,
+        output_stream=stdout,
+    )
+
+    assert served == 3
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+    stats = responses[-1]
+    assert stats["ok"] is True
+    assert stats["request_count"] == 3
+    assert stats["cache_hits"] >= 1
+    assert stats["cache_misses"] >= 1
+
+
+def test_session_serve_reports_health_without_failing_on_stale_cache(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_store
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    opened = json.loads(CliRunner().invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    module_path.write_text("def create_invoice():\n    return 2\n", encoding="utf-8")
+
+    stdin = StringIO(json.dumps({"command": "health"}) + "\n")
+    stdout = StringIO()
+    session_store.serve_session_stream(
+        opened["session_id"],
+        str(project),
+        input_stream=stdin,
+        output_stream=stdout,
+    )
+
+    payload = json.loads(stdout.getvalue().strip())
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["ok"] is False
+    assert payload["stale"] is True
+    assert str(module_path.resolve()) in payload["changeset"]["modified"]
+
+
 def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"

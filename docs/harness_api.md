@@ -855,6 +855,8 @@ Request shape:
 Supported commands:
 
 - `ping`
+- `health`
+- `stats`
 - `show`
 - `repo_map`
 - `context`
@@ -869,6 +871,12 @@ Supported commands:
 
 Responses reuse the same public payload shapes as the one-shot session and repo-map-derived
 commands, with an added `session_id` field.
+
+Special control-plane responses:
+
+- `health` reports session freshness and current on-disk changes without failing the request
+- `stats` reports serve-loop cache/runtime metrics including `cache_hits`, `cache_misses`,
+  `refresh_count`, `session_count`, `cache_size_bytes`, `uptime_seconds`, and `request_count`
 
 Use `--refresh-on-stale` to refresh the cached session once and retry the request when file
 changes are detected.

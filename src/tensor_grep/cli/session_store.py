@@ -79,6 +79,9 @@ class _SessionServeCache:
         self._max_entries = max(1, max_entries)
         self._entries: OrderedDict[tuple[str, str], _SessionServeCacheEntry] = OrderedDict()
         self._size_bytes = 0
+        self._hits = 0
+        self._misses = 0
+        self._refreshes = 0
 
     def _key(self, session_id: str, path: str) -> tuple[str, str]:
         return (str(_resolve_root(Path(path))), session_id)
@@ -87,7 +90,9 @@ class _SessionServeCache:
         key = self._key(session_id, path)
         entry = self._entries.pop(key, None)
         if entry is None:
+            self._misses += 1
             return None
+        self._hits += 1
         self._entries[key] = entry
         return entry.payload
 
@@ -118,6 +123,9 @@ class _SessionServeCache:
             return cached
         return self.put(session_id, path, get_session(session_id, path))
 
+    def record_refresh(self) -> None:
+        self._refreshes += 1
+
     @property
     def session_count(self) -> int:
         return len(self._entries)
@@ -125,6 +133,18 @@ class _SessionServeCache:
     @property
     def size_bytes(self) -> int:
         return self._size_bytes
+
+    @property
+    def hits(self) -> int:
+        return self._hits
+
+    @property
+    def misses(self) -> int:
+        return self._misses
+
+    @property
+    def refreshes(self) -> int:
+        return self._refreshes
 
 
 def _resolve_root(path: Path) -> Path:
@@ -399,6 +419,25 @@ def _load_session_payload(
         payload = get_session(session_id, path)
         _ensure_session_not_stale(payload)
     return payload
+
+
+def _session_health_payload(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    repo_map = cast(dict[str, Any], payload.get("repo_map") or {})
+    changeset = _stale_changeset(payload) or _empty_changeset()
+    stale = _changeset_has_entries(changeset)
+    return {
+        "version": _SESSION_VERSION,
+        "session_id": session_id,
+        "root": str(payload.get("root", repo_map.get("path", "."))),
+        "created_at": str(payload.get("created_at", "")),
+        "refreshed_at": str(payload.get("refreshed_at", payload.get("created_at", ""))),
+        "refresh_type": str(payload.get("refresh_type", "full")),
+        "file_count": len(cast(list[Any], repo_map.get("files", []))),
+        "symbol_count": len(cast(list[Any], repo_map.get("symbols", []))),
+        "ok": not stale,
+        "stale": stale,
+        "changeset": changeset,
+    }
 
 
 def session_context(
@@ -749,11 +788,17 @@ def serve_session_stream(
                 response = {
                     "version": _SESSION_VERSION,
                     "ok": True,
+                    "cache_hits": payload_cache.hits,
+                    "cache_misses": payload_cache.misses,
+                    "refresh_count": payload_cache.refreshes,
                     "session_count": payload_cache.session_count,
                     "cache_size_bytes": payload_cache.size_bytes,
                     "uptime_seconds": max(0.0, monotonic() - started_at),
                     "request_count": request_count,
                 }
+            elif command == "health":
+                payload = payload_cache.load(request_session_id, request_path)
+                response = _session_health_payload(request_session_id, payload)
             else:
                 payload = payload_cache.load(request_session_id, request_path)
                 response = serve_session_request(
@@ -765,6 +810,7 @@ def serve_session_stream(
         except SessionStaleError as exc:
             if refresh_on_stale:
                 refresh_session(request_session_id, request_path, payload_cache=payload_cache)
+                payload_cache.record_refresh()
                 payload = payload_cache.load(request_session_id, request_path)
                 response = serve_session_request(
                     request_session_id,
