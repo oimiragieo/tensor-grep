@@ -2640,13 +2640,18 @@ def session_context_cmd(
     query: str = typer.Option(
         ..., "--query", help="Query text used to rank relevant repo context."
     ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a context pack derived from a cached session."""
     from tensor_grep.cli.session_store import session_context
 
     try:
-        payload = session_context(session_id, query, path)
+        payload = session_context(session_id, query, path, refresh_on_stale=refresh_on_stale)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2691,6 +2696,11 @@ def session_context_render_cmd(
         "--render-profile",
         help="Render profile: full, compact, or llm.",
     ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready render bundle derived from a cached session."""
@@ -2709,6 +2719,7 @@ def session_context_render_cmd(
             model=model,
             optimize_context=optimize_context,
             render_profile=render_profile,
+            refresh_on_stale=refresh_on_stale,
         )
     except SessionStaleError as exc:
         error_payload = {
@@ -2738,6 +2749,11 @@ def session_edit_plan_cmd(
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a cached-session edit-planning bundle without rendered source text."""
@@ -2750,6 +2766,7 @@ def session_edit_plan_cmd(
             path,
             max_files=max_files,
             max_symbols=max_symbols,
+            refresh_on_stale=refresh_on_stale,
         )
     except Exception as exc:
         typer.echo(str(exc), err=True)
@@ -2777,13 +2794,24 @@ def session_blast_radius_cmd(
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
     ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a cached-session blast radius for a symbol."""
     from tensor_grep.cli.session_store import session_blast_radius
 
     try:
-        payload = session_blast_radius(session_id, symbol, path, max_depth=max_depth)
+        payload = session_blast_radius(
+            session_id,
+            symbol,
+            path,
+            max_depth=max_depth,
+            refresh_on_stale=refresh_on_stale,
+        )
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2824,6 +2852,11 @@ def session_blast_radius_render_cmd(
         "--render-profile",
         help="Render profile: full, compact, or llm.",
     ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready cached-session blast radius bundle."""
@@ -2841,6 +2874,7 @@ def session_blast_radius_render_cmd(
             max_render_chars=max_render_chars,
             optimize_context=optimize_context,
             render_profile=render_profile,
+            refresh_on_stale=refresh_on_stale,
         )
     except Exception as exc:
         typer.echo(str(exc), err=True)
@@ -2868,6 +2902,11 @@ def session_blast_radius_plan_cmd(
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a cached-session blast-radius planning bundle without rendered source text."""
@@ -2881,6 +2920,7 @@ def session_blast_radius_plan_cmd(
             max_depth=max_depth,
             max_files=max_files,
             max_symbols=max_symbols,
+            refresh_on_stale=refresh_on_stale,
         )
     except Exception as exc:
         typer.echo(str(exc), err=True)

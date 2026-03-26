@@ -307,6 +307,43 @@ def test_session_serve_can_auto_refresh_stale_session(tmp_path: Path) -> None:
     assert payload["definitions"][0]["name"] == "settle_invoice"
 
 
+def test_session_context_can_auto_refresh_stale_session(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    module_path.write_text(
+        "def create_invoice():\n    return 1\n\n"
+        "def settle_invoice():\n    return create_invoice()\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "context",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "settle invoice",
+            "--refresh-on-stale",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["routing_reason"] == "session-context"
+    assert any(symbol["name"] == "settle_invoice" for symbol in payload["symbols"])
+
+
 def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"

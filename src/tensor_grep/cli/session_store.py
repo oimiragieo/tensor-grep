@@ -382,9 +382,33 @@ def get_session(session_id: str, path: str = ".") -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(session_path.read_text(encoding="utf-8")))
 
 
-def session_context(session_id: str, query: str, path: str = ".") -> dict[str, Any]:
+def _load_session_payload(
+    session_id: str,
+    path: str = ".",
+    *,
+    refresh_on_stale: bool = False,
+    payload_cache: _SessionServeCache | None = None,
+) -> dict[str, Any]:
     payload = get_session(session_id, path)
-    _ensure_session_not_stale(payload)
+    try:
+        _ensure_session_not_stale(payload)
+    except SessionStaleError:
+        if not refresh_on_stale:
+            raise
+        refresh_session(session_id, path, payload_cache=payload_cache)
+        payload = get_session(session_id, path)
+        _ensure_session_not_stale(payload)
+    return payload
+
+
+def session_context(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    *,
+    refresh_on_stale: bool = False,
+) -> dict[str, Any]:
+    payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     context = build_context_pack_from_map(payload["repo_map"], query)
     context["session_id"] = session_id
     context["routing_reason"] = "session-context"
@@ -398,9 +422,9 @@ def session_context_edit_plan(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
-    payload = get_session(session_id, path)
-    _ensure_session_not_stale(payload)
+    payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     context = build_context_edit_plan_from_map(
         payload["repo_map"],
         query,
@@ -425,9 +449,9 @@ def session_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
-    payload = get_session(session_id, path)
-    _ensure_session_not_stale(payload)
+    payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     context = build_context_render_from_map(
         payload["repo_map"],
         query,
@@ -451,9 +475,9 @@ def session_blast_radius(
     path: str = ".",
     *,
     max_depth: int = 3,
+    refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
-    payload = get_session(session_id, path)
-    _ensure_session_not_stale(payload)
+    payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     response = build_symbol_blast_radius_from_map(
         payload["repo_map"],
         symbol,
@@ -472,9 +496,9 @@ def session_blast_radius_plan(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
-    payload = get_session(session_id, path)
-    _ensure_session_not_stale(payload)
+    payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     response = build_symbol_blast_radius_plan_from_map(
         payload["repo_map"],
         symbol,
@@ -499,9 +523,9 @@ def session_blast_radius_render(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
-    payload = get_session(session_id, path)
-    _ensure_session_not_stale(payload)
+    payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
     response = build_symbol_blast_radius_render_from_map(
         payload["repo_map"],
         symbol,

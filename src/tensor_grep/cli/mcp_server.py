@@ -824,6 +824,7 @@ def tg_session_edit_plan(
     path: str = ".",
     max_files: int = 3,
     max_symbols: int = 5,
+    refresh_on_stale: bool = False,
 ) -> str:
     """
     Return a cached-session edit-planning bundle without rendered source text.
@@ -845,6 +846,7 @@ def tg_session_edit_plan(
                 path,
                 max_files=max_files,
                 max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
             ),
             indent=2,
         )
@@ -880,6 +882,7 @@ def tg_session_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    refresh_on_stale: bool = False,
 ) -> str:
     """
     Return a prompt-ready repository context bundle derived from a cached session.
@@ -911,6 +914,7 @@ def tg_session_context_render(
                 model=model,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
+                refresh_on_stale=refresh_on_stale,
             ),
             indent=2,
         )
@@ -939,6 +943,7 @@ def tg_session_blast_radius(
     symbol: str,
     path: str = ".",
     max_depth: int = 3,
+    refresh_on_stale: bool = False,
 ) -> str:
     """
     Return a cached-session blast radius for a symbol.
@@ -953,7 +958,13 @@ def tg_session_blast_radius(
 
     try:
         return json.dumps(
-            session_blast_radius(session_id, symbol, path, max_depth=max_depth),
+            session_blast_radius(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                refresh_on_stale=refresh_on_stale,
+            ),
             indent=2,
         )
     except SessionStaleError as exc:
@@ -1039,6 +1050,7 @@ def tg_session_blast_radius_render(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    refresh_on_stale: bool = False,
 ) -> str:
     """
     Return a prompt-ready cached-session blast radius bundle for a symbol.
@@ -1073,6 +1085,7 @@ def tg_session_blast_radius_render(
                 max_render_chars=max_render_chars,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
+                refresh_on_stale=refresh_on_stale,
             ),
             indent=2,
         )
@@ -1107,6 +1120,7 @@ def tg_session_blast_radius_plan(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    refresh_on_stale: bool = False,
 ) -> str:
     """
     Return a cached-session blast-radius planning bundle without rendered source text.
@@ -1130,6 +1144,7 @@ def tg_session_blast_radius_plan(
                 max_depth=max_depth,
                 max_files=max_files,
                 max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
             ),
             indent=2,
         )
@@ -2126,7 +2141,12 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_session_context(session_id: str, query: str, path: str = ".") -> str:
+def tg_session_context(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    refresh_on_stale: bool = False,
+) -> str:
     """
     Return a context pack derived from a cached session.
 
@@ -2138,7 +2158,7 @@ def tg_session_context(session_id: str, query: str, path: str = ".") -> str:
     from tensor_grep.cli.session_store import session_context
 
     try:
-        payload = session_context(session_id, query, path)
+        payload = session_context(session_id, query, path, refresh_on_stale=refresh_on_stale)
     except Exception as exc:
         return json.dumps(
             {

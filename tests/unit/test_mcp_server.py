@@ -1732,6 +1732,37 @@ def test_tg_session_context_reports_stale_session_until_refreshed(tmp_path):
     assert context["routing_reason"] == "session-context"
 
 
+def test_tg_session_context_can_auto_refresh_stale_session(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    sample_path = src_dir / "sample.py"
+    sample_path.write_text("def add(x):\n    return x\n", encoding="utf-8")
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    sample_path.write_text(
+        "def add(x):\n    return x\n\n"
+        "def settle_invoice():\n    return add(1)\n",
+        encoding="utf-8",
+    )
+
+    context = json.loads(
+        mcp_server.tg_session_context(
+            session_id,
+            "settle invoice",
+            str(project),
+            refresh_on_stale=True,
+        )
+    )
+    assert context["session_id"] == session_id
+    assert context["routing_reason"] == "session-context"
+    assert any(symbol["name"] == "settle_invoice" for symbol in context["symbols"])
+
+
 def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
     from tensor_grep.cli import mcp_server
 
