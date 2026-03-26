@@ -171,6 +171,21 @@ def _rust_parser() -> Any | None:
     return tree_sitter.Parser(language)
 
 
+def _symbol_navigation_provenance_for_path(path: str) -> str:
+    suffix = Path(path).suffix.lower()
+    if suffix == ".py":
+        return "python-ast"
+    if suffix in _JS_TS_SUFFIXES:
+        return "tree-sitter" if (
+            _typescript_parser(tsx=suffix == ".tsx") is not None
+            if suffix in _TS_SUFFIXES
+            else _javascript_parser() is not None
+        ) else "regex-heuristic"
+    if suffix in _RUST_SUFFIXES:
+        return "tree-sitter" if _rust_parser() is not None else "regex-heuristic"
+    return "heuristic"
+
+
 def _symbol_record(
     *,
     name: str,
@@ -4072,7 +4087,10 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
                 _, current_calls = _regex_references_and_calls(current, symbol)
         else:
             _, current_calls = _regex_references_and_calls(current, symbol)
-        calls.extend(current_calls)
+        for current_call in current_calls:
+            call_payload = dict(current_call)
+            call_payload["provenance"] = _symbol_navigation_provenance_for_path(str(current_call["file"]))
+            calls.append(call_payload)
 
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
     context_payload = build_context_pack_from_map(repo_map, symbol)
@@ -4099,6 +4117,7 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
     payload["imports"] = context_payload["imports"]
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
+    payload["graph_completeness"] = "moderate"
     return payload
 
 
@@ -4128,10 +4147,19 @@ def build_symbol_blast_radius_from_map(
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
-        dict(current)
+        {
+            **dict(current),
+            "provenance": _symbol_navigation_provenance_for_path(str(current["file"])),
+        }
         for current in defs_payload["definitions"]
         if str(current["file"]) in preferred_definition_file_set
-    ] or [dict(current) for current in defs_payload["definitions"]]
+    ] or [
+        {
+            **dict(current),
+            "provenance": _symbol_navigation_provenance_for_path(str(current["file"])),
+        }
+        for current in defs_payload["definitions"]
+    ]
 
     normalized_depth = max(0, int(max_depth))
     all_files = [str(current) for current in repo_map.get("files", [])]
@@ -4291,7 +4319,14 @@ def build_symbol_blast_radius_from_map(
         ]
         if not depth_files:
             continue
-        caller_tree.append({"depth": depth, "files": depth_files})
+        caller_tree.append(
+            {
+                "depth": depth,
+                "files": depth_files,
+                "provenance": ["graph-derived"],
+                "graph_completeness": "moderate",
+            }
+        )
         rendered_lines.append(f"Depth {depth}:")
         rendered_lines.extend(f"- {current}" for current in depth_files)
 

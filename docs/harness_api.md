@@ -742,6 +742,12 @@ This is currently a Python-first symbol navigation contract. It finds exact Pyth
 | `tests` | `array<string>` | Likely impacted tests. |
 | `related_paths` | `array<string>` | Stable union of definition files, caller files, and tests. |
 
+Each `callers[]` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `string` | Symbol-navigation source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
+
 ## Symbol Blast Radius JSON
 
 Emitted by `tg.exe blast-radius --symbol <name> --json ...`.
@@ -772,6 +778,20 @@ Use this shape when an agent needs an explicit downstream change radius instead 
 | `imports` | `array<object>` | Ranked imports reused from the impact surface. |
 | `symbols` | `array<object>` | Ranked symbol matches reused from the impact surface. |
 | `related_paths` | `array<string>` | Stable union of radius files and tests. |
+| `graph_completeness` | `string` | Optional graph trust label surfaced on caller-tree nodes and related graph metadata. |
+
+Each `definitions[]` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `string` | Symbol-navigation source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
+
+Each `caller_tree[]` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `array<string>` | Graph-source labels for the depth bucket, currently `graph-derived`. |
+| `graph_completeness` | `string` | Actionable graph trust label, currently `moderate`. |
 
 ## Symbol Blast Radius Plan JSON
 
@@ -969,12 +989,12 @@ Current tool set:
 - `tg_session_list(path=".")`
 - `tg_session_show(session_id, path=".")`
 - `tg_session_refresh(session_id, path=".")`
-- `tg_session_context(session_id, query, path=".")`
-- `tg_session_edit_plan(session_id, query, path=".", max_files=3, max_symbols=5)`
-- `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
-- `tg_session_blast_radius(session_id, symbol, path=".", max_depth=3)`
-- `tg_session_blast_radius_plan(session_id, symbol, path=".", max_depth=3, max_files=3, max_symbols=5)`
-- `tg_session_blast_radius_render(session_id, symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
+- `tg_session_context(session_id, query, path=".", refresh_on_stale=False, auto_refresh=None)`
+- `tg_session_edit_plan(session_id, query, path=".", max_files=3, max_symbols=5, refresh_on_stale=False, auto_refresh=None)`
+- `tg_session_context_render(session_id, query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", refresh_on_stale=False, auto_refresh=None)`
+- `tg_session_blast_radius(session_id, symbol, path=".", max_depth=3, refresh_on_stale=False, auto_refresh=None)`
+- `tg_session_blast_radius_plan(session_id, symbol, path=".", max_depth=3, max_files=3, max_symbols=5, refresh_on_stale=False, auto_refresh=None)`
+- `tg_session_blast_radius_render(session_id, symbol, path=".", max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", refresh_on_stale=False, auto_refresh=None)`
 - `tg_index_search(pattern, path=".")`
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`

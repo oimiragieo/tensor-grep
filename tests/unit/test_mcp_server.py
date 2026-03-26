@@ -2886,13 +2886,17 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
     assert payload["symbol"] == "create_invoice"
     assert payload["max_depth"] == 2
     assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert payload["definitions"][0]["provenance"] == "python-ast"
     assert any(caller["file"] == str(service_path.resolve()) for caller in payload["callers"])
+    assert any(caller["provenance"] == "python-ast" for caller in payload["callers"])
     assert payload["files"][0] == str(module_path.resolve())
     assert str(service_path.resolve()) in payload["files"]
     assert str(api_path.resolve()) in payload["files"]
     assert payload["tests"][0] == str(test_path.resolve())
     assert any(level["depth"] == 0 for level in payload["caller_tree"])
     assert any(level["depth"] == 1 for level in payload["caller_tree"])
+    assert all(level["provenance"] == ["graph-derived"] for level in payload["caller_tree"])
+    assert all(level["graph_completeness"] == "moderate" for level in payload["caller_tree"])
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
