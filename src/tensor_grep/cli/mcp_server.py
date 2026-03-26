@@ -141,6 +141,29 @@ def _session_error_payload(
     return json.dumps(payload, indent=2)
 
 
+def _session_exception_payload(
+    *,
+    session_id: str | None = None,
+    path: str,
+    message: str,
+    detail: dict[str, Any] | None = None,
+    **extra: Any,
+) -> str:
+    payload: dict[str, Any] = {
+        "version": _json_output_version(),
+        "path": str(Path(path).expanduser()),
+        **extra,
+        "error": {
+            "code": "invalid_input",
+            "message": message,
+            "detail": detail or {},
+        },
+    }
+    if session_id is not None:
+        payload["session_id"] = session_id
+    return json.dumps(payload, indent=2)
+
+
 def _review_bundle_error(message: str, *, code: str, routing_reason: str) -> str:
     payload = {
         "version": _json_output_version(),
@@ -2085,14 +2108,7 @@ def tg_session_open(path: str = ".") -> str:
     try:
         payload = open_session(path)
     except Exception as exc:
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "error": {"code": "invalid_input", "message": str(exc)},
-                "path": str(Path(path).expanduser()),
-            },
-            indent=2,
-        )
+        return _session_exception_payload(path=path, message=str(exc), detail={})
 
     return json.dumps(payload.__dict__, indent=2)
 
@@ -2110,14 +2126,7 @@ def tg_session_list(path: str = ".") -> str:
     try:
         sessions = [record.__dict__ for record in list_sessions(path)]
     except Exception as exc:
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "error": {"code": "invalid_input", "message": str(exc)},
-                "path": str(Path(path).expanduser()),
-            },
-            indent=2,
-        )
+        return _session_exception_payload(path=path, message=str(exc), detail={})
 
     return json.dumps({"version": _json_output_version(), "sessions": sessions}, indent=2)
 
@@ -2136,14 +2145,11 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
     try:
         payload = get_session(session_id, path)
     except Exception as exc:
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "error": {"code": "invalid_input", "message": str(exc)},
-                "path": str(Path(path).expanduser()),
-                "session_id": session_id,
-            },
-            indent=2,
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
+            message=str(exc),
+            detail={},
         )
 
     return json.dumps(payload, indent=2)
@@ -2163,14 +2169,11 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
     try:
         payload = refresh_session(session_id, path)
     except Exception as exc:
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "error": {"code": "invalid_input", "message": str(exc)},
-                "path": str(Path(path).expanduser()),
-                "session_id": session_id,
-            },
-            indent=2,
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
+            message=str(exc),
+            detail={},
         )
 
     return json.dumps(payload.__dict__, indent=2)
@@ -2192,16 +2195,33 @@ def tg_session_context(
         query: Query text used to rank relevant repo context.
         path: File or directory rooted at the session scope.
     """
-    from tensor_grep.cli.session_store import session_context
+    from tensor_grep.cli.session_store import SessionStaleError, session_context
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         payload = session_context(session_id, query, path, refresh_on_stale=effective_refresh)
-    except Exception as exc:
+    except SessionStaleError as exc:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
+            message=str(exc),
+            detail={"query": query},
+            query=query,
+        )
+    except FileNotFoundError:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"query": query},
+            query=query,
+        )
+    except Exception as exc:
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
             message=str(exc),
             detail={"query": query},
             query=query,

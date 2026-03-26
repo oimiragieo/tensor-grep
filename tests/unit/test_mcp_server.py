@@ -475,6 +475,25 @@ def test_tg_session_context_returns_uniform_error_detail(tmp_path: Path):
     assert "detail" in payload["error"]
 
 
+def test_tg_session_lifecycle_errors_return_uniform_error_detail(tmp_path: Path):
+    from tensor_grep.cli import mcp_server
+
+    with (
+        patch("tensor_grep.cli.session_store.open_session", side_effect=RuntimeError("open failed")),
+        patch("tensor_grep.cli.session_store.list_sessions", side_effect=RuntimeError("list failed")),
+        patch("tensor_grep.cli.session_store.get_session", side_effect=RuntimeError("show failed")),
+        patch("tensor_grep.cli.session_store.refresh_session", side_effect=RuntimeError("refresh failed")),
+    ):
+        opened = json.loads(mcp_server.tg_session_open(str(tmp_path)))
+        listed = json.loads(mcp_server.tg_session_list(str(tmp_path)))
+        shown = json.loads(mcp_server.tg_session_show("session-missing", str(tmp_path)))
+        refreshed = json.loads(mcp_server.tg_session_refresh("session-missing", str(tmp_path)))
+
+        for payload in (opened, listed, shown, refreshed):
+            assert payload["error"]["code"] == "invalid_input"
+            assert "detail" in payload["error"]
+
+
 def test_tg_rulesets_returns_builtin_ruleset_metadata():
     from tensor_grep.cli import mcp_server
 
