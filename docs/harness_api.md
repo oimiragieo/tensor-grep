@@ -641,11 +641,16 @@ Example: [`examples/defs.json`](examples/defs.json)
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name requested. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
+| `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
 | `files` | `array<string>` | Files containing exact definitions. |
 | `tests` | `array<string>` | Test files in the inventory root. |
 | `related_paths` | `array<string>` | Stable union of definition files and tests. |
 
-Each `definitions[]` object contains `name`, `kind`, `file`, and `line`.
+Each `definitions[]` object contains `name`, `kind`, `file`, `line`, and may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `string` | Symbol-navigation source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
 
 ## Symbol Source JSON
 
@@ -713,11 +718,22 @@ This is currently a Python-first symbol navigation contract. It finds exact name
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
+| `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
 | `references` | `array<object>` | Python-first reference rows. |
 | `files` | `array<string>` | Files containing reference rows. |
 | `related_paths` | `array<string>` | Stable union of definition files, reference files, and tests. |
 
-Each `references[]` object contains `name`, `kind`, `file`, `line`, and `text`.
+Each `definitions[]` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `string` | Symbol-navigation source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
+
+Each `references[]` object contains `name`, `kind`, `file`, `line`, `text`, and may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `string` | Symbol-navigation source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
 
 ## Symbol Callers JSON
 

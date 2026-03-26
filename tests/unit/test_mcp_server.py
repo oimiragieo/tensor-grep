@@ -2477,6 +2477,8 @@ def test_tg_symbol_defs_returns_exact_definition_matches(tmp_path):
     assert payload["symbol"] == "create_invoice"
     assert len(payload["definitions"]) == 1
     assert payload["definitions"][0]["file"] == str(module_path.resolve())
+    assert payload["definitions"][0]["provenance"] == "python-ast"
+    assert payload["graph_completeness"] == "strong"
 
 
 def test_tg_symbol_defs_can_find_rust_and_typescript_symbols(tmp_path):
@@ -2743,6 +2745,8 @@ def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
     assert payload["routing_backend"] == "RepoMap"
     assert payload["routing_reason"] == "symbol-refs"
     assert payload["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
+    assert payload["graph_completeness"] == "moderate"
+    assert any(ref["provenance"] == "python-ast" for ref in payload["references"])
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
 
 
@@ -2781,8 +2785,10 @@ def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_p
 
     assert ts_refs["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert any(ref["file"] == str(ts_path.resolve()) for ref in ts_refs["references"])
+    assert any(ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in ts_refs["references"])
     assert any(caller["file"] == str(ts_path.resolve()) for caller in ts_callers["callers"])
     assert any(ref["file"] == str(rust_path.resolve()) for ref in rust_refs["references"])
+    assert any(ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in rust_refs["references"])
     assert any(caller["file"] == str(rust_path.resolve()) for caller in rust_callers["callers"])
 
 

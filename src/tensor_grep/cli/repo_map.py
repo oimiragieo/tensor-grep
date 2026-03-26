@@ -3825,7 +3825,12 @@ def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     payload["tests"] = list(repo_map.get("tests", []))
     payload["related_paths"] = list(repo_map.get("related_paths", []))
     definitions = [
-        dict(current) for current in payload["symbols"] if str(current["name"]) == symbol
+        {
+            **dict(current),
+            "provenance": _symbol_navigation_provenance_for_path(str(current["file"])),
+        }
+        for current in payload["symbols"]
+        if str(current["name"]) == symbol
     ]
     definitions.sort(
         key=lambda item: (
@@ -3847,6 +3852,7 @@ def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     payload["definitions"] = definitions
     payload["files"] = sorted(dict.fromkeys(definition_files))
     payload["related_paths"] = related_paths
+    payload["graph_completeness"] = "strong"
     return payload
 
 
@@ -4016,6 +4022,7 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     payload = build_symbol_defs_from_map(repo_map, symbol)
     references: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(payload["path"])):
+        current_provenance = _symbol_navigation_provenance_for_path(str(current))
         if current.suffix == ".py":
             current_refs, _ = _python_references_and_calls(current, symbol)
         elif current.suffix in _JS_TS_SUFFIXES:
@@ -4033,13 +4040,20 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
                     "file": str(call["file"]),
                     "line": int(call["line"]),
                     "text": str(call["text"]),
+                    "provenance": current_provenance,
                 }
                 for call in current_calls
             ]
             current_refs.extend(rust_call_refs)
         else:
             current_refs, _ = _regex_references_and_calls(current, symbol)
-        references.extend(current_refs)
+        references.extend(
+            {
+                **dict(current_ref),
+                "provenance": str(current_ref.get("provenance", current_provenance)),
+            }
+            for current_ref in current_refs
+        )
 
     referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
     related_paths: list[str] = []
@@ -4051,6 +4065,7 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     payload["references"] = references
     payload["files"] = referenced_files
     payload["related_paths"] = related_paths
+    payload["graph_completeness"] = "moderate"
     return payload
 
 
