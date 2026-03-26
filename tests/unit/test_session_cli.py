@@ -192,10 +192,13 @@ def test_session_serve_streams_jsonl_requests_from_cached_session(
     responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
     assert responses[0]["session_id"] == opened["session_id"]
     assert responses[0]["routing_reason"] == "session-repo-map"
+    assert responses[0]["serve_cache"]["status"] == "miss"
     assert responses[0]["files"] == [str(module_path.resolve())]
     assert responses[1]["routing_reason"] == "session-context"
+    assert responses[1]["serve_cache"]["status"] == "hit"
     assert responses[1]["tests"][0] == str(test_path.resolve())
     assert responses[2]["routing_reason"] == "session-callers"
+    assert responses[2]["serve_cache"]["status"] == "hit"
     assert responses[2]["callers"][0]["file"] == str(test_path.resolve())
     assert responses[3]["routing_reason"] == "session-blast-radius"
     assert responses[3]["max_depth"] == 1
@@ -408,6 +411,63 @@ def test_session_serve_reports_health_without_failing_on_stale_cache(tmp_path: P
     assert payload["ok"] is False
     assert payload["stale"] is True
     assert str(module_path.resolve()) in payload["changeset"]["modified"]
+
+
+def test_session_serve_reports_multi_root_stats_and_cache_provenance(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_store
+
+    first_project = tmp_path / "project_one"
+    first_src = first_project / "src"
+    first_src.mkdir(parents=True)
+    (first_src / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    second_project = tmp_path / "project_two"
+    second_src = second_project / "src"
+    second_src.mkdir(parents=True)
+    (second_src / "billing.py").write_text("def issue_invoice():\n    return 2\n", encoding="utf-8")
+
+    runner = CliRunner()
+    first_opened = json.loads(runner.invoke(app, ["session", "open", str(first_project), "--json"]).stdout)
+    second_opened = json.loads(runner.invoke(app, ["session", "open", str(second_project), "--json"]).stdout)
+
+    stdin = StringIO(
+        "\n".join(
+            [
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "repo_map"}),
+                json.dumps(
+                    {
+                        "command": "repo_map",
+                        "session_id": second_opened["session_id"],
+                        "path": str(second_project),
+                    }
+                ),
+                json.dumps({"command": "stats"}),
+            ]
+        )
+        + "\n"
+    )
+    stdout = StringIO()
+
+    session_store.serve_session_stream(
+        first_opened["session_id"],
+        str(first_project),
+        input_stream=stdin,
+        output_stream=stdout,
+    )
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines() if line.strip()]
+    first_repo_map = responses[0]
+    second_repo_map = responses[1]
+    other_root_repo_map = responses[2]
+    stats = responses[3]
+
+    assert first_repo_map["serve_cache"]["status"] == "miss"
+    assert second_repo_map["serve_cache"]["status"] == "hit"
+    assert other_root_repo_map["serve_cache"]["status"] == "miss"
+    assert stats["root_count"] == 2
+    assert stats["session_count"] == 2
+    assert len(stats["sessions"]) == 2
 
 
 def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:

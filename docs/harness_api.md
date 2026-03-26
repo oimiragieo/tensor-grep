@@ -876,7 +876,10 @@ Special control-plane responses:
 
 - `health` reports session freshness and current on-disk changes without failing the request
 - `stats` reports serve-loop cache/runtime metrics including `cache_hits`, `cache_misses`,
-  `refresh_count`, `session_count`, `cache_size_bytes`, `uptime_seconds`, and `request_count`
+  `refresh_count`, `root_count`, `session_count`, `sessions`, `cache_size_bytes`,
+  `uptime_seconds`, and `request_count`
+- routed responses also include `serve_cache` with per-request cache provenance:
+  `status`, `session_count`, and `root_count`
 
 Use `--refresh-on-stale` to refresh the cached session once and retry the request when file
 changes are detected.

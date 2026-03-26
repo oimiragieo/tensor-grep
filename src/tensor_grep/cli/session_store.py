@@ -123,6 +123,12 @@ class _SessionServeCache:
             return cached
         return self.put(session_id, path, get_session(session_id, path))
 
+    def load_with_status(self, session_id: str, path: str) -> tuple[dict[str, Any], str]:
+        cached = self.get(session_id, path)
+        if cached is not None:
+            return cached, "hit"
+        return self.put(session_id, path, get_session(session_id, path)), "miss"
+
     def record_refresh(self) -> None:
         self._refreshes += 1
 
@@ -145,6 +151,17 @@ class _SessionServeCache:
     @property
     def refreshes(self) -> int:
         return self._refreshes
+
+    @property
+    def root_count(self) -> int:
+        return len({root for root, _ in self._entries})
+
+    @property
+    def sessions(self) -> list[dict[str, str]]:
+        return [
+            {"root": root, "session_id": session_id}
+            for root, session_id in self._entries.keys()
+        ]
 
 
 def _resolve_root(path: Path) -> Path:
@@ -791,33 +808,50 @@ def serve_session_stream(
                     "cache_hits": payload_cache.hits,
                     "cache_misses": payload_cache.misses,
                     "refresh_count": payload_cache.refreshes,
+                    "root_count": payload_cache.root_count,
                     "session_count": payload_cache.session_count,
+                    "sessions": payload_cache.sessions,
                     "cache_size_bytes": payload_cache.size_bytes,
                     "uptime_seconds": max(0.0, monotonic() - started_at),
                     "request_count": request_count,
                 }
             elif command == "health":
-                payload = payload_cache.load(request_session_id, request_path)
+                payload, cache_status = payload_cache.load_with_status(request_session_id, request_path)
                 response = _session_health_payload(request_session_id, payload)
+                response["serve_cache"] = {
+                    "status": cache_status,
+                    "session_count": payload_cache.session_count,
+                    "root_count": payload_cache.root_count,
+                }
             else:
-                payload = payload_cache.load(request_session_id, request_path)
+                payload, cache_status = payload_cache.load_with_status(request_session_id, request_path)
                 response = serve_session_request(
                     request_session_id,
                     request,
                     request_path,
                     payload=payload,
                 )
+                response["serve_cache"] = {
+                    "status": cache_status,
+                    "session_count": payload_cache.session_count,
+                    "root_count": payload_cache.root_count,
+                }
         except SessionStaleError as exc:
             if refresh_on_stale:
                 refresh_session(request_session_id, request_path, payload_cache=payload_cache)
                 payload_cache.record_refresh()
-                payload = payload_cache.load(request_session_id, request_path)
+                payload, cache_status = payload_cache.load_with_status(request_session_id, request_path)
                 response = serve_session_request(
                     request_session_id,
                     request,
                     request_path,
                     payload=payload,
                 )
+                response["serve_cache"] = {
+                    "status": cache_status,
+                    "session_count": payload_cache.session_count,
+                    "root_count": payload_cache.root_count,
+                }
             else:
                 response = {
                     "version": _SESSION_VERSION,
