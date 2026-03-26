@@ -258,6 +258,26 @@ def test_files_mode_lists_candidates(monkeypatch):
     assert result.stdout.strip().splitlines() == ["a.py", "b.py"]
 
 
+def test_session_daemon_help_lists_lifecycle_commands() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["session", "daemon", "--help"])
+
+    assert result.exit_code == 0
+    assert "start" in result.stdout
+    assert "status" in result.stdout
+    assert "stop" in result.stdout
+
+
+def test_session_context_help_mentions_daemon_flag() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["session", "context", "--help"])
+
+    assert result.exit_code == 0
+    assert "--daemon" in result.stdout
+
+
 def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
     _FAKE_WALK = {".": ["a.log"]}

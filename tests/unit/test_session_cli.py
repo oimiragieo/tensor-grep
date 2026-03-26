@@ -470,6 +470,62 @@ def test_session_serve_reports_multi_root_stats_and_cache_provenance(tmp_path: P
     assert len(stats["sessions"]) == 2
 
 
+def test_session_daemon_lifecycle(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    project.mkdir()
+
+    stopped = session_daemon.get_session_daemon_status(str(project))
+    assert stopped["running"] is False
+
+    started = session_daemon.start_session_daemon(str(project))
+    assert started["running"] is True
+    assert started["port"] > 0
+
+    status = session_daemon.get_session_daemon_status(str(project))
+    assert status["running"] is True
+    assert status["port"] == started["port"]
+
+    stopped_payload = session_daemon.stop_session_daemon(str(project))
+    assert stopped_payload["stopped"] is True
+    assert stopped_payload["running"] is False
+
+
+def test_session_context_can_use_daemon(tmp_path: Path) -> None:
+    from tensor_grep.cli import session_daemon
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "context",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "invoice",
+            "--daemon",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == opened["session_id"]
+    assert payload["routing_reason"] == "session-context"
+    assert payload["files"] == [str(module_path.resolve())]
+    session_daemon.stop_session_daemon(str(project))
+
+
 def test_session_blast_radius_reuses_cached_repo_map(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"

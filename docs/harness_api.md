@@ -816,6 +816,34 @@ Emitted by `tg session refresh <id> ... --json`.
 | `file_count` | `integer` | Number of source files captured after refresh. |
 | `symbol_count` | `integer` | Number of symbols captured after refresh. |
 
+## Session Daemon JSON
+
+Emitted by:
+
+- `tg.exe session daemon start ... --json`
+- `tg.exe session daemon status ... --json`
+- `tg.exe session daemon stop ... --json`
+
+This is the root-scoped warm localhost daemon that backs daemon-routed session requests.
+
+Start and status responses include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `root` | `string` | Session root served by the daemon. |
+| `running` | `boolean` | Whether the daemon is currently live. |
+| `host` | `string` | Loopback host used for request routing. |
+| `port` | `integer` | Bound localhost port. |
+| `pid` | `integer` | Process identifier when the daemon is live. |
+| `started_at` | `string` | ISO-8601 startup timestamp when the daemon is live. |
+
+Stop responses additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `stopped` | `boolean` | `true` when a live daemon accepted the shutdown request. |
+
 ## Session Context JSON
 
 Emitted by `tg.exe session context <id> --query ... --json`.
@@ -823,6 +851,8 @@ Emitted by `tg.exe session context <id> --query ... --json`.
 Example: [`examples/session_context.json`](examples/session_context.json)
 
 This reuses a cached repo map instead of rebuilding inventory for every query.
+Use `--daemon` to route the same request through the warm localhost session daemon. Daemon-routed
+responses preserve the same payload shape and add `serve_cache` request provenance.
 
 | Field | Type | Notes |
 | --- | --- | --- |

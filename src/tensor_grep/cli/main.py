@@ -54,10 +54,16 @@ session_app = typer.Typer(
     help="Open and reuse cached repository-map sessions.",
     no_args_is_help=True,
 )
+session_daemon_app = typer.Typer(
+    help="Run and inspect the warm localhost session daemon.",
+    no_args_is_help=True,
+)
 review_bundle_app = typer.Typer(
     help="Create and verify enterprise review bundles.",
     no_args_is_help=True,
 )
+
+session_app.add_typer(session_daemon_app, name="daemon")
 
 
 def _read_project_version_fallback() -> str:
@@ -2554,6 +2560,72 @@ def session_open(
     )
 
 
+@session_daemon_app.command("start")
+def session_daemon_start(
+    path: str = typer.Argument(".", help="File or directory rooted at the daemon scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Start or reuse a warm localhost session daemon for the current root."""
+    from tensor_grep.cli.session_daemon import start_session_daemon
+
+    try:
+        payload = start_session_daemon(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}")
+
+
+@session_daemon_app.command("status")
+def session_daemon_status(
+    path: str = typer.Argument(".", help="File or directory rooted at the daemon scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Show daemon status for the current root."""
+    from tensor_grep.cli.session_daemon import get_session_daemon_status
+
+    try:
+        payload = get_session_daemon_status(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if payload.get("running"):
+        typer.echo(f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}")
+    else:
+        typer.echo("Session daemon not running")
+
+
+@session_daemon_app.command("stop")
+def session_daemon_stop(
+    path: str = typer.Argument(".", help="File or directory rooted at the daemon scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Stop the warm localhost session daemon for the current root."""
+    from tensor_grep.cli.session_daemon import stop_session_daemon
+
+    try:
+        payload = stop_session_daemon(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo("Session daemon stopped" if payload.get("stopped") else "Session daemon not running")
+
+
 @session_app.command("list")
 def session_list(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
@@ -2645,13 +2717,31 @@ def session_context_cmd(
         "--refresh-on-stale",
         help="Refresh the cached session once when file changes are detected, then retry the request.",
     ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a context pack derived from a cached session."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
     from tensor_grep.cli.session_store import session_context
 
     try:
-        payload = session_context(session_id, query, path, refresh_on_stale=refresh_on_stale)
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "context",
+                    "session_id": session_id,
+                    "path": path,
+                    "query": query,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_context(session_id, query, path, refresh_on_stale=refresh_on_stale)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2701,26 +2791,52 @@ def session_context_render_cmd(
         "--refresh-on-stale",
         help="Refresh the cached session once when file changes are detected, then retry the request.",
     ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready render bundle derived from a cached session."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
     from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
     try:
-        payload = session_context_render(
-            session_id,
-            query,
-            path,
-            max_files=max_files,
-            max_sources=max_sources,
-            max_symbols_per_file=max_symbols_per_file,
-            max_render_chars=max_render_chars,
-            max_tokens=max_tokens,
-            model=model,
-            optimize_context=optimize_context,
-            render_profile=render_profile,
-            refresh_on_stale=refresh_on_stale,
-        )
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "context_render",
+                    "session_id": session_id,
+                    "path": path,
+                    "query": query,
+                    "max_files": max_files,
+                    "max_sources": max_sources,
+                    "max_symbols_per_file": max_symbols_per_file,
+                    "max_render_chars": max_render_chars,
+                    "max_tokens": max_tokens,
+                    "model": model,
+                    "optimize_context": optimize_context,
+                    "render_profile": render_profile,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_context_render(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                max_tokens=max_tokens,
+                model=model,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                refresh_on_stale=refresh_on_stale,
+            )
     except SessionStaleError as exc:
         error_payload = {
             "version": 1,
@@ -2754,20 +2870,40 @@ def session_edit_plan_cmd(
         "--refresh-on-stale",
         help="Refresh the cached session once when file changes are detected, then retry the request.",
     ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a cached-session edit-planning bundle without rendered source text."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
     from tensor_grep.cli.session_store import session_context_edit_plan
 
     try:
-        payload = session_context_edit_plan(
-            session_id,
-            query,
-            path,
-            max_files=max_files,
-            max_symbols=max_symbols,
-            refresh_on_stale=refresh_on_stale,
-        )
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "context_edit_plan",
+                    "session_id": session_id,
+                    "path": path,
+                    "query": query,
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_context_edit_plan(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
+            )
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2799,19 +2935,38 @@ def session_blast_radius_cmd(
         "--refresh-on-stale",
         help="Refresh the cached session once when file changes are detected, then retry the request.",
     ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a cached-session blast radius for a symbol."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
     from tensor_grep.cli.session_store import session_blast_radius
 
     try:
-        payload = session_blast_radius(
-            session_id,
-            symbol,
-            path,
-            max_depth=max_depth,
-            refresh_on_stale=refresh_on_stale,
-        )
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "blast_radius",
+                    "session_id": session_id,
+                    "path": path,
+                    "symbol": symbol,
+                    "max_depth": max_depth,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_blast_radius(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                refresh_on_stale=refresh_on_stale,
+            )
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2857,25 +3012,50 @@ def session_blast_radius_render_cmd(
         "--refresh-on-stale",
         help="Refresh the cached session once when file changes are detected, then retry the request.",
     ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready cached-session blast radius bundle."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
     from tensor_grep.cli.session_store import session_blast_radius_render
 
     try:
-        payload = session_blast_radius_render(
-            session_id,
-            symbol,
-            path,
-            max_depth=max_depth,
-            max_files=max_files,
-            max_sources=max_sources,
-            max_symbols_per_file=max_symbols_per_file,
-            max_render_chars=max_render_chars,
-            optimize_context=optimize_context,
-            render_profile=render_profile,
-            refresh_on_stale=refresh_on_stale,
-        )
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "blast_radius_render",
+                    "session_id": session_id,
+                    "path": path,
+                    "symbol": symbol,
+                    "max_depth": max_depth,
+                    "max_files": max_files,
+                    "max_sources": max_sources,
+                    "max_symbols_per_file": max_symbols_per_file,
+                    "max_render_chars": max_render_chars,
+                    "optimize_context": optimize_context,
+                    "render_profile": render_profile,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_blast_radius_render(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                refresh_on_stale=refresh_on_stale,
+            )
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2907,21 +3087,42 @@ def session_blast_radius_plan_cmd(
         "--refresh-on-stale",
         help="Refresh the cached session once when file changes are detected, then retry the request.",
     ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a cached-session blast-radius planning bundle without rendered source text."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
     from tensor_grep.cli.session_store import session_blast_radius_plan
 
     try:
-        payload = session_blast_radius_plan(
-            session_id,
-            symbol,
-            path,
-            max_depth=max_depth,
-            max_files=max_files,
-            max_symbols=max_symbols,
-            refresh_on_stale=refresh_on_stale,
-        )
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "blast_radius_plan",
+                    "session_id": session_id,
+                    "path": path,
+                    "symbol": symbol,
+                    "max_depth": max_depth,
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_blast_radius_plan(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
+            )
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
