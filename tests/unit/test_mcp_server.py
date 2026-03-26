@@ -2602,6 +2602,10 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
     assert payload["files"][0] == str(module_path.resolve())
     assert str(other_path.resolve()) in payload["files"]
     assert payload["tests"][0] == str(test_path.resolve())
+    assert any(
+        entry["file"] == str(other_path.resolve()) and entry["provenance"] == "python-ast"
+        for entry in payload["imports"]
+    )
 
 
 def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_path):
@@ -2716,6 +2720,10 @@ def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(t
     assert "definition" in payload["file_matches"][0]["reasons"]
     assert payload["file_matches"][1]["path"] == str(importer_path.resolve())
     assert "import" in payload["file_matches"][1]["reasons"]
+    assert any(
+        entry["file"] == str(importer_path.resolve()) and entry["provenance"] == "python-ast"
+        for entry in payload["imports"]
+    )
     assert payload["file_summaries"][0]["path"] == str(module_path.resolve())
     assert {item["name"] for item in payload["file_summaries"][0]["symbols"]} == {
         "create_invoice"

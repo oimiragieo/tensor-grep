@@ -269,6 +269,7 @@ Each ranked `imports[]` object extends the Repo Map JSON import shape with:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `score` | `integer` | Deterministic query relevance score. |
+| `provenance` | `string` | Import-source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
 
 ## Edit Plan JSON
 
@@ -699,6 +700,12 @@ Example: [`examples/impact.json`](examples/impact.json)
 | `imports` | `array<object>` | Ranked import entries from the context pack path. |
 | `symbols` | `array<object>` | Ranked related symbols, including `score`. |
 | `related_paths` | `array<string>` | Stable union of impacted files and tests. |
+
+Each `imports[]` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `provenance` | `string` | Import-source label such as `python-ast`, `tree-sitter`, or `regex-heuristic`. |
 
 ## Symbol Refs JSON
 

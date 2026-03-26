@@ -1420,7 +1420,13 @@ def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     for current in all_files:
         current_imports, current_symbols = _imports_and_symbols_for_path(current)
         if current_imports:
-            imports.append({"file": str(current), "imports": current_imports})
+            imports.append(
+                {
+                    "file": str(current),
+                    "imports": current_imports,
+                    "provenance": _symbol_navigation_provenance_for_path(str(current)),
+                }
+            )
         symbols.extend(current_symbols)
 
     payload["files"] = source_files
@@ -1487,7 +1493,13 @@ def build_repo_map_incremental(
             else previous_symbols_by_file.get(current_path, [])
         )
         if current_imports:
-            imports.append({"file": current_path, "imports": current_imports})
+            imports.append(
+                {
+                    "file": current_path,
+                    "imports": current_imports,
+                    "provenance": _symbol_navigation_provenance_for_path(current_path),
+                }
+            )
         symbols.extend(current_symbols)
 
     payload["files"] = source_files
@@ -1904,6 +1916,9 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
         if score <= 0:
             continue
         scored_entry = dict(entry)
+        scored_entry["provenance"] = str(
+            entry.get("provenance", _symbol_navigation_provenance_for_path(str(entry["file"])))
+        )
         scored_entry["score"] = score
         scored_imports.append(scored_entry)
     scored_imports.sort(key=lambda item: (-int(item["score"]), str(item["file"])))
