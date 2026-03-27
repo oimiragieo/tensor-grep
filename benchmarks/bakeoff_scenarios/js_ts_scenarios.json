@@ -1,0 +1,211 @@
+{
+  "scenarios": [
+    {
+      "id": "js-ts-named-import-alias",
+      "language": "js-ts",
+      "category": "named_import_alias",
+      "description": "Named import resolved through an alias.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/named_import_alias",
+      "query_or_symbol": "createInvoiceAlias",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.js"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-default-import",
+      "language": "js-ts",
+      "category": "default_import",
+      "description": "Default import call graph.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/default_import",
+      "query_or_symbol": "createInvoiceDefault",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 7
+      },
+      "expected_dependent_files": [
+        "src/service.js"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-re-export-chain",
+      "language": "js-ts",
+      "category": "re_export_chain",
+      "description": "Named re-export chain across two barrels.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/re_export_chain",
+      "query_or_symbol": "createInvoiceChain",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.ts",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/barrel_one.ts",
+        "src/barrel_two.ts",
+        "src/service.ts"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-jest-test-association",
+      "language": "js-ts",
+      "category": "jest_test_association",
+      "description": "Jest describe/it test association via framework naming.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/jest_test_association",
+      "query_or_symbol": "createInvoiceSpec",
+      "mode": "context-render",
+      "expected_primary_file": "src/payments.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/ui_flow.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest"
+      ]
+    },
+    {
+      "id": "js-ts-type-only-import",
+      "language": "js-ts",
+      "category": "type_only_import",
+      "description": "TypeScript type-only import reference.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/type_only_import",
+      "query_or_symbol": "InvoicePayload",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/types.ts",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.ts"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-tsconfig-path-alias",
+      "language": "js-ts",
+      "category": "tsconfig_path_alias",
+      "description": "Path alias resolution through tsconfig paths.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/tsconfig_path_alias",
+      "query_or_symbol": "createInvoicePathAlias",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.ts",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.ts"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-module-with-multiple-exports",
+      "language": "js-ts",
+      "category": "module_with_multiple_exports",
+      "description": "Target symbol inside a module with multiple exports.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/module_with_multiple_exports",
+      "query_or_symbol": "createInvoiceMultiExport",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.js"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-barrel-re-exports",
+      "language": "js-ts",
+      "category": "barrel_re_exports",
+      "description": "Barrel file re-export into a feature module.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/barrel_re_exports",
+      "query_or_symbol": "createInvoiceBarrel",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.ts",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/index.ts",
+        "src/features/service.ts"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-cross-directory-imports",
+      "language": "js-ts",
+      "category": "cross_directory_imports",
+      "description": "Cross-directory relative import resolution.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/cross_directory_imports",
+      "query_or_symbol": "createInvoiceNested",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/core/payments.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/features/checkout/service.js"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "js-ts-react-component-with-test",
+      "language": "js-ts",
+      "category": "react_component_with_test",
+      "description": "React component with colocated Jest-style test.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/react_component_with_test",
+      "query_or_symbol": "InvoiceCard",
+      "mode": "context-render",
+      "expected_primary_file": "src/components/InvoiceCard.tsx",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/InvoiceCard.test.tsx"
+      ],
+      "expected_validation_commands_contain": [
+        "jest"
+      ]
+    }
+  ]
+}

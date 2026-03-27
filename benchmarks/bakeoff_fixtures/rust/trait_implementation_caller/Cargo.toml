@@ -1,0 +1,4 @@
+[package]
+name = "trait_implementation_caller"
+version = "0.1.0"
+edition = "2021"

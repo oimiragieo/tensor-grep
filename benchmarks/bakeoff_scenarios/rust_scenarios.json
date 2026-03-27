@@ -1,0 +1,208 @@
+{
+  "scenarios": [
+    {
+      "id": "rust-simple-fn-with-caller",
+      "language": "rust",
+      "category": "simple_fn_with_caller",
+      "description": "Simple Rust function with one caller.",
+      "repo_fixture": "../bakeoff_fixtures/rust/simple_fn_with_caller",
+      "query_or_symbol": "issue_invoice_simple",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "rust-pub-mod-tree-navigation",
+      "language": "rust",
+      "category": "pub_mod_tree_navigation",
+      "description": "Rust pub mod tree path resolution.",
+      "repo_fixture": "../bakeoff_fixtures/rust/pub_mod_tree_navigation",
+      "query_or_symbol": "issue_invoice_mod_tree",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing/adapters.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "rust-use-alias-resolution",
+      "language": "rust",
+      "category": "use_alias_resolution",
+      "description": "use alias resolution for a Rust function.",
+      "repo_fixture": "../bakeoff_fixtures/rust/use_alias_resolution",
+      "query_or_symbol": "issue_invoice_alias",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/consumer.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "rust-workspace-cross-crate-import",
+      "language": "rust",
+      "category": "workspace_cross_crate_import",
+      "description": "Workspace cross-crate import impact.",
+      "repo_fixture": "../bakeoff_fixtures/rust/workspace_cross_crate_import",
+      "query_or_symbol": "issue_invoice_workspace",
+      "mode": "blast-radius",
+      "expected_primary_file": "shared/src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "app/src/lib.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "rust-trait-implementation-caller",
+      "language": "rust",
+      "category": "trait_implementation_caller",
+      "description": "Caller located inside a trait implementation.",
+      "repo_fixture": "../bakeoff_fixtures/rust/trait_implementation_caller",
+      "query_or_symbol": "issue_invoice_trait",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "rust-test-function-association",
+      "language": "rust",
+      "category": "test_function_association",
+      "description": "#[test] function should appear in validation commands.",
+      "repo_fixture": "../bakeoff_fixtures/rust/test_function_association",
+      "query_or_symbol": "issue_invoice_tested",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/integration_checks.rs"
+      ],
+      "expected_validation_commands_contain": [
+        "cargo test"
+      ]
+    },
+    {
+      "id": "rust-tokio-test-association",
+      "language": "rust",
+      "category": "tokio_test_association",
+      "description": "#[tokio::test] association should be surfaced.",
+      "repo_fixture": "../bakeoff_fixtures/rust/tokio_test_association",
+      "query_or_symbol": "issue_invoice_async",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/async_checks.rs"
+      ],
+      "expected_validation_commands_contain": [
+        "cargo test"
+      ]
+    },
+    {
+      "id": "rust-scoped-identifier-call",
+      "language": "rust",
+      "category": "scoped_identifier_call",
+      "description": "Scoped identifier call via crate path.",
+      "repo_fixture": "../bakeoff_fixtures/rust/scoped_identifier_call",
+      "query_or_symbol": "issue_invoice_scoped",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "rust-glob-use-resolution",
+      "language": "rust",
+      "category": "glob_use_resolution",
+      "description": "Glob use should still resolve the target symbol.",
+      "repo_fixture": "../bakeoff_fixtures/rust/glob_use_resolution",
+      "query_or_symbol": "issue_invoice_glob",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/service.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "rust-multiple-same-named-symbols",
+      "language": "rust",
+      "category": "multiple_same_named_symbols",
+      "description": "Shared Invoice symbol should win over local same-named symbol.",
+      "repo_fixture": "../bakeoff_fixtures/rust/multiple_same_named_symbols",
+      "query_or_symbol": "Invoice",
+      "mode": "blast-radius",
+      "expected_primary_file": "shared/src/billing.rs",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 1
+      },
+      "expected_dependent_files": [
+        "app/src/lib.rs"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    }
+  ]
+}
