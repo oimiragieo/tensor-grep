@@ -2977,6 +2977,8 @@ def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_pat
     assert payload["tests"][0] == str(test_path.resolve())
     assert payload["test_matches"][0]["path"] == str(test_path.resolve())
     assert "test-graph" in payload["test_matches"][0]["reasons"]
+    assert payload["test_matches"][0]["association"]["edge_kind"] in {"import-graph", "hybrid"}
+    assert payload["test_matches"][0]["association"]["confidence"] in {"strong", "moderate"}
 
 
 def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers(tmp_path):
@@ -3087,6 +3089,8 @@ def test_tg_symbol_impact_prefers_tests_covering_more_central_files(tmp_path):
     ui_match = next(item for item in payload["test_matches"] if item["path"] == str(ui_test.resolve()))
     cli_match = next(item for item in payload["test_matches"] if item["path"] == str(cli_test.resolve()))
     assert ui_match["graph_score"] > cli_match["graph_score"]
+    assert "graph-derived" in ui_match["association"]["provenance"]
+    assert ui_match["association"]["confidence"] in {"strong", "moderate"}
 
 
 def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(tmp_path):

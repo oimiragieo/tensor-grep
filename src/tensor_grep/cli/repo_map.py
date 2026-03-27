@@ -1869,7 +1869,25 @@ def _context_tests(
             reasons.append("graph-centrality")
             score += max(1, round(graph_score * 10))
         if score > 0:
-            related.append(_match_record(current, score, reasons, graph_score if graph_score > 0.0 else None))
+            if import_bonus > 0 and stem in source_stems:
+                edge_kind = "hybrid"
+            elif import_bonus > 0:
+                edge_kind = "import-graph"
+            elif stem in source_stems:
+                edge_kind = "filename"
+            else:
+                edge_kind = "path"
+            if import_bonus > 0 or graph_score > 0.0:
+                confidence = "strong" if import_bonus > 0 and graph_score > 0.0 else "moderate"
+            else:
+                confidence = "weak"
+            match = _match_record(current, score, reasons, graph_score if graph_score > 0.0 else None)
+            match["association"] = {
+                "edge_kind": edge_kind,
+                "confidence": confidence,
+                "provenance": _provenance_from_reasons(reasons),
+            }
+            related.append(match)
     related.sort(key=lambda item: (-int(item["score"]), str(item["path"])))
     return related
 
@@ -3962,6 +3980,7 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
             "path": str(item["path"]),
             "score": int(item["score"]),
             "reasons": list(item["reasons"]),
+            "provenance": list(item.get("provenance", [])),
             **(
                 {"graph_score": float(item["graph_score"])}
                 if "graph_score" in item
@@ -3990,6 +4009,12 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
             "path": str(item["path"]),
             "score": int(item["score"]),
             "reasons": list(item["reasons"]),
+            "provenance": list(item.get("provenance", [])),
+            **(
+                {"association": dict(item["association"])}
+                if "association" in item
+                else {}
+            ),
             **(
                 {"graph_score": float(item["graph_score"])}
                 if "graph_score" in item
@@ -4001,7 +4026,17 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
     for current in related_tests:
         test_matches_by_path.setdefault(
             str(current),
-            {"path": str(current), "score": 1, "reasons": ["test-graph"]},
+            {
+                "path": str(current),
+                "score": 1,
+                "reasons": ["test-graph"],
+                "provenance": _provenance_from_reasons(["test-graph"]),
+                "association": {
+                    "edge_kind": "import-graph",
+                    "confidence": "moderate",
+                    "provenance": _provenance_from_reasons(["test-graph"]),
+                },
+            },
         )
 
     related_paths: list[str] = []

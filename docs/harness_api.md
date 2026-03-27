@@ -257,6 +257,12 @@ Each `file_matches[]` and `test_matches[]` object uses:
 | `reasons` | `array<string>` | Stable provenance labels such as `path`, `symbol`, `definition`, `import`, `import-graph`, `graph-centrality`, `filename`, or `test-graph`. |
 | `provenance` | `array<string>` | Normalized trust labels such as `parser-backed`, `graph-derived`, `filename-convention`, or `heuristic`. |
 
+Each `test_matches[]` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `association` | `object` | Test-association trust metadata with `edge_kind`, `confidence`, and normalized provenance labels. |
+
 Each `file_summaries[]` object uses:
 
 | Field | Type | Notes |
