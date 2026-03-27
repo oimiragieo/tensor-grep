@@ -4,6 +4,7 @@ import ast
 import json
 import math
 import re
+import tomllib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -30,6 +31,7 @@ _RENDER_PROFILES = {"full", "compact", "llm"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
 _JS_TS_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
+_RUST_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
 
 
 class _ValidationRunnerInfo(NamedTuple):
@@ -789,6 +791,455 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
     return bindings
 
 
+def _rust_mod_declarations(source: str) -> list[str]:
+    pattern = re.compile(
+        r"^\s*(?:pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;\s*$",
+        re.MULTILINE,
+    )
+    return [match.group(1).strip() for match in pattern.finditer(source)]
+
+
+def _rust_module_base_dir(module_file: Path) -> Path:
+    if module_file.name in {"lib.rs", "main.rs", "mod.rs"}:
+        return module_file.parent.resolve()
+    return (module_file.parent / module_file.stem).resolve()
+
+
+def _rust_module_file_for_declaration(module_file: Path, module_name: str) -> Path | None:
+    base_dir = _rust_module_base_dir(module_file)
+    candidates = [
+        (base_dir / f"{module_name}.rs").resolve(),
+        (base_dir / module_name / "mod.rs").resolve(),
+    ]
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def _build_rust_module_tree(
+    entry_path: Path,
+    *,
+    _prefix: tuple[str, ...] = (),
+    _visited: set[str] | None = None,
+) -> dict[str, str]:
+    normalized_entry = entry_path.expanduser().resolve()
+    visited = set() if _visited is None else set(_visited)
+    current_key = str(normalized_entry)
+    if current_key in visited:
+        return {}
+    visited.add(current_key)
+
+    try:
+        source = normalized_entry.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+
+    module_tree: dict[str, str] = {}
+    for module_name in _rust_mod_declarations(source):
+        module_file = _rust_module_file_for_declaration(normalized_entry, module_name)
+        if module_file is None:
+            continue
+        module_parts = (*_prefix, module_name)
+        module_tree["::".join(module_parts)] = str(module_file)
+        module_tree.update(
+            _build_rust_module_tree(
+                module_file,
+                _prefix=module_parts,
+                _visited=visited,
+            )
+        )
+    return module_tree
+
+
+def _normalize_rust_crate_name(name: str) -> str:
+    return str(name).strip().replace("-", "_")
+
+
+def _parse_rust_workspace_members(root: Path) -> dict[str, Any]:
+    cargo_toml = root / "Cargo.toml"
+    payload: dict[str, Any] = {
+        "exists": False,
+        "members": {},
+    }
+    if not cargo_toml.is_file():
+        return payload
+
+    try:
+        parsed = tomllib.loads(cargo_toml.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return payload
+
+    workspace = parsed.get("workspace", {})
+    if not isinstance(workspace, dict):
+        return payload
+
+    raw_members = workspace.get("members", [])
+    member_patterns = [raw_members] if isinstance(raw_members, str) else raw_members
+    if not isinstance(member_patterns, list):
+        return payload
+
+    members: dict[str, str] = {}
+    for member_pattern in member_patterns:
+        if not isinstance(member_pattern, str) or not member_pattern.strip():
+            continue
+        has_glob = any(token in member_pattern for token in {"*", "?", "["})
+        member_dirs = (
+            [candidate for candidate in root.glob(member_pattern) if candidate.is_dir()]
+            if has_glob
+            else [root / member_pattern]
+        )
+        for member_dir in member_dirs:
+            normalized_dir = member_dir.expanduser().resolve()
+            member_cargo = normalized_dir / "Cargo.toml"
+            if not member_cargo.is_file():
+                continue
+            crate_name = _normalize_rust_crate_name(normalized_dir.name)
+            try:
+                member_parsed = tomllib.loads(member_cargo.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+                member_parsed = {}
+            package = member_parsed.get("package", {})
+            if isinstance(package, dict):
+                package_name = package.get("name")
+                if isinstance(package_name, str) and package_name.strip():
+                    crate_name = _normalize_rust_crate_name(package_name)
+            entry_path = (normalized_dir / "src" / "lib.rs").resolve()
+            if not entry_path.is_file():
+                fallback_entry = (normalized_dir / "src" / "main.rs").resolve()
+                if fallback_entry.is_file():
+                    entry_path = fallback_entry
+                else:
+                    continue
+            members[crate_name] = str(entry_path)
+    if members:
+        payload["exists"] = True
+        payload["members"] = members
+    return payload
+
+
+def _prime_rust_repo_context(root: Path) -> dict[str, Any]:
+    normalized_root = root.expanduser().resolve()
+    context = {
+        "root": str(normalized_root),
+        "workspace": _parse_rust_workspace_members(normalized_root),
+        "mod_tree_cache": {},
+    }
+    _RUST_REPO_CONTEXTS[str(normalized_root)] = context
+    return context
+
+
+def _rust_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
+    normalized_root = _normalized_repo_root(repo_root)
+    if normalized_root is None:
+        return {
+            "root": None,
+            "workspace": {
+                "exists": False,
+                "members": {},
+            },
+            "mod_tree_cache": {},
+        }
+    cached = _RUST_REPO_CONTEXTS.get(str(normalized_root))
+    if cached is not None:
+        return cached
+    return _prime_rust_repo_context(normalized_root)
+
+
+def _rust_crate_entry_for_path(path: Path) -> Path | None:
+    normalized_path = path.expanduser().resolve()
+    candidates = [normalized_path.parent, *normalized_path.parents]
+    src_root = next((parent for parent in candidates if parent.name == "src"), None)
+    if src_root is None:
+        return None
+    lib_path = (src_root / "lib.rs").resolve()
+    if lib_path.is_file():
+        return lib_path
+    main_path = (src_root / "main.rs").resolve()
+    if main_path.is_file():
+        return main_path
+    if normalized_path.name in {"lib.rs", "main.rs"} and normalized_path.parent == src_root:
+        return normalized_path
+    return None
+
+
+def _rust_module_tree_for_entry(
+    entry_path: Path,
+    repo_root: Path | str | None = None,
+) -> dict[str, str]:
+    normalized_entry = entry_path.expanduser().resolve()
+    context = _rust_repo_context(repo_root if repo_root is not None else normalized_entry.parent)
+    cache_key = str(normalized_entry)
+    cached = context["mod_tree_cache"].get(cache_key)
+    if cached is not None:
+        return dict(cached)
+    module_tree = _build_rust_module_tree(normalized_entry)
+    context["mod_tree_cache"][cache_key] = dict(module_tree)
+    return module_tree
+
+
+def _rust_module_path_for_definition(
+    definition_path: Path,
+    entry_path: Path,
+) -> tuple[str, ...] | None:
+    normalized_definition = definition_path.expanduser().resolve()
+    normalized_entry = entry_path.expanduser().resolve()
+    if normalized_definition == normalized_entry:
+        return ()
+    try:
+        relative_path = normalized_definition.relative_to(normalized_entry.parent)
+    except ValueError:
+        return None
+    if relative_path.suffix != ".rs":
+        return None
+    parts = list(relative_path.parts)
+    if parts[-1] in {"lib.rs", "main.rs"}:
+        return ()
+    if parts[-1] == "mod.rs":
+        parts = parts[:-1]
+    else:
+        parts[-1] = Path(parts[-1]).stem
+    return tuple(part for part in parts if part)
+
+
+def _rust_workspace_entry_for_crate(
+    crate_name: str,
+    repo_root: Path | str | None = None,
+) -> Path | None:
+    context = _rust_repo_context(repo_root)
+    members = context.get("workspace", {}).get("members", {})
+    member_path = members.get(_normalize_rust_crate_name(crate_name))
+    return Path(str(member_path)).expanduser().resolve() if member_path else None
+
+
+def _rust_module_tree_lookup(
+    entry_path: Path,
+    module_parts: list[str],
+    repo_root: Path | str | None = None,
+) -> Path | None:
+    if not module_parts:
+        return entry_path.expanduser().resolve()
+    module_tree = _rust_module_tree_for_entry(entry_path, repo_root)
+    resolved = module_tree.get("::".join(module_parts))
+    return Path(resolved).expanduser().resolve() if resolved else None
+
+
+def _rust_partial_candidate_paths(
+    module_name: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    normalized_root = _normalized_repo_root(repo_root)
+    if normalized_root is None:
+        return []
+
+    normalized_definition = Path(definition_path).expanduser().resolve()
+    inferred_candidates: list[dict[str, Any]] = []
+    module_parts = [part.strip() for part in module_name.split("::") if part.strip()]
+    if not module_parts or module_parts[0] in {"crate", "self", "super"}:
+        return inferred_candidates
+
+    external_entry = (normalized_root / module_parts[0] / "src" / "lib.rs").resolve()
+    if not external_entry.is_file():
+        fallback_entry = (normalized_root / module_parts[0] / "src" / "main.rs").resolve()
+        if fallback_entry.is_file():
+            external_entry = fallback_entry
+        else:
+            return inferred_candidates
+
+    candidate_path = _rust_module_tree_lookup(external_entry, module_parts[1:], normalized_root)
+    if candidate_path is None and not module_parts[1:]:
+        candidate_path = external_entry
+    if candidate_path is not None and candidate_path == normalized_definition:
+        provenance = ["partial-resolution"]
+        if module_parts[1:]:
+            provenance.append("mod-declaration")
+        inferred_candidates.append(
+            {
+                "path": str(candidate_path),
+                "provenance": provenance,
+                "confidence": 0.2,
+            }
+        )
+    return inferred_candidates
+
+
+def _rust_module_candidates(
+    importer_path: Path,
+    module_name: str,
+    repo_root: Path | str | None = None,
+) -> list[dict[str, Any]]:
+    parts = [part.strip() for part in module_name.split("::") if part.strip()]
+    if not parts:
+        return []
+
+    normalized_root = _normalized_repo_root(repo_root)
+    normalized_importer = importer_path.expanduser().resolve()
+    candidates: list[dict[str, Any]] = []
+
+    def _add_candidate(path: Path | None, provenance: list[str], confidence: float) -> None:
+        if path is None:
+            return
+        resolved_path = str(path.expanduser().resolve())
+        if any(str(current["path"]) == resolved_path for current in candidates):
+            return
+        candidates.append(
+            {
+                "path": resolved_path,
+                "provenance": list(provenance),
+                "confidence": float(confidence),
+            }
+        )
+
+    crate_entry = _rust_crate_entry_for_path(normalized_importer)
+    if parts[0] == "crate" and crate_entry is not None:
+        _add_candidate(
+            _rust_module_tree_lookup(crate_entry, parts[1:], normalized_root),
+            ["mod-declaration"] if parts[1:] else [],
+            0.95,
+        )
+    elif normalized_root is not None:
+        workspace_entry = _rust_workspace_entry_for_crate(parts[0], normalized_root)
+        if workspace_entry is not None:
+            _add_candidate(
+                _rust_module_tree_lookup(workspace_entry, parts[1:], normalized_root),
+                ["workspace-crate", *(["mod-declaration"] if parts[1:] else [])],
+                0.92,
+            )
+
+    start = normalized_importer.parent
+    while start.name == "":
+        start = start.parent
+
+    heuristic_parts = list(parts)
+    if heuristic_parts[0] == "crate":
+        crate_root = next(
+            (
+                parent
+                for parent in [normalized_importer.parent, *normalized_importer.parents]
+                if parent.name == "src"
+            ),
+            None,
+        )
+        if crate_root is not None:
+            start = crate_root.resolve()
+        heuristic_parts = heuristic_parts[1:]
+    else:
+        while heuristic_parts and heuristic_parts[0] == "super":
+            start = start.parent
+            heuristic_parts = heuristic_parts[1:]
+        if heuristic_parts and heuristic_parts[0] == "self":
+            heuristic_parts = heuristic_parts[1:]
+
+    if heuristic_parts:
+        base = start.joinpath(*heuristic_parts).resolve()
+        _add_candidate(base.with_suffix(".rs"), [], 1.0)
+        _add_candidate(base / "mod.rs", [], 1.0)
+
+    return candidates
+
+
+def _rust_module_match_details(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    resolved_definition = str(Path(definition_path).expanduser().resolve())
+    module_parts = [part.strip() for part in module_name.split("::") if part.strip()]
+    for candidate in _rust_module_candidates(importer_path, module_name, repo_root):
+        if str(candidate.get("path")) == resolved_definition:
+            return {
+                "matched": True,
+                "provenance": list(candidate.get("provenance", [])),
+                "confidence": float(candidate.get("confidence", 1.0)),
+            }
+
+    for candidate in _rust_partial_candidate_paths(module_name, definition_path, repo_root):
+        if str(candidate.get("path")) == resolved_definition:
+            return {
+                "matched": True,
+                "provenance": list(candidate.get("provenance", [])),
+                "confidence": float(candidate.get("confidence", 0.2)),
+            }
+
+    if module_parts and module_parts[0] in {"crate", "self", "super"}:
+        return {"matched": False, "provenance": [], "confidence": 0.0}
+    if module_parts and _rust_workspace_entry_for_crate(module_parts[0], repo_root) is not None:
+        return {"matched": False, "provenance": [], "confidence": 0.0}
+    if _module_path_matches_definition(module_name, definition_path):
+        return {
+            "matched": True,
+            "provenance": ["partial-resolution"],
+            "confidence": 0.2,
+        }
+    return {"matched": False, "provenance": [], "confidence": 0.0}
+
+
+def _rust_use_binding_match_details(
+    importer_path: Path,
+    binding: dict[str, Any],
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any] | None:
+    imported_name = str(binding.get("imported", ""))
+    local_name = str(binding.get("local", ""))
+    definition_stem = Path(definition_path).with_suffix("").name.lower()
+    if not (
+        bool(binding.get("wildcard"))
+        or imported_name.lower() == symbol.lower()
+        or local_name.lower() == symbol.lower()
+        or imported_name.lower() == definition_stem
+    ):
+        return None
+
+    for module_name in [str(binding.get("module", "")), str(binding.get("path", ""))]:
+        if not module_name:
+            continue
+        details = _rust_module_match_details(
+            importer_path,
+            module_name,
+            definition_path,
+            repo_root,
+        )
+        if details["matched"]:
+            return {
+                "provenance": list(details.get("provenance", [])),
+                "confidence": float(details.get("confidence", 1.0)),
+            }
+    return None
+
+
+def _rust_resolve_use_binding(
+    importer_path: Path,
+    binding: dict[str, Any],
+    symbol: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any] | None:
+    imported_name = str(binding.get("imported", ""))
+    local_name = str(binding.get("local", ""))
+    wildcard = bool(binding.get("wildcard"))
+    if not (
+        wildcard
+        or imported_name.lower() == symbol.lower()
+        or local_name.lower() == symbol.lower()
+    ):
+        return None
+
+    module_names = [str(binding.get("module", "")), str(binding.get("path", ""))]
+    for module_name in module_names:
+        if not module_name:
+            continue
+        for candidate in _rust_module_candidates(importer_path, module_name, repo_root):
+            if not str(candidate.get("path")):
+                continue
+            return {
+                "symbol": symbol,
+                "definition_file": str(candidate["path"]),
+                "provenance": list(candidate.get("provenance", [])),
+                "confidence": float(candidate.get("confidence", 1.0)),
+            }
+    return None
+
+
 def _definition_module_parts(path: str) -> list[str]:
     raw_parts = [part.lower() for part in Path(path).with_suffix("").parts if part]
     parts = [part for part in raw_parts if part not in {".", ".."} and not part.endswith(":\\")]
@@ -834,41 +1285,16 @@ def _rust_module_matches_definition(
     importer_path: Path,
     module_name: str,
     definition_path: str,
+    repo_root: Path | str | None = None,
 ) -> bool:
-    parts = [part.strip() for part in module_name.split("::") if part.strip()]
-    if not parts:
-        return False
-
-    start = importer_path.parent.resolve()
-    while start.name == "":
-        start = start.parent
-
-    if parts[0] == "crate":
-        crate_root = next(
-            (parent for parent in [importer_path.parent, *importer_path.parents] if parent.name == "src"),
-            None,
-        )
-        if crate_root is not None:
-            start = crate_root.resolve()
-        parts = parts[1:]
-    else:
-        while parts and parts[0] == "super":
-            start = start.parent
-            parts = parts[1:]
-        if parts and parts[0] == "self":
-            parts = parts[1:]
-
-    if not parts:
-        return False
-
-    base = start.joinpath(*parts).resolve()
-    candidates = [base.with_suffix(".rs"), base / "mod.rs"]
-    resolved_definition = str(Path(definition_path).resolve())
-    if any(str(candidate) == resolved_definition for candidate in candidates):
-        return True
-    if module_name.startswith(("crate::", "self::", "super::")):
-        return False
-    return _module_path_matches_definition(module_name, definition_path)
+    return bool(
+        _rust_module_match_details(
+            importer_path,
+            module_name,
+            definition_path,
+            repo_root,
+        )["matched"]
+    )
 
 
 def _file_imports_symbol_from_definition(
@@ -941,22 +1367,15 @@ def _file_imports_symbol_from_definition(
 
     if file_path.suffix in _RUST_SUFFIXES:
         bindings = _rust_use_bindings(source)
-        definition_stem = Path(definition_path).with_suffix("").name.lower()
         return any(
-            (
-                _rust_module_matches_definition(
-                    file_path, str(binding.get("module", "")), definition_path
-                )
-                or _rust_module_matches_definition(
-                    file_path, str(binding.get("path", "")), definition_path
-                )
+            _rust_use_binding_match_details(
+                file_path,
+                binding,
+                symbol,
+                definition_path,
+                repo_root,
             )
-            and (
-                bool(binding.get("wildcard"))
-                or str(binding.get("imported", "")).lower() == symbol.lower()
-                or str(binding.get("local", "")).lower() == symbol.lower()
-                or str(binding.get("imported", "")).lower() == definition_stem
-            )
+            is not None
             for binding in bindings
         )
 
@@ -1110,35 +1529,29 @@ def _rust_import_update_target(
     file_path: Path,
     symbol: str,
     definition_path: str,
+    repo_root: Path | str | None = None,
 ) -> dict[str, Any] | None:
     try:
         source = file_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
 
-    definition_stem = Path(definition_path).with_suffix("").name.lower()
     for binding in _rust_use_bindings(source):
-        module_name = str(binding.get("module", ""))
-        imported_name = str(binding.get("imported", ""))
-        local_name = str(binding.get("local", ""))
-        imported_path = str(binding.get("path", ""))
-        wildcard = bool(binding.get("wildcard"))
-        if not (
-            _rust_module_matches_definition(file_path, module_name, definition_path)
-            or _rust_module_matches_definition(file_path, imported_path, definition_path)
-        ):
-            continue
-        if not (
-            wildcard
-            or imported_name.lower() == symbol.lower()
-            or local_name.lower() == symbol.lower()
-            or imported_name.lower() == definition_stem
+        if (
+            _rust_use_binding_match_details(
+                file_path,
+                binding,
+                symbol,
+                definition_path,
+                repo_root,
+            )
+            is None
         ):
             continue
         return {
             "start_line": int(binding.get("start_line", 0)),
             "end_line": int(binding.get("end_line", binding.get("start_line", 0))),
-            "module": module_name or imported_path,
+            "module": str(binding.get("module", "")) or str(binding.get("path", "")),
             "provenance": "heuristic",
         }
     return None
@@ -1157,7 +1570,7 @@ def _import_update_target(
     if file_path.suffix in _JS_TS_SUFFIXES:
         return _js_ts_import_update_target(file_path, symbol, definition_path, repo_root)
     if file_path.suffix in _RUST_SUFFIXES:
-        return _rust_import_update_target(file_path, symbol, definition_path)
+        return _rust_import_update_target(file_path, symbol, definition_path, repo_root)
     return None
 
 
@@ -1761,7 +2174,9 @@ def _js_ts_references_and_calls(
 
 
 def _rust_references_and_calls(
-    path: Path, symbol: str
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if path.suffix not in _RUST_SUFFIXES:
         return [], []
@@ -1780,13 +2195,16 @@ def _rust_references_and_calls(
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
     bindings = _rust_use_bindings(source)
-    local_names = {
-        str(binding["local"])
-        for binding in bindings
-        if not bool(binding.get("wildcard")) and str(binding.get("imported", "")) == symbol
-    }
-    if any(bool(binding.get("wildcard")) for binding in bindings):
-        local_names.add(symbol)
+    local_name_resolution_by_name: dict[str, dict[str, Any]] = {}
+    for binding in bindings:
+        resolved_import = _rust_resolve_use_binding(path, binding, symbol, repo_root)
+        if resolved_import is None:
+            continue
+        local_name = str(binding.get("local", "") or binding.get("imported", "") or symbol)
+        local_name_resolution_by_name[local_name] = dict(resolved_import)
+        if bool(binding.get("wildcard")):
+            local_name_resolution_by_name.setdefault(symbol, dict(resolved_import))
+    local_names = {name for name in local_name_resolution_by_name if name}
 
     def _node_text(node: Any) -> str:
         return source[node.start_byte : node.end_byte]
@@ -1805,6 +2223,7 @@ def _rust_references_and_calls(
         node_type = node.type
         if node_type == "identifier":
             node_text = _node_text(node)
+            alias_resolution = local_name_resolution_by_name.get(node_text)
             if (
                 (node_text == symbol or node_text in local_names)
                 and not _is_definition_identifier(node)
@@ -1817,15 +2236,29 @@ def _rust_references_and_calls(
                         "file": str(path),
                         "line": node.start_point[0] + 1,
                         "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    alias_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    alias_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if alias_resolution
+                            else {}
+                        ),
                     }
                 )
         elif node_type == "call_expression":
             function_node = node.child_by_field_name("function")
             matched = False
+            call_resolution: dict[str, Any] | None = None
             if function_node is not None:
                 if function_node.type == "identifier":
                     function_name = _node_text(function_node)
                     matched = function_name == symbol or function_name in local_names
+                    call_resolution = local_name_resolution_by_name.get(function_name)
                 elif function_node.type == "field_expression":
                     field_node = function_node.child_by_field_name("field")
                     matched = bool(field_node is not None and _node_text(field_node) == symbol)
@@ -1840,6 +2273,18 @@ def _rust_references_and_calls(
                         "file": str(path),
                         "line": node.start_point[0] + 1,
                         "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    call_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    call_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if call_resolution
+                            else {}
+                        ),
                     }
                 )
                 calls.append(
@@ -1849,6 +2294,18 @@ def _rust_references_and_calls(
                         "file": str(path),
                         "line": node.start_point[0] + 1,
                         "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    call_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    call_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if call_resolution
+                            else {}
+                        ),
                     }
                 )
         for child in node.children:
@@ -2142,7 +2599,9 @@ def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
 
-    _prime_js_ts_repo_context(root if root.is_dir() else root.parent)
+    context_root = root if root.is_dir() else root.parent
+    _prime_js_ts_repo_context(context_root)
+    _prime_rust_repo_context(context_root)
     payload = _envelope(root)
     all_files = _iter_repo_files(root)
     tests = [str(current) for current in all_files if _is_test_file(current)]
@@ -2178,7 +2637,9 @@ def build_repo_map_incremental(
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
 
-    _prime_js_ts_repo_context(root if root.is_dir() else root.parent)
+    context_root = root if root.is_dir() else root.parent
+    _prime_js_ts_repo_context(context_root)
+    _prime_rust_repo_context(context_root)
     normalized_changeset = _normalized_changeset_paths(root, changeset)
     changed_files = set(normalized_changeset["added"]) | set(normalized_changeset["modified"])
     previous_paths = {
@@ -5224,7 +5685,7 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
             if not current_refs:
                 current_refs, _ = _regex_references_and_calls(current, symbol)
         elif current.suffix in _RUST_SUFFIXES:
-            current_refs, current_calls = _rust_references_and_calls(current, symbol)
+            current_refs, current_calls = _rust_references_and_calls(current, symbol, repo_root)
             if not current_refs and not current_calls:
                 current_refs, current_calls = _regex_references_and_calls(current, symbol)
             rust_call_refs = [
@@ -5235,6 +5696,16 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
                     "line": int(call["line"]),
                     "text": str(call["text"]),
                     "provenance": current_provenance,
+                    **(
+                        {
+                            "resolution_provenance": list(call.get("resolution_provenance", [])),
+                            "resolution_confidence": float(
+                                call.get("resolution_confidence", 0.95)
+                            ),
+                        }
+                        if "resolution_provenance" in call
+                        else {}
+                    ),
                 }
                 for call in current_calls
             ]
@@ -5297,7 +5768,7 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
             if not current_calls:
                 _, current_calls = _regex_references_and_calls(current, symbol)
         elif current.suffix in _RUST_SUFFIXES:
-            _, current_calls = _rust_references_and_calls(current, symbol)
+            _, current_calls = _rust_references_and_calls(current, symbol, repo_root)
             if not current_calls:
                 _, current_calls = _regex_references_and_calls(current, symbol)
         else:
