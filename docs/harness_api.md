@@ -246,6 +246,7 @@ The `coverage_summary` object may additionally include:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `evidence_counts` | `object` | Query-level counts for `parser_backed`, `graph_derived`, and `heuristic` evidence observed in the ranked payload. |
+| `evidence_ratios` | `object` | Query-level normalized ratios for the same evidence classes, useful when result sizes differ across queries. |
 
 Each ranked `symbols[]` object extends the Repo Map JSON symbol shape with:
 

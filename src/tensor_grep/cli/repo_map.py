@@ -1628,6 +1628,18 @@ def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
     for item in payload.get("caller_tree", []):
         if isinstance(item, dict):
             add_from_value(item.get("provenance"))
+    total_evidence = sum(evidence_counts.values())
+    if total_evidence > 0:
+        evidence_ratios = {
+            key: round(value / total_evidence, 6)
+            for key, value in evidence_counts.items()
+        }
+    else:
+        evidence_ratios = {
+            "parser_backed": 0.0,
+            "graph_derived": 0.0,
+            "heuristic": 0.0,
+        }
     return {
         "language_scope": language_scope,
         "parser_backed_fields": [
@@ -1642,6 +1654,7 @@ def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
         ],
         "graph_completeness": str(payload.get("graph_completeness", "moderate")),
         "evidence_counts": evidence_counts,
+        "evidence_ratios": evidence_ratios,
     }
 
 

@@ -441,6 +441,9 @@ def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Pat
     assert {"parser_backed", "graph_derived", "heuristic"} <= set(
         payload["coverage_summary"]["evidence_counts"]
     )
+    assert {"parser_backed", "graph_derived", "heuristic"} <= set(
+        payload["coverage_summary"]["evidence_ratios"]
+    )
     assert payload["coverage_summary"]["evidence_counts"]["parser_backed"] >= 1
 
 
