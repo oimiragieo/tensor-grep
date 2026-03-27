@@ -3677,8 +3677,10 @@ def _suggested_edit_confidence(score: int, provenance: str | None = None) -> flo
         return 0.0
     normalized_provenance = str(provenance or "").strip().lower()
     adjusted_score = score
-    if normalized_provenance == "heuristic":
+    if normalized_provenance in {"heuristic", "regex-heuristic", "filename-convention"}:
         adjusted_score = max(1, score - 3)
+    elif normalized_provenance == "graph-derived":
+        adjusted_score = max(1, score - 2)
     return _confidence_from_score(adjusted_score)
 
 
@@ -3689,62 +3691,212 @@ def _import_update_rationale(symbol: str, module_name: str) -> str:
     )
 
 
+def _caller_update_rationale(symbol: str, line_number: int) -> str:
+    return (
+        f"calls {symbol}() on line {line_number}; "
+        f"if {symbol}'s signature changes, this call site must be updated"
+    )
+
+
+def _suggested_edit_base_entry(current: dict[str, Any]) -> dict[str, Any]:
+    file_path = str(current.get("file", ""))
+    reasons = list(current.get("reasons", []))
+    edit_kind = "caller-update" if "caller" in reasons else "dependency-update"
+    provenance = _symbol_navigation_provenance_for_path(file_path) if file_path else "heuristic"
+    return {
+        "file": file_path,
+        "symbol": str(current.get("symbol", "")),
+        "start_line": int(current.get("start_line", 0)),
+        "end_line": int(current.get("end_line", 0)),
+        "edit_kind": edit_kind,
+        "rationale": str(
+            current.get(
+                "rationale",
+                _span_rationale(
+                    str(current.get("symbol", "")),
+                    reasons,
+                    int(current.get("depth", 0)),
+                ),
+            )
+        ),
+        "provenance": provenance,
+        "confidence": _suggested_edit_confidence(int(current.get("score", 0)), provenance),
+    }
+
+
+def _caller_update_targets_for_span(
+    current: dict[str, Any],
+    callers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    current_file = str(current.get("file", ""))
+    start_line = int(current.get("start_line", 0))
+    end_line = int(current.get("end_line", start_line))
+    if not current_file or start_line <= 0 or end_line < start_line:
+        return []
+
+    targets_by_line: dict[int, dict[str, Any]] = {}
+    for caller in callers:
+        if str(caller.get("file", "")) != current_file:
+            continue
+        line_number = int(caller.get("line", 0))
+        if line_number < start_line or line_number > end_line or line_number <= 0:
+            continue
+        provenance = str(
+            caller.get("provenance", _symbol_navigation_provenance_for_path(current_file))
+        )
+        candidate = {
+            "start_line": line_number,
+            "end_line": line_number,
+            "provenance": provenance,
+        }
+        existing = targets_by_line.get(line_number)
+        if existing is None or float(
+            _suggested_edit_confidence(10, provenance)
+        ) > float(_suggested_edit_confidence(10, str(existing.get("provenance", "")))):
+            targets_by_line[line_number] = candidate
+
+    return [targets_by_line[line] for line in sorted(targets_by_line)]
+
+
+def _ambiguous_suggested_edit_alternatives(
+    primary_symbol: dict[str, Any] | None,
+    definitions: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    if primary_symbol is None:
+        return []
+    primary_name = str(primary_symbol.get("name", ""))
+    primary_file = str(primary_symbol.get("file", ""))
+    alternatives: dict[tuple[str, str], dict[str, str]] = {}
+    for current in definitions:
+        current_file = str(current.get("file", ""))
+        current_name = str(current.get("name", ""))
+        if not current_file or not current_name:
+            continue
+        if current_name != primary_name:
+            continue
+        if current_file == primary_file:
+            continue
+        key = (current_file, current_name)
+        alternatives[key] = {"file": current_file, "symbol": current_name}
+    return [alternatives[key] for key in sorted(alternatives)]
+
+
+def _suggested_edit_priority(entry: dict[str, Any]) -> tuple[int, float, int, int, str, str]:
+    edit_kind = str(entry.get("edit_kind", "dependency-update"))
+    kind_priority = {
+        "caller-update": 0,
+        "import-update": 1,
+        "dependency-update": 2,
+    }.get(edit_kind, 3)
+    start_line = int(entry.get("start_line", 0))
+    end_line = int(entry.get("end_line", start_line))
+    return (
+        kind_priority,
+        -float(entry.get("confidence", 0.0)),
+        max(0, end_line - start_line),
+        0 if bool(entry.get("ambiguous")) else 1,
+        str(entry.get("symbol", "")),
+        str(entry.get("rationale", "")),
+    )
+
+
+def _deduplicate_suggested_edits(suggestions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ordered_keys: list[tuple[str, int]] = []
+    deduped: dict[tuple[str, int], dict[str, Any]] = {}
+    for entry in suggestions:
+        file_path = str(entry.get("file", ""))
+        start_line = int(entry.get("start_line", 0))
+        if not file_path or start_line <= 0:
+            continue
+        key = (file_path, start_line)
+        existing = deduped.get(key)
+        if existing is None:
+            ordered_keys.append(key)
+            deduped[key] = dict(entry)
+            continue
+        if _suggested_edit_priority(entry) < _suggested_edit_priority(existing):
+            deduped[key] = dict(entry)
+    return [deduped[key] for key in ordered_keys]
+
+
 def _suggested_edits_from_related_spans(
     related_spans: list[dict[str, Any]],
     *,
     primary_symbol: dict[str, Any] | None = None,
+    definitions: list[dict[str, Any]] | None = None,
+    callers: list[dict[str, Any]] | None = None,
     max_edits: int,
 ) -> list[dict[str, Any]]:
     suggestions: list[dict[str, Any]] = []
     processed_spans: list[dict[str, Any]] = []
+    resolved_callers = [dict(current) for current in callers or []]
+    resolved_definitions = [dict(current) for current in definitions or []]
     for current in related_spans:
         reasons = list(current.get("reasons", []))
-        edit_kind = "caller-update" if "caller" in reasons else "dependency-update"
-        suggestions.append(
-            {
-                "file": str(current.get("file", "")),
-                "symbol": str(current.get("symbol", "")),
-                "start_line": int(current.get("start_line", 0)),
-                "end_line": int(current.get("end_line", 0)),
-                "edit_kind": edit_kind,
-                "rationale": str(
-                    current.get(
-                        "rationale",
-                        _span_rationale(
-                            str(current.get("symbol", "")),
-                            reasons,
-                            int(current.get("depth", 0)),
-                        ),
-                    )
-                ),
-                "confidence": _suggested_edit_confidence(int(current.get("score", 0))),
-            }
+        if "caller" not in reasons:
+            suggestions.append(_suggested_edit_base_entry(current))
+            processed_spans.append(current)
+            continue
+
+        current_file = str(current.get("file", ""))
+        score = int(current.get("score", 0))
+        call_targets = _caller_update_targets_for_span(current, resolved_callers)
+        ambiguous_alternatives = _ambiguous_suggested_edit_alternatives(
+            primary_symbol,
+            resolved_definitions,
         )
+        if call_targets and primary_symbol is not None:
+            primary_name = str(primary_symbol.get("name", ""))
+            for target in call_targets:
+                entry: dict[str, Any] = {
+                    "file": current_file,
+                    "symbol": str(current.get("symbol", "")),
+                    "start_line": int(target["start_line"]),
+                    "end_line": int(target["end_line"]),
+                    "edit_kind": "caller-update",
+                    "rationale": _caller_update_rationale(
+                        primary_name,
+                        int(target["start_line"]),
+                    ),
+                    "provenance": str(target.get("provenance", "heuristic")),
+                    "confidence": _suggested_edit_confidence(
+                        score,
+                        str(target.get("provenance", "heuristic")),
+                    ),
+                }
+                if ambiguous_alternatives:
+                    entry["ambiguous"] = True
+                    entry["alternatives"] = ambiguous_alternatives
+                suggestions.append(entry)
+        else:
+            fallback_entry = _suggested_edit_base_entry(current)
+            if ambiguous_alternatives:
+                fallback_entry["ambiguous"] = True
+                fallback_entry["alternatives"] = ambiguous_alternatives
+            suggestions.append(fallback_entry)
         processed_spans.append(current)
-        if len(suggestions) >= max(1, max_edits):
-            break
 
     if primary_symbol is None:
-        return suggestions
+        return _deduplicate_suggested_edits(suggestions)
 
     primary_name = str(primary_symbol.get("name", ""))
     definition_path = str(primary_symbol.get("file", ""))
     if not primary_name or not definition_path:
-        return suggestions
+        return _deduplicate_suggested_edits(suggestions)
 
     import_updates_by_key: dict[tuple[str, int, int], dict[str, Any]] = {}
     for current in processed_spans:
         current_file = str(current.get("file", ""))
         if not current_file:
             continue
-        target = _import_update_target(Path(current_file), primary_name, definition_path)
-        if target is None:
+        import_target = _import_update_target(Path(current_file), primary_name, definition_path)
+        if import_target is None:
             continue
-        start_line = int(target.get("start_line", 0))
-        end_line = int(target.get("end_line", start_line))
-        provenance = str(target.get("provenance", "heuristic"))
-        module_name = str(target.get("module", Path(definition_path).stem))
-        entry: dict[str, Any] = {
+        start_line = int(import_target.get("start_line", 0))
+        end_line = int(import_target.get("end_line", start_line))
+        provenance = str(import_target.get("provenance", "heuristic"))
+        module_name = str(import_target.get("module", Path(definition_path).stem))
+        import_entry: dict[str, Any] = {
             "file": current_file,
             "symbol": primary_name,
             "start_line": start_line,
@@ -3756,11 +3908,11 @@ def _suggested_edits_from_related_spans(
         }
         key = (current_file, start_line, end_line)
         existing = import_updates_by_key.get(key)
-        if existing is None or float(entry["confidence"]) > float(existing["confidence"]):
-            import_updates_by_key[key] = entry
+        if existing is None or float(import_entry["confidence"]) > float(existing["confidence"]):
+            import_updates_by_key[key] = import_entry
 
     suggestions.extend(import_updates_by_key.values())
-    return suggestions
+    return _deduplicate_suggested_edits(suggestions)
 
 
 def _preferred_edit_anchor_symbol(
@@ -3899,6 +4051,12 @@ def _build_edit_plan_seed(
     coverage_summary = dict(
         payload.get("coverage_summary", _coverage_summary(payload))
     )
+    suggested_edit_primary_symbol = edit_anchor_symbol or primary_symbol
+    suggested_edit_definitions = (
+        list(radius_payload.get("definitions", []))
+        if radius_payload is not None
+        else ([suggested_edit_primary_symbol] if suggested_edit_primary_symbol is not None else [])
+    )
 
     return {
         "primary_file": primary_file,
@@ -3931,7 +4089,9 @@ def _build_edit_plan_seed(
         "related_spans": related_spans,
         "suggested_edits": _suggested_edits_from_related_spans(
             related_spans,
-            primary_symbol=primary_symbol,
+            primary_symbol=suggested_edit_primary_symbol,
+            definitions=suggested_edit_definitions,
+            callers=list(radius_payload.get("callers", [])) if radius_payload is not None else [],
             max_edits=max_files,
         ),
         "dependency_trust": dependency_trust,

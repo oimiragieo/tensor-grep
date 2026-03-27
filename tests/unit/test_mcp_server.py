@@ -2205,6 +2205,46 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert "create_invoice" in payload["rendered_context"]
 
 
+def test_tg_context_render_includes_exact_caller_update_lines(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        "def create_invoice(total):\n"
+        "    return total + 1\n",
+        encoding="utf-8",
+    )
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def build_receipt(total):\n"
+        "    first = create_invoice(total)\n"
+        "    return create_invoice(first)\n",
+        encoding="utf-8",
+    )
+
+    payload = json.loads(mcp_server.tg_context_render("create invoice", str(project)))
+
+    caller_updates = [
+        dict(current)
+        for current in payload["edit_plan_seed"]["suggested_edits"]
+        if current["file"] == str(service_path.resolve()) and current["edit_kind"] == "caller-update"
+    ]
+    assert [(entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates] == [
+        ("build_receipt", 4, 4),
+        ("build_receipt", 5, 5),
+    ]
+    for entry in caller_updates:
+        assert entry["provenance"] == "python-ast"
+        assert 0.0 < entry["confidence"] <= 1.0
+        assert f"calls create_invoice() on line {entry['start_line']}" in entry["rationale"]
+
+
 def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
     from tensor_grep.cli import mcp_server
 

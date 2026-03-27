@@ -63,7 +63,7 @@ def test_python_import_update_targets_exact_import_statement_line(
 
     caller_update = _suggested_edit(seed, file_path=src_dir / "service.py", edit_kind="caller-update")
     assert caller_update["symbol"] == "build_receipt"
-    assert caller_update["start_line"] == 3
+    assert caller_update["start_line"] == 4
     assert caller_update["end_line"] == 4
 
 
