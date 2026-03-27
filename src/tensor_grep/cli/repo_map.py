@@ -214,15 +214,24 @@ def _node_has_ancestor_type(node: Any, ancestor_types: set[str]) -> bool:
     return False
 
 
-def _js_ts_named_import_bindings(source: str) -> list[dict[str, str]]:
-    bindings: list[dict[str, str]] = []
+def _line_span_from_offsets(source: str, start_offset: int, end_offset: int) -> tuple[int, int]:
+    start_line = source.count("\n", 0, max(0, start_offset)) + 1
+    normalized_end = max(0, end_offset - 1)
+    end_line = source.count("\n", 0, normalized_end) + 1
+    return start_line, max(start_line, end_line)
+
+
+def _js_ts_named_import_bindings(source: str) -> list[dict[str, Any]]:
+    bindings: list[dict[str, Any]] = []
     pattern = re.compile(
-        r"(?:import|export)\s+(?:type\s+)?\{(?P<specifiers>[^}]+)\}\s*from\s*[\"'](?P<module>[^\"']+)[\"']",
+        r"(?P<statement_kind>import|export)\s+(?:type\s+)?\{(?P<specifiers>[^}]+)\}\s*from\s*[\"'](?P<module>[^\"']+)[\"']",
         re.MULTILINE | re.DOTALL,
     )
     for match in pattern.finditer(source):
+        start_line, end_line = _line_span_from_offsets(source, match.start(), match.end())
         module_name = match.group("module").strip()
         specifiers = match.group("specifiers")
+        statement_kind = match.group("statement_kind").strip()
         for raw_specifier in specifiers.split(","):
             specifier = raw_specifier.strip()
             if not specifier:
@@ -238,6 +247,9 @@ def _js_ts_named_import_bindings(source: str) -> list[dict[str, str]]:
                         "module": module_name,
                         "imported": imported,
                         "local": local,
+                        "statement_kind": statement_kind,
+                        "start_line": start_line,
+                        "end_line": end_line,
                     }
                 )
     return bindings
@@ -318,6 +330,7 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
     bindings: list[dict[str, Any]] = []
     pattern = re.compile(r"(?:pub\s+)?use\s+([^;]+);", re.MULTILINE | re.DOTALL)
     for match in pattern.finditer(source):
+        start_line, end_line = _line_span_from_offsets(source, match.start(), match.end())
         for item in _flatten_rust_use_items(match.group(1)):
             normalized = item.strip()
             if not normalized:
@@ -327,6 +340,8 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
                     {
                         "module": normalized[:-3].strip(),
                         "wildcard": True,
+                        "start_line": start_line,
+                        "end_line": end_line,
                     }
                 )
                 continue
@@ -350,6 +365,8 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
                     "local": local_name.strip(),
                     "path": imported_path.strip(),
                     "wildcard": False,
+                    "start_line": start_line,
+                    "end_line": end_line,
                 }
             )
     return bindings
@@ -504,6 +521,157 @@ def _file_imports_symbol_from_definition(
         )
 
     return False
+
+
+def _python_import_update_target(
+    file_path: Path,
+    symbol: str,
+    definition_path: str,
+) -> dict[str, Any] | None:
+    try:
+        source = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if _module_path_matches_definition(alias.name, definition_path):
+                    return {
+                        "start_line": int(node.lineno),
+                        "end_line": int(getattr(node, "end_lineno", node.lineno)),
+                        "module": alias.name,
+                        "provenance": "parser-backed",
+                    }
+        elif isinstance(node, ast.ImportFrom):
+            if not node.module or not _module_path_matches_definition(node.module, definition_path):
+                continue
+            if any(alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names):
+                return {
+                    "start_line": int(node.lineno),
+                    "end_line": int(getattr(node, "end_lineno", node.lineno)),
+                    "module": node.module,
+                    "provenance": "parser-backed",
+                }
+    return None
+
+
+def _js_ts_import_update_target(
+    file_path: Path,
+    symbol: str,
+    definition_path: str,
+) -> dict[str, Any] | None:
+    try:
+        source = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    parser = (
+        _typescript_parser(tsx=file_path.suffix == ".tsx")
+        if file_path.suffix in _TS_SUFFIXES
+        else _javascript_parser()
+    )
+    if parser is not None:
+        tree = parser.parse(source.encode("utf-8"))
+        stack = [tree.root_node]
+        while stack:
+            node = stack.pop()
+            if node.type == "import_statement":
+                statement = source[node.start_byte : node.end_byte]
+                for binding in _js_ts_named_import_bindings(statement):
+                    if (
+                        str(binding.get("statement_kind", "import")) == "import"
+                        and str(binding.get("imported", "")) == symbol
+                        and _js_ts_module_matches_definition(
+                            file_path,
+                            str(binding.get("module", "")),
+                            definition_path,
+                        )
+                    ):
+                        return {
+                            "start_line": int(node.start_point[0] + 1),
+                            "end_line": int(node.end_point[0] + 1),
+                            "module": str(binding.get("module", "")),
+                            "provenance": "parser-backed",
+                        }
+            stack.extend(reversed(node.children))
+
+    for binding in _js_ts_named_import_bindings(source):
+        if (
+            str(binding.get("statement_kind", "import")) == "import"
+            and str(binding.get("imported", "")) == symbol
+            and _js_ts_module_matches_definition(
+                file_path,
+                str(binding.get("module", "")),
+                definition_path,
+            )
+        ):
+            return {
+                "start_line": int(binding.get("start_line", 0)),
+                "end_line": int(binding.get("end_line", binding.get("start_line", 0))),
+                "module": str(binding.get("module", "")),
+                "provenance": "heuristic",
+            }
+    return None
+
+
+def _rust_import_update_target(
+    file_path: Path,
+    symbol: str,
+    definition_path: str,
+) -> dict[str, Any] | None:
+    try:
+        source = file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    definition_stem = Path(definition_path).with_suffix("").name.lower()
+    for binding in _rust_use_bindings(source):
+        module_name = str(binding.get("module", ""))
+        imported_name = str(binding.get("imported", ""))
+        local_name = str(binding.get("local", ""))
+        imported_path = str(binding.get("path", ""))
+        wildcard = bool(binding.get("wildcard"))
+        if not (
+            _rust_module_matches_definition(file_path, module_name, definition_path)
+            or _rust_module_matches_definition(file_path, imported_path, definition_path)
+        ):
+            continue
+        if not (
+            wildcard
+            or imported_name.lower() == symbol.lower()
+            or local_name.lower() == symbol.lower()
+            or imported_name.lower() == definition_stem
+        ):
+            continue
+        return {
+            "start_line": int(binding.get("start_line", 0)),
+            "end_line": int(binding.get("end_line", binding.get("start_line", 0))),
+            "module": module_name or imported_path,
+            "provenance": "heuristic",
+        }
+    return None
+
+
+def _import_update_target(
+    file_path: Path,
+    symbol: str,
+    definition_path: str,
+) -> dict[str, Any] | None:
+    if str(file_path.resolve()) == str(Path(definition_path).resolve()):
+        return None
+    if file_path.suffix == ".py":
+        return _python_import_update_target(file_path, symbol, definition_path)
+    if file_path.suffix in _JS_TS_SUFFIXES:
+        return _js_ts_import_update_target(file_path, symbol, definition_path)
+    if file_path.suffix in _RUST_SUFFIXES:
+        return _rust_import_update_target(file_path, symbol, definition_path)
+    return None
 
 
 def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[str]:
@@ -3504,12 +3672,31 @@ def _deterministic_edit_ordering(
     return ordering
 
 
+def _suggested_edit_confidence(score: int, provenance: str | None = None) -> float:
+    if score <= 0:
+        return 0.0
+    normalized_provenance = str(provenance or "").strip().lower()
+    adjusted_score = score
+    if normalized_provenance == "heuristic":
+        adjusted_score = max(1, score - 3)
+    return _confidence_from_score(adjusted_score)
+
+
+def _import_update_rationale(symbol: str, module_name: str) -> str:
+    return (
+        f"this file imports {symbol} from {module_name}; "
+        f"if {symbol} changes, this import must be updated"
+    )
+
+
 def _suggested_edits_from_related_spans(
     related_spans: list[dict[str, Any]],
     *,
+    primary_symbol: dict[str, Any] | None = None,
     max_edits: int,
 ) -> list[dict[str, Any]]:
     suggestions: list[dict[str, Any]] = []
+    processed_spans: list[dict[str, Any]] = []
     for current in related_spans:
         reasons = list(current.get("reasons", []))
         edit_kind = "caller-update" if "caller" in reasons else "dependency-update"
@@ -3530,11 +3717,49 @@ def _suggested_edits_from_related_spans(
                         ),
                     )
                 ),
-                "confidence": _confidence_from_score(int(current.get("score", 0))),
+                "confidence": _suggested_edit_confidence(int(current.get("score", 0))),
             }
         )
+        processed_spans.append(current)
         if len(suggestions) >= max(1, max_edits):
             break
+
+    if primary_symbol is None:
+        return suggestions
+
+    primary_name = str(primary_symbol.get("name", ""))
+    definition_path = str(primary_symbol.get("file", ""))
+    if not primary_name or not definition_path:
+        return suggestions
+
+    import_updates_by_key: dict[tuple[str, int, int], dict[str, Any]] = {}
+    for current in processed_spans:
+        current_file = str(current.get("file", ""))
+        if not current_file:
+            continue
+        target = _import_update_target(Path(current_file), primary_name, definition_path)
+        if target is None:
+            continue
+        start_line = int(target.get("start_line", 0))
+        end_line = int(target.get("end_line", start_line))
+        provenance = str(target.get("provenance", "heuristic"))
+        module_name = str(target.get("module", Path(definition_path).stem))
+        entry: dict[str, Any] = {
+            "file": current_file,
+            "symbol": primary_name,
+            "start_line": start_line,
+            "end_line": end_line,
+            "edit_kind": "import-update",
+            "rationale": _import_update_rationale(primary_name, module_name),
+            "provenance": provenance,
+            "confidence": _suggested_edit_confidence(int(current.get("score", 0)), provenance),
+        }
+        key = (current_file, start_line, end_line)
+        existing = import_updates_by_key.get(key)
+        if existing is None or float(entry["confidence"]) > float(existing["confidence"]):
+            import_updates_by_key[key] = entry
+
+    suggestions.extend(import_updates_by_key.values())
     return suggestions
 
 
@@ -3706,6 +3931,7 @@ def _build_edit_plan_seed(
         "related_spans": related_spans,
         "suggested_edits": _suggested_edits_from_related_spans(
             related_spans,
+            primary_symbol=primary_symbol,
             max_edits=max_files,
         ),
         "dependency_trust": dependency_trust,
