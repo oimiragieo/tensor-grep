@@ -4,10 +4,13 @@ import ast
 import json
 import math
 import re
+import threading
+import time
 import tomllib
+from contextlib import nullcontext
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
@@ -41,6 +44,115 @@ class _ValidationRunnerInfo(NamedTuple):
     ts_runners: tuple[str, ...]
 
 
+class _ProfilePhase:
+    def __init__(self, collector: _ProfileCollector, name: str) -> None:
+        self._collector = collector
+        self._name = name
+        self._start = 0.0
+
+    def __enter__(self) -> None:
+        self._collector._push(self._name)
+        self._start = time.perf_counter()
+        return None
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any,
+    ) -> Literal[False]:
+        try:
+            elapsed = max(0.0, time.perf_counter() - self._start)
+            self._collector._record(self._name, elapsed)
+        finally:
+            self._collector._pop()
+        return False
+
+
+class _ProfileCollector:
+    def __init__(self, *, enabled: bool = True) -> None:
+        self.enabled = enabled
+        self._local = threading.local()
+        self._lock = threading.Lock()
+        self._phase_totals: dict[str, float] = {}
+        self._phase_calls: dict[str, int] = {}
+        self._phase_order: list[str] = []
+
+    def _stack(self) -> list[str]:
+        stack = getattr(self._local, "stack", None)
+        if stack is None:
+            stack = []
+            self._local.stack = stack
+        return stack
+
+    def _push(self, name: str) -> None:
+        self._stack().append(name)
+
+    def _pop(self) -> None:
+        stack = self._stack()
+        if stack:
+            stack.pop()
+
+    def _record(self, name: str, elapsed: float) -> None:
+        with self._lock:
+            if name not in self._phase_totals:
+                self._phase_totals[name] = 0.0
+                self._phase_calls[name] = 0
+                self._phase_order.append(name)
+            self._phase_totals[name] += elapsed
+            self._phase_calls[name] += 1
+
+    def phase(self, name: str) -> _ProfilePhase | nullcontext[None]:
+        if not self.enabled:
+            return nullcontext()
+        return _ProfilePhase(self, name)
+
+    def result(self) -> dict[str, Any]:
+        with self._lock:
+            phases: list[dict[str, Any]] = [
+                {
+                    "name": name,
+                    "elapsed_s": float(self._phase_totals[name]),
+                    "calls": int(self._phase_calls[name]),
+                }
+                for name in self._phase_order
+            ]
+            total_elapsed = float(sum(self._phase_totals[name] for name in self._phase_order))
+        breakdown_pct = (
+            {
+                str(phase["name"]): (float(phase["elapsed_s"]) / total_elapsed) * 100.0
+                for phase in phases
+            }
+            if total_elapsed > 0.0
+            else {}
+        )
+        return {
+            "phases": phases,
+            "total_elapsed_s": total_elapsed,
+            "breakdown_pct": breakdown_pct,
+        }
+
+
+def _profiling_phase(
+    collector: _ProfileCollector | None,
+    name: str,
+) -> _ProfilePhase | nullcontext[None]:
+    if collector is None:
+        return nullcontext()
+    return collector.phase(name)
+
+
+def _attach_profiling(
+    payload: dict[str, Any],
+    collector: _ProfileCollector | None,
+) -> dict[str, Any]:
+    if collector is not None and collector.enabled:
+        payload["_profiling"] = collector.result()
+    else:
+        payload.pop("_profiling", None)
+    return payload
+
+
 def _envelope(path: Path) -> dict[str, Any]:
     return {
         "version": JSON_OUTPUT_VERSION,
@@ -70,18 +182,23 @@ def _is_test_file(path: Path) -> bool:
     )
 
 
-def _iter_repo_files(root: Path) -> list[Path]:
-    if root.is_file():
-        return [root.resolve()]
+def _iter_repo_files(
+    root: Path,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> list[Path]:
+    with _profiling_phase(_profiling_collector, "file_walk"):
+        if root.is_file():
+            return [root.resolve()]
 
-    files: list[Path] = []
-    for current in root.rglob("*"):
-        if not current.is_file():
-            continue
-        if any(part in _SKIP_DIR_NAMES for part in current.parts):
-            continue
-        files.append(current.resolve())
-    return sorted(files)
+        files: list[Path] = []
+        for current in root.rglob("*"):
+            if not current.is_file():
+                continue
+            if any(part in _SKIP_DIR_NAMES for part in current.parts):
+                continue
+            files.append(current.resolve())
+        return sorted(files)
 
 
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
@@ -1612,6 +1729,7 @@ def _relevant_tests_for_symbol(
     *,
     caller_files: list[str] | None = None,
     fallback_tests: list[str] | None = None,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> list[str]:
     repo_root = Path(str(repo_map["path"])).resolve()
     tests = [str(current) for current in repo_map.get("tests", [])]
@@ -1625,12 +1743,22 @@ def _relevant_tests_for_symbol(
             str(entry["file"]): [str(item) for item in entry["imports"]]
             for entry in repo_map.get("imports", [])
         }
-        reverse_importers = _reverse_importers(all_files, imports_by_file)
-        file_distances = _reverse_import_distances(source_files, all_files, imports_by_file)
+        reverse_importers = _reverse_importers(
+            all_files,
+            imports_by_file,
+            _profiling_collector=_profiling_collector,
+        )
+        file_distances = _reverse_import_distances(
+            source_files,
+            all_files,
+            imports_by_file,
+            _profiling_collector=_profiling_collector,
+        )
         graph_scores = _personalized_reverse_import_pagerank(
             source_files,
             all_files,
             reverse_importers,
+            _profiling_collector=_profiling_collector,
         )
         file_scores: dict[str, int] = {}
         for current in source_files:
@@ -2551,21 +2679,26 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     return sources
 
 
-def _imports_and_symbols_for_path(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    current_imports, current_symbols = _python_imports_and_symbols(path)
-    if path.suffix in _JS_TS_SUFFIXES:
-        current_imports, _ = _regex_imports_and_symbols(path)
-        current_symbols = _js_ts_parser_symbols(path)
-        if not current_symbols:
-            _, current_symbols = _regex_imports_and_symbols(path)
-    elif path.suffix in _RUST_SUFFIXES:
-        current_imports, _ = _regex_imports_and_symbols(path)
-        current_symbols = _rust_parser_symbols(path)
-        if not current_symbols:
-            _, current_symbols = _regex_imports_and_symbols(path)
-    elif not current_imports and not current_symbols:
-        current_imports, current_symbols = _regex_imports_and_symbols(path)
-    return current_imports, current_symbols
+def _imports_and_symbols_for_path(
+    path: Path,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> tuple[list[str], list[dict[str, Any]]]:
+    with _profiling_phase(_profiling_collector, "file_parse"):
+        current_imports, current_symbols = _python_imports_and_symbols(path)
+        if path.suffix in _JS_TS_SUFFIXES:
+            current_imports, _ = _regex_imports_and_symbols(path)
+            current_symbols = _js_ts_parser_symbols(path)
+            if not current_symbols:
+                _, current_symbols = _regex_imports_and_symbols(path)
+        elif path.suffix in _RUST_SUFFIXES:
+            current_imports, _ = _regex_imports_and_symbols(path)
+            current_symbols = _rust_parser_symbols(path)
+            if not current_symbols:
+                _, current_symbols = _regex_imports_and_symbols(path)
+        elif not current_imports and not current_symbols:
+            current_imports, current_symbols = _regex_imports_and_symbols(path)
+        return current_imports, current_symbols
 
 
 def _group_symbols_by_file(symbols: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -2595,39 +2728,53 @@ def _normalized_changeset_paths(
     return normalized
 
 
-def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
+def build_repo_map(
+    path: str | Path = ".",
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
 
-    context_root = root if root.is_dir() else root.parent
-    _prime_js_ts_repo_context(context_root)
-    _prime_rust_repo_context(context_root)
-    payload = _envelope(root)
-    all_files = _iter_repo_files(root)
-    tests = [str(current) for current in all_files if _is_test_file(current)]
-    source_files = [str(current) for current in all_files if not _is_test_file(current)]
+    with _profiling_phase(_profiling_collector, "repo_map_build"):
+        context_root = root if root.is_dir() else root.parent
+        _prime_js_ts_repo_context(context_root)
+        _prime_rust_repo_context(context_root)
+        payload = _envelope(root)
+        if _profiling_collector is None:
+            all_files = _iter_repo_files(root)
+        else:
+            all_files = _iter_repo_files(root, _profiling_collector=_profiling_collector)
+        tests = [str(current) for current in all_files if _is_test_file(current)]
+        source_files = [str(current) for current in all_files if not _is_test_file(current)]
 
-    imports: list[dict[str, Any]] = []
-    symbols: list[dict[str, Any]] = []
-    for current in all_files:
-        current_imports, current_symbols = _imports_and_symbols_for_path(current)
-        if current_imports:
-            imports.append(
-                {
-                    "file": str(current),
-                    "imports": current_imports,
-                    "provenance": _symbol_navigation_provenance_for_path(str(current)),
-                }
-            )
-        symbols.extend(current_symbols)
+        imports: list[dict[str, Any]] = []
+        symbols: list[dict[str, Any]] = []
+        for current in all_files:
+            if _profiling_collector is None:
+                current_imports, current_symbols = _imports_and_symbols_for_path(current)
+            else:
+                current_imports, current_symbols = _imports_and_symbols_for_path(
+                    current,
+                    _profiling_collector=_profiling_collector,
+                )
+            if current_imports:
+                imports.append(
+                    {
+                        "file": str(current),
+                        "imports": current_imports,
+                        "provenance": _symbol_navigation_provenance_for_path(str(current)),
+                    }
+                )
+            symbols.extend(current_symbols)
 
-    payload["files"] = source_files
-    payload["symbols"] = symbols
-    payload["imports"] = imports
-    payload["tests"] = tests
-    payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
-    return payload
+        payload["files"] = source_files
+        payload["symbols"] = symbols
+        payload["imports"] = imports
+        payload["tests"] = tests
+        payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_repo_map_incremental(
@@ -3028,44 +3175,50 @@ def _reverse_import_distances(
     seed_files: list[str],
     all_files: list[str],
     imports_by_file: dict[str, list[str]],
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, int]:
-    distances: dict[str, int] = {}
-    frontier = list(seed_files)
-    seen = set(seed_files)
+    with _profiling_phase(_profiling_collector, "graph_bfs"):
+        distances: dict[str, int] = {}
+        frontier = list(seed_files)
+        seen = set(seed_files)
 
-    for depth in range(1, 4):
-        dependency_aliases = {current: _module_aliases_for_path(current) for current in frontier}
-        next_frontier: list[str] = []
-        for current in all_files:
-            if current in seen:
-                continue
-            bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
-            if bonus <= 0:
-                continue
-            distances[current] = depth
-            seen.add(current)
-            next_frontier.append(current)
-        if not next_frontier:
-            break
-        frontier = next_frontier
-    return distances
+        for depth in range(1, 4):
+            dependency_aliases = {current: _module_aliases_for_path(current) for current in frontier}
+            next_frontier: list[str] = []
+            for current in all_files:
+                if current in seen:
+                    continue
+                bonus = _import_graph_bonus(current, dependency_aliases, imports_by_file)
+                if bonus <= 0:
+                    continue
+                distances[current] = depth
+                seen.add(current)
+                next_frontier.append(current)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        return distances
 
 
 def _reverse_importers(
     all_files: list[str],
     imports_by_file: dict[str, list[str]],
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, set[str]]:
-    aliases_by_file = {current: _module_aliases_for_path(current) for current in all_files}
-    reverse: dict[str, set[str]] = {current: set() for current in all_files}
-    for importer in all_files:
-        for import_name in imports_by_file.get(importer, []):
-            lowered = import_name.lower()
-            for current, aliases in aliases_by_file.items():
-                if current == importer:
-                    continue
-                if any(alias and alias in lowered for alias in aliases):
-                    reverse[current].add(importer)
-    return reverse
+    with _profiling_phase(_profiling_collector, "graph_construction"):
+        aliases_by_file = {current: _module_aliases_for_path(current) for current in all_files}
+        reverse: dict[str, set[str]] = {current: set() for current in all_files}
+        for importer in all_files:
+            for import_name in imports_by_file.get(importer, []):
+                lowered = import_name.lower()
+                for current, aliases in aliases_by_file.items():
+                    if current == importer:
+                        continue
+                    if any(alias and alias in lowered for alias in aliases):
+                        reverse[current].add(importer)
+        return reverse
 
 
 def _personalized_reverse_import_pagerank(
@@ -3075,36 +3228,38 @@ def _personalized_reverse_import_pagerank(
     *,
     alpha: float = 0.85,
     iterations: int = 12,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, float]:
-    if not seed_files:
-        return {}
+    with _profiling_phase(_profiling_collector, "graph_pagerank"):
+        if not seed_files:
+            return {}
 
-    unique_seeds = [current for current in seed_files if current in set(all_files)]
-    if not unique_seeds:
-        return {}
+        unique_seeds = [current for current in seed_files if current in set(all_files)]
+        if not unique_seeds:
+            return {}
 
-    seed_set = set(unique_seeds)
-    seed_weight = 1.0 / len(unique_seeds)
-    personalization = {
-        current: (seed_weight if current in seed_set else 0.0) for current in all_files
-    }
-    ranks = dict(personalization)
-    for _ in range(iterations):
-        updated = {
-            current: (1.0 - alpha) * personalization[current] for current in all_files
+        seed_set = set(unique_seeds)
+        seed_weight = 1.0 / len(unique_seeds)
+        personalization = {
+            current: (seed_weight if current in seed_set else 0.0) for current in all_files
         }
-        for current in all_files:
-            outgoing = sorted(reverse_importers.get(current, set()))
-            if outgoing:
-                share = alpha * ranks[current] / len(outgoing)
-                for importer in outgoing:
-                    updated[importer] = updated.get(importer, 0.0) + share
-                continue
-            spill = alpha * ranks[current] / len(unique_seeds)
-            for seed in unique_seeds:
-                updated[seed] = updated.get(seed, 0.0) + spill
-        ranks = updated
-    return {current: rank for current, rank in ranks.items() if rank > 0.0}
+        ranks = dict(personalization)
+        for _ in range(iterations):
+            updated = {
+                current: (1.0 - alpha) * personalization[current] for current in all_files
+            }
+            for current in all_files:
+                outgoing = sorted(reverse_importers.get(current, set()))
+                if outgoing:
+                    share = alpha * ranks[current] / len(outgoing)
+                    for importer in outgoing:
+                        updated[importer] = updated.get(importer, 0.0) + share
+                    continue
+                spill = alpha * ranks[current] / len(unique_seeds)
+                for seed in unique_seeds:
+                    updated[seed] = updated.get(seed, 0.0) + spill
+            ranks = updated
+        return {current: rank for current, rank in ranks.items() if rank > 0.0}
 
 
 def _dependency_ranked_files(
@@ -3239,150 +3394,168 @@ def _context_tests(
     return related
 
 
-def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[str, Any]:
-    terms = _query_terms(query)
-    all_symbols = [dict(symbol) for symbol in payload["symbols"]]
-    imports_by_file = {
-        str(entry["file"]): [str(item) for item in entry["imports"]] for entry in payload["imports"]
-    }
-    file_scores = {str(current): _score_file_path(str(current), terms) for current in payload["files"]}
-    file_reasons: dict[str, list[str]] = {}
-    for current, score in file_scores.items():
-        if score > 0:
-            _append_reason(file_reasons, current, "path")
+def _build_context_pack_from_map(
+    payload: dict[str, Any],
+    query: str,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
+    with _profiling_phase(_profiling_collector, "context_scoring"):
+        terms = _query_terms(query)
+        all_symbols = [dict(symbol) for symbol in payload["symbols"]]
+        imports_by_file = {
+            str(entry["file"]): [str(item) for item in entry["imports"]] for entry in payload["imports"]
+        }
+        file_scores = {str(current): _score_file_path(str(current), terms) for current in payload["files"]}
+        file_reasons: dict[str, list[str]] = {}
+        for current, score in file_scores.items():
+            if score > 0:
+                _append_reason(file_reasons, current, "path")
 
-    scored_symbols: list[dict[str, Any]] = []
-    for symbol in payload["symbols"]:
-        score = _score_symbol(symbol, terms)
-        if score <= 0:
-            continue
-        scored_symbol = dict(symbol)
-        scored_symbol["score"] = score
-        current_path = str(scored_symbol["file"])
-        _append_reason(file_reasons, current_path, "definition")
-        if _score_text_terms(str(scored_symbol["name"]), terms) > 0:
-            _append_reason(file_reasons, current_path, "symbol")
-        scored_symbols.append(scored_symbol)
-    scored_symbols.sort(
-        key=lambda item: (
-            -int(item["score"]),
-            str(item["file"]),
-            int(item["line"]),
-            str(item["name"]),
+        scored_symbols: list[dict[str, Any]] = []
+        for symbol in payload["symbols"]:
+            score = _score_symbol(symbol, terms)
+            if score <= 0:
+                continue
+            scored_symbol = dict(symbol)
+            scored_symbol["score"] = score
+            current_path = str(scored_symbol["file"])
+            _append_reason(file_reasons, current_path, "definition")
+            if _score_text_terms(str(scored_symbol["name"]), terms) > 0:
+                _append_reason(file_reasons, current_path, "symbol")
+            scored_symbols.append(scored_symbol)
+        scored_symbols.sort(
+            key=lambda item: (
+                -int(item["score"]),
+                str(item["file"]),
+                int(item["line"]),
+                str(item["name"]),
+            )
         )
-    )
-    for symbol in scored_symbols:
-        current = str(symbol["file"])
-        file_scores[current] = file_scores.get(current, 0) + int(symbol["score"]) * 2
-
-    scored_imports: list[dict[str, Any]] = []
-    for entry in payload["imports"]:
-        score = _score_import_entry(entry, terms)
-        if score <= 0:
-            continue
-        scored_entry = dict(entry)
-        scored_entry["provenance"] = str(
-            entry.get("provenance", _symbol_navigation_provenance_for_path(str(entry["file"])))
-        )
-        scored_entry["score"] = score
-        scored_imports.append(scored_entry)
-    scored_imports.sort(key=lambda item: (-int(item["score"]), str(item["file"])))
-    for entry in scored_imports:
-        current = str(entry["file"])
-        file_scores[current] = file_scores.get(current, 0) + int(entry["score"]) * 2
-        _append_reason(file_reasons, current, "import")
-
-    dependency_seed_files: list[str] = []
-    for symbol in scored_symbols:
-        current = str(symbol["file"])
-        if current not in dependency_seed_files:
-            dependency_seed_files.append(current)
-    for entry in scored_imports:
-        current = str(entry["file"])
-        if current not in dependency_seed_files:
-            dependency_seed_files.append(current)
-    if not dependency_seed_files:
-        dependency_seed_files = [path for path in payload["files"] if _score_file_path(str(path), terms) > 0]
-
-    all_files = [str(current) for current in payload["files"]]
-    dependency_aliases = {
-        current: _module_aliases_for_path(current) for current in dependency_seed_files
-    }
-    file_distances = _reverse_import_distances(
-        dependency_seed_files,
-        all_files,
-        imports_by_file,
-    )
-    reverse_importers = _reverse_importers(all_files, imports_by_file)
-    for current in payload["files"]:
-        current_path = str(current)
-        if current_path in dependency_seed_files:
-            continue
-        import_graph_bonus = _import_graph_bonus(
-            current_path,
-            dependency_aliases,
-            imports_by_file,
-        )
-        file_scores[current_path] = file_scores.get(current_path, 0) + import_graph_bonus
-        if import_graph_bonus > 0:
-            _append_reason(file_reasons, current_path, "import-graph")
-        if current_path in file_distances:
-            file_scores[current_path] = file_scores.get(current_path, 0) + max(1, 5 - file_distances[current_path])
-            _append_reason(file_reasons, current_path, "import-graph")
-    graph_seed_files: list[str] = []
-    for symbol in scored_symbols:
-        current = str(symbol["file"])
-        if current not in graph_seed_files:
-            graph_seed_files.append(current)
-    if not graph_seed_files:
-        graph_seed_files = list(dependency_seed_files)
-
-    graph_scores = _personalized_reverse_import_pagerank(
-        graph_seed_files,
-        all_files,
-        reverse_importers,
-    )
-    for current_path in set(dependency_seed_files) | set(file_distances):
-        graph_score = graph_scores.get(current_path, 0.0)
-        if graph_score <= 0.0:
-            continue
-        file_scores[current_path] = file_scores.get(current_path, 0) + max(1, round(graph_score * 10))
-        _append_reason(file_reasons, current_path, "graph-centrality")
-
-    scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
-    scored_files.sort(key=lambda item: (-item[0], item[1]))
-    ranked_files = [path for _, path in scored_files]
-    file_matches = [
-        _match_record(path, score, file_reasons.get(path, []), graph_scores.get(path))
-        for score, path in scored_files
-    ]
-    if not ranked_files:
         for symbol in scored_symbols:
             current = str(symbol["file"])
-            if current not in ranked_files:
-                ranked_files.append(current)
+            file_scores[current] = file_scores.get(current, 0) + int(symbol["score"]) * 2
+
+        scored_imports: list[dict[str, Any]] = []
+        for entry in payload["imports"]:
+            score = _score_import_entry(entry, terms)
+            if score <= 0:
+                continue
+            scored_entry = dict(entry)
+            scored_entry["provenance"] = str(
+                entry.get("provenance", _symbol_navigation_provenance_for_path(str(entry["file"])))
+            )
+            scored_entry["score"] = score
+            scored_imports.append(scored_entry)
+        scored_imports.sort(key=lambda item: (-int(item["score"]), str(item["file"])))
         for entry in scored_imports:
             current = str(entry["file"])
-            if current not in ranked_files:
-                ranked_files.append(current)
-    test_matches = _context_tests(
-        ranked_files,
-        payload["tests"],
-        terms,
-        imports_by_file,
-        file_distances,
-        graph_scores,
-        file_scores,
-        raw_query=query,
-    )
-    ranked_tests = [str(item["path"]) for item in test_matches]
+            file_scores[current] = file_scores.get(current, 0) + int(entry["score"]) * 2
+            _append_reason(file_reasons, current, "import")
 
-    related_paths = []
-    for current in ranked_files:
-        related_paths.append(current)
-    for current in ranked_tests:
-        if current not in related_paths:
+        dependency_seed_files: list[str] = []
+        for symbol in scored_symbols:
+            current = str(symbol["file"])
+            if current not in dependency_seed_files:
+                dependency_seed_files.append(current)
+        for entry in scored_imports:
+            current = str(entry["file"])
+            if current not in dependency_seed_files:
+                dependency_seed_files.append(current)
+        if not dependency_seed_files:
+            dependency_seed_files = [
+                path for path in payload["files"] if _score_file_path(str(path), terms) > 0
+            ]
+
+        all_files = [str(current) for current in payload["files"]]
+        dependency_aliases = {
+            current: _module_aliases_for_path(current) for current in dependency_seed_files
+        }
+        file_distances = _reverse_import_distances(
+            dependency_seed_files,
+            all_files,
+            imports_by_file,
+            _profiling_collector=_profiling_collector,
+        )
+        reverse_importers = _reverse_importers(
+            all_files,
+            imports_by_file,
+            _profiling_collector=_profiling_collector,
+        )
+        for current in payload["files"]:
+            current_path = str(current)
+            if current_path in dependency_seed_files:
+                continue
+            import_graph_bonus = _import_graph_bonus(
+                current_path,
+                dependency_aliases,
+                imports_by_file,
+            )
+            file_scores[current_path] = file_scores.get(current_path, 0) + import_graph_bonus
+            if import_graph_bonus > 0:
+                _append_reason(file_reasons, current_path, "import-graph")
+            if current_path in file_distances:
+                file_scores[current_path] = file_scores.get(current_path, 0) + max(
+                    1, 5 - file_distances[current_path]
+                )
+                _append_reason(file_reasons, current_path, "import-graph")
+        graph_seed_files: list[str] = []
+        for symbol in scored_symbols:
+            current = str(symbol["file"])
+            if current not in graph_seed_files:
+                graph_seed_files.append(current)
+        if not graph_seed_files:
+            graph_seed_files = list(dependency_seed_files)
+
+        graph_scores = _personalized_reverse_import_pagerank(
+            graph_seed_files,
+            all_files,
+            reverse_importers,
+            _profiling_collector=_profiling_collector,
+        )
+        for current_path in set(dependency_seed_files) | set(file_distances):
+            graph_score = graph_scores.get(current_path, 0.0)
+            if graph_score <= 0.0:
+                continue
+            file_scores[current_path] = file_scores.get(current_path, 0) + max(
+                1, round(graph_score * 10)
+            )
+            _append_reason(file_reasons, current_path, "graph-centrality")
+
+        scored_files = [(score, path) for path, score in file_scores.items() if score > 0]
+        scored_files.sort(key=lambda item: (-item[0], item[1]))
+        ranked_files = [path for _, path in scored_files]
+        file_matches = [
+            _match_record(path, score, file_reasons.get(path, []), graph_scores.get(path))
+            for score, path in scored_files
+        ]
+        if not ranked_files:
+            for symbol in scored_symbols:
+                current = str(symbol["file"])
+                if current not in ranked_files:
+                    ranked_files.append(current)
+            for entry in scored_imports:
+                current = str(entry["file"])
+                if current not in ranked_files:
+                    ranked_files.append(current)
+        test_matches = _context_tests(
+            ranked_files,
+            payload["tests"],
+            terms,
+            imports_by_file,
+            file_distances,
+            graph_scores,
+            file_scores,
+            raw_query=query,
+        )
+        ranked_tests = [str(item["path"]) for item in test_matches]
+
+        related_paths = []
+        for current in ranked_files:
             related_paths.append(current)
+        for current in ranked_tests:
+            if current not in related_paths:
+                related_paths.append(current)
 
     payload["routing_reason"] = "context-pack"
     payload["query"] = query
@@ -3399,9 +3572,18 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
     return payload
 
 
-def build_context_pack(query: str, path: str | Path = ".") -> dict[str, Any]:
-    payload = build_repo_map(path)
-    return _build_context_pack_from_map(payload, query)
+def build_context_pack(
+    query: str,
+    path: str | Path = ".",
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
+    payload = build_repo_map(path, _profiling_collector=_profiling_collector)
+    return build_context_pack_from_map(
+        payload,
+        query,
+        _profiling_collector=_profiling_collector,
+    )
 
 
 def build_context_pack_json(query: str, path: str | Path = ".") -> str:
@@ -3492,10 +3674,15 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
-def _estimate_tokens(text: str) -> int:
-    if not text:
-        return 0
-    return max(1, math.ceil(len(text) / 3.5))
+def _estimate_tokens(
+    text: str,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> int:
+    with _profiling_phase(_profiling_collector, "token_estimation"):
+        if not text:
+            return 0
+        return max(1, math.ceil(len(text) / 3.5))
 
 
 def _render_part_score(part: dict[str, Any]) -> int:
@@ -3550,7 +3737,12 @@ def _render_part_sort_key(
     )
 
 
-def _prepare_render_part(part: dict[str, Any], *, has_prior_content: bool) -> dict[str, Any] | None:
+def _prepare_render_part(
+    part: dict[str, Any],
+    *,
+    has_prior_content: bool,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any] | None:
     text = str(part.get("text", "")).strip()
     if not text:
         return None
@@ -3560,7 +3752,10 @@ def _prepare_render_part(part: dict[str, Any], *, has_prior_content: bool) -> di
     prepared["text"] = text
     prepared["chunk"] = chunk
     prepared["score"] = _render_part_score(part)
-    prepared["token_estimate"] = _estimate_tokens(chunk)
+    prepared["token_estimate"] = _estimate_tokens(
+        chunk,
+        _profiling_collector=_profiling_collector,
+    )
     return prepared
 
 
@@ -3580,124 +3775,143 @@ def _render_context_string_and_sections(
     max_render_chars: int | None = None,
     max_tokens: int | None = None,
     model: str | None = None,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> tuple[str, list[dict[str, Any]], bool, int, list[dict[str, Any]]]:
-    max_render_chars = (
-        max_render_chars if max_render_chars is not None and max_render_chars > 0 else None
-    )
-    resolved_max_tokens = max_tokens if max_tokens is not None else payload.get("max_tokens")
-    max_tokens = (
-        int(resolved_max_tokens)
-        if resolved_max_tokens is not None and int(resolved_max_tokens) > 0
-        else None
-    )
-    _ = model if model is not None else payload.get("model")
-    primary_file = None
-    edit_plan_seed = payload.get("edit_plan_seed")
-    if isinstance(edit_plan_seed, dict):
-        current_primary_file = edit_plan_seed.get("primary_file")
-        if current_primary_file:
-            primary_file = str(current_primary_file)
-    if primary_file is None:
-        files = payload.get("files", [])
-        if isinstance(files, list) and files:
-            primary_file = str(files[0])
-
-    raw_parts = _render_context_parts(payload)
-    query_parts: list[dict[str, Any]] = []
-    ranked_parts: list[tuple[dict[str, Any], int]] = []
-    for index, part in enumerate(raw_parts):
-        if str(part.get("kind", "")) == "query":
-            query_parts.append(part)
-            continue
-        ranked_parts.append((part, index))
-    ranked_parts.sort(
-        key=lambda item: _render_part_sort_key(
-            item[0],
-            primary_file=primary_file,
-            original_index=item[1],
+    with _profiling_phase(_profiling_collector, "render_packing"):
+        max_render_chars = (
+            max_render_chars if max_render_chars is not None and max_render_chars > 0 else None
         )
-    )
-    parts = [*query_parts, *[part for part, _ in ranked_parts]]
+        resolved_max_tokens = max_tokens if max_tokens is not None else payload.get("max_tokens")
+        max_tokens = (
+            int(resolved_max_tokens)
+            if resolved_max_tokens is not None and int(resolved_max_tokens) > 0
+            else None
+        )
+        _ = model if model is not None else payload.get("model")
+        primary_file = None
+        edit_plan_seed = payload.get("edit_plan_seed")
+        if isinstance(edit_plan_seed, dict):
+            current_primary_file = edit_plan_seed.get("primary_file")
+            if current_primary_file:
+                primary_file = str(current_primary_file)
+        if primary_file is None:
+            files = payload.get("files", [])
+            if isinstance(files, list) and files:
+                primary_file = str(files[0])
 
-    selected_parts: list[dict[str, Any]] = []
-    omitted_parts: list[dict[str, Any]] = []
-    non_query_selected = 0
-    estimated_total_tokens = 0
-    budget_exhausted = False
+        raw_parts = _render_context_parts(payload)
+        query_parts: list[dict[str, Any]] = []
+        ranked_parts: list[tuple[dict[str, Any], int]] = []
+        for index, part in enumerate(raw_parts):
+            if str(part.get("kind", "")) == "query":
+                query_parts.append(part)
+                continue
+            ranked_parts.append((part, index))
+        ranked_parts.sort(
+            key=lambda item: _render_part_sort_key(
+                item[0],
+                primary_file=primary_file,
+                original_index=item[1],
+            )
+        )
+        parts = [*query_parts, *[part for part, _ in ranked_parts]]
 
-    for part in parts:
-        prepared = _prepare_render_part(part, has_prior_content=bool(selected_parts))
-        if prepared is None:
-            continue
-        if str(prepared.get("kind", "")) == "query":
-            selected_parts.append(prepared)
-            estimated_total_tokens += int(prepared["token_estimate"])
-            continue
-        if budget_exhausted:
+        selected_parts: list[dict[str, Any]] = []
+        omitted_parts: list[dict[str, Any]] = []
+        non_query_selected = 0
+        estimated_total_tokens = 0
+        budget_exhausted = False
+
+        for part in parts:
+            prepared = _prepare_render_part(
+                part,
+                has_prior_content=bool(selected_parts),
+                _profiling_collector=_profiling_collector,
+            )
+            if prepared is None:
+                continue
+            if str(prepared.get("kind", "")) == "query":
+                selected_parts.append(prepared)
+                estimated_total_tokens += int(prepared["token_estimate"])
+                continue
+            if budget_exhausted:
+                omitted_parts.append(prepared)
+                continue
+            current_token_estimate = estimated_total_tokens + int(prepared["token_estimate"])
+            if max_tokens is None or current_token_estimate <= max_tokens:
+                selected_parts.append(prepared)
+                estimated_total_tokens = current_token_estimate
+                non_query_selected += 1
+                continue
+            if non_query_selected == 0 and estimated_total_tokens <= max_tokens:
+                selected_parts.append(prepared)
+                estimated_total_tokens = current_token_estimate
+                non_query_selected += 1
+                budget_exhausted = True
+                continue
             omitted_parts.append(prepared)
-            continue
-        current_token_estimate = estimated_total_tokens + int(prepared["token_estimate"])
-        if max_tokens is None or current_token_estimate <= max_tokens:
-            selected_parts.append(prepared)
-            estimated_total_tokens = current_token_estimate
-            non_query_selected += 1
-            continue
-        if non_query_selected == 0 and estimated_total_tokens <= max_tokens:
-            selected_parts.append(prepared)
-            estimated_total_tokens = current_token_estimate
-            non_query_selected += 1
-            budget_exhausted = True
-            continue
-        omitted_parts.append(prepared)
 
-    sections: list[dict[str, Any]] = []
-    rendered_parts: list[str] = []
-    offset = 0
-    total_token_estimate = 0
-    truncated = bool(omitted_parts)
-    char_omitted_parts: list[dict[str, Any]] = []
-    for index, part in enumerate(selected_parts):
-        chunk = str(part["chunk"])
-        if max_render_chars is not None and offset + len(chunk) > max_render_chars:
-            remaining = max_render_chars - offset
-            partially_rendered_current = False
-            if offset == 0 and remaining > 0:
-                chunk = chunk[:remaining]
-                section_token_estimate = _estimate_tokens(chunk)
-                rendered_parts.append(chunk)
-                sections.append(
-                    {
-                        "kind": str(part["kind"]),
-                        "start": offset,
-                        "end": offset + len(chunk),
-                        "token_estimate": section_token_estimate,
-                        **{key: value for key, value in part.items() if key not in {"text", "chunk", "score", "token_estimate"}},
-                    }
-                )
-                offset += len(chunk)
-                total_token_estimate += section_token_estimate
-                partially_rendered_current = True
-            char_omitted_parts = selected_parts[index + (1 if partially_rendered_current else 0) :]
-            truncated = True
-            break
-        rendered_parts.append(chunk)
-        section_token_estimate = int(part["token_estimate"])
-        sections.append(
-            {
-                "kind": str(part["kind"]),
-                "start": offset,
-                "end": offset + len(chunk),
-                "token_estimate": section_token_estimate,
-                **{key: value for key, value in part.items() if key not in {"text", "chunk", "score", "token_estimate"}},
-            }
-        )
-        offset += len(chunk)
-        total_token_estimate += section_token_estimate
-    omitted_sections = [
-        _omitted_section_record(part)
-        for part in [*char_omitted_parts, *omitted_parts]
-    ]
-    return "".join(rendered_parts).rstrip(), sections, truncated, total_token_estimate, omitted_sections
+        sections: list[dict[str, Any]] = []
+        rendered_parts: list[str] = []
+        offset = 0
+        total_token_estimate = 0
+        truncated = bool(omitted_parts)
+        char_omitted_parts: list[dict[str, Any]] = []
+        for index, part in enumerate(selected_parts):
+            chunk = str(part["chunk"])
+            if max_render_chars is not None and offset + len(chunk) > max_render_chars:
+                remaining = max_render_chars - offset
+                partially_rendered_current = False
+                if offset == 0 and remaining > 0:
+                    chunk = chunk[:remaining]
+                    section_token_estimate = _estimate_tokens(
+                        chunk,
+                        _profiling_collector=_profiling_collector,
+                    )
+                    rendered_parts.append(chunk)
+                    sections.append(
+                        {
+                            "kind": str(part["kind"]),
+                            "start": offset,
+                            "end": offset + len(chunk),
+                            "token_estimate": section_token_estimate,
+                            **{
+                                key: value
+                                for key, value in part.items()
+                                if key not in {"text", "chunk", "score", "token_estimate"}
+                            },
+                        }
+                    )
+                    offset += len(chunk)
+                    total_token_estimate += section_token_estimate
+                    partially_rendered_current = True
+                char_omitted_parts = selected_parts[
+                    index + (1 if partially_rendered_current else 0) :
+                ]
+                truncated = True
+                break
+            rendered_parts.append(chunk)
+            section_token_estimate = int(part["token_estimate"])
+            sections.append(
+                {
+                    "kind": str(part["kind"]),
+                    "start": offset,
+                    "end": offset + len(chunk),
+                    "token_estimate": section_token_estimate,
+                    **{
+                        key: value
+                        for key, value in part.items()
+                        if key not in {"text", "chunk", "score", "token_estimate"}
+                    },
+                }
+            )
+            offset += len(chunk)
+            total_token_estimate += section_token_estimate
+        omitted_sections = [
+            _omitted_section_record(part)
+            for part in [*char_omitted_parts, *omitted_parts]
+        ]
+        return "".join(rendered_parts).rstrip(), sections, truncated, total_token_estimate, omitted_sections
 
 
 def _normalize_render_profile(render_profile: str, optimize_context: bool) -> str:
@@ -3823,119 +4037,121 @@ def _render_source_block(
     *,
     render_profile: str,
     optimize_context: bool,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    block = str(source.get("source", ""))
-    path = Path(str(source["file"]))
-    normalized_profile = _normalize_render_profile(render_profile, optimize_context)
-    diagnostics = {
-        "original_line_count": 0,
-        "rendered_line_count": 0,
-        "removed_line_count": 0,
-        "removed_comment_lines": 0,
-        "removed_blank_lines": 0,
-        "removed_docstring_lines": 0,
-        "removed_boilerplate_lines": 0,
-        "js_jsdoc_removed": 0,
-        "ts_type_imports_removed": 0,
-        "rust_doc_comments_removed": 0,
-        "rust_attributes_removed": 0,
-    }
-    line_map: list[dict[str, int]] = []
+    with _profiling_phase(_profiling_collector, "source_rendering"):
+        block = str(source.get("source", ""))
+        path = Path(str(source["file"]))
+        normalized_profile = _normalize_render_profile(render_profile, optimize_context)
+        diagnostics = {
+            "original_line_count": 0,
+            "rendered_line_count": 0,
+            "removed_line_count": 0,
+            "removed_comment_lines": 0,
+            "removed_blank_lines": 0,
+            "removed_docstring_lines": 0,
+            "removed_boilerplate_lines": 0,
+            "js_jsdoc_removed": 0,
+            "ts_type_imports_removed": 0,
+            "rust_doc_comments_removed": 0,
+            "rust_attributes_removed": 0,
+        }
+        line_map: list[dict[str, int]] = []
 
-    original_lines = block.splitlines()
-    diagnostics["original_line_count"] = len(original_lines)
-    if normalized_profile == "full":
-        rendered_source = block
-        if original_lines:
-            line_map.append(
-                {
-                    "rendered_start_line": 1,
-                    "rendered_end_line": len(original_lines),
-                    "original_start_line": int(source["start_line"]),
-                    "original_end_line": int(source["end_line"]),
-                }
-            )
-        diagnostics["rendered_line_count"] = len(original_lines)
-    else:
-        kept_lines: list[str] = []
-        current_segment: dict[str, int] | None = None
-        rendered_line_number = 1
-        original_start = int(source["start_line"])
-        omitted_docstring_lines: set[int] = set()
-        omitted_boilerplate_lines: set[int] = set()
-        omitted_jsdoc_lines: set[int] = set()
-        omitted_ts_type_import_lines: set[int] = set()
-        omitted_rust_doc_comment_lines: set[int] = set()
-        omitted_rust_attribute_lines: set[int] = set()
-        if path.suffix == ".py":
-            omitted_docstring_lines, omitted_boilerplate_lines = _python_ast_omitted_relative_lines(
-                block
-            )
-        elif path.suffix in _TS_SUFFIXES:
-            omitted_jsdoc_lines, omitted_ts_type_import_lines = _ts_ast_omitted_relative_lines(
-                block
-            )
-        elif path.suffix in _JS_TS_SUFFIXES:
-            omitted_jsdoc_lines = _js_ast_omitted_relative_lines(block)
-        elif path.suffix in _RUST_SUFFIXES:
-            omitted_rust_doc_comment_lines, omitted_rust_attribute_lines = (
-                _rust_ast_omitted_relative_lines(block)
-            )
-        for index, line in enumerate(original_lines):
-            original_line_number = original_start + index
-            relative_line_number = index + 1
-            if not line.strip():
-                diagnostics["removed_blank_lines"] += 1
-                continue
-            if relative_line_number in omitted_jsdoc_lines:
-                diagnostics["removed_comment_lines"] += 1
-                diagnostics["js_jsdoc_removed"] += 1
-                continue
-            if relative_line_number in omitted_ts_type_import_lines:
-                diagnostics["ts_type_imports_removed"] += 1
-                continue
-            if relative_line_number in omitted_rust_doc_comment_lines:
-                diagnostics["removed_comment_lines"] += 1
-                diagnostics["rust_doc_comments_removed"] += 1
-                continue
-            if relative_line_number in omitted_rust_attribute_lines:
-                diagnostics["removed_boilerplate_lines"] += 1
-                diagnostics["rust_attributes_removed"] += 1
-                continue
-            if _is_comment_line(path, line):
-                diagnostics["removed_comment_lines"] += 1
-                continue
-            if relative_line_number in omitted_docstring_lines:
-                diagnostics["removed_docstring_lines"] += 1
-                continue
-            if relative_line_number in omitted_boilerplate_lines:
-                diagnostics["removed_boilerplate_lines"] += 1
-                continue
+        original_lines = block.splitlines()
+        diagnostics["original_line_count"] = len(original_lines)
+        if normalized_profile == "full":
+            rendered_source = block
+            if original_lines:
+                line_map.append(
+                    {
+                        "rendered_start_line": 1,
+                        "rendered_end_line": len(original_lines),
+                        "original_start_line": int(source["start_line"]),
+                        "original_end_line": int(source["end_line"]),
+                    }
+                )
+            diagnostics["rendered_line_count"] = len(original_lines)
+        else:
+            kept_lines: list[str] = []
+            current_segment: dict[str, int] | None = None
+            rendered_line_number = 1
+            original_start = int(source["start_line"])
+            omitted_docstring_lines: set[int] = set()
+            omitted_boilerplate_lines: set[int] = set()
+            omitted_jsdoc_lines: set[int] = set()
+            omitted_ts_type_import_lines: set[int] = set()
+            omitted_rust_doc_comment_lines: set[int] = set()
+            omitted_rust_attribute_lines: set[int] = set()
+            if path.suffix == ".py":
+                omitted_docstring_lines, omitted_boilerplate_lines = (
+                    _python_ast_omitted_relative_lines(block)
+                )
+            elif path.suffix in _TS_SUFFIXES:
+                omitted_jsdoc_lines, omitted_ts_type_import_lines = (
+                    _ts_ast_omitted_relative_lines(block)
+                )
+            elif path.suffix in _JS_TS_SUFFIXES:
+                omitted_jsdoc_lines = _js_ast_omitted_relative_lines(block)
+            elif path.suffix in _RUST_SUFFIXES:
+                omitted_rust_doc_comment_lines, omitted_rust_attribute_lines = (
+                    _rust_ast_omitted_relative_lines(block)
+                )
+            for index, line in enumerate(original_lines):
+                original_line_number = original_start + index
+                relative_line_number = index + 1
+                if not line.strip():
+                    diagnostics["removed_blank_lines"] += 1
+                    continue
+                if relative_line_number in omitted_jsdoc_lines:
+                    diagnostics["removed_comment_lines"] += 1
+                    diagnostics["js_jsdoc_removed"] += 1
+                    continue
+                if relative_line_number in omitted_ts_type_import_lines:
+                    diagnostics["ts_type_imports_removed"] += 1
+                    continue
+                if relative_line_number in omitted_rust_doc_comment_lines:
+                    diagnostics["removed_comment_lines"] += 1
+                    diagnostics["rust_doc_comments_removed"] += 1
+                    continue
+                if relative_line_number in omitted_rust_attribute_lines:
+                    diagnostics["removed_boilerplate_lines"] += 1
+                    diagnostics["rust_attributes_removed"] += 1
+                    continue
+                if _is_comment_line(path, line):
+                    diagnostics["removed_comment_lines"] += 1
+                    continue
+                if relative_line_number in omitted_docstring_lines:
+                    diagnostics["removed_docstring_lines"] += 1
+                    continue
+                if relative_line_number in omitted_boilerplate_lines:
+                    diagnostics["removed_boilerplate_lines"] += 1
+                    continue
 
-            kept_lines.append(line)
-            if (
-                current_segment is None
-                or original_line_number != current_segment["original_end_line"] + 1
-            ):
-                current_segment = {
-                    "rendered_start_line": rendered_line_number,
-                    "rendered_end_line": rendered_line_number,
-                    "original_start_line": original_line_number,
-                    "original_end_line": original_line_number,
-                }
-                line_map.append(current_segment)
-            else:
-                current_segment["rendered_end_line"] = rendered_line_number
-                current_segment["original_end_line"] = original_line_number
-            rendered_line_number += 1
+                kept_lines.append(line)
+                if (
+                    current_segment is None
+                    or original_line_number != current_segment["original_end_line"] + 1
+                ):
+                    current_segment = {
+                        "rendered_start_line": rendered_line_number,
+                        "rendered_end_line": rendered_line_number,
+                        "original_start_line": original_line_number,
+                        "original_end_line": original_line_number,
+                    }
+                    line_map.append(current_segment)
+                else:
+                    current_segment["rendered_end_line"] = rendered_line_number
+                    current_segment["original_end_line"] = original_line_number
+                rendered_line_number += 1
 
-        rendered_source = "\n".join(kept_lines)
-        if kept_lines and block.endswith("\n"):
-            rendered_source += "\n"
-        diagnostics["rendered_line_count"] = len(kept_lines)
-        diagnostics["removed_line_count"] = (
-            diagnostics["original_line_count"] - diagnostics["rendered_line_count"]
-        )
+            rendered_source = "\n".join(kept_lines)
+            if kept_lines and block.endswith("\n"):
+                rendered_source += "\n"
+            diagnostics["rendered_line_count"] = len(kept_lines)
+            diagnostics["removed_line_count"] = (
+                diagnostics["original_line_count"] - diagnostics["rendered_line_count"]
+            )
 
     rendered = dict(source)
     rendered["render_profile"] = normalized_profile
@@ -5276,68 +5492,71 @@ def _attach_edit_plan_metadata(
     max_symbols: int,
     max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
     blast_radius_payload: dict[str, Any] | None = None,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    ranked_symbols = _sorted_ranked_symbols(list(payload.get("symbols", [])))
-    edit_anchor_symbol = _preferred_edit_anchor_symbol(None, ranked_symbols)
-    resolved_blast_radius_payload = blast_radius_payload
-    if edit_anchor_symbol is not None and resolved_blast_radius_payload is None:
-        edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
-        if edit_symbol_name:
-            resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
-                repo_map,
-                edit_symbol_name,
-                max_depth=max_depth,
-            )
-    payload["edit_plan_seed"] = _build_edit_plan_seed(
-        repo_map,
-        payload,
-        ranked_symbols=ranked_symbols,
-        query=query,
-        max_files=max_files,
-        max_depth=max_depth,
-        blast_radius_payload=resolved_blast_radius_payload,
-    )
-    payload["graph_trust_summary"] = (
-        dict(resolved_blast_radius_payload.get("graph_trust_summary", {}))
-        if resolved_blast_radius_payload is not None
-        else _graph_trust_summary([])
-    )
-    payload["candidate_edit_targets"] = {
-        "files": list(payload.get("files", []))[:max_files],
-        "symbols": ranked_symbols[:max_symbols],
-        "tests": list(payload.get("tests", []))[:max_files],
-        "ranking_quality": str(
-            payload.get(
-                "ranking_quality",
-                _ranking_quality(
-                    list(payload.get("file_matches", [])),
-                    list(payload.get("test_matches", [])),
-                ),
-            )
-        ),
-        "coverage_summary": dict(payload.get("coverage_summary", _coverage_summary(payload))),
-        "spans": _candidate_edit_spans(
+    with _profiling_phase(_profiling_collector, "edit_plan_assembly"):
+        ranked_symbols = _sorted_ranked_symbols(list(payload.get("symbols", [])))
+        edit_anchor_symbol = _preferred_edit_anchor_symbol(None, ranked_symbols)
+        resolved_blast_radius_payload = blast_radius_payload
+        if edit_anchor_symbol is not None and resolved_blast_radius_payload is None:
+            edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
+            if edit_symbol_name:
+                resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
+                    repo_map,
+                    edit_symbol_name,
+                    max_depth=max_depth,
+                    _profiling_collector=_profiling_collector,
+                )
+        payload["edit_plan_seed"] = _build_edit_plan_seed(
+            repo_map,
+            payload,
+            ranked_symbols=ranked_symbols,
+            query=query,
+            max_files=max_files,
+            max_depth=max_depth,
+            blast_radius_payload=resolved_blast_radius_payload,
+        )
+        payload["graph_trust_summary"] = (
+            dict(resolved_blast_radius_payload.get("graph_trust_summary", {}))
+            if resolved_blast_radius_payload is not None
+            else _graph_trust_summary([])
+        )
+        payload["candidate_edit_targets"] = {
+            "files": list(payload.get("files", []))[:max_files],
+            "symbols": ranked_symbols[:max_symbols],
+            "tests": list(payload.get("tests", []))[:max_files],
+            "ranking_quality": str(
+                payload.get(
+                    "ranking_quality",
+                    _ranking_quality(
+                        list(payload.get("file_matches", [])),
+                        list(payload.get("test_matches", [])),
+                    ),
+                )
+            ),
+            "coverage_summary": dict(payload.get("coverage_summary", _coverage_summary(payload))),
+            "spans": _candidate_edit_spans(
+                primary_symbol=payload["edit_plan_seed"].get("primary_symbol"),
+                primary_file_match={},
+                related_spans=[],
+                max_spans=max(max_files, max_symbols),
+            ),
+        }
+        primary_file = payload["edit_plan_seed"].get("primary_file")
+        primary_file_match = next(
+            (
+                match
+                for match in payload.get("file_matches", [])
+                if str(match.get("path")) == str(primary_file)
+            ),
+            payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
+        )
+        payload["candidate_edit_targets"]["spans"] = _candidate_edit_spans(
             primary_symbol=payload["edit_plan_seed"].get("primary_symbol"),
-            primary_file_match={},
-            related_spans=[],
+            primary_file_match=primary_file_match,
+            related_spans=list(payload["edit_plan_seed"].get("related_spans", [])),
             max_spans=max(max_files, max_symbols),
-        ),
-    }
-    primary_file = payload["edit_plan_seed"].get("primary_file")
-    primary_file_match = next(
-        (
-            match
-            for match in payload.get("file_matches", [])
-            if str(match.get("path")) == str(primary_file)
-        ),
-        payload.get("file_matches", [{}])[0] if payload.get("file_matches") else {},
-    )
-    payload["candidate_edit_targets"]["spans"] = _candidate_edit_spans(
-        primary_symbol=payload["edit_plan_seed"].get("primary_symbol"),
-        primary_file_match=primary_file_match,
-        related_spans=list(payload["edit_plan_seed"].get("related_spans", [])),
-        max_spans=max(max_files, max_symbols),
-    )
+        )
     return payload
 
 
@@ -5347,13 +5566,15 @@ def build_context_edit_plan(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path)
+    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
     return build_context_edit_plan_from_map(
         repo_map,
         query,
         max_files=max_files,
         max_symbols=max_symbols,
+        _profiling_collector=_profiling_collector,
     )
 
 
@@ -5363,8 +5584,13 @@ def build_context_edit_plan_from_map(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    payload = build_context_pack_from_map(repo_map, query)
+    payload = build_context_pack_from_map(
+        repo_map,
+        query,
+        _profiling_collector=_profiling_collector,
+    )
     normalized_max_files = max(1, max_files)
     normalized_max_symbols = max(1, max_symbols)
     payload["routing_reason"] = "context-edit-plan"
@@ -5376,13 +5602,15 @@ def build_context_edit_plan_from_map(
     payload["symbols"] = _sorted_ranked_symbols(list(payload.get("symbols", [])))[:normalized_max_symbols]
     payload["max_files"] = normalized_max_files
     payload["max_symbols"] = normalized_max_symbols
-    return _attach_edit_plan_metadata(
+    payload = _attach_edit_plan_metadata(
         repo_map,
         payload,
         query=query,
         max_files=normalized_max_files,
         max_symbols=normalized_max_symbols,
+        _profiling_collector=_profiling_collector,
     )
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_context_edit_plan_json(
@@ -5410,8 +5638,9 @@ def build_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path)
+    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
     return build_context_render_from_map(
         repo_map,
         query,
@@ -5423,6 +5652,7 @@ def build_context_render(
         model=model,
         optimize_context=optimize_context,
         render_profile=render_profile,
+        _profiling_collector=_profiling_collector,
     )
 
 
@@ -5438,8 +5668,13 @@ def build_context_render_from_map(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    context_payload = build_context_pack_from_map(repo_map, query)
+    context_payload = build_context_pack_from_map(
+        repo_map,
+        query,
+        _profiling_collector=_profiling_collector,
+    )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
     max_files = max(1, max_files)
     max_sources = max(1, max_sources)
@@ -5455,7 +5690,11 @@ def build_context_render_from_map(
         if symbol_key in seen_symbols:
             continue
         seen_symbols.add(symbol_key)
-        symbol_sources = build_symbol_source_from_map(repo_map, str(symbol["name"])).get("sources", [])
+        symbol_sources = build_symbol_source_from_map(
+            repo_map,
+            str(symbol["name"]),
+            _profiling_collector=_profiling_collector,
+        ).get("sources", [])
         for source in symbol_sources:
             if str(source["file"]) != current_file:
                 continue
@@ -5464,6 +5703,7 @@ def build_context_render_from_map(
                     source,
                     render_profile=normalized_profile,
                     optimize_context=optimize_context,
+                    _profiling_collector=_profiling_collector,
                 )
             )
             break
@@ -5497,6 +5737,7 @@ def build_context_render_from_map(
         max_files=max_files,
         max_symbols=max_sources,
         max_depth=_DEFAULT_EDIT_PLAN_MAX_DEPTH,
+        _profiling_collector=_profiling_collector,
     )
     (
         rendered_context,
@@ -5507,13 +5748,14 @@ def build_context_render_from_map(
     ) = _render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
+        _profiling_collector=_profiling_collector,
     )
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
     payload["truncated"] = truncated
     payload["token_estimate"] = token_estimate
     payload["omitted_sections"] = omitted_sections
-    return payload
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_context_render_json(
@@ -5546,14 +5788,25 @@ def build_context_render_json(
     )
 
 
-def build_context_pack_from_map(repo_map: dict[str, Any], query: str) -> dict[str, Any]:
+def build_context_pack_from_map(
+    repo_map: dict[str, Any],
+    query: str,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
     payload = dict(repo_map)
     payload["files"] = list(repo_map.get("files", []))
     payload["symbols"] = [dict(symbol) for symbol in repo_map.get("symbols", [])]
     payload["imports"] = [dict(entry) for entry in repo_map.get("imports", [])]
     payload["tests"] = list(repo_map.get("tests", []))
     payload["related_paths"] = list(repo_map.get("related_paths", []))
-    return _build_context_pack_from_map(payload, query)
+    payload.pop("_profiling", None)
+    payload = _build_context_pack_from_map(
+        payload,
+        query,
+        _profiling_collector=_profiling_collector,
+    )
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_symbol_defs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
@@ -5604,28 +5857,43 @@ def build_symbol_defs_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_defs(symbol, path), indent=2)
 
 
-def build_symbol_source(symbol: str, path: str | Path = ".") -> dict[str, Any]:
-    repo_map = build_repo_map(path)
-    return build_symbol_source_from_map(repo_map, symbol)
+def build_symbol_source(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
+    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    return build_symbol_source_from_map(
+        repo_map,
+        symbol,
+        _profiling_collector=_profiling_collector,
+    )
 
 
-def build_symbol_source_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+def build_symbol_source_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
     sources: list[dict[str, Any]] = []
     seen_files: set[str] = set()
-    for definition in defs_payload["definitions"]:
-        current_path = Path(str(definition["file"]))
-        if str(current_path) in seen_files:
-            continue
-        seen_files.add(str(current_path))
-        current_sources = _python_symbol_sources(current_path, symbol)
-        if not current_sources and current_path.suffix in _JS_TS_SUFFIXES:
-            current_sources = _js_ts_parser_symbol_sources(current_path, symbol)
-        if not current_sources and current_path.suffix in _RUST_SUFFIXES:
-            current_sources = _rust_parser_symbol_sources(current_path, symbol)
-        if not current_sources:
-            current_sources = _regex_symbol_sources(current_path, symbol)
-        sources.extend(current_sources)
+    with _profiling_phase(_profiling_collector, "source_extraction"):
+        for definition in defs_payload["definitions"]:
+            current_path = Path(str(definition["file"]))
+            if str(current_path) in seen_files:
+                continue
+            seen_files.add(str(current_path))
+            current_sources = _python_symbol_sources(current_path, symbol)
+            if not current_sources and current_path.suffix in _JS_TS_SUFFIXES:
+                current_sources = _js_ts_parser_symbol_sources(current_path, symbol)
+            if not current_sources and current_path.suffix in _RUST_SUFFIXES:
+                current_sources = _rust_parser_symbol_sources(current_path, symbol)
+            if not current_sources:
+                current_sources = _regex_symbol_sources(current_path, symbol)
+            sources.extend(current_sources)
 
     related_paths: list[str] = []
     for current in [*defs_payload["files"], *defs_payload["tests"]]:
@@ -5642,21 +5910,39 @@ def build_symbol_source_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
     payload["tests"] = defs_payload["tests"]
     payload["related_paths"] = related_paths
     payload["sources"] = sources
-    return payload
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_symbol_source_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_source(symbol, path), indent=2)
 
 
-def build_symbol_impact(symbol: str, path: str | Path = ".") -> dict[str, Any]:
-    payload = build_repo_map(path)
-    return build_symbol_impact_from_map(payload, symbol)
+def build_symbol_impact(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
+    payload = build_repo_map(path, _profiling_collector=_profiling_collector)
+    return build_symbol_impact_from_map(
+        payload,
+        symbol,
+        _profiling_collector=_profiling_collector,
+    )
 
 
-def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+def build_symbol_impact_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
-    context_payload = build_context_pack_from_map(repo_map, symbol)
+    context_payload = build_context_pack_from_map(
+        repo_map,
+        symbol,
+        _profiling_collector=_profiling_collector,
+    )
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
@@ -5684,6 +5970,7 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
         symbol,
         definition_files,
         fallback_tests=list(context_payload.get("tests", [])),
+        _profiling_collector=_profiling_collector,
     )
 
     file_matches_by_path: dict[str, dict[str, Any]] = {
@@ -5769,7 +6056,7 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
-    return payload
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_symbol_impact_json(symbol: str, path: str | Path = ".") -> str:
@@ -5853,12 +6140,26 @@ def build_symbol_refs_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_refs(symbol, path), indent=2)
 
 
-def build_symbol_callers(symbol: str, path: str | Path = ".") -> dict[str, Any]:
-    repo_map = build_repo_map(path)
-    return build_symbol_callers_from_map(repo_map, symbol)
+def build_symbol_callers(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
+    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    return build_symbol_callers_from_map(
+        repo_map,
+        symbol,
+        _profiling_collector=_profiling_collector,
+    )
 
 
-def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+def build_symbol_callers_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    _profiling_collector: _ProfileCollector | None = None,
+) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
     repo_root = Path(str(repo_map["path"])).resolve()
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
@@ -5870,32 +6171,41 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
     ] or [dict(current) for current in defs_payload["definitions"]]
     definition_files = [str(current["file"]) for current in definitions]
     calls: list[dict[str, Any]] = []
-    for current in _iter_repo_files(Path(defs_payload["path"])):
-        if current.suffix == ".py":
-            _, current_calls = _python_references_and_calls(current, symbol)
-        elif current.suffix in _JS_TS_SUFFIXES:
-            _, current_calls = _js_ts_references_and_calls(current, symbol, repo_root)
-            if not current_calls:
+    with _profiling_phase(_profiling_collector, "caller_scan"):
+        for current in _iter_repo_files(
+            Path(defs_payload["path"]),
+            _profiling_collector=_profiling_collector,
+        ):
+            if current.suffix == ".py":
+                _, current_calls = _python_references_and_calls(current, symbol)
+            elif current.suffix in _JS_TS_SUFFIXES:
+                _, current_calls = _js_ts_references_and_calls(current, symbol, repo_root)
+                if not current_calls:
+                    _, current_calls = _regex_references_and_calls(current, symbol)
+            elif current.suffix in _RUST_SUFFIXES:
+                _, current_calls = _rust_references_and_calls(current, symbol, repo_root)
+                if not current_calls:
+                    _, current_calls = _regex_references_and_calls(current, symbol)
+            else:
                 _, current_calls = _regex_references_and_calls(current, symbol)
-        elif current.suffix in _RUST_SUFFIXES:
-            _, current_calls = _rust_references_and_calls(current, symbol, repo_root)
-            if not current_calls:
-                _, current_calls = _regex_references_and_calls(current, symbol)
-        else:
-            _, current_calls = _regex_references_and_calls(current, symbol)
-        for current_call in current_calls:
-            call_payload = dict(current_call)
-            call_payload["provenance"] = _symbol_navigation_provenance_for_path(str(current_call["file"]))
-            calls.append(call_payload)
+            for current_call in current_calls:
+                call_payload = dict(current_call)
+                call_payload["provenance"] = _symbol_navigation_provenance_for_path(str(current_call["file"]))
+                calls.append(call_payload)
 
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
-    context_payload = build_context_pack_from_map(repo_map, symbol)
+    context_payload = build_context_pack_from_map(
+        repo_map,
+        symbol,
+        _profiling_collector=_profiling_collector,
+    )
     related_tests = _relevant_tests_for_symbol(
         repo_map,
         symbol,
         definition_files,
         caller_files=caller_files,
         fallback_tests=list(context_payload.get("tests", [])),
+        _profiling_collector=_profiling_collector,
     )
 
     related_paths: list[str] = []
@@ -5919,7 +6229,7 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
-    return payload
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_symbol_callers_json(symbol: str, path: str | Path = ".") -> str:
@@ -5931,9 +6241,15 @@ def build_symbol_blast_radius(
     path: str | Path = ".",
     *,
     max_depth: int = 3,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path)
-    return build_symbol_blast_radius_from_map(repo_map, symbol, max_depth=max_depth)
+    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    return build_symbol_blast_radius_from_map(
+        repo_map,
+        symbol,
+        max_depth=max_depth,
+        _profiling_collector=_profiling_collector,
+    )
 
 
 def build_symbol_blast_radius_from_map(
@@ -5941,10 +6257,19 @@ def build_symbol_blast_radius_from_map(
     symbol: str,
     *,
     max_depth: int = 3,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
-    callers_payload = build_symbol_callers_from_map(repo_map, symbol)
-    impact_payload = build_symbol_impact_from_map(repo_map, symbol)
+    callers_payload = build_symbol_callers_from_map(
+        repo_map,
+        symbol,
+        _profiling_collector=_profiling_collector,
+    )
+    impact_payload = build_symbol_impact_from_map(
+        repo_map,
+        symbol,
+        _profiling_collector=_profiling_collector,
+    )
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
@@ -5978,13 +6303,23 @@ def build_symbol_blast_radius_from_map(
         )
         for current in repo_map.get("imports", [])
     }
-    reverse_importers = _reverse_importers(all_files, imports_by_file)
+    reverse_importers = _reverse_importers(
+        all_files,
+        imports_by_file,
+        _profiling_collector=_profiling_collector,
+    )
     definition_files = [str(current["file"]) for current in definitions]
-    dependency_distances = _reverse_import_distances(definition_files, all_files, imports_by_file)
+    dependency_distances = _reverse_import_distances(
+        definition_files,
+        all_files,
+        imports_by_file,
+        _profiling_collector=_profiling_collector,
+    )
     reverse_graph_scores = _personalized_reverse_import_pagerank(
         definition_files,
         all_files,
         reverse_importers,
+        _profiling_collector=_profiling_collector,
     )
 
     direct_callers = [dict(current) for current in callers_payload.get("callers", [])]
@@ -6194,7 +6529,7 @@ def build_symbol_blast_radius_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
-    return payload
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_symbol_blast_radius_json(
@@ -6216,14 +6551,16 @@ def build_symbol_blast_radius_plan(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path)
+    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
     return build_symbol_blast_radius_plan_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
         max_files=max_files,
         max_symbols=max_symbols,
+        _profiling_collector=_profiling_collector,
     )
 
 
@@ -6234,8 +6571,14 @@ def build_symbol_blast_radius_plan_from_map(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    payload = build_symbol_blast_radius_from_map(repo_map, symbol, max_depth=max_depth)
+    payload = build_symbol_blast_radius_from_map(
+        repo_map,
+        symbol,
+        max_depth=max_depth,
+        _profiling_collector=_profiling_collector,
+    )
     normalized_max_files = max(1, max_files)
     normalized_max_symbols = max(1, max_symbols)
     payload["routing_reason"] = "symbol-blast-radius-plan"
@@ -6247,7 +6590,7 @@ def build_symbol_blast_radius_plan_from_map(
     payload["symbols"] = _sorted_ranked_symbols(list(payload.get("symbols", [])))[:normalized_max_symbols]
     payload["max_files"] = normalized_max_files
     payload["max_symbols"] = normalized_max_symbols
-    return _attach_edit_plan_metadata(
+    payload = _attach_edit_plan_metadata(
         repo_map,
         payload,
         query=symbol,
@@ -6255,7 +6598,9 @@ def build_symbol_blast_radius_plan_from_map(
         max_symbols=normalized_max_symbols,
         max_depth=max_depth,
         blast_radius_payload=payload,
+        _profiling_collector=_profiling_collector,
     )
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_symbol_blast_radius_plan_json(
@@ -6289,8 +6634,9 @@ def build_symbol_blast_radius_render(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path)
+    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
     return build_symbol_blast_radius_render_from_map(
         repo_map,
         symbol,
@@ -6301,6 +6647,7 @@ def build_symbol_blast_radius_render(
         max_render_chars=max_render_chars,
         optimize_context=optimize_context,
         render_profile=render_profile,
+        _profiling_collector=_profiling_collector,
     )
 
 
@@ -6315,8 +6662,14 @@ def build_symbol_blast_radius_render_from_map(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    radius_payload = build_symbol_blast_radius_from_map(repo_map, symbol, max_depth=max_depth)
+    radius_payload = build_symbol_blast_radius_from_map(
+        repo_map,
+        symbol,
+        max_depth=max_depth,
+        _profiling_collector=_profiling_collector,
+    )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
     max_files = max(1, max_files)
     max_sources = max(1, max_sources)
@@ -6334,9 +6687,11 @@ def build_symbol_blast_radius_render_from_map(
         if symbol_key in seen_symbols:
             continue
         seen_symbols.add(symbol_key)
-        symbol_sources = build_symbol_source_from_map(repo_map, str(current_symbol["name"])).get(
-            "sources", []
-        )
+        symbol_sources = build_symbol_source_from_map(
+            repo_map,
+            str(current_symbol["name"]),
+            _profiling_collector=_profiling_collector,
+        ).get("sources", [])
         for source in symbol_sources:
             if str(source["file"]) != current_file:
                 continue
@@ -6345,6 +6700,7 @@ def build_symbol_blast_radius_render_from_map(
                     source,
                     render_profile=normalized_profile,
                     optimize_context=optimize_context,
+                    _profiling_collector=_profiling_collector,
                 )
             )
             break
@@ -6379,6 +6735,7 @@ def build_symbol_blast_radius_render_from_map(
     ) = _render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
+        _profiling_collector=_profiling_collector,
     )
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
@@ -6393,8 +6750,9 @@ def build_symbol_blast_radius_render_from_map(
         max_symbols=max_sources,
         max_depth=max_depth,
         blast_radius_payload=radius_payload,
+        _profiling_collector=_profiling_collector,
     )
-    return payload
+    return _attach_profiling(payload, _profiling_collector)
 
 
 def build_symbol_blast_radius_render_json(
