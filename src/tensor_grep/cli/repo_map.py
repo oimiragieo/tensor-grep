@@ -1646,6 +1646,7 @@ def _relevant_tests_for_symbol(
             file_distances,
             graph_scores,
             file_scores,
+            raw_query=symbol,
         )
         direct_definition_tests = []
         for current in tests:
@@ -2750,6 +2751,8 @@ def _provenance_from_reasons(reasons: list[str]) -> list[str]:
             label = "parser-backed"
         elif reason in {"import-graph", "graph-depth", "graph-centrality", "test-graph"}:
             label = "graph-derived"
+        elif reason == "framework-pattern":
+            label = "framework-pattern"
         elif reason in {"filename", "path"}:
             label = "filename-convention"
         else:
@@ -2799,7 +2802,7 @@ def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
             evidence_counts["parser_backed"] += 1
         elif normalized == "graph-derived":
             evidence_counts["graph_derived"] += 1
-        elif normalized in {"regex-heuristic", "heuristic", "filename-convention"}:
+        elif normalized in {"regex-heuristic", "heuristic", "filename-convention", "framework-pattern"}:
             evidence_counts["heuristic"] += 1
 
     def add_from_value(value: Any) -> None:
@@ -3175,6 +3178,8 @@ def _context_tests(
     file_distances: dict[str, int],
     graph_scores: dict[str, float],
     file_scores: dict[str, int],
+    *,
+    raw_query: str | None = None,
 ) -> list[dict[str, Any]]:
     related: list[dict[str, Any]] = []
     source_stems = {Path(current).stem.lower() for current in source_files}
@@ -3192,6 +3197,10 @@ def _context_tests(
         score += import_bonus
         if import_bonus > 0:
             reasons.append("test-graph")
+        framework_bonus = _framework_test_pattern_bonus(current, terms, raw_query=raw_query)
+        score += framework_bonus
+        if framework_bonus > 0:
+            reasons.append("framework-pattern")
         graph_score = _test_graph_score(
             current,
             source_files,
@@ -3207,12 +3216,16 @@ def _context_tests(
                 edge_kind = "hybrid"
             elif import_bonus > 0:
                 edge_kind = "import-graph"
+            elif framework_bonus > 0:
+                edge_kind = "framework-pattern"
             elif stem in source_stems:
                 edge_kind = "filename"
             else:
                 edge_kind = "path"
             if import_bonus > 0 or graph_score > 0.0:
                 confidence = "strong" if import_bonus > 0 and graph_score > 0.0 else "moderate"
+            elif framework_bonus > 0:
+                confidence = "moderate" if framework_bonus >= 3 else "weak"
             else:
                 confidence = "weak"
             match = _match_record(current, score, reasons, graph_score if graph_score > 0.0 else None)
@@ -3360,6 +3373,7 @@ def _build_context_pack_from_map(payload: dict[str, Any], query: str) -> dict[st
         file_distances,
         graph_scores,
         file_scores,
+        raw_query=query,
     )
     ranked_tests = [str(item["path"]) for item in test_matches]
 
@@ -4075,6 +4089,18 @@ def _candidate_terms(value: str | None) -> list[str]:
     return _query_terms(normalized.replace("_", " "))
 
 
+def _python_decorator_qualname(node: ast.AST) -> str | None:
+    current = node
+    if isinstance(current, ast.Call):
+        current = current.func
+    if isinstance(current, ast.Name):
+        return current.id
+    if isinstance(current, ast.Attribute):
+        parent = _python_decorator_qualname(current.value)
+        return f"{parent}.{current.attr}" if parent else current.attr
+    return None
+
+
 def _best_test_function_candidate(
     candidates: list[str],
     *,
@@ -4133,6 +4159,36 @@ def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=256)
+def _python_parametrized_test_function_candidates(test_path: str) -> tuple[str, ...]:
+    path = Path(test_path)
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return ()
+
+    candidates: list[str] = []
+
+    def visit_body(nodes: list[ast.stmt]) -> None:
+        for node in nodes:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+                decorator_names = {
+                    name
+                    for decorator in node.decorator_list
+                    if (name := _python_decorator_qualname(decorator))
+                }
+                if {
+                    "pytest.mark.parametrize",
+                    "mark.parametrize",
+                } & decorator_names:
+                    candidates.append(node.name)
+            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                visit_body(list(node.body))
+
+    visit_body(list(tree.body))
+    return tuple(dict.fromkeys(candidates))
+
+
+@lru_cache(maxsize=256)
 def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
@@ -4140,7 +4196,23 @@ def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
     except (OSError, UnicodeDecodeError):
         return ()
     pattern = re.compile(
-        r"#\s*\[\s*test\s*]\s*(?:\r?\n\s*)*(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+        r"#\s*\[\s*(?:test|tokio::test)(?:\([^]]*\))?\s*]\s*"
+        r"(?:\r?\n\s*)*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
+        re.MULTILINE,
+    )
+    return tuple(dict.fromkeys(match.group(1) for match in pattern.finditer(source)))
+
+
+@lru_cache(maxsize=256)
+def _rust_tokio_test_function_candidates(test_path: str) -> tuple[str, ...]:
+    path = Path(test_path)
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ()
+    pattern = re.compile(
+        r"#\s*\[\s*tokio::test(?:\([^]]*\))?\s*]\s*"
+        r"(?:\r?\n\s*)*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
         re.MULTILINE,
     )
     return tuple(dict.fromkeys(match.group(1) for match in pattern.finditer(source)))
@@ -4153,10 +4225,11 @@ def _javascript_test_function_candidates(test_path: str) -> tuple[str, ...]:
         source = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return ()
-    pattern = re.compile(
+    describe_pattern = re.compile(r"""\bdescribe(?:\.(?:only|skip))?\s*\(\s*["']([^"']+)["']""")
+    test_pattern = re.compile(
         r"""(?x)
         (?:
-            \b(?:test|it)\s*\(\s*["']([^"']+)["']
+            \b(?:test|it)(?:\.(?:only|skip|todo|concurrent))?\s*\(\s*["']([^"']+)["']
             |
             \b(?:test|it)\.each\s*\([^)]*\)\s*\(\s*["']([^"']+)["']
             |
@@ -4164,14 +4237,51 @@ def _javascript_test_function_candidates(test_path: str) -> tuple[str, ...]:
         )
         """
     )
-    return tuple(
-        dict.fromkeys(
-            candidate
-            for match in pattern.finditer(source)
-            for candidate in match.groups()
-            if candidate
-        )
-    )
+    describe_candidates = [(match.start(), match.group(1)) for match in describe_pattern.finditer(source)]
+    candidates: list[str] = []
+    for match in test_pattern.finditer(source):
+        target_name = next((group for group in match.groups() if group), None)
+        if not target_name:
+            continue
+        suite_name = None
+        for position, candidate in describe_candidates:
+            if position >= match.start():
+                break
+            suite_name = candidate
+        if suite_name:
+            candidates.append(f"{suite_name} {target_name}".strip())
+        candidates.append(target_name)
+    return tuple(dict.fromkeys(candidates))
+
+
+def _framework_test_function_candidates(test_path: str) -> tuple[str, ...]:
+    path = Path(test_path)
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        return _python_parametrized_test_function_candidates(test_path)
+    if suffix in _JS_TS_SUFFIXES:
+        return _javascript_test_function_candidates(test_path)
+    if suffix in _RUST_SUFFIXES:
+        return _rust_tokio_test_function_candidates(test_path)
+    return ()
+
+
+def _framework_test_pattern_bonus(
+    test_path: str,
+    terms: list[str],
+    *,
+    raw_query: str | None = None,
+) -> int:
+    candidates = _framework_test_function_candidates(test_path)
+    if not candidates:
+        return 0
+    expanded_terms: list[str] = list(terms)
+    for candidate_term in _candidate_terms(raw_query):
+        if candidate_term not in expanded_terms:
+            expanded_terms.append(candidate_term)
+    if not expanded_terms:
+        return 0
+    return max((_score_text_terms(candidate, expanded_terms) for candidate in candidates), default=0) * 3
 
 
 def _javascript_runner_file_command(runner: str, relative_path: str) -> str:
@@ -4188,7 +4298,7 @@ def _javascript_runner_specific_command(runner: str, relative_path: str, test_fi
         return f"npx vitest run {relative_path} -t {quoted_filter}"
     if runner == "mocha":
         return f"npx mocha {relative_path} --grep {quoted_filter}"
-    return f"npx jest {relative_path} -t {quoted_filter}"
+    return f"npx jest {relative_path} --testNamePattern {quoted_filter}"
 
 
 def _javascript_runner_fallback_command(runner: str) -> str:
@@ -5997,16 +6107,19 @@ def build_symbol_blast_radius_from_map(
             aliases = _module_aliases_for_path(source_file)
             if any(alias and alias in import_name.lower() for alias in aliases for import_name in current_imports):
                 coverage_hits += 1
-        if coverage_hits <= 0 and not any(reason in {"import-graph", "graph-centrality"} for reason in reasons):
+        if coverage_hits <= 0 and not any(
+            reason in {"import-graph", "graph-centrality", "framework-pattern"} for reason in reasons
+        ):
             continue
         score += coverage_hits
         related_tests.append(str(current))
-        test_match_lookup[str(current)] = {
-            "path": str(current),
-            "score": score,
-            "reasons": reasons,
-            **({"graph_score": graph_score} if graph_score > 0.0 else {}),
-        }
+        updated_entry = dict(test_entry)
+        updated_entry["path"] = str(current)
+        updated_entry["score"] = score
+        updated_entry["reasons"] = reasons
+        if graph_score > 0.0:
+            updated_entry["graph_score"] = graph_score
+        test_match_lookup[str(current)] = updated_entry
 
     caller_tree: list[dict[str, Any]] = []
     rendered_lines = [f"Blast radius for {symbol}:"]

@@ -184,7 +184,7 @@ def test_python_commands_use_relative_paths(
     [
         (
             {"jest": "^29.0.0"},
-            'npx jest tests/widget.test.js -t widget',
+            'npx jest tests/widget.test.js --testNamePattern widget',
             "npx jest tests/widget.test.js",
             "npx jest",
         ),
@@ -240,14 +240,14 @@ def test_javascript_runner_detection(
         (
             {"jest": "^29.0.0", "ts-jest": "^29.0.0"},
             None,
-            'npx jest tests/widget.spec.ts -t widget',
+            'npx jest tests/widget.spec.ts --testNamePattern widget',
             "npx jest tests/widget.spec.ts",
             "npx jest",
         ),
         (
             {"jest": "^29.0.0"},
             {"preset": "ts-jest"},
-            'npx jest tests/widget.spec.ts -t widget',
+            'npx jest tests/widget.spec.ts --testNamePattern widget',
             "npx jest tests/widget.spec.ts",
             "npx jest",
         ),
