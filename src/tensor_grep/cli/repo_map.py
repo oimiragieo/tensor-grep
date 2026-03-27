@@ -142,6 +142,18 @@ def _profiling_phase(
     return collector.phase(name)
 
 
+def _resolve_profiling_collector(
+    *,
+    profile: bool,
+    collector: _ProfileCollector | None,
+) -> _ProfileCollector | None:
+    if collector is not None:
+        return collector
+    if profile:
+        return _ProfileCollector()
+    return None
+
+
 def _attach_profiling(
     payload: dict[str, Any],
     collector: _ProfileCollector | None,
@@ -5566,15 +5578,18 @@ def build_context_edit_plan(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
+    repo_map = build_repo_map(path, _profiling_collector=collector)
     return build_context_edit_plan_from_map(
         repo_map,
         query,
         max_files=max_files,
         max_symbols=max_symbols,
-        _profiling_collector=_profiling_collector,
+        profile=profile,
+        _profiling_collector=collector,
     )
 
 
@@ -5584,12 +5599,14 @@ def build_context_edit_plan_from_map(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     payload = build_context_pack_from_map(
         repo_map,
         query,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
     normalized_max_files = max(1, max_files)
     normalized_max_symbols = max(1, max_symbols)
@@ -5608,9 +5625,9 @@ def build_context_edit_plan_from_map(
         query=query,
         max_files=normalized_max_files,
         max_symbols=normalized_max_symbols,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
-    return _attach_profiling(payload, _profiling_collector)
+    return _attach_profiling(payload, collector)
 
 
 def build_context_edit_plan_json(
@@ -5619,9 +5636,16 @@ def build_context_edit_plan_json(
     *,
     max_files: int = 3,
     max_symbols: int = 5,
+    profile: bool = False,
 ) -> str:
     return json.dumps(
-        build_context_edit_plan(query, path, max_files=max_files, max_symbols=max_symbols),
+        build_context_edit_plan(
+            query,
+            path,
+            max_files=max_files,
+            max_symbols=max_symbols,
+            profile=profile,
+        ),
         indent=2,
     )
 
@@ -5638,9 +5662,11 @@ def build_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
+    repo_map = build_repo_map(path, _profiling_collector=collector)
     return build_context_render_from_map(
         repo_map,
         query,
@@ -5652,7 +5678,8 @@ def build_context_render(
         model=model,
         optimize_context=optimize_context,
         render_profile=render_profile,
-        _profiling_collector=_profiling_collector,
+        profile=profile,
+        _profiling_collector=collector,
     )
 
 
@@ -5668,12 +5695,14 @@ def build_context_render_from_map(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     context_payload = build_context_pack_from_map(
         repo_map,
         query,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
     max_files = max(1, max_files)
@@ -5693,7 +5722,7 @@ def build_context_render_from_map(
         symbol_sources = build_symbol_source_from_map(
             repo_map,
             str(symbol["name"]),
-            _profiling_collector=_profiling_collector,
+            _profiling_collector=collector,
         ).get("sources", [])
         for source in symbol_sources:
             if str(source["file"]) != current_file:
@@ -5703,7 +5732,7 @@ def build_context_render_from_map(
                     source,
                     render_profile=normalized_profile,
                     optimize_context=optimize_context,
-                    _profiling_collector=_profiling_collector,
+                    _profiling_collector=collector,
                 )
             )
             break
@@ -5737,7 +5766,7 @@ def build_context_render_from_map(
         max_files=max_files,
         max_symbols=max_sources,
         max_depth=_DEFAULT_EDIT_PLAN_MAX_DEPTH,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
     (
         rendered_context,
@@ -5748,14 +5777,14 @@ def build_context_render_from_map(
     ) = _render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
     payload["truncated"] = truncated
     payload["token_estimate"] = token_estimate
     payload["omitted_sections"] = omitted_sections
-    return _attach_profiling(payload, _profiling_collector)
+    return _attach_profiling(payload, collector)
 
 
 def build_context_render_json(
@@ -5770,6 +5799,7 @@ def build_context_render_json(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
 ) -> str:
     return json.dumps(
         build_context_render(
@@ -5783,6 +5813,7 @@ def build_context_render_json(
             model=model,
             optimize_context=optimize_context,
             render_profile=render_profile,
+            profile=profile,
         ),
         indent=2,
     )
@@ -6634,9 +6665,11 @@ def build_symbol_blast_radius_render(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
+    repo_map = build_repo_map(path, _profiling_collector=collector)
     return build_symbol_blast_radius_render_from_map(
         repo_map,
         symbol,
@@ -6647,7 +6680,8 @@ def build_symbol_blast_radius_render(
         max_render_chars=max_render_chars,
         optimize_context=optimize_context,
         render_profile=render_profile,
-        _profiling_collector=_profiling_collector,
+        profile=profile,
+        _profiling_collector=collector,
     )
 
 
@@ -6662,13 +6696,15 @@ def build_symbol_blast_radius_render_from_map(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
+    collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
     radius_payload = build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
     max_files = max(1, max_files)
@@ -6690,7 +6726,7 @@ def build_symbol_blast_radius_render_from_map(
         symbol_sources = build_symbol_source_from_map(
             repo_map,
             str(current_symbol["name"]),
-            _profiling_collector=_profiling_collector,
+            _profiling_collector=collector,
         ).get("sources", [])
         for source in symbol_sources:
             if str(source["file"]) != current_file:
@@ -6700,7 +6736,7 @@ def build_symbol_blast_radius_render_from_map(
                     source,
                     render_profile=normalized_profile,
                     optimize_context=optimize_context,
-                    _profiling_collector=_profiling_collector,
+                    _profiling_collector=collector,
                 )
             )
             break
@@ -6735,7 +6771,7 @@ def build_symbol_blast_radius_render_from_map(
     ) = _render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
     payload["rendered_context"] = rendered_context
     payload["sections"] = sections
@@ -6750,9 +6786,9 @@ def build_symbol_blast_radius_render_from_map(
         max_symbols=max_sources,
         max_depth=max_depth,
         blast_radius_payload=radius_payload,
-        _profiling_collector=_profiling_collector,
+        _profiling_collector=collector,
     )
-    return _attach_profiling(payload, _profiling_collector)
+    return _attach_profiling(payload, collector)
 
 
 def build_symbol_blast_radius_render_json(
@@ -6766,6 +6802,7 @@ def build_symbol_blast_radius_render_json(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
 ) -> str:
     return json.dumps(
         build_symbol_blast_radius_render(
@@ -6778,6 +6815,7 @@ def build_symbol_blast_radius_render_json(
             max_render_chars=max_render_chars,
             optimize_context=optimize_context,
             render_profile=render_profile,
+            profile=profile,
         ),
         indent=2,
     )

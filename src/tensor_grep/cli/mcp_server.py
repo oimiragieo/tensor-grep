@@ -827,6 +827,7 @@ def tg_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
 ) -> str:
     """
     Return a prompt-ready repository context bundle for edit planning.
@@ -848,6 +849,7 @@ def tg_context_render(
                 model=model,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
+                profile=profile,
             ),
             indent=2,
         )
@@ -935,6 +937,7 @@ def tg_session_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
     refresh_on_stale: bool = False,
     auto_refresh: bool | None = None,
 ) -> str:
@@ -969,6 +972,7 @@ def tg_session_context_render(
                 model=model,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
+                profile=profile,
                 refresh_on_stale=effective_refresh,
             ),
             indent=2,
@@ -1408,6 +1412,7 @@ def tg_symbol_blast_radius_render(
     max_render_chars: int | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
 ) -> str:
     """
     Return a prompt-ready blast-radius bundle for a symbol.
@@ -1435,6 +1440,7 @@ def tg_symbol_blast_radius_render(
                 max_render_chars=max_render_chars,
                 optimize_context=optimize_context,
                 render_profile=render_profile,
+                profile=profile,
             ),
             indent=2,
         )

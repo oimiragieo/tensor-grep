@@ -2179,6 +2179,7 @@ def context_render(
         "--render-profile",
         help="Render profile: full, compact, or llm.",
     ),
+    profile: bool = typer.Option(False, "--profile", help="Include per-phase profiling in JSON output."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
@@ -2198,6 +2199,7 @@ def context_render(
                     model=model,
                     optimize_context=optimize_context,
                     render_profile=render_profile,
+                    profile=profile,
                 )
             )
             return
@@ -2213,6 +2215,7 @@ def context_render(
             model=model,
             optimize_context=optimize_context,
             render_profile=render_profile,
+            profile=profile,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -2229,6 +2232,7 @@ def edit_plan(
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
+    profile: bool = typer.Option(False, "--profile", help="Include per-phase profiling in JSON output."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable edit-planning bundle without rendered source text."""
@@ -2242,6 +2246,7 @@ def edit_plan(
                     path,
                     max_files=max_files,
                     max_symbols=max_symbols,
+                    profile=profile,
                 )
             )
             return
@@ -2251,6 +2256,7 @@ def edit_plan(
             path,
             max_files=max_files,
             max_symbols=max_symbols,
+            profile=profile,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -2441,6 +2447,7 @@ def blast_radius_render(
         "--render-profile",
         help="Render profile: full, compact, or llm.",
     ),
+    profile: bool = typer.Option(False, "--profile", help="Include per-phase profiling in JSON output."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready blast-radius bundle for a symbol."""
@@ -2462,6 +2469,7 @@ def blast_radius_render(
                     max_render_chars=max_render_chars,
                     optimize_context=optimize_context,
                     render_profile=render_profile,
+                    profile=profile,
                 )
             )
             return
@@ -2476,6 +2484,7 @@ def blast_radius_render(
             max_render_chars=max_render_chars,
             optimize_context=optimize_context,
             render_profile=render_profile,
+            profile=profile,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)

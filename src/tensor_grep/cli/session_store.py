@@ -505,6 +505,7 @@ def session_context_render(
     model: str | None = None,
     optimize_context: bool = False,
     render_profile: str = "full",
+    profile: bool = False,
     refresh_on_stale: bool = False,
 ) -> dict[str, Any]:
     payload = _load_session_payload(session_id, path, refresh_on_stale=refresh_on_stale)
@@ -519,6 +520,7 @@ def session_context_render(
         model=model,
         optimize_context=optimize_context,
         render_profile=render_profile,
+        profile=profile,
     )
     context["session_id"] = session_id
     context["routing_reason"] = "session-context-render"
@@ -654,6 +656,7 @@ def _serve_session_request_from_payload(
             ),
             optimize_context=bool(request.get("optimize_context", False)),
             render_profile=str(request.get("render_profile", "full")),
+            profile=bool(request.get("profile", False)),
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-context-render"
@@ -740,6 +743,7 @@ def _serve_session_request_from_payload(
             ),
             optimize_context=bool(request.get("optimize_context", False)),
             render_profile=str(request.get("render_profile", "full")),
+            profile=bool(request.get("profile", False)),
         )
         response["session_id"] = session_id
         response["routing_reason"] = "session-blast-radius-render"

@@ -146,6 +146,12 @@ def _assert_enriched_edit_plan_seed(
         assert 0.0 <= step["confidence"] <= 1.0
 
 
+def _without_profiling(payload: dict[str, object]) -> dict[str, object]:
+    cleaned = dict(payload)
+    cleaned.pop("_profiling", None)
+    return cleaned
+
+
 def test_tg_ast_search_accepts_ast_wrapper_backend():
     from tensor_grep.cli import mcp_server
 
@@ -1536,6 +1542,36 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
     assert "rendered_context" in rendered
 
 
+def test_tg_session_context_render_profile_includes_profiling_without_changing_output(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    sample_path = src_dir / "sample.py"
+    sample_path.write_text(
+        "def add(x):\n    return x + 1\n",
+        encoding="utf-8",
+    )
+
+    opened = json.loads(mcp_server.tg_session_open(str(project)))
+    session_id = opened["session_id"]
+
+    baseline = json.loads(mcp_server.tg_session_context_render(session_id, "add", str(project)))
+    profiled = json.loads(
+        mcp_server.tg_session_context_render(
+            session_id,
+            "add",
+            str(project),
+            profile=True,
+        )
+    )
+
+    assert "_profiling" not in baseline
+    assert profiled["_profiling"]["phases"]
+    assert _without_profiling(profiled) == baseline
+
+
 def test_tg_session_blast_radius_uses_cached_repo_map(tmp_path):
     from tensor_grep.cli import mcp_server
 
@@ -1629,6 +1665,57 @@ def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_pa
         primary_symbol_name="create_invoice",
     )
     assert "create_invoice" in payload["rendered_context"]
+
+
+def test_tg_symbol_blast_radius_render_profile_includes_profiling_without_changing_output(
+    tmp_path,
+):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total):\n    return total + 1\n",
+        encoding="utf-8",
+    )
+    (src_dir / "service.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def build_invoice(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_service.py").write_text(
+        "from src.service import build_invoice\n\n"
+        "def test_build_invoice():\n"
+        "    assert build_invoice(2) == 3\n",
+        encoding="utf-8",
+    )
+
+    baseline = json.loads(
+        mcp_server.tg_symbol_blast_radius_render(
+            "create_invoice",
+            str(project),
+            max_depth=1,
+            max_render_chars=400,
+        )
+    )
+    profiled = json.loads(
+        mcp_server.tg_symbol_blast_radius_render(
+            "create_invoice",
+            str(project),
+            max_depth=1,
+            max_render_chars=400,
+            profile=True,
+        )
+    )
+
+    assert "_profiling" not in baseline
+    assert profiled["_profiling"]["phases"]
+    assert _without_profiling(profiled) == baseline
 
 
 def test_tg_symbol_blast_radius_plan_returns_machine_readable_bundle(tmp_path):
@@ -2203,6 +2290,43 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert payload["edit_plan_seed"]["confidence"]["test"] >= 0.5
     assert str(module_path.resolve()) in payload["rendered_context"]
     assert "create_invoice" in payload["rendered_context"]
+
+
+def test_tg_context_render_profile_includes_profiling_without_changing_output(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    (src_dir / "payments.py").write_text(
+        "class PaymentService:\n"
+        "    pass\n\n"
+        "def create_invoice(total, tax):\n"
+        "    return total + tax\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+
+    baseline = json.loads(mcp_server.tg_context_render("create invoice", str(project)))
+    profiled = json.loads(
+        mcp_server.tg_context_render(
+            "create invoice",
+            str(project),
+            profile=True,
+        )
+    )
+
+    assert "_profiling" not in baseline
+    assert profiled["_profiling"]["phases"]
+    assert _without_profiling(profiled) == baseline
 
 
 def test_tg_context_render_includes_exact_caller_update_lines(tmp_path):
