@@ -811,6 +811,7 @@ Use this shape when an agent needs an explicit downstream change radius instead 
 | `test_matches` | `array<object>` | Ranked test metadata for the same radius. |
 | `caller_tree` | `array<object>` | Depth-indexed radius tree with one object per depth level. |
 | `rendered_caller_tree` | `string` | Deterministic text rendering of `caller_tree`. |
+| `graph_trust_summary` | `object` | Top-level dependency-edge trust summary aggregated from the caller tree, including edge kind, confidence, provenance, depth count, and evidence counts. |
 | `imports` | `array<object>` | Ranked imports reused from the impact surface. |
 | `symbols` | `array<object>` | Ranked symbol matches reused from the impact surface. |
 | `related_paths` | `array<string>` | Stable union of radius files and tests. |
@@ -848,6 +849,7 @@ The shape matches Symbol Blast Radius JSON and additionally includes:
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
+| `graph_trust_summary` | `object` | Same aggregated dependency-edge trust summary exposed by Symbol Blast Radius JSON. |
 
 ## Symbol Blast Radius Render JSON
 
@@ -868,6 +870,7 @@ The shape matches Context Render JSON and additionally includes:
 | `callers` | `array<object>` | Exact caller rows. |
 | `caller_tree` | `array<object>` | Depth-indexed radius tree. |
 | `rendered_caller_tree` | `string` | Deterministic text rendering of the same tree. |
+| `graph_trust_summary` | `object` | Same aggregated dependency-edge trust summary exposed by Symbol Blast Radius JSON. |
 
 ## Session Open JSON
 

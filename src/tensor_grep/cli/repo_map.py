@@ -1658,6 +1658,38 @@ def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _graph_trust_summary(caller_tree: list[dict[str, Any]]) -> dict[str, Any]:
+    parser_backed = 0
+    heuristic = 0
+    provenance: list[str] = []
+    max_confidence_rank = 0
+    confidence_order = {"weak": 1, "moderate": 2, "strong": 3}
+    for level in caller_tree:
+        edge_summary = level.get("edge_summary", {})
+        if not isinstance(edge_summary, dict):
+            continue
+        counts = edge_summary.get("evidence_counts", {})
+        if isinstance(counts, dict):
+            parser_backed += int(counts.get("parser_backed", 0))
+            heuristic += int(counts.get("heuristic", 0))
+        for label in edge_summary.get("provenance", []):
+            if isinstance(label, str) and label not in provenance:
+                provenance.append(label)
+        confidence = str(edge_summary.get("confidence", "weak"))
+        max_confidence_rank = max(max_confidence_rank, confidence_order.get(confidence, 1))
+    rank_to_confidence = {value: key for key, value in confidence_order.items()}
+    return {
+        "edge_kind": "reverse-import",
+        "confidence": rank_to_confidence.get(max_confidence_rank, "weak"),
+        "provenance": provenance or ["graph-derived"],
+        "depth_count": len(caller_tree),
+        "evidence_counts": {
+            "parser_backed": parser_backed,
+            "heuristic": heuristic,
+        },
+    }
+
+
 def _match_record(
     path: str,
     score: int,
@@ -4499,6 +4531,7 @@ def build_symbol_blast_radius_from_map(
     payload["test_matches"] = [test_match_lookup[str(current)] for current in related_tests]
     payload["caller_tree"] = caller_tree
     payload["rendered_caller_tree"] = "\n".join(rendered_lines)
+    payload["graph_trust_summary"] = _graph_trust_summary(caller_tree)
     payload["imports"] = impact_payload["imports"]
     payload["symbols"] = impact_payload["symbols"]
     payload["related_paths"] = related_paths

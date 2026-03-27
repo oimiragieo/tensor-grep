@@ -1594,6 +1594,7 @@ def test_tg_symbol_blast_radius_render_returns_prompt_ready_radius_bundle(tmp_pa
 
     assert payload["routing_reason"] == "symbol-blast-radius-render"
     assert payload["symbol"] == "create_invoice"
+    assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
     assert payload["sources"][0]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
     _assert_enriched_edit_plan_seed(
@@ -1637,6 +1638,7 @@ def test_tg_symbol_blast_radius_plan_returns_machine_readable_bundle(tmp_path):
     assert payload["routing_reason"] == "symbol-blast-radius-plan"
     assert "rendered_context" not in payload
     assert "sources" not in payload
+    assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
     assert payload["candidate_edit_targets"]["spans"][0]["file"] == str(module_path.resolve())
     assert payload["candidate_edit_targets"]["spans"][0]["symbol"] == "create_invoice"
@@ -2939,6 +2941,9 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
     assert all(level["graph_completeness"] == "moderate" for level in payload["caller_tree"])
     assert all(level["edge_summary"]["edge_kind"] == "reverse-import" for level in payload["caller_tree"])
     assert all("confidence" in level["edge_summary"] for level in payload["caller_tree"])
+    assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
+    assert payload["graph_trust_summary"]["depth_count"] >= 1
+    assert "graph-derived" in payload["graph_trust_summary"]["provenance"]
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 
