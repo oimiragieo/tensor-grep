@@ -2935,8 +2935,10 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
     assert payload["tests"][0] == str(test_path.resolve())
     assert any(level["depth"] == 0 for level in payload["caller_tree"])
     assert any(level["depth"] == 1 for level in payload["caller_tree"])
-    assert all(level["provenance"] == ["graph-derived"] for level in payload["caller_tree"])
+    assert all("graph-derived" in level["provenance"] for level in payload["caller_tree"])
     assert all(level["graph_completeness"] == "moderate" for level in payload["caller_tree"])
+    assert all(level["edge_summary"]["edge_kind"] == "reverse-import" for level in payload["caller_tree"])
+    assert all("confidence" in level["edge_summary"] for level in payload["caller_tree"])
     assert "Depth 0:" in payload["rendered_caller_tree"]
 
 

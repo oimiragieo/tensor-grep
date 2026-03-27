@@ -4278,6 +4278,12 @@ def build_symbol_blast_radius_from_map(
 
     normalized_depth = max(0, int(max_depth))
     all_files = [str(current) for current in repo_map.get("files", [])]
+    import_provenance_by_file = {
+        str(current["file"]): str(
+            current.get("provenance", _symbol_navigation_provenance_for_path(str(current["file"])))
+        )
+        for current in repo_map.get("imports", [])
+    }
     imports_by_file = {
         str(current["file"]): list(
             dict.fromkeys(
@@ -4434,12 +4440,42 @@ def build_symbol_blast_radius_from_map(
         ]
         if not depth_files:
             continue
+        parser_backed_edges = sum(
+            1
+            for current in depth_files
+            if import_provenance_by_file.get(current) in {"python-ast", "tree-sitter"}
+        )
+        heuristic_edges = sum(
+            1
+            for current in depth_files
+            if import_provenance_by_file.get(current) in {"regex-heuristic", "heuristic"}
+        )
+        edge_provenance = ["graph-derived"]
+        if parser_backed_edges > 0:
+            edge_provenance.append("parser-backed")
+        if heuristic_edges > 0:
+            edge_provenance.append("heuristic")
+        if parser_backed_edges > 0 and heuristic_edges == 0:
+            edge_confidence = "strong"
+        elif parser_backed_edges > 0:
+            edge_confidence = "moderate"
+        else:
+            edge_confidence = "weak"
         caller_tree.append(
             {
                 "depth": depth,
                 "files": depth_files,
-                "provenance": ["graph-derived"],
+                "provenance": edge_provenance,
                 "graph_completeness": "moderate",
+                "edge_summary": {
+                    "edge_kind": "reverse-import",
+                    "confidence": edge_confidence,
+                    "provenance": edge_provenance,
+                    "evidence_counts": {
+                        "parser_backed": parser_backed_edges,
+                        "heuristic": heuristic_edges,
+                    },
+                },
             }
         )
         rendered_lines.append(f"Depth {depth}:")

@@ -828,6 +828,7 @@ Each `caller_tree[]` object may additionally include:
 | --- | --- | --- |
 | `provenance` | `array<string>` | Graph-source labels for the depth bucket, currently `graph-derived`. |
 | `graph_completeness` | `string` | Actionable graph trust label, currently `moderate`. |
+| `edge_summary` | `object` | Dependency-edge trust metadata for the depth bucket, including `edge_kind`, `confidence`, normalized provenance, and parser-backed vs heuristic evidence counts. |
 
 ## Symbol Blast Radius Plan JSON
 
