@@ -4138,6 +4138,8 @@ def build_symbol_impact_from_map(repo_map: dict[str, Any], symbol: str) -> dict[
     payload["imports"] = context_payload["imports"]
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
+    payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
+    payload["coverage_summary"] = _coverage_summary(payload)
     return payload
 
 
@@ -4152,6 +4154,7 @@ def build_symbol_refs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
 
 def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
     payload = build_symbol_defs_from_map(repo_map, symbol)
+    context_payload = build_context_pack_from_map(repo_map, symbol)
     references: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(payload["path"])):
         current_provenance = _symbol_navigation_provenance_for_path(str(current))
@@ -4198,6 +4201,11 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     payload["files"] = referenced_files
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
+    payload["ranking_quality"] = _ranking_quality(
+        context_payload["file_matches"],
+        context_payload["test_matches"],
+    )
+    payload["coverage_summary"] = _coverage_summary(payload)
     return payload
 
 
@@ -4265,6 +4273,11 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
     payload["symbols"] = context_payload["symbols"]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "moderate"
+    payload["ranking_quality"] = _ranking_quality(
+        context_payload["file_matches"],
+        context_payload["test_matches"],
+    )
+    payload["coverage_summary"] = _coverage_summary(payload)
     return payload
 
 
