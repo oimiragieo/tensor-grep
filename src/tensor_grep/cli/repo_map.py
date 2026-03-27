@@ -29,6 +29,7 @@ _RUST_SUFFIXES = {".rs"}
 _RENDER_PROFILES = {"full", "compact", "llm"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
+_JS_TS_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
 
 
 class _ValidationRunnerInfo(NamedTuple):
@@ -272,6 +273,422 @@ def _js_ts_namespace_import_bindings(source: str) -> list[dict[str, str]]:
     return bindings
 
 
+def _js_ts_default_import_bindings(source: str) -> list[dict[str, Any]]:
+    bindings: list[dict[str, Any]] = []
+    pattern = re.compile(
+        r"""(?x)
+        import
+        \s+
+        (?!type\b)
+        (?P<local>[A-Za-z_][A-Za-z0-9_]*)
+        \s*
+        (?:,\s*\{[^}]*\})?
+        \s+from\s*["'](?P<module>[^"']+)["']
+        """,
+        re.MULTILINE | re.DOTALL,
+    )
+    for match in pattern.finditer(source):
+        start_line, end_line = _line_span_from_offsets(source, match.start(), match.end())
+        bindings.append(
+            {
+                "module": match.group("module").strip(),
+                "local": match.group("local").strip(),
+                "start_line": start_line,
+                "end_line": end_line,
+            }
+        )
+    return bindings
+
+
+def _normalized_repo_root(repo_root: Path | str | None) -> Path | None:
+    if repo_root is None:
+        return None
+    return Path(str(repo_root)).expanduser().resolve()
+
+
+def _dedupe_labels(labels: list[str]) -> list[str]:
+    ordered: list[str] = []
+    for label in labels:
+        normalized = str(label).strip()
+        if normalized and normalized not in ordered:
+            ordered.append(normalized)
+    return ordered
+
+
+def _parse_js_ts_tsconfig(root: Path) -> dict[str, Any]:
+    tsconfig_path = root / "tsconfig.json"
+    payload: dict[str, Any] = {
+        "exists": False,
+        "base_url": None,
+        "paths": [],
+    }
+    if not tsconfig_path.exists():
+        return payload
+
+    try:
+        parsed = json.loads(tsconfig_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return payload
+
+    compiler_options = parsed.get("compilerOptions", {})
+    if not isinstance(compiler_options, dict):
+        return payload
+
+    payload["exists"] = True
+    base_url = compiler_options.get("baseUrl")
+    if isinstance(base_url, str) and base_url.strip():
+        payload["base_url"] = str((root / base_url).resolve())
+
+    raw_paths = compiler_options.get("paths", {})
+    if isinstance(raw_paths, dict):
+        normalized_paths: list[dict[str, Any]] = []
+        for pattern, targets in raw_paths.items():
+            if not isinstance(pattern, str) or not pattern.strip():
+                continue
+            if isinstance(targets, str):
+                target_list = [targets]
+            elif isinstance(targets, list):
+                target_list = [str(target) for target in targets if isinstance(target, str)]
+            else:
+                continue
+            if not target_list:
+                continue
+            normalized_paths.append({"pattern": pattern, "targets": target_list})
+        payload["paths"] = normalized_paths
+    return payload
+
+
+def _prime_js_ts_repo_context(root: Path) -> dict[str, Any]:
+    normalized_root = root.expanduser().resolve()
+    context = {
+        "root": str(normalized_root),
+        "tsconfig": _parse_js_ts_tsconfig(normalized_root),
+        "re_export_cache": {},
+    }
+    _JS_TS_REPO_CONTEXTS[str(normalized_root)] = context
+    return context
+
+
+def _js_ts_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
+    normalized_root = _normalized_repo_root(repo_root)
+    if normalized_root is None:
+        return {
+            "root": None,
+            "tsconfig": {
+                "exists": False,
+                "base_url": None,
+                "paths": [],
+            },
+            "re_export_cache": {},
+        }
+    cached = _JS_TS_REPO_CONTEXTS.get(str(normalized_root))
+    if cached is not None:
+        return cached
+    return _prime_js_ts_repo_context(normalized_root)
+
+
+def _js_ts_candidate_files(base: Path) -> list[Path]:
+    normalized_base = base.resolve()
+    candidates: list[Path] = []
+    if normalized_base.suffix in _JS_TS_SUFFIXES:
+        candidates.append(normalized_base)
+    else:
+        candidates.extend(
+            (normalized_base.with_suffix(suffix)).resolve() for suffix in sorted(_JS_TS_SUFFIXES)
+        )
+        candidates.extend(
+            ((normalized_base / "index").with_suffix(suffix)).resolve()
+            for suffix in sorted(_JS_TS_SUFFIXES)
+        )
+    deduped: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        current = str(candidate)
+        if current not in seen:
+            deduped.append(candidate)
+            seen.add(current)
+    return deduped
+
+
+def _expand_js_ts_tsconfig_target(
+    module_name: str,
+    pattern: str,
+    target: str,
+) -> str | None:
+    if "*" not in pattern:
+        return target if module_name == pattern else None
+    prefix, suffix = pattern.split("*", 1)
+    if not module_name.startswith(prefix):
+        return None
+    if suffix and not module_name.endswith(suffix):
+        return None
+    token_end = len(module_name) - len(suffix) if suffix else len(module_name)
+    token = module_name[len(prefix) : token_end]
+    return target.replace("*", token, 1)
+
+
+def _js_ts_module_candidates(
+    importer_path: Path,
+    module_name: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    if module_name.startswith("."):
+        base = (importer_path.parent / module_name).resolve()
+        return {
+            "paths": _js_ts_candidate_files(base),
+            "provenance": [],
+            "confidence": 1.0,
+        }
+
+    context = _js_ts_repo_context(repo_root)
+    tsconfig = context.get("tsconfig", {})
+    base_dir = Path(
+        str(
+            tsconfig.get("base_url")
+            or context.get("root")
+            or importer_path.parent.resolve()
+        )
+    ).resolve()
+
+    for current in tsconfig.get("paths", []):
+        pattern = str(current.get("pattern", ""))
+        targets = [str(target) for target in current.get("targets", []) if target]
+        for target in targets:
+            expanded = _expand_js_ts_tsconfig_target(module_name, pattern, target)
+            if expanded is None:
+                continue
+            return {
+                "paths": _js_ts_candidate_files((base_dir / expanded).resolve()),
+                "provenance": ["tsconfig-path-alias"],
+                "confidence": 0.88,
+            }
+
+    if tsconfig.get("base_url"):
+        return {
+            "paths": _js_ts_candidate_files((base_dir / module_name).resolve()),
+            "provenance": ["tsconfig-base-url"],
+            "confidence": 0.76,
+        }
+
+    return {"paths": [], "provenance": [], "confidence": 0.0}
+
+
+def _js_ts_module_match_details(
+    importer_path: Path,
+    module_name: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any]:
+    candidate_info = _js_ts_module_candidates(importer_path, module_name, repo_root)
+    resolved_definition = str(Path(definition_path).resolve())
+    if any(str(candidate) == resolved_definition for candidate in candidate_info["paths"]):
+        return {
+            "matched": True,
+            "provenance": list(candidate_info["provenance"]),
+            "confidence": float(candidate_info["confidence"] or 1.0),
+        }
+
+    if not module_name.startswith(".") and _module_path_matches_definition(module_name, definition_path):
+        return {
+            "matched": True,
+            "provenance": ["partial-resolution"],
+            "confidence": 0.2,
+        }
+
+    return {"matched": False, "provenance": [], "confidence": 0.0}
+
+
+def _js_ts_symbol_names(path: Path) -> set[str]:
+    symbols = _js_ts_parser_symbols(path)
+    if not symbols:
+        _, symbols = _regex_imports_and_symbols(path)
+    return {str(symbol.get("name", "")) for symbol in symbols if symbol.get("name")}
+
+
+def _js_ts_default_export_name(source: str, path: Path) -> str | None:
+    direct_patterns = [
+        re.compile(
+            r"export\s+default\s+(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
+            re.MULTILINE,
+        ),
+        re.compile(r"export\s+default\s+class\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE),
+        re.compile(r"export\s+default\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", re.MULTILINE),
+    ]
+    for pattern in direct_patterns:
+        match = pattern.search(source)
+        if not match:
+            continue
+        candidate = match.group(1).strip()
+        if candidate in _js_ts_symbol_names(path):
+            return candidate
+    return None
+
+
+def _js_ts_resolve_exported_symbol(
+    module_path: Path,
+    exported_name: str,
+    repo_root: Path | str | None = None,
+    *,
+    _depth: int = 0,
+    _visited: set[tuple[str, str]] | None = None,
+) -> dict[str, Any] | None:
+    normalized_root = _normalized_repo_root(repo_root)
+    normalized_module = module_path.expanduser().resolve()
+    if normalized_module.suffix not in _JS_TS_SUFFIXES:
+        return None
+
+    context = _js_ts_repo_context(normalized_root)
+    cache_key = (str(normalized_module), exported_name)
+    cached = context["re_export_cache"].get(cache_key)
+    if cached is not None:
+        return dict(cached) if isinstance(cached, dict) else None
+
+    visited = set() if _visited is None else set(_visited)
+    if _depth >= 5 or cache_key in visited:
+        context["re_export_cache"][cache_key] = None
+        return None
+    visited.add(cache_key)
+
+    try:
+        source = normalized_module.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        context["re_export_cache"][cache_key] = None
+        return None
+
+    if exported_name == "default":
+        direct_default = _js_ts_default_export_name(source, normalized_module)
+        if direct_default:
+            result = {
+                "symbol": direct_default,
+                "definition_file": str(normalized_module),
+                "provenance": ["default-import"],
+                "confidence": 0.95,
+            }
+            context["re_export_cache"][cache_key] = dict(result)
+            return result
+    elif exported_name in _js_ts_symbol_names(normalized_module):
+        result = {
+            "symbol": exported_name,
+            "definition_file": str(normalized_module),
+            "provenance": [],
+            "confidence": 0.95,
+        }
+        context["re_export_cache"][cache_key] = dict(result)
+        return result
+
+    for binding in _js_ts_named_import_bindings(source):
+        if (
+            str(binding.get("statement_kind", "")) != "export"
+            or str(binding.get("local", "")) != exported_name
+        ):
+            continue
+        candidate_info = _js_ts_module_candidates(
+            normalized_module,
+            str(binding.get("module", "")),
+            normalized_root,
+        )
+        for candidate in candidate_info["paths"]:
+            nested = _js_ts_resolve_exported_symbol(
+                candidate,
+                str(binding.get("imported", "")),
+                normalized_root,
+                _depth=_depth + 1,
+                _visited=visited,
+            )
+            if nested is None:
+                continue
+            provenance = _dedupe_labels(
+                [
+                    *list(candidate_info.get("provenance", [])),
+                    *list(nested.get("provenance", [])),
+                    "re-export-chain",
+                ]
+            )
+            confidence = float(nested.get("confidence", 0.2))
+            if float(candidate_info.get("confidence", 0.0)) > 0.0:
+                confidence = min(confidence, float(candidate_info["confidence"]))
+            result = {
+                "symbol": str(nested.get("symbol", exported_name)),
+                "definition_file": str(nested.get("definition_file", normalized_module)),
+                "provenance": provenance,
+                "confidence": round(confidence, 3),
+            }
+            context["re_export_cache"][cache_key] = dict(result)
+            return result
+
+    context["re_export_cache"][cache_key] = None
+    return None
+
+
+def _js_ts_resolve_imported_symbol(
+    importer_path: Path,
+    module_name: str,
+    imported_name: str,
+    repo_root: Path | str | None = None,
+) -> dict[str, Any] | None:
+    candidate_info = _js_ts_module_candidates(importer_path, module_name, repo_root)
+    for candidate in candidate_info["paths"]:
+        resolved = _js_ts_resolve_exported_symbol(candidate, imported_name, repo_root)
+        if resolved is None:
+            continue
+        provenance = _dedupe_labels(
+            [
+                *list(candidate_info.get("provenance", [])),
+                *list(resolved.get("provenance", [])),
+            ]
+        )
+        confidence = float(resolved.get("confidence", 0.2))
+        if float(candidate_info.get("confidence", 0.0)) > 0.0:
+            confidence = min(confidence, float(candidate_info["confidence"]))
+        return {
+            "symbol": str(resolved.get("symbol", imported_name)),
+            "definition_file": str(resolved.get("definition_file", candidate)),
+            "provenance": provenance,
+            "confidence": round(confidence, 3),
+        }
+    return None
+
+
+def _js_ts_import_match_details(
+    importer_path: Path,
+    *,
+    module_name: str,
+    imported_name: str,
+    symbol: str,
+    definition_path: str,
+    repo_root: Path | str | None = None,
+    is_default: bool = False,
+) -> dict[str, Any] | None:
+    resolved_definition = str(Path(definition_path).resolve())
+    resolved = _js_ts_resolve_imported_symbol(
+        importer_path,
+        module_name,
+        "default" if is_default else imported_name,
+        repo_root,
+    )
+    if resolved is not None:
+        if (
+            str(resolved.get("definition_file")) == resolved_definition
+            and str(resolved.get("symbol")) == symbol
+        ):
+            return {
+                "provenance": list(resolved.get("provenance", [])),
+                "confidence": float(resolved.get("confidence", 0.95)),
+            }
+        return None
+
+    if is_default:
+        return None
+
+    details = _js_ts_module_match_details(importer_path, module_name, definition_path, repo_root)
+    if details["matched"] and imported_name == symbol:
+        return {
+            "provenance": list(details.get("provenance", [])),
+            "confidence": float(details.get("confidence", 0.95)),
+        }
+    return None
+
+
 def _split_top_level_list(text: str) -> list[str]:
     items: list[str] = []
     current: list[str] = []
@@ -401,20 +818,16 @@ def _js_ts_module_matches_definition(
     importer_path: Path,
     module_name: str,
     definition_path: str,
+    repo_root: Path | str | None = None,
 ) -> bool:
-    if module_name.startswith("."):
-        base = (importer_path.parent / module_name).resolve()
-        candidates: list[Path] = []
-        if base.suffix in _JS_TS_SUFFIXES:
-            candidates.append(base)
-        else:
-            candidates.extend(base.with_suffix(suffix) for suffix in sorted(_JS_TS_SUFFIXES))
-            candidates.extend(
-                (base / "index").with_suffix(suffix) for suffix in sorted(_JS_TS_SUFFIXES)
-            )
-        resolved_definition = str(Path(definition_path).resolve())
-        return any(str(candidate) == resolved_definition for candidate in candidates)
-    return _module_path_matches_definition(module_name, definition_path)
+    return bool(
+        _js_ts_module_match_details(
+            importer_path,
+            module_name,
+            definition_path,
+            repo_root,
+        )["matched"]
+    )
 
 
 def _rust_module_matches_definition(
@@ -462,6 +875,7 @@ def _file_imports_symbol_from_definition(
     file_path: Path,
     symbol: str,
     definition_path: str,
+    repo_root: Path | str | None = None,
 ) -> bool:
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -489,13 +903,39 @@ def _file_imports_symbol_from_definition(
 
     if file_path.suffix in _JS_TS_SUFFIXES:
         bindings = _js_ts_named_import_bindings(source)
+        default_bindings = _js_ts_default_import_bindings(source)
         namespace_bindings = _js_ts_namespace_import_bindings(source)
         return any(
-            binding["imported"] == symbol
-            and _js_ts_module_matches_definition(file_path, binding["module"], definition_path)
+            _js_ts_import_match_details(
+                file_path,
+                module_name=str(binding["module"]),
+                imported_name=str(binding["imported"]),
+                symbol=symbol,
+                definition_path=definition_path,
+                repo_root=repo_root,
+            )
+            is not None
             for binding in bindings
+            if str(binding.get("statement_kind", "import")) == "import"
         ) or any(
-            _js_ts_module_matches_definition(file_path, binding["module"], definition_path)
+            _js_ts_import_match_details(
+                file_path,
+                module_name=str(binding["module"]),
+                imported_name="default",
+                symbol=symbol,
+                definition_path=definition_path,
+                repo_root=repo_root,
+                is_default=True,
+            )
+            is not None
+            for binding in default_bindings
+        ) or any(
+            _js_ts_module_matches_definition(
+                file_path,
+                binding["module"],
+                definition_path,
+                repo_root,
+            )
             for binding in namespace_bindings
         )
 
@@ -565,6 +1005,7 @@ def _js_ts_import_update_target(
     file_path: Path,
     symbol: str,
     definition_path: str,
+    repo_root: Path | str | None = None,
 ) -> dict[str, Any] | None:
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -583,15 +1024,37 @@ def _js_ts_import_update_target(
             node = stack.pop()
             if node.type == "import_statement":
                 statement = source[node.start_byte : node.end_byte]
+                for binding in _js_ts_default_import_bindings(statement):
+                    if (
+                        _js_ts_import_match_details(
+                            file_path,
+                            module_name=str(binding.get("module", "")),
+                            imported_name="default",
+                            symbol=symbol,
+                            definition_path=definition_path,
+                            repo_root=repo_root,
+                            is_default=True,
+                        )
+                        is not None
+                    ):
+                        return {
+                            "start_line": int(node.start_point[0] + 1),
+                            "end_line": int(node.end_point[0] + 1),
+                            "module": str(binding.get("module", "")),
+                            "provenance": "parser-backed",
+                        }
                 for binding in _js_ts_named_import_bindings(statement):
                     if (
                         str(binding.get("statement_kind", "import")) == "import"
-                        and str(binding.get("imported", "")) == symbol
-                        and _js_ts_module_matches_definition(
+                        and _js_ts_import_match_details(
                             file_path,
-                            str(binding.get("module", "")),
-                            definition_path,
+                            module_name=str(binding.get("module", "")),
+                            imported_name=str(binding.get("imported", "")),
+                            symbol=symbol,
+                            definition_path=definition_path,
+                            repo_root=repo_root,
                         )
+                        is not None
                     ):
                         return {
                             "start_line": int(node.start_point[0] + 1),
@@ -601,15 +1064,38 @@ def _js_ts_import_update_target(
                         }
             stack.extend(reversed(node.children))
 
+    for binding in _js_ts_default_import_bindings(source):
+        if (
+            _js_ts_import_match_details(
+                file_path,
+                module_name=str(binding.get("module", "")),
+                imported_name="default",
+                symbol=symbol,
+                definition_path=definition_path,
+                repo_root=repo_root,
+                is_default=True,
+            )
+            is not None
+        ):
+            return {
+                "start_line": int(binding.get("start_line", 0)),
+                "end_line": int(binding.get("end_line", binding.get("start_line", 0))),
+                "module": str(binding.get("module", "")),
+                "provenance": "heuristic",
+            }
+
     for binding in _js_ts_named_import_bindings(source):
         if (
             str(binding.get("statement_kind", "import")) == "import"
-            and str(binding.get("imported", "")) == symbol
-            and _js_ts_module_matches_definition(
+            and _js_ts_import_match_details(
                 file_path,
-                str(binding.get("module", "")),
-                definition_path,
+                module_name=str(binding.get("module", "")),
+                imported_name=str(binding.get("imported", "")),
+                symbol=symbol,
+                definition_path=definition_path,
+                repo_root=repo_root,
             )
+            is not None
         ):
             return {
                 "start_line": int(binding.get("start_line", 0)),
@@ -662,19 +1148,21 @@ def _import_update_target(
     file_path: Path,
     symbol: str,
     definition_path: str,
+    repo_root: Path | str | None = None,
 ) -> dict[str, Any] | None:
     if str(file_path.resolve()) == str(Path(definition_path).resolve()):
         return None
     if file_path.suffix == ".py":
         return _python_import_update_target(file_path, symbol, definition_path)
     if file_path.suffix in _JS_TS_SUFFIXES:
-        return _js_ts_import_update_target(file_path, symbol, definition_path)
+        return _js_ts_import_update_target(file_path, symbol, definition_path, repo_root)
     if file_path.suffix in _RUST_SUFFIXES:
         return _rust_import_update_target(file_path, symbol, definition_path)
     return None
 
 
 def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[str]:
+    repo_root = Path(str(repo_map["path"])).resolve()
     definitions = [
         dict(current)
         for current in repo_map.get("symbols", [])
@@ -692,7 +1180,12 @@ def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[s
         if current_path in scores:
             continue
         for definition_file in definition_files:
-            if _file_imports_symbol_from_definition(current, symbol, definition_file):
+            if _file_imports_symbol_from_definition(
+                current,
+                symbol,
+                definition_file,
+                repo_root,
+            ):
                 scores[definition_file] += 2 if _is_test_file(current) else 1
 
     preferred = [current for current, score in scores.items() if score > 0]
@@ -707,6 +1200,7 @@ def _relevant_tests_for_symbol(
     caller_files: list[str] | None = None,
     fallback_tests: list[str] | None = None,
 ) -> list[str]:
+    repo_root = Path(str(repo_map["path"])).resolve()
     tests = [str(current) for current in repo_map.get("tests", [])]
     caller_set = set(caller_files or [])
     if caller_files:
@@ -744,7 +1238,12 @@ def _relevant_tests_for_symbol(
         for current in tests:
             path = Path(current)
             if any(
-                _file_imports_symbol_from_definition(path, symbol, definition_file)
+                _file_imports_symbol_from_definition(
+                    path,
+                    symbol,
+                    definition_file,
+                    repo_root,
+                )
                 for definition_file in definition_files
             ):
                 direct_definition_tests.append(current)
@@ -765,7 +1264,12 @@ def _relevant_tests_for_symbol(
             continue
         path = Path(current)
         if any(
-            _file_imports_symbol_from_definition(path, symbol, definition_file)
+            _file_imports_symbol_from_definition(
+                path,
+                symbol,
+                definition_file,
+                repo_root,
+            )
             for definition_file in definition_files
         ):
             related.append(current)
@@ -1099,7 +1603,9 @@ def _regex_references_and_calls(
 
 
 def _js_ts_references_and_calls(
-    path: Path, symbol: str
+    path: Path,
+    symbol: str,
+    repo_root: Path | str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if path.suffix not in _JS_TS_SUFFIXES:
         return [], []
@@ -1120,11 +1626,37 @@ def _js_ts_references_and_calls(
     lines = source.splitlines()
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
-    alias_names = {
-        binding["local"]
-        for binding in _js_ts_named_import_bindings(source)
-        if binding["imported"] == symbol
-    }
+    alias_resolution_by_name: dict[str, dict[str, Any]] = {}
+    for binding in _js_ts_named_import_bindings(source):
+        if str(binding.get("statement_kind", "import")) != "import":
+            continue
+        resolved_import = _js_ts_resolve_imported_symbol(
+            path,
+            str(binding.get("module", "")),
+            str(binding.get("imported", "")),
+            repo_root,
+        )
+        if resolved_import is not None:
+            if str(resolved_import.get("symbol")) != symbol:
+                continue
+            alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
+            continue
+        if str(binding.get("imported", "")) == symbol:
+            alias_resolution_by_name[str(binding.get("local", ""))] = {
+                "provenance": [],
+                "confidence": 0.95,
+            }
+    for binding in _js_ts_default_import_bindings(source):
+        resolved_import = _js_ts_resolve_imported_symbol(
+            path,
+            str(binding.get("module", "")),
+            "default",
+            repo_root,
+        )
+        if resolved_import is None or str(resolved_import.get("symbol")) != symbol:
+            continue
+        alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
+    alias_names = {name for name in alias_resolution_by_name if name}
 
     def _node_text(node: Any) -> str:
         return source[node.start_byte : node.end_byte]
@@ -1137,6 +1669,8 @@ def _js_ts_references_and_calls(
         parent = node.parent
         if parent is None:
             return False
+        if _node_has_ancestor_type(node, {"import_statement"}):
+            return True
         if parent.type in {
             "function_declaration",
             "class_declaration",
@@ -1154,6 +1688,9 @@ def _js_ts_references_and_calls(
         )
         if matched_identifier:
             if not _is_definition_identifier(node):
+                alias_reference_resolution = (
+                    alias_resolution_by_name.get(node_text) if node_type == "identifier" else None
+                )
                 references.append(
                     {
                         "name": symbol,
@@ -1161,17 +1698,32 @@ def _js_ts_references_and_calls(
                         "file": str(path),
                         "line": node.start_point[0] + 1,
                         "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    alias_reference_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    alias_reference_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if alias_reference_resolution
+                            else {}
+                        ),
                     }
                 )
         elif node_type == "call_expression":
             function_node = node.child_by_field_name("function")
             matched = False
+            alias_resolution: dict[str, Any] | None = None
             if function_node is not None:
                 if function_node.type in {"identifier", "property_identifier"}:
                     function_name = _node_text(function_node)
                     matched = function_name == symbol or (
                         function_node.type == "identifier" and function_name in alias_names
                     )
+                    if function_node.type == "identifier":
+                        alias_resolution = alias_resolution_by_name.get(function_name)
                 elif function_node.type == "member_expression":
                     property_node = function_node.child_by_field_name("property")
                     matched = bool(
@@ -1185,6 +1737,18 @@ def _js_ts_references_and_calls(
                         "file": str(path),
                         "line": node.start_point[0] + 1,
                         "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    alias_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    alias_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if alias_resolution
+                            else {}
+                        ),
                     }
                 )
         for child in node.children:
@@ -1578,6 +2142,7 @@ def build_repo_map(path: str | Path = ".") -> dict[str, Any]:
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
 
+    _prime_js_ts_repo_context(root if root.is_dir() else root.parent)
     payload = _envelope(root)
     all_files = _iter_repo_files(root)
     tests = [str(current) for current in all_files if _is_test_file(current)]
@@ -1613,6 +2178,7 @@ def build_repo_map_incremental(
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
 
+    _prime_js_ts_repo_context(root if root.is_dir() else root.parent)
     normalized_changeset = _normalized_changeset_paths(root, changeset)
     changed_files = set(normalized_changeset["added"]) | set(normalized_changeset["modified"])
     previous_paths = {
@@ -3825,6 +4391,7 @@ def _suggested_edits_from_related_spans(
     primary_symbol: dict[str, Any] | None = None,
     definitions: list[dict[str, Any]] | None = None,
     callers: list[dict[str, Any]] | None = None,
+    repo_root: Path | str | None = None,
     max_edits: int,
 ) -> list[dict[str, Any]]:
     suggestions: list[dict[str, Any]] = []
@@ -3889,7 +4456,12 @@ def _suggested_edits_from_related_spans(
         current_file = str(current.get("file", ""))
         if not current_file:
             continue
-        import_target = _import_update_target(Path(current_file), primary_name, definition_path)
+        import_target = _import_update_target(
+            Path(current_file),
+            primary_name,
+            definition_path,
+            repo_root,
+        )
         if import_target is None:
             continue
         start_line = int(import_target.get("start_line", 0))
@@ -4092,6 +4664,7 @@ def _build_edit_plan_seed(
             primary_symbol=suggested_edit_primary_symbol,
             definitions=suggested_edit_definitions,
             callers=list(radius_payload.get("callers", [])) if radius_payload is not None else [],
+            repo_root=Path(str(repo_map["path"])).resolve(),
             max_edits=max_files,
         ),
         "dependency_trust": dependency_trust,
@@ -4640,13 +5213,14 @@ def build_symbol_refs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
 def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
     payload = build_symbol_defs_from_map(repo_map, symbol)
     context_payload = build_context_pack_from_map(repo_map, symbol)
+    repo_root = Path(str(repo_map["path"])).resolve()
     references: list[dict[str, Any]] = []
     for current in _iter_repo_files(Path(payload["path"])):
         current_provenance = _symbol_navigation_provenance_for_path(str(current))
         if current.suffix == ".py":
             current_refs, _ = _python_references_and_calls(current, symbol)
         elif current.suffix in _JS_TS_SUFFIXES:
-            current_refs, _ = _js_ts_references_and_calls(current, symbol)
+            current_refs, _ = _js_ts_references_and_calls(current, symbol, repo_root)
             if not current_refs:
                 current_refs, _ = _regex_references_and_calls(current, symbol)
         elif current.suffix in _RUST_SUFFIXES:
@@ -4705,6 +5279,7 @@ def build_symbol_callers(symbol: str, path: str | Path = ".") -> dict[str, Any]:
 
 def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    repo_root = Path(str(repo_map["path"])).resolve()
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
@@ -4718,7 +5293,7 @@ def build_symbol_callers_from_map(repo_map: dict[str, Any], symbol: str) -> dict
         if current.suffix == ".py":
             _, current_calls = _python_references_and_calls(current, symbol)
         elif current.suffix in _JS_TS_SUFFIXES:
-            _, current_calls = _js_ts_references_and_calls(current, symbol)
+            _, current_calls = _js_ts_references_and_calls(current, symbol, repo_root)
             if not current_calls:
                 _, current_calls = _regex_references_and_calls(current, symbol)
         elif current.suffix in _RUST_SUFFIXES:
