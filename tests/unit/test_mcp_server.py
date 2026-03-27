@@ -438,6 +438,10 @@ def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Pat
     assert {"heuristic_fields", "parser_backed_fields", "graph_completeness"} <= set(
         payload["coverage_summary"]
     )
+    assert {"parser_backed", "graph_derived", "heuristic"} <= set(
+        payload["coverage_summary"]["evidence_counts"]
+    )
+    assert payload["coverage_summary"]["evidence_counts"]["parser_backed"] >= 1
 
 
 def test_tg_session_context_supports_auto_refresh_alias(tmp_path: Path):

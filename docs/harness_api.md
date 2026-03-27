@@ -241,6 +241,12 @@ Use this shape when an agent needs a query-driven subset of the repository map b
 | `ranking_quality` | `string` | Actionable ranking strength label: `strong`, `moderate`, or `weak`. |
 | `coverage_summary` | `object` | Query-time trust summary covering parser-backed fields, heuristic fields, and graph completeness. |
 
+The `coverage_summary` object may additionally include:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `evidence_counts` | `object` | Query-level counts for `parser_backed`, `graph_derived`, and `heuristic` evidence observed in the ranked payload. |
+
 Each ranked `symbols[]` object extends the Repo Map JSON symbol shape with:
 
 | Field | Type | Notes |

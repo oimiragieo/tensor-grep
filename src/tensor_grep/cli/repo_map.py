@@ -1592,6 +1592,42 @@ def _ranking_quality(
 def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
     coverage = dict(payload.get("coverage", {}))
     language_scope = str(coverage.get("language_scope", ""))
+    evidence_counts = {
+        "parser_backed": 0,
+        "graph_derived": 0,
+        "heuristic": 0,
+    }
+
+    def add_label(label: str) -> None:
+        normalized = label.strip().lower()
+        if normalized in {"python-ast", "tree-sitter", "parser-backed"}:
+            evidence_counts["parser_backed"] += 1
+        elif normalized == "graph-derived":
+            evidence_counts["graph_derived"] += 1
+        elif normalized in {"regex-heuristic", "heuristic", "filename-convention"}:
+            evidence_counts["heuristic"] += 1
+
+    def add_from_value(value: Any) -> None:
+        if isinstance(value, str):
+            add_label(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    add_label(item)
+        elif isinstance(value, dict):
+            provenance = value.get("provenance")
+            if provenance is not None:
+                add_from_value(provenance)
+
+    for group_name in ("file_matches", "test_matches", "imports", "definitions", "references", "callers"):
+        for item in payload.get(group_name, []):
+            if isinstance(item, dict):
+                add_from_value(item.get("provenance"))
+                if group_name == "test_matches":
+                    add_from_value(item.get("association"))
+    for item in payload.get("caller_tree", []):
+        if isinstance(item, dict):
+            add_from_value(item.get("provenance"))
     return {
         "language_scope": language_scope,
         "parser_backed_fields": [
@@ -1604,7 +1640,8 @@ def _coverage_summary(payload: dict[str, Any]) -> dict[str, Any]:
             "test-matching",
             "graph-ranking",
         ],
-        "graph_completeness": "moderate",
+        "graph_completeness": str(payload.get("graph_completeness", "moderate")),
+        "evidence_counts": evidence_counts,
     }
 
 
