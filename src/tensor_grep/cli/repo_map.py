@@ -1690,6 +1690,63 @@ def _graph_trust_summary(caller_tree: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _is_parser_backed_provenance(label: str) -> bool:
+    return label.strip().lower() in {"python-ast", "tree-sitter", "parser-backed"}
+
+
+def _is_heuristic_provenance(label: str) -> bool:
+    return label.strip().lower() in {"regex-heuristic", "heuristic", "filename-convention"}
+
+
+def _dependency_trust(
+    repo_map: dict[str, Any],
+    dependent_files: list[str],
+) -> dict[str, Any]:
+    import_provenance_by_file = {
+        str(current["file"]): str(
+            current.get("provenance", _symbol_navigation_provenance_for_path(str(current["file"])))
+        )
+        for current in repo_map.get("imports", [])
+        if current.get("file")
+    }
+    parser_backed_count = 0
+    heuristic_count = 0
+    for current in dict.fromkeys(str(path) for path in dependent_files if path):
+        provenance = import_provenance_by_file.get(current, "")
+        if _is_parser_backed_provenance(provenance):
+            parser_backed_count += 1
+        elif _is_heuristic_provenance(provenance):
+            heuristic_count += 1
+    if parser_backed_count > 0 and heuristic_count == 0:
+        import_resolution_quality = "strong"
+    elif parser_backed_count > 0:
+        import_resolution_quality = "moderate"
+    else:
+        import_resolution_quality = "weak"
+    return {
+        "import_resolution_quality": import_resolution_quality,
+        "parser_backed_count": parser_backed_count,
+        "heuristic_count": heuristic_count,
+    }
+
+
+def _plan_trust_summary(
+    ranking_quality: str,
+    coverage_summary: dict[str, Any],
+    dependency_trust: dict[str, Any],
+) -> str:
+    evidence_counts = dict(coverage_summary.get("evidence_counts", {}))
+    return (
+        f"Ranking {ranking_quality}; coverage {coverage_summary.get('graph_completeness', 'moderate')} "
+        f"(parser_backed={int(evidence_counts.get('parser_backed', 0))}, "
+        f"graph_derived={int(evidence_counts.get('graph_derived', 0))}, "
+        f"heuristic={int(evidence_counts.get('heuristic', 0))}); dependency trust "
+        f"{dependency_trust.get('import_resolution_quality', 'weak')} "
+        f"(parser_backed={int(dependency_trust.get('parser_backed_count', 0))}, "
+        f"heuristic={int(dependency_trust.get('heuristic_count', 0))})."
+    )
+
+
 def _match_record(
     path: str,
     score: int,
@@ -3604,6 +3661,19 @@ def _build_edit_plan_seed(
             test_count=len(radius_payload.get("tests", payload.get("tests", []))),
             max_depth=max_depth,
         )
+    dependency_trust = _dependency_trust(repo_map, dependent_files)
+    ranking_quality = str(
+        payload.get(
+            "ranking_quality",
+            _ranking_quality(
+                list(payload.get("file_matches", [])),
+                list(payload.get("test_matches", [])),
+            ),
+        )
+    )
+    coverage_summary = dict(
+        payload.get("coverage_summary", _coverage_summary(payload))
+    )
 
     return {
         "primary_file": primary_file,
@@ -3637,6 +3707,12 @@ def _build_edit_plan_seed(
         "suggested_edits": _suggested_edits_from_related_spans(
             related_spans,
             max_edits=max_files,
+        ),
+        "dependency_trust": dependency_trust,
+        "plan_trust_summary": _plan_trust_summary(
+            ranking_quality,
+            coverage_summary,
+            dependency_trust,
         ),
         "dependent_files": dependent_files,
         "edit_ordering": _deterministic_edit_ordering(
@@ -3672,19 +3748,16 @@ def _attach_edit_plan_metadata(
     blast_radius_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ranked_symbols = _sorted_ranked_symbols(list(payload.get("symbols", [])))
-    payload["candidate_edit_targets"] = {
-        "files": list(payload.get("files", []))[:max_files],
-        "symbols": ranked_symbols[:max_symbols],
-        "tests": list(payload.get("tests", []))[:max_files],
-        "spans": _candidate_edit_spans(
-            primary_symbol=payload["edit_plan_seed"]["primary_symbol"]
-            if "edit_plan_seed" in payload
-            else None,
-            primary_file_match={},
-            related_spans=[],
-            max_spans=max(max_files, max_symbols),
-        ),
-    }
+    edit_anchor_symbol = _preferred_edit_anchor_symbol(None, ranked_symbols)
+    resolved_blast_radius_payload = blast_radius_payload
+    if edit_anchor_symbol is not None and resolved_blast_radius_payload is None:
+        edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
+        if edit_symbol_name:
+            resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
+                repo_map,
+                edit_symbol_name,
+                max_depth=max_depth,
+            )
     payload["edit_plan_seed"] = _build_edit_plan_seed(
         repo_map,
         payload,
@@ -3692,8 +3765,34 @@ def _attach_edit_plan_metadata(
         query=query,
         max_files=max_files,
         max_depth=max_depth,
-        blast_radius_payload=blast_radius_payload,
+        blast_radius_payload=resolved_blast_radius_payload,
     )
+    payload["graph_trust_summary"] = (
+        dict(resolved_blast_radius_payload.get("graph_trust_summary", {}))
+        if resolved_blast_radius_payload is not None
+        else _graph_trust_summary([])
+    )
+    payload["candidate_edit_targets"] = {
+        "files": list(payload.get("files", []))[:max_files],
+        "symbols": ranked_symbols[:max_symbols],
+        "tests": list(payload.get("tests", []))[:max_files],
+        "ranking_quality": str(
+            payload.get(
+                "ranking_quality",
+                _ranking_quality(
+                    list(payload.get("file_matches", [])),
+                    list(payload.get("test_matches", [])),
+                ),
+            )
+        ),
+        "coverage_summary": dict(payload.get("coverage_summary", _coverage_summary(payload))),
+        "spans": _candidate_edit_spans(
+            primary_symbol=payload["edit_plan_seed"].get("primary_symbol"),
+            primary_file_match={},
+            related_spans=[],
+            max_spans=max(max_files, max_symbols),
+        ),
+    }
     primary_file = payload["edit_plan_seed"].get("primary_file")
     primary_file_match = next(
         (

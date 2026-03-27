@@ -124,6 +124,20 @@ def _assert_enriched_edit_plan_seed(
     else:
         assert all(isinstance(path, str) for path in edit_plan_seed["edit_ordering"])
     assert 0.0 <= edit_plan_seed["rollback_risk"] <= 1.0
+    assert {
+        "import_resolution_quality",
+        "parser_backed_count",
+        "heuristic_count",
+    } <= set(edit_plan_seed["dependency_trust"])
+    assert edit_plan_seed["dependency_trust"]["import_resolution_quality"] in {
+        "strong",
+        "moderate",
+        "weak",
+    }
+    assert edit_plan_seed["dependency_trust"]["parser_backed_count"] >= 0
+    assert edit_plan_seed["dependency_trust"]["heuristic_count"] >= 0
+    assert isinstance(edit_plan_seed["plan_trust_summary"], str)
+    assert edit_plan_seed["plan_trust_summary"]
     assert isinstance(edit_plan_seed["validation_plan"], list)
     assert edit_plan_seed["validation_plan"]
     for step in edit_plan_seed["validation_plan"]:
@@ -445,6 +459,15 @@ def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Pat
         payload["coverage_summary"]["evidence_ratios"]
     )
     assert payload["coverage_summary"]["evidence_counts"]["parser_backed"] >= 1
+    assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
+    assert payload["candidate_edit_targets"]["ranking_quality"] == payload["ranking_quality"]
+    assert payload["candidate_edit_targets"]["coverage_summary"] == payload["coverage_summary"]
+    assert payload["edit_plan_seed"]["dependency_trust"]["import_resolution_quality"] in {
+        "strong",
+        "moderate",
+        "weak",
+    }
+    assert payload["edit_plan_seed"]["plan_trust_summary"]
 
 
 def test_tg_session_context_supports_auto_refresh_alias(tmp_path: Path):
@@ -1500,6 +1523,9 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
     assert rendered["session_id"] == session_id
     assert rendered["routing_reason"] == "session-context-render"
     assert rendered["sources"][0]["name"] == "add"
+    assert rendered["graph_trust_summary"]["edge_kind"] == "reverse-import"
+    assert rendered["candidate_edit_targets"]["ranking_quality"] == rendered["ranking_quality"]
+    assert rendered["candidate_edit_targets"]["coverage_summary"] == rendered["coverage_summary"]
     assert rendered["edit_plan_seed"]["validation_commands"] == ["uv run pytest -q"]
     _assert_enriched_edit_plan_seed(
         rendered["edit_plan_seed"],
@@ -2153,8 +2179,11 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert "symbol" in summary_section["provenance"]["reasons"]
     assert source_section["provenance"]["symbol"] == "create_invoice"
     assert source_section["provenance"]["symbol_score"] >= 1
+    assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
     assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
     assert payload["candidate_edit_targets"]["symbols"][0]["name"] == "create_invoice"
+    assert payload["candidate_edit_targets"]["ranking_quality"] == payload["ranking_quality"]
+    assert payload["candidate_edit_targets"]["coverage_summary"] == payload["coverage_summary"]
     assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
     assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
@@ -2206,9 +2235,12 @@ def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
     assert payload["routing_reason"] == "context-edit-plan"
     assert "rendered_context" not in payload
     assert "sources" not in payload
+    assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
     assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
     assert payload["candidate_edit_targets"]["spans"][0]["file"] == str(module_path.resolve())
     assert payload["candidate_edit_targets"]["spans"][0]["symbol"] == "create_invoice"
+    assert payload["candidate_edit_targets"]["ranking_quality"] == payload["ranking_quality"]
+    assert payload["candidate_edit_targets"]["coverage_summary"] == payload["coverage_summary"]
     _assert_enriched_edit_plan_seed(
         payload["edit_plan_seed"],
         primary_file=module_path,
