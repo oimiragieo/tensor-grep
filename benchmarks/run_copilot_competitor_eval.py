@@ -71,6 +71,38 @@ def _normalize_candidate_json(candidate: str) -> str | None:
     return None
 
 
+def _iter_json_object_candidates(stdout: str) -> list[str]:
+    candidates: list[str] = []
+    text = stdout.replace("\r", "")
+    for start in range(len(text)):
+        if text[start] != "{":
+            continue
+        depth = 0
+        in_string = False
+        escape = False
+        for end in range(start, len(text)):
+            char = text[end]
+            if in_string:
+                if escape:
+                    escape = False
+                elif char == "\\":
+                    escape = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    candidates.append(text[start : end + 1].replace("\n", ""))
+                    break
+    return candidates
+
+
 def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextManager[None]:
     @contextlib.contextmanager
     def _manager() -> Any:
@@ -157,6 +189,10 @@ def _extract_text_from_copilot_output(stdout: str) -> str:
         if content.startswith("● "):
             content = content[2:].strip()
         normalized = _normalize_candidate_json(content)
+        if normalized is not None:
+            return normalized
+    for candidate in reversed(_iter_json_object_candidates(stdout)):
+        normalized = _normalize_candidate_json(candidate)
         if normalized is not None:
             return normalized
     raise ValueError("Unable to extract Copilot JSON content from output")

@@ -3216,6 +3216,25 @@ def test_run_copilot_competitor_eval_should_parse_wrapped_final_json():
     assert json.loads(extracted)["actual_primary_file"] == "a.py"
 
 
+def test_run_copilot_competitor_eval_should_parse_fenced_json_from_mixed_output():
+    module = _load_script_module(
+        "run_copilot_competitor_eval_fenced_script", "benchmarks/run_copilot_competitor_eval.py"
+    )
+    stdout = "\n".join(
+        [
+            "Analyzing repository...",
+            "I found the likely target below.",
+            "```json",
+            '{"actual_primary_file":"b.py","actual_primary_span":{"start_line":10,"end_line":12},"actual_dependent_files":[],"actual_suggested_edit_files":[],"actual_test_files":[],"actual_validation_commands":["pytest -q"],"context_token_count":321,"notes":"ok"}',
+            "```",
+        ]
+    )
+
+    extracted = module._extract_text_from_copilot_output(stdout)
+
+    assert json.loads(extracted)["actual_primary_file"] == "b.py"
+
+
 def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path, monkeypatch):
     module = _load_script_module(
         "run_gemini_competitor_eval_script", "benchmarks/run_gemini_competitor_eval.py"
