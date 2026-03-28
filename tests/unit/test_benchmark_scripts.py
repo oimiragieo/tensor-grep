@@ -3246,28 +3246,21 @@ def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tm
             }
         ]
     }
-    monkeypatch.setattr(module, "resolve_gemini_binary", lambda: "gemini")
     monkeypatch.setattr(
-        module.subprocess,
-        "run",
-        lambda *args, **kwargs: type(
-            "Proc",
-            (),
+        module,
+        "_run_gemini_command",
+        lambda *args, **kwargs: json.dumps(
             {
-                "stdout": json.dumps(
-                    {
-                        "response": "```diff\n"
-                        "diff --git a/demo.py b/demo.py\n"
-                        "--- a/demo.py\n"
-                        "+++ b/demo.py\n"
-                        "@@ -1 +1 @@\n"
-                        "-old\n"
-                        "+new\n"
-                        "```"
-                    }
-                )
-            },
-        )(),
+                "response": "```diff\n"
+                "diff --git a/demo.py b/demo.py\n"
+                "--- a/demo.py\n"
+                "+++ b/demo.py\n"
+                "@@ -1 +1 @@\n"
+                "-old\n"
+                "+new\n"
+                "```"
+            }
+        ),
     )
 
     payload = module.build_payload(driver_payload, model="gemini-2.5-flash")
@@ -3291,17 +3284,51 @@ def test_run_gemini_patch_predictions_should_capture_timeout_as_empty_patch(monk
             }
         ]
     }
-    monkeypatch.setattr(module, "resolve_gemini_binary", lambda: "gemini")
 
     def _raise_timeout(*args, **kwargs):
         raise module.subprocess.TimeoutExpired(cmd="gemini", timeout=5)
 
-    monkeypatch.setattr(module.subprocess, "run", _raise_timeout)
+    monkeypatch.setattr(module, "_run_gemini_command", _raise_timeout)
 
     payload = module.build_payload(driver_payload, model="gemini-2.5-flash", timeout_seconds=5)
 
     assert payload["records"][0]["model_patch"] == ""
     assert payload["records"][0]["notes"] == "timeout after 5s"
+
+
+def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_patch_predictions_kill_script", "benchmarks/run_gemini_patch_predictions.py")
+    calls: list[tuple[str, object]] = []
+
+    class FakeProc:
+        pid = 4242
+        returncode = None
+
+        def communicate(self, timeout=None):
+            calls.append(("communicate", timeout))
+            raise module.subprocess.TimeoutExpired(cmd="gemini", timeout=timeout)
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return 0
+
+    monkeypatch.setattr(module, "resolve_gemini_binary", lambda: "gemini")
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: calls.append(("taskkill", list(args[0]))) or type("Proc", (), {"returncode": 0})(),
+    )
+
+    try:
+        module._run_gemini_command(tmp_path, "prompt", model="gemini-2.5-flash", timeout_seconds=7)
+    except module.subprocess.TimeoutExpired:
+        pass
+    else:
+        raise AssertionError("expected timeout")
+
+    assert ("communicate", 7) in calls
+    assert any(call[0] == "taskkill" and "/PID" in call[1] for call in calls)
 
 
 def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, tmp_path):

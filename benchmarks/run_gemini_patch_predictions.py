@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -99,6 +100,63 @@ def _extract_response_text(stdout: str) -> str:
     return stripped
 
 
+def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+    with contextlib.suppress(Exception):
+        if platform.system().lower().startswith("win"):
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        else:
+            proc.kill()
+    with contextlib.suppress(Exception):
+        proc.wait(timeout=5)
+
+
+def _run_gemini_command(
+    repo_root: Path,
+    prompt: str,
+    *,
+    model: str,
+    timeout_seconds: int,
+) -> str:
+    command = [
+        resolve_gemini_binary(),
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--model",
+        model,
+        "--yolo",
+        "--include-directories",
+        str(repo_root),
+    ]
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(repo_root),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(command, **popen_kwargs)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_tree(proc)
+        raise subprocess.TimeoutExpired(command, timeout_seconds, output=exc.output, stderr=exc.stderr) from None
+    if proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, command, output=stdout, stderr=stderr)
+    return stdout
+
+
 def run_gemini_patch_record(
     record: dict[str, Any],
     *,
@@ -112,28 +170,13 @@ def run_gemini_patch_record(
     patch_text = ""
     try:
         with _ephemeral_repo_instructions(repo_root):
-            proc = subprocess.run(
-                [
-                    resolve_gemini_binary(),
-                    "-p",
-                    prompt,
-                    "--output-format",
-                    "json",
-                    "--model",
-                    model,
-                    "--yolo",
-                    "--include-directories",
-                    str(repo_root),
-                ],
-                cwd=str(repo_root),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=True,
-                timeout=timeout_seconds,
+            stdout = _run_gemini_command(
+                repo_root,
+                prompt,
+                model=model,
+                timeout_seconds=timeout_seconds,
             )
-        patch_text = _extract_response_text(proc.stdout)
+        patch_text = _extract_response_text(stdout)
     except subprocess.TimeoutExpired:
         notes = f"timeout after {timeout_seconds}s"
     except subprocess.CalledProcessError as exc:
