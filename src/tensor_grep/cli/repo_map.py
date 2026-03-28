@@ -12,6 +12,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
+from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
+
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
 ROUTING_REASON = "repo-map"
@@ -35,6 +37,7 @@ _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
 _JS_TS_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
 _RUST_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
+_EXTERNAL_LSP_PROVIDER_MANAGER = ExternalLSPProviderManager()
 
 
 class _ValidationRunnerInfo(NamedTuple):
@@ -5865,19 +5868,203 @@ def build_context_pack_from_map(
     return _attach_profiling(payload, _profiling_collector)
 
 
-def build_symbol_defs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
+def _normalize_semantic_provider(provider: str) -> str:
+    normalized = str(provider).strip().lower() or "native"
+    if normalized not in {"native", "lsp", "hybrid"}:
+        return "native"
+    return normalized
+
+
+def _language_for_path(path: str | Path) -> str:
+    suffix = Path(path).suffix.lower()
+    if suffix in _JS_TS_SUFFIXES:
+        return "javascript"
+    if suffix in _RUST_SUFFIXES:
+        return "rust"
+    return "python"
+
+
+def _lsp_symbol_kind_name(value: object) -> str:
+    mapping = {
+        5: "class",
+        12: "function",
+        6: "method",
+        2: "module",
+        3: "namespace",
+        13: "variable",
+        14: "constant",
+        10: "enum",
+        23: "struct",
+        11: "interface",
+    }
+    if isinstance(value, int):
+        return mapping.get(value, "symbol")
+    return "symbol"
+
+
+def _symbol_character_in_file(path: Path, line_number: int, symbol: str) -> int:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return 0
+    if line_number <= 0 or line_number > len(lines):
+        return 0
+    line = lines[line_number - 1]
+    return max(0, line.find(symbol))
+
+
+def _external_workspace_symbols(repo_root: Path, symbol: str) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    languages = {
+        _language_for_path(current.get("file", ""))
+        for current in build_repo_map(repo_root).get("symbols", [])
+        if current.get("file")
+    }
+    for language in sorted(languages):
+        try:
+            client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(language=language, workspace_root=repo_root)
+            result = client.request("workspace/symbol", {"query": symbol})
+        except (FileNotFoundError, LSPTransportError, ValueError):
+            continue
+        if not isinstance(result, list):
+            continue
+        for current in result:
+            if not isinstance(current, dict) or str(current.get("name", "")) != symbol:
+                continue
+            location = current.get("location")
+            if not isinstance(location, dict):
+                continue
+            payload_range = location.get("range")
+            if not isinstance(payload_range, dict):
+                continue
+            payload_start = payload_range.get("start")
+            payload_end = payload_range.get("end")
+            if not isinstance(payload_start, dict) or not isinstance(payload_end, dict):
+                continue
+            uri = str(location.get("uri", ""))
+            if not uri.startswith("file://"):
+                continue
+            file_path = Path(uri[8:] if uri.startswith("file:///") else uri.replace("file://", "", 1))
+            if len(str(file_path)) >= 2 and str(file_path)[1] == ":":
+                resolved_path = Path(str(file_path))
+            else:
+                resolved_path = file_path
+            matches.append(
+                {
+                    "name": symbol,
+                    "kind": _lsp_symbol_kind_name(current.get("kind")),
+                    "file": str(resolved_path.resolve()),
+                    "line": int(payload_start.get("line") or 0) + 1,
+                    "end_line": int(payload_end.get("line") or payload_start.get("line") or 0) + 1,
+                    "provenance": f"lsp-{language}",
+                }
+            )
+    matches.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int, str]] = set()
+    for current in matches:
+        key = (str(current["file"]), int(current["line"]), int(current["end_line"]), str(current["kind"]))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(current)
+    return deduped
+
+
+def _external_references(repo_root: Path, symbol: str, definitions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    for definition in definitions:
+        current_path = Path(str(definition["file"])).resolve()
+        language = _language_for_path(current_path)
+        try:
+            client = _EXTERNAL_LSP_PROVIDER_MANAGER.get_client(language=language, workspace_root=repo_root)
+            client.ensure_document(
+                uri=current_path.as_uri(),
+                text=current_path.read_text(encoding="utf-8"),
+                language_id=language,
+            )
+            result = client.request(
+                "textDocument/references",
+                {
+                    "textDocument": {"uri": current_path.as_uri()},
+                    "position": {
+                        "line": int(definition.get("line", 1)) - 1,
+                        "character": _symbol_character_in_file(current_path, int(definition.get("line", 1)), symbol),
+                    },
+                    "context": {"includeDeclaration": True},
+                },
+            )
+        except (FileNotFoundError, OSError, UnicodeDecodeError, LSPTransportError, ValueError):
+            continue
+        if not isinstance(result, list):
+            continue
+        for current in result:
+            if not isinstance(current, dict):
+                continue
+            location_range = current.get("range")
+            if not isinstance(location_range, dict):
+                continue
+            start = location_range.get("start")
+            end = location_range.get("end")
+            if not isinstance(start, dict) or not isinstance(end, dict):
+                continue
+            uri = str(current.get("uri", ""))
+            if not uri.startswith("file://"):
+                continue
+            file_path = Path(uri[8:] if uri.startswith("file:///") else uri.replace("file://", "", 1))
+            resolved_path = Path(str(file_path)).resolve()
+            try:
+                lines = resolved_path.read_text(encoding="utf-8").splitlines()
+            except (FileNotFoundError, OSError, UnicodeDecodeError):
+                lines = []
+            line_number = int(start.get("line", 0)) + 1
+            text = lines[line_number - 1].strip() if 0 < line_number <= len(lines) else symbol
+            references.append(
+                {
+                    "name": symbol,
+                    "kind": "reference",
+                    "file": str(resolved_path),
+                    "line": line_number,
+                    "end_line": int(end.get("line") or start.get("line") or 0) + 1,
+                    "text": text,
+                    "provenance": f"lsp-{language}",
+                }
+            )
+    references.sort(key=lambda item: (str(item["file"]), int(item["line"])))
+    deduped: list[dict[str, Any]] = []
+    seen_refs: set[tuple[str, int, int]] = set()
+    for current in references:
+        key = (str(current["file"]), int(current["line"]), int(current["end_line"]))
+        if key in seen_refs:
+            continue
+        seen_refs.add(key)
+        deduped.append(current)
+    return deduped
+
+
+def build_symbol_defs(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    semantic_provider: str = "native",
+) -> dict[str, Any]:
     payload = build_repo_map(path)
-    return build_symbol_defs_from_map(payload, symbol)
+    return build_symbol_defs_from_map(payload, symbol, semantic_provider=semantic_provider)
 
 
-def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
+def build_symbol_defs_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    semantic_provider: str = "native",
+) -> dict[str, Any]:
     payload = dict(repo_map)
     payload["files"] = list(repo_map.get("files", []))
     payload["symbols"] = [dict(current) for current in repo_map.get("symbols", [])]
     payload["imports"] = [dict(current) for current in repo_map.get("imports", [])]
     payload["tests"] = list(repo_map.get("tests", []))
     payload["related_paths"] = list(repo_map.get("related_paths", []))
-    definitions = [
+    native_definitions = [
         {
             **dict(current),
             "provenance": _symbol_navigation_provenance_for_path(str(current["file"])),
@@ -5885,7 +6072,7 @@ def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
         for current in payload["symbols"]
         if str(current["name"]) == symbol
     ]
-    definitions.sort(
+    native_definitions.sort(
         key=lambda item: (
             str(item["file"]),
             int(item["line"]),
@@ -5893,6 +6080,31 @@ def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
             str(item["name"]),
         )
     )
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    definitions = [dict(current) for current in native_definitions]
+    if normalized_provider != "native":
+        external_definitions = _external_workspace_symbols(Path(str(repo_map["path"])).resolve(), symbol)
+        if normalized_provider == "lsp":
+            definitions = external_definitions or definitions
+        else:
+            merged: dict[tuple[str, int, int, str], dict[str, Any]] = {}
+            for current in [*external_definitions, *definitions]:
+                key = (
+                    str(current["file"]),
+                    int(current["line"]),
+                    int(current.get("end_line", current["line"])),
+                    str(current.get("kind", "symbol")),
+                )
+                merged[key] = dict(current)
+            definitions = list(merged.values())
+            definitions.sort(
+                key=lambda item: (
+                    str(item["file"]),
+                    int(item["line"]),
+                    str(item["kind"]),
+                    str(item["name"]),
+                )
+            )
 
     definition_files = [str(current["file"]) for current in definitions]
     related_paths = []
@@ -5906,11 +6118,17 @@ def build_symbol_defs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
     payload["files"] = sorted(dict.fromkeys(definition_files))
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "strong"
+    payload["semantic_provider"] = normalized_provider
     return payload
 
 
-def build_symbol_defs_json(symbol: str, path: str | Path = ".") -> str:
-    return json.dumps(build_symbol_defs(symbol, path), indent=2)
+def build_symbol_defs_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    semantic_provider: str = "native",
+) -> str:
+    return json.dumps(build_symbol_defs(symbol, path, semantic_provider=semantic_provider), indent=2)
 
 
 def build_symbol_source(
@@ -6119,13 +6337,23 @@ def build_symbol_impact_json(symbol: str, path: str | Path = ".") -> str:
     return json.dumps(build_symbol_impact(symbol, path), indent=2)
 
 
-def build_symbol_refs(symbol: str, path: str | Path = ".") -> dict[str, Any]:
+def build_symbol_refs(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    semantic_provider: str = "native",
+) -> dict[str, Any]:
     repo_map = build_repo_map(path)
-    return build_symbol_refs_from_map(repo_map, symbol)
+    return build_symbol_refs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
 
 
-def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[str, Any]:
-    payload = build_symbol_defs_from_map(repo_map, symbol)
+def build_symbol_refs_from_map(
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    semantic_provider: str = "native",
+) -> dict[str, Any]:
+    payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     context_payload = build_context_pack_from_map(repo_map, symbol)
     repo_root = Path(str(repo_map["path"])).resolve()
     references: list[dict[str, Any]] = []
@@ -6173,6 +6401,23 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
             for current_ref in current_refs
         )
 
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    if normalized_provider != "native":
+        external_refs = _external_references(repo_root, symbol, [dict(current) for current in payload["definitions"]])
+        if normalized_provider == "lsp":
+            references = external_refs or references
+        else:
+            merged_refs: dict[tuple[str, int, int], dict[str, Any]] = {}
+            for current_ref in [*external_refs, *references]:
+                key = (
+                    str(current_ref["file"]),
+                    int(current_ref["line"]),
+                    int(current_ref.get("end_line", current_ref["line"])),
+                )
+                merged_refs[key] = dict(current_ref)
+            references = list(merged_refs.values())
+            references.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", ""))))
+
     referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
     related_paths: list[str] = []
     for current in [*payload["files"], *referenced_files, *payload["tests"]]:
@@ -6189,23 +6434,31 @@ def build_symbol_refs_from_map(repo_map: dict[str, Any], symbol: str) -> dict[st
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
+    payload["semantic_provider"] = normalized_provider
     return payload
 
 
-def build_symbol_refs_json(symbol: str, path: str | Path = ".") -> str:
-    return json.dumps(build_symbol_refs(symbol, path), indent=2)
+def build_symbol_refs_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    semantic_provider: str = "native",
+) -> str:
+    return json.dumps(build_symbol_refs(symbol, path, semantic_provider=semantic_provider), indent=2)
 
 
 def build_symbol_callers(
     symbol: str,
     path: str | Path = ".",
     *,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
     return build_symbol_callers_from_map(
         repo_map,
         symbol,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
 
@@ -6214,9 +6467,10 @@ def build_symbol_callers_from_map(
     repo_map: dict[str, Any],
     symbol: str,
     *,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     repo_root = Path(str(repo_map["path"])).resolve()
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
@@ -6248,6 +6502,33 @@ def build_symbol_callers_from_map(
                 call_payload = dict(current_call)
                 call_payload["provenance"] = _symbol_navigation_provenance_for_path(str(current_call["file"]))
                 calls.append(call_payload)
+
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    if normalized_provider != "native":
+        external_refs = _external_references(repo_root, symbol, [dict(current) for current in defs_payload["definitions"]])
+        external_calls: list[dict[str, Any]] = []
+        for external_ref in external_refs:
+            text = str(external_ref.get("text", ""))
+            if f"{symbol}(" in text or f"{symbol}!" in text or symbol in text:
+                external_calls.append(
+                    {
+                        **dict(external_ref),
+                        "kind": "call",
+                    }
+                )
+        if normalized_provider == "lsp":
+            calls = external_calls or calls
+        else:
+            merged_calls: dict[tuple[str, int, int], dict[str, Any]] = {}
+            for current_call_entry in [*external_calls, *calls]:
+                key = (
+                    str(current_call_entry["file"]),
+                    int(current_call_entry["line"]),
+                    int(current_call_entry.get("end_line", current_call_entry["line"])),
+                )
+                merged_calls[key] = dict(current_call_entry)
+            calls = list(merged_calls.values())
+            calls.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", ""))))
 
     caller_files = sorted(dict.fromkeys(str(current["file"]) for current in calls))
     context_payload = build_context_pack_from_map(
@@ -6285,11 +6566,17 @@ def build_symbol_callers_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
+    payload["semantic_provider"] = normalized_provider
     return _attach_profiling(payload, _profiling_collector)
 
 
-def build_symbol_callers_json(symbol: str, path: str | Path = ".") -> str:
-    return json.dumps(build_symbol_callers(symbol, path), indent=2)
+def build_symbol_callers_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    semantic_provider: str = "native",
+) -> str:
+    return json.dumps(build_symbol_callers(symbol, path, semantic_provider=semantic_provider), indent=2)
 
 
 def build_symbol_blast_radius(

@@ -1235,7 +1235,7 @@ def tg_session_blast_radius_plan(
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_defs(symbol: str, path: str = ".") -> str:
+def tg_symbol_defs(symbol: str, path: str = ".", provider: str = "native") -> str:
     """
     Return exact definition locations for a symbol.
 
@@ -1244,7 +1244,7 @@ def tg_symbol_defs(symbol: str, path: str = ".") -> str:
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_defs(symbol, path), indent=2)
+        return json.dumps(build_symbol_defs(symbol, path, semantic_provider=provider), indent=2)
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),
@@ -1316,7 +1316,7 @@ def tg_symbol_impact(symbol: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_refs(symbol: str, path: str = ".") -> str:
+def tg_symbol_refs(symbol: str, path: str = ".", provider: str = "native") -> str:
     """
     Return Python-first symbol references across the inventory root.
 
@@ -1325,7 +1325,7 @@ def tg_symbol_refs(symbol: str, path: str = ".") -> str:
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_refs(symbol, path), indent=2)
+        return json.dumps(build_symbol_refs(symbol, path, semantic_provider=provider), indent=2)
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),
@@ -1343,7 +1343,7 @@ def tg_symbol_refs(symbol: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_callers(symbol: str, path: str = ".") -> str:
+def tg_symbol_callers(symbol: str, path: str = ".", provider: str = "native") -> str:
     """
     Return Python-first symbol call sites and likely impacted tests.
 
@@ -1352,7 +1352,7 @@ def tg_symbol_callers(symbol: str, path: str = ".") -> str:
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_callers(symbol, path), indent=2)
+        return json.dumps(build_symbol_callers(symbol, path, semantic_provider=provider), indent=2)
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),

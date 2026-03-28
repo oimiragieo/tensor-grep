@@ -2273,6 +2273,7 @@ def edit_plan(
 def defs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
@@ -2280,10 +2281,10 @@ def defs(
 
     try:
         if json_output:
-            typer.echo(build_symbol_defs_json(symbol, path))
+            typer.echo(build_symbol_defs_json(symbol, path, semantic_provider=provider))
             return
 
-        payload = build_symbol_defs(symbol, path)
+        payload = build_symbol_defs(symbol, path, semantic_provider=provider)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2342,6 +2343,7 @@ def impact(
 def refs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first symbol references across the inventory root."""
@@ -2349,10 +2351,10 @@ def refs(
 
     try:
         if json_output:
-            typer.echo(build_symbol_refs_json(symbol, path))
+            typer.echo(build_symbol_refs_json(symbol, path, semantic_provider=provider))
             return
 
-        payload = build_symbol_refs(symbol, path)
+        payload = build_symbol_refs(symbol, path, semantic_provider=provider)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2365,6 +2367,7 @@ def refs(
 def callers(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first call sites and likely impacted tests for a symbol."""
@@ -2372,10 +2375,10 @@ def callers(
 
     try:
         if json_output:
-            typer.echo(build_symbol_callers_json(symbol, path))
+            typer.echo(build_symbol_callers_json(symbol, path, semantic_provider=provider))
             return
 
-        payload = build_symbol_callers(symbol, path)
+        payload = build_symbol_callers(symbol, path, semantic_provider=provider)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
