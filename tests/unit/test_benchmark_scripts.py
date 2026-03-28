@@ -24,6 +24,9 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_context_render_benchmarks.py",
     "benchmarks/run_blast_radius_benchmarks.py",
     "benchmarks/run_session_benchmarks.py",
+    "benchmarks/run_external_eval.py",
+    "benchmarks/analyze_external_profiling.py",
+    "benchmarks/normalize_competitor_eval.py",
 ]
 
 
@@ -2585,3 +2588,172 @@ def test_run_ast_benchmarks_should_emit_json_artifact_when_ast_grep_is_missing(
     assert payload["artifact"] == "bench_ast_m3"
     assert payload["passed"] is False
     assert "ast-grep binary not found" in payload["error"]
+
+
+def test_run_external_eval_should_aggregate_manifest_packs(tmp_path):
+    module = _load_script_module("run_external_eval_script", "benchmarks/run_external_eval.py")
+    scenario_pack = tmp_path / "scenarios.json"
+    scenario_pack.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "manifest_path": str(tmp_path / "manifest.json"),
+        "packs": [{"name": "demo", "language": "python", "scenario_pack": str(scenario_pack)}],
+    }
+
+    scenario = module.run_bakeoff.load_scenarios(scenario_pack)[0]
+
+    def _fake_evaluate(_scenario, *, profile=False):
+        row = {
+            "actual_primary_file": "a.py",
+            "actual_primary_span": {"start_line": 1, "end_line": 2},
+            "actual_dependent_files": [],
+            "actual_suggested_edit_files": [],
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "context_token_count": 12,
+        }
+        if profile:
+            row["_profiling"] = {"total_elapsed_s": 0.1, "phases": []}
+        return module.run_bakeoff.score_scenario(scenario, row)
+
+    module.run_bakeoff.evaluate_scenario = _fake_evaluate
+    payload = module.build_external_eval_payload(manifest, profile=True)
+
+    assert payload["artifact"] == "bench_external_eval"
+    assert payload["pack_count"] == 1
+    assert payload["summary"]["scenario_count"] == 1
+    assert payload["by_language"]["python"]["scenario_count"] == 1
+
+
+def test_analyze_external_profiling_should_rank_dominant_phases():
+    module = _load_script_module(
+        "analyze_external_profiling_script", "benchmarks/analyze_external_profiling.py"
+    )
+    payload = {
+        "artifact": "bench_bakeoff",
+        "rows": [
+            {
+                "_profiling": {
+                    "total_elapsed_s": 1.0,
+                    "phases": [
+                        {"name": "repo_map_build", "elapsed_s": 0.6, "calls": 1},
+                        {"name": "caller_scan", "elapsed_s": 0.4, "calls": 2},
+                    ],
+                }
+            }
+        ],
+    }
+
+    analysis = module.analyze_external_profiling(payload)
+
+    assert analysis["artifact"] == "bench_external_profile_analysis"
+    assert analysis["dominant_phases"][0]["name"] == "repo_map_build"
+    assert analysis["dominant_phases"][0]["percent_total_elapsed"] == 60.0
+
+
+def test_normalize_competitor_eval_should_score_manual_records(tmp_path):
+    module = _load_script_module(
+        "normalize_competitor_eval_script", "benchmarks/normalize_competitor_eval.py"
+    )
+    scenario_pack = tmp_path / "scenarios.json"
+    scenario_pack.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": ["b.py"],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": ["tests/test_a.py"],
+                        "expected_validation_commands_contain": ["pytest tests/test_a.py"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = {
+        "scenario_packs": ["scenarios.json"],
+        "records": [
+            {
+                "system": "tensor-grep",
+                "scenario_pack": "scenarios.json",
+                "scenario_id": "demo",
+                "actual_primary_file": "a.py",
+                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                "actual_dependent_files": ["b.py"],
+                "actual_suggested_edit_files": [],
+                "actual_test_files": ["tests/test_a.py"],
+                "actual_validation_commands": ["python -m pytest tests/test_a.py -q"],
+                "context_token_count": 100,
+                "wall_clock_seconds": 0.25,
+                "deterministic_repeat_match": True,
+            }
+        ],
+    }
+
+    normalized = module.normalize_competitor_eval(payload, base_dir=tmp_path)
+
+    assert normalized["artifact"] == "competitor_eval_normalized"
+    assert normalized["by_system"]["tensor-grep"]["scenario_count"] == 1
+    row = normalized["records"][0]
+    assert row["primary_file_hit"] == 1.0
+    assert row["validation_cmd_hit"] == 1.0
+
+
+def test_render_comparison_scorecard_should_emit_ranked_markdown():
+    module = _load_script_module(
+        "render_comparison_scorecard_script", "benchmarks/render_comparison_scorecard.py"
+    )
+    payload = {
+        "records": [{}, {}],
+        "by_system": {
+            "system-b": {
+                "mean_overall_score": 0.4,
+                "mean_primary_file_hit": 0.5,
+                "mean_primary_span_hit": 0.5,
+                "mean_wall_clock_seconds": 2.0,
+            },
+            "system-a": {
+                "mean_overall_score": 0.8,
+                "mean_primary_file_hit": 1.0,
+                "mean_primary_span_hit": 1.0,
+                "mean_wall_clock_seconds": 1.0,
+            },
+        },
+    }
+
+    markdown = module.render_scorecard(payload)
+
+    assert markdown.startswith("# Competitor Evaluation Scorecard")
+    assert markdown.index("`system-a`") < markdown.index("`system-b`")

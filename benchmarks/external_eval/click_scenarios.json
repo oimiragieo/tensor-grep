@@ -1,0 +1,413 @@
+{
+  "scenarios": [
+    {
+      "id": "click-open_file",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.open_file.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "open_file",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 358,
+        "end_line": 404
+      },
+      "expected_dependent_files": [
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py",
+        "src/click/exceptions.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py",
+        "src/click/exceptions.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_utils.py -k test_open_file -q",
+        "tests/test_utils.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-style",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.style.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "style",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/termui.py",
+      "expected_primary_span": {
+        "start_line": 518,
+        "end_line": 644
+      },
+      "expected_dependent_files": [
+        "src/click/core.py",
+        "examples/colors/colors.py",
+        "examples/termui/termui.py",
+        "src/click/__init__.py"
+      ],
+      "expected_suggested_edit_files": [
+        "examples/colors/colors.py",
+        "examples/termui/termui.py",
+        "src/click/core.py",
+        "src/click/termui.py",
+        "src/click/__init__.py"
+      ],
+      "expected_test_files": [
+        "tests/test_shell_completion.py",
+        "tests/test_context.py",
+        "tests/test_parser.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_shell_completion.py -q",
+        "tests/test_context.py -q",
+        "tests/test_parser.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-usageerror",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.UsageError.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "UsageError",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/exceptions.py",
+      "expected_primary_span": {
+        "start_line": 56,
+        "end_line": 92
+      },
+      "expected_dependent_files": [
+        "src/click/core.py",
+        "src/click/__init__.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/core.py",
+        "src/click/__init__.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py"
+      ],
+      "expected_test_files": [
+        "tests/test_shell_completion.py",
+        "tests/test_context.py",
+        "tests/test_termui.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_shell_completion.py -q",
+        "tests/test_context.py -q",
+        "tests/test_termui.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-abort",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.Abort.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "Abort",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/core.py",
+      "expected_primary_span": {
+        "start_line": 726,
+        "end_line": 728
+      },
+      "expected_dependent_files": [
+        "src/click/termui.py",
+        "src/click/__init__.py",
+        "src/click/_termui_impl.py",
+        "src/click/types.py",
+        "src/click/parser.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/core.py",
+        "src/click/termui.py",
+        "src/click/__init__.py",
+        "src/click/_termui_impl.py",
+        "src/click/types.py",
+        "src/click/parser.py"
+      ],
+      "expected_test_files": [
+        "tests/test_shell_completion.py",
+        "tests/test_context.py",
+        "tests/test_parser.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_shell_completion.py -q",
+        "tests/test_context.py -q",
+        "tests/test_parser.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-unstyle",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.unstyle.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "unstyle",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/termui.py",
+      "expected_primary_span": {
+        "start_line": 647,
+        "end_line": 656
+      },
+      "expected_dependent_files": [
+        "src/click/__init__.py",
+        "src/click/core.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/__init__.py",
+        "src/click/core.py"
+      ],
+      "expected_test_files": [
+        "tests/test_shell_completion.py",
+        "tests/test_context.py",
+        "tests/test_utils.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_shell_completion.py -q",
+        "tests/test_context.py -q",
+        "tests/test_utils.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-secho",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.secho.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "secho",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/termui.py",
+      "expected_primary_span": {
+        "start_line": 659,
+        "end_line": 690
+      },
+      "expected_dependent_files": [
+        "src/click/__init__.py",
+        "src/click/core.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/__init__.py",
+        "src/click/core.py"
+      ],
+      "expected_test_files": [
+        "tests/test_shell_completion.py",
+        "tests/test_context.py",
+        "tests/test_termui.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_shell_completion.py -q",
+        "tests/test_context.py -q",
+        "tests/test_termui.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-get_text_stream",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.get_text_stream.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "get_text_stream",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 337,
+        "end_line": 355
+      },
+      "expected_dependent_files": [
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py",
+        "src/click/exceptions.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py",
+        "src/click/exceptions.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_utils.py -k test_echo_no_streams -q",
+        "tests/test_utils.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-get_binary_stream",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.get_binary_stream.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "get_binary_stream",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 325,
+        "end_line": 334
+      },
+      "expected_dependent_files": [
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py",
+        "src/click/exceptions.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/types.py",
+        "src/click/parser.py",
+        "src/click/exceptions.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_utils.py -k test_echo_no_streams -q",
+        "tests/test_utils.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-format_filename",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.format_filename.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "format_filename",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 407,
+        "end_line": 446
+      },
+      "expected_dependent_files": [
+        "src/click/types.py",
+        "src/click/exceptions.py",
+        "examples/complex/complex/commands/cmd_init.py",
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/parser.py"
+      ],
+      "expected_suggested_edit_files": [
+        "examples/complex/complex/commands/cmd_init.py",
+        "src/click/exceptions.py",
+        "src/click/types.py",
+        "src/click/utils.py",
+        "src/click/__init__.py",
+        "src/click/core.py",
+        "src/click/decorators.py",
+        "src/click/shell_completion.py",
+        "src/click/_termui_impl.py",
+        "src/click/termui.py",
+        "src/click/parser.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_utils.py -k test_filename_formatting -q",
+        "tests/test_utils.py -q",
+        "-q"
+      ]
+    },
+    {
+      "id": "click-open_stream",
+      "language": "python",
+      "category": "external-click-baseline",
+      "description": "Baseline external-repo scenario for click.open_stream.",
+      "repo_fixture": "../external_repos/click",
+      "query_or_symbol": "open_stream",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/click/_compat.py",
+      "expected_primary_span": {
+        "start_line": 371,
+        "end_line": 449
+      },
+      "expected_dependent_files": [
+        "src/click/_termui_impl.py",
+        "src/click/types.py",
+        "src/click/utils.py",
+        "src/click/termui.py",
+        "src/click/_winconsole.py",
+        "src/click/testing.py",
+        "src/click/exceptions.py",
+        "src/click/formatting.py"
+      ],
+      "expected_suggested_edit_files": [
+        "src/click/_termui_impl.py",
+        "src/click/types.py",
+        "src/click/utils.py",
+        "src/click/termui.py",
+        "src/click/_winconsole.py",
+        "src/click/testing.py",
+        "src/click/exceptions.py",
+        "src/click/formatting.py"
+      ],
+      "expected_test_files": [
+        "tests/test_shell_completion.py",
+        "tests/test_termui.py",
+        "tests/test_context.py"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_shell_completion.py -q",
+        "tests/test_termui.py -q",
+        "tests/test_context.py -q",
+        "-q"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "scenario_packs": [
+    "click_scenarios.json",
+    "commander_scenarios.json",
+    "clap_lex_scenarios.json"
+  ],
+  "records": [
+    {
+      "system": "claude-code",
+      "scenario_pack": "click_scenarios.json",
+      "scenario_id": "click-open_file",
+      "repo": "click",
+      "language": "python",
+      "difficulty": "medium",
+      "actual_primary_file": "src/click/utils.py",
+      "actual_primary_span": {
+        "start_line": 358,
+        "end_line": 404
+      },
+      "actual_dependent_files": [
+        "src/click/core.py"
+      ],
+      "actual_suggested_edit_files": [
+        "src/click/core.py"
+      ],
+      "actual_test_files": [
+        "tests/test_utils.py"
+      ],
+      "actual_validation_commands": [
+        "python -m pytest tests/test_utils.py -q"
+      ],
+      "context_token_count": 900,
+      "wall_clock_seconds": 12.5,
+      "deterministic_repeat_match": false,
+      "notes": "Replace with the actual competitor output for this scenario."
+    }
+  ]
+}
