@@ -15,7 +15,9 @@
       },
       "expected_dependent_files": [],
       "expected_suggested_edit_files": [],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/lexer.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -35,7 +37,9 @@
       },
       "expected_dependent_files": [],
       "expected_suggested_edit_files": [],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/parsed.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -55,7 +59,9 @@
       },
       "expected_dependent_files": [],
       "expected_suggested_edit_files": [],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/shorts.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -77,7 +83,9 @@
       "expected_suggested_edit_files": [
         "src/lib.rs"
       ],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/lexer.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -99,7 +107,9 @@
       "expected_suggested_edit_files": [
         "src/lib.rs"
       ],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/parsed.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -121,7 +131,9 @@
       "expected_suggested_edit_files": [
         "src/lib.rs"
       ],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/parsed.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -143,7 +155,9 @@
       "expected_suggested_edit_files": [
         "src/lib.rs"
       ],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/parsed.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -165,7 +179,9 @@
       "expected_suggested_edit_files": [
         "src/lib.rs"
       ],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/shorts.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -187,7 +203,9 @@
       "expected_suggested_edit_files": [
         "src/lib.rs"
       ],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/lexer.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]
@@ -209,7 +227,9 @@
       "expected_suggested_edit_files": [
         "src/lib.rs"
       ],
-      "expected_test_files": [],
+      "expected_test_files": [
+        "tests/testsuite/lexer.rs"
+      ],
       "expected_validation_commands_contain": [
         "cargo test"
       ]

@@ -4493,7 +4493,7 @@ def _framework_test_function_candidates(test_path: str) -> tuple[str, ...]:
     if suffix in _JS_TS_SUFFIXES:
         return _javascript_test_function_candidates(test_path)
     if suffix in _RUST_SUFFIXES:
-        return _rust_tokio_test_function_candidates(test_path)
+        return _rust_test_function_candidates(test_path)
     return ()
 
 
@@ -4547,7 +4547,30 @@ def _rust_file_level_command(test_path: Path, repo_root: Path) -> str | None:
         return None
     if relative.suffix != ".rs" or "tests" not in relative.parts:
         return None
-    return f"cargo test --test {relative.stem}"
+    parts = list(relative.parts)
+    tests_index = parts.index("tests")
+    target_parts = parts[tests_index + 1 :]
+    if not target_parts:
+        return None
+    if len(target_parts) == 1:
+        target = Path(target_parts[0]).stem
+    else:
+        target = Path(target_parts[0]).stem
+    if not target:
+        return None
+    return f"cargo test --test {target}"
+
+
+def _rust_uses_nested_test_target(test_path: Path, repo_root: Path) -> bool:
+    try:
+        relative = test_path.resolve().relative_to(repo_root)
+    except ValueError:
+        return False
+    if relative.suffix != ".rs" or "tests" not in relative.parts:
+        return False
+    parts = list(relative.parts)
+    tests_index = parts.index("tests")
+    return len(parts[tests_index + 1 :]) > 1
 
 
 def _validation_commands_for_tests(
@@ -4704,6 +4727,7 @@ def _validation_plan_for_tests(
 
         if suffix in _RUST_SUFFIXES:
             include_rust_fallback = True
+            file_level_command = _rust_file_level_command(path, root)
             if is_primary_test:
                 test_filter = _best_test_function_candidate(
                     list(_rust_test_function_candidates(absolute_path)),
@@ -4711,14 +4735,18 @@ def _validation_plan_for_tests(
                     query=query,
                 )
                 if test_filter:
+                    targeted_command = (
+                        f"{file_level_command} {test_filter}"
+                        if file_level_command and _rust_uses_nested_test_target(path, root)
+                        else f"cargo test {test_filter}"
+                    )
                     add_step(
-                        f"cargo test {test_filter}",
+                        targeted_command,
                         scope="symbol",
                         runner="cargo",
                         target=relative_path,
                         confidence=0.88,
                     )
-            file_level_command = _rust_file_level_command(path, root)
             if file_level_command:
                 add_step(
                     file_level_command,

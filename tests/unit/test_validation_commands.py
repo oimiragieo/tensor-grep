@@ -503,3 +503,60 @@ def test_build_symbol_blast_radius_render_uses_rust_validation_commands(tmp_path
         "cargo test --test integration_checks",
         "cargo test",
     ]
+
+
+def test_rust_framework_candidates_include_plain_test_functions(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    test_path = project / "tests" / "testsuite" / "parsed.rs"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(
+        "#[test]\n"
+        "fn is_escape() {\n"
+        "    assert!(true);\n"
+        "}\n"
+        "\n"
+        "#[tokio::test]\n"
+        "async fn next_flag_async() {\n"
+        "    assert!(true);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    candidates = repo_map._framework_test_function_candidates(str(test_path.resolve()))
+
+    assert candidates == ("is_escape", "next_flag_async")
+
+
+def test_rust_nested_integration_tests_use_targeted_commands(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    tests_dir = project / "tests" / "testsuite"
+    tests_dir.mkdir(parents=True)
+    (project / "Cargo.toml").write_text(
+        "[package]\n"
+        'name = "sample"\n'
+        'version = "0.1.0"\n',
+        encoding="utf-8",
+    )
+    (tests_dir / "main.rs").write_text('automod::dir!("tests/testsuite");\n', encoding="utf-8")
+    test_path = tests_dir / "shorts.rs"
+    test_path.write_text(
+        "#[test]\n"
+        "fn next_flag() {\n"
+        "    assert!(true);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    commands = _validation_commands(
+        project,
+        [test_path],
+        primary_test=test_path,
+        primary_symbol_name="next_flag",
+        query="next_flag",
+    )
+
+    assert commands == [
+        "cargo test --test testsuite next_flag",
+        "cargo test --test testsuite",
+        "cargo test",
+    ]
