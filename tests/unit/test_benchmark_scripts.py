@@ -31,6 +31,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_claude_competitor_eval.py",
     "benchmarks/run_codex_competitor_eval.py",
     "benchmarks/run_copilot_competitor_eval.py",
+    "benchmarks/run_gemini_competitor_eval.py",
 ]
 
 
@@ -3213,3 +3214,71 @@ def test_run_copilot_competitor_eval_should_parse_wrapped_final_json():
     extracted = module._extract_text_from_copilot_output(stdout)
 
     assert json.loads(extracted)["actual_primary_file"] == "a.py"
+
+
+def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path, monkeypatch):
+    module = _load_script_module(
+        "run_gemini_competitor_eval_script", "benchmarks/run_gemini_competitor_eval.py"
+    )
+    scenario_pack = tmp_path / "scenarios.json"
+    scenario_pack.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(module, "resolve_gemini_binary", lambda: "gemini")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Proc",
+            (),
+            {
+                "stdout": json.dumps(
+                    {
+                        "session_id": "demo",
+                        "response": json.dumps(
+                            {
+                                "actual_primary_file": "a.py",
+                                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                "actual_dependent_files": [],
+                                "actual_suggested_edit_files": [],
+                                "actual_test_files": [],
+                                "actual_validation_commands": ["pytest -q"],
+                                "context_token_count": 123,
+                                "notes": "ok",
+                            }
+                        ),
+                        "stats": {},
+                    }
+                )
+            },
+        )(),
+    )
+
+    payload = module.build_payload(scenario_pack, model="gemini-2.5-flash")
+
+    assert payload["artifact"] == "gemini_competitor_eval"
+    assert payload["suite"] == "run_gemini_competitor_eval"
+    assert payload["records"][0]["system"] == "gemini-cli"
+    assert payload["records"][0]["actual_primary_file"] == "a.py"
