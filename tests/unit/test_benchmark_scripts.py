@@ -1382,6 +1382,86 @@ def test_run_session_benchmarks_should_fail_when_incremental_refresh_exceeds_thr
     assert payload["refresh_rows"][0]["passed_ratio_gate"] is False
 
 
+def test_analyze_bakeoff_misses_should_bucket_false_positive_paths(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "analyze_bakeoff_misses_script",
+        "benchmarks/analyze_bakeoff_misses.py",
+    )
+    input_path = tmp_path / "bench_bakeoff.json"
+    output_path = tmp_path / "bakeoff_analysis.json"
+    markdown_path = tmp_path / "bakeoff_analysis.md"
+    input_path.write_text(
+        json.dumps(
+            {
+                "artifact": "bench_bakeoff",
+                "summary": {
+                    "scenario_count": 2,
+                    "mean_file_hit_rate": 0.75,
+                    "mean_file_precision": 0.5,
+                },
+                "rows": [
+                    {
+                        "name": "click:blast-radius:open_file",
+                        "query_or_symbol": "open_file",
+                        "expected_primary_file": "src/click/utils.py",
+                        "actual_primary_file": "src/click/utils.py",
+                        "false_positive_files": [
+                            "repo/examples/demo.py",
+                            "repo/src/click/__init__.py",
+                            "repo/src/click/_compat.py",
+                        ],
+                        "file_hit_rate": 0.5,
+                        "file_precision": 0.25,
+                    },
+                    {
+                        "name": "click:blast-radius:UsageError",
+                        "query_or_symbol": "UsageError",
+                        "expected_primary_file": "src/click/exceptions.py",
+                        "actual_primary_file": "src/click/exceptions.py",
+                        "false_positive_files": [
+                            "repo/src/click/formatting.py",
+                            "repo/src/click/shell_completion.py",
+                        ],
+                        "file_hit_rate": 1.0,
+                        "file_precision": 0.75,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "analyze_bakeoff_misses.py",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+            "--markdown",
+            str(markdown_path),
+        ],
+    )
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["artifact"] == "bakeoff_miss_analysis"
+    assert payload["scenario_count"] == 2
+    assert payload["scenarios_with_false_positives"] == 2
+    assert payload["bucket_counts"]["examples"] == 1
+    assert payload["bucket_counts"]["package-entrypoint"] == 1
+    assert payload["bucket_counts"]["compat-layer"] == 1
+    assert payload["bucket_counts"]["formatting"] == 1
+    assert payload["bucket_counts"]["shell-completion"] == 1
+    assert payload["worst_scenarios"][0]["name"] == "click:blast-radius:open_file"
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "# Bakeoff Miss Analysis" in markdown
+    assert "package-entrypoint" in markdown
+
+
 @pytest.mark.parametrize("rel_path", BENCHMARK_JSON_SCRIPTS)
 def test_benchmark_scripts_should_declare_suite_and_generated_at_epoch_s(rel_path: str):
     root = Path(__file__).resolve().parents[2]
