@@ -27,6 +27,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_external_eval.py",
     "benchmarks/analyze_external_profiling.py",
     "benchmarks/normalize_competitor_eval.py",
+    "benchmarks/render_world_class_report.py",
 ]
 
 
@@ -2757,3 +2758,50 @@ def test_render_comparison_scorecard_should_emit_ranked_markdown():
 
     assert markdown.startswith("# Competitor Evaluation Scorecard")
     assert markdown.index("`system-a`") < markdown.index("`system-b`")
+
+
+def test_render_world_class_report_should_include_baseline_and_competitor_sections():
+    module = _load_script_module(
+        "render_world_class_report_script", "benchmarks/render_world_class_report.py"
+    )
+    external_eval = {
+        "summary": {
+            "scenario_count": 29,
+            "mean_file_hit_rate": 1.0,
+            "mean_span_hit_rate": 1.0,
+            "mean_file_precision": 0.9,
+            "mean_test_hit_rate": 0.7,
+            "mean_validation_cmd_hit_rate": 1.0,
+            "mean_false_positive_file_count": 1.2,
+            "mean_context_token_count": 700.0,
+        },
+        "by_language": {
+            "python": {"scenario_count": 10, "mean_file_precision": 0.72},
+        },
+    }
+    profiling = {
+        "dominant_phases": [
+            {"name": "caller_scan", "elapsed_s": 5.0, "avg_elapsed_s": 0.2, "percent_total_elapsed": 25.0}
+        ]
+    }
+    competitor = {
+        "by_system": {
+            "tensor-grep": {
+                "mean_overall_score": 0.9,
+                "mean_primary_file_hit": 1.0,
+                "mean_primary_span_hit": 1.0,
+                "mean_wall_clock_seconds": 2.0,
+            }
+        }
+    }
+
+    report = module.render_world_class_report(
+        external_eval=external_eval,
+        profiling=profiling,
+        competitor=competitor,
+    )
+
+    assert report.startswith("# World-Class Evaluation Report")
+    assert "## External Baseline" in report
+    assert "## Dominant Profiling Phases" in report
+    assert "## Competitor Summary" in report
