@@ -278,6 +278,18 @@ def test_session_context_help_mentions_daemon_flag() -> None:
     assert "--daemon" in result.stdout
 
 
+def test_lsp_help_mentions_provider_modes() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lsp", "--help"])
+
+    assert result.exit_code == 0
+    assert "--provider" in result.stdout
+    assert "native=repo-map only" in result.stdout
+    assert "Examples:" in result.stdout
+    assert "--provider hybrid" in result.stdout
+
+
 def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
     _FAKE_WALK = {".": ["a.log"]}

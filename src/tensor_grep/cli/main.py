@@ -3734,10 +3734,20 @@ def lsp(
     provider: str = typer.Option(
         "native",
         "--provider",
-        help="Semantic provider mode: native, lsp, or hybrid.",
+        help="Semantic provider mode. native=repo-map only, lsp=external provider only, hybrid=merge both.",
     ),
 ) -> None:
-    """Start the structural search language server."""
+    """Start the structural search language server.
+
+    Examples:
+      tg lsp
+      tg lsp --provider native
+      tg lsp --provider lsp
+      tg lsp --provider hybrid
+
+    The provider mode is also exposed to editor clients through the
+    `TG_LSP_PROVIDER` environment variable.
+    """
     import os
 
     from tensor_grep.cli.lsp_server import run_lsp

@@ -1,11 +1,37 @@
-# Tensor-Grep: High-Performance Multi-GPU Log Parsing and Structural Code Retrieval via Hybrid Architectures
+# Tensor-Grep: Routing-First Search, Structural Retrieval, and AI Harness Planning for Real Codebases
 
-> Current-state note (2026-03-18): this document serves two purposes: a historical optimization ledger and a current-state architecture paper. Not every benchmark or architectural claim below describes the current accepted line. The latest local refresh on this Windows host recovered the end-to-end text benchmark to within the stored Windows regression window after restoring `rg` as the default cold-path backend for generic text search. The native Rust AST backend now beats `sg` on both search and rewrite benchmarks: AST search ratio 0.846x on the single-query gate and 0.850x / 0.795x / 0.743x / 0.852x across Python / JavaScript / TypeScript / Rust in the multilang suite. Rewrite apply ratio is 0.760x on the default 1K-file corpus and 0.782x on the 5K-file corpus. No end-to-end native GPU crossover on this host. Treat later optimization-history sections as historical unless they are explicitly tied to the current accepted artifacts in `docs/benchmarks.md` and `docs/gpu_crossover.md`.
+> Current-state note (2026-03-28): this document now tracks three active product lines: cold-path text search, native AST/rewrite execution, and AI-harness-oriented repository planning. Not every historical benchmark below describes the current accepted line. The accepted local line on this Windows host keeps `rg` as the default cold-path backend for generic text search, keeps the native Rust AST backend ahead of `sg` on both search and rewrite benchmarks, and adds a repository-planning surface that is now benchmarked against real external repos and headless agent competitors. The latest accepted external planning baseline covers 29 real-repo scenarios and scores `mean_file_hit_rate = 1.0`, `mean_span_hit_rate = 1.0`, and `mean_file_precision = 0.9060`. On bounded cross-language comparison slices, `tensor-grep` currently beats Gemini and Copilot on planning quality, validation targeting, and context efficiency. The new `native | lsp | hybrid` semantic-provider feature is implemented and benchmarkable, but the current `click` provider bakeoff shows no accuracy improvement over `native` while increasing wall-clock cost (`68.374s` native vs `89.79s` LSP vs `89.382s` hybrid), so provider-backed modes remain opt-in rather than default. Treat later optimization-history sections as historical unless they are explicitly tied to the current accepted artifacts in `docs/benchmarks.md`, `artifacts/bench_external_eval_native_provider.json`, and the provider-mode bakeoff artifacts.
 
 **Abstract:**
-With the exponential growth of telemetry data and massive monorepos in enterprise software, traditional CPU-bound log parsers and code search tools are increasingly becoming bottlenecks in modern CI/CD and security pipelines. To address the constraints of line-rate packet processing and massive data analytics, we present **tensor-grep**, a highly resilient, GPU-accelerated engine that bridges the gap between raw regex throughput and deep semantic code representation. Instead of treating text search as a homogenous compute problem, our primary contribution demonstrates that **routing is the optimization**. `tensor-grep` dynamically dispatches evaluation between zero-cost Rust abstractions for simple strings, and VRAM-native PyTorch/RAPIDS arrays for structural Graph Neural Network (GNN) matching and complex Deterministic Finite Automata (DFA) resolution. Our latest full benchmark pass shows mixed end-to-end CLI throughput versus specialized native tools, while also showing strong backend-level latency for targeted AST/NLP/Torch workloads and faster literal counting on the Rust path. We formally outline how this tripartite routing architecture masks operating system limitations and enables predictable query-class-aware execution.
+`tensor-grep` began as a routing-first search engine for text, regex, GPU, and structural search workloads. It has since evolved into a broader repository-analysis substrate for AI harnesses: exact symbol definition and reference discovery, blast-radius planning, trust-aware edit plans, and benchmarked context packing for real codebases. The central architectural claim still holds: **routing is the optimization**. Rather than treating repository intelligence as a single-model problem, `tensor-grep` dispatches simple text queries to native search paths, structural queries to the native Rust AST backend, and higher-level planning to deterministic graph/ranking layers that expose provenance, confidence, and coverage explicitly. The current accepted line shows three distinct strengths. First, the native AST backend beats `ast-grep` on the accepted local search and rewrite benchmarks. Second, the planning layer achieves perfect primary file/span hit rate on the current external scenario corpus while maintaining materially lower context size than headless Gemini and Copilot baselines. Third, semantic-provider integration (`native | lsp | hybrid`) is now a real feature surface, but benchmarking shows that external LSP providers do not yet improve planning outcomes enough to justify the added latency by default. The practical conclusion is that world-class AI tooling requires deterministic repository planning, measured end-to-end edit benchmarks, and optional semantic enrichment only when it wins on real tasks.
 
 ---
+
+## 0. Current Product Line
+
+The current accepted line should be read as a layered system, not just a search CLI:
+
+1. **Cold-path text and regex routing**
+   `tensor-grep` keeps `rg` as the default generic-text baseline and only routes away from it when the workload or flags justify doing so.
+2. **Native AST and rewrite execution**
+   The Rust AST backend is now the accepted structural-search and rewrite path, with current accepted ratios beating `sg` on both search and apply benchmarks.
+3. **AI-harness repository planning**
+   The repo-map/planning stack exposes exact defs/refs/callers, blast radius, edit plans, trust metadata, and machine-readable context bundles.
+4. **Optional semantic providers**
+   External semantic providers now exist behind `native`, `lsp`, and `hybrid` modes. They are useful for experimentation and IDE-facing surfaces, but the current accepted benchmark line keeps `native` as the default because provider-backed modes have not yet earned a quality win.
+
+The newest accepted planning and comparison artifacts show:
+
+* **External planning baseline (`29` scenarios):**
+  `mean_file_hit_rate = 1.0`, `mean_span_hit_rate = 1.0`, `mean_file_precision = 0.9060`
+* **Python external precision remains the weakest internal metric:**
+  `mean_file_precision = 0.7275`
+* **Cross-language bounded comparator slices:**
+  `tensor-grep` beats headless Gemini and Copilot on Python (`click`), JavaScript (`commander`), and Rust (`clap_lex`) slices, with the clearest advantage in validation targeting and context efficiency
+* **Semantic-provider bakeoff (`click`, 10 scenarios):**
+  `native`, `lsp`, and `hybrid` are currently identical on quality metrics, while `lsp` and `hybrid` are slower
+
+That product state matches the current literature: repository-level graph navigation and retrieval quality matter more than generic tool loops, and end-to-end patch correctness is the next proof obligation rather than more raw navigation features.
 
 ## 1. Introduction
 
@@ -405,6 +431,74 @@ While the current tripartite routing structure defines a new paradigm for regex 
 9. **Linear Temporal Logic (LTL) Log Synthesis:**
    Building upon structural AST tracing, `tensor-grep` will support LTL assertions (e.g., *Query: Did connection timeout ALWAYS follow event authentication failure?*). By mapping sequential log arrays into characteristic bitvector matrices, the GPU can evaluate sequence compliance 2000x faster than existing CPU trace learners [Valizadeh et al., 2024].
 
+## 5. Current AI Harness Evaluation Line
+
+The most important change since the earlier GPU- and AST-centric drafts is that `tensor-grep` is now evaluated as a repository-planning substrate for AI coding workflows, not only as a search binary. The accepted local line includes:
+
+* machine-readable symbol navigation (`defs`, `refs`, `callers`, `source`)
+* blast-radius and edit-planning surfaces
+* trust metadata (`provenance`, `coverage_summary`, `ranking_quality`, `graph_trust_summary`)
+* external bakeoff harnesses for real repositories
+* competitor normalization for headless Gemini / Copilot / Codex-style runs
+
+### 5.1 External Planning Baseline
+
+The current accepted external-eval artifact (`artifacts/bench_external_eval_native_provider.json`) covers **29** real-repo scenarios across Python, JavaScript, and Rust:
+
+* `mean_file_hit_rate = 1.0`
+* `mean_span_hit_rate = 1.0`
+* `mean_file_precision = 0.9060`
+
+By language:
+
+* **Python:** `mean_file_precision = 0.7275`
+* **JavaScript:** `mean_file_precision = 1.0`
+* **Rust:** `mean_file_precision = 1.0`
+
+This benchmark line is strong enough to show that deterministic repository planning is already competitive, but it also exposes the next real engineering target: Python dependent-file precision remains the weakest internal metric.
+
+### 5.2 Bounded Headless Agent Comparison
+
+`tensor-grep` now has a bounded apples-to-apples comparison line against headless Gemini and Copilot on real repository slices:
+
+* **Python (`click`, limit 5):**
+  `tensor-grep` beats both Gemini and Copilot on file/span accuracy, test/validation targeting, and context efficiency
+* **JavaScript (`commander`, limit 5):**
+  `tensor-grep` beats both Gemini and Copilot; Copilot is the stronger comparator on this slice
+* **Rust (`clap_lex`, limit 5):**
+  `tensor-grep` again leads on precision and context efficiency, while Rust test targeting remains an open product gap
+
+These results support a narrower but important claim: on bounded repository planning tasks, `tensor-grep` is already outperforming current headless agent baselines as a retrieval/planning substrate. They do **not** yet prove end-to-end patch superiority. That missing proof is now the central evaluation gap.
+
+### 5.3 Semantic Providers: Useful Feature, Not Yet a Default Win
+
+The current line includes a real semantic-provider feature:
+
+* `native`
+* `lsp`
+* `hybrid`
+
+Provider health, fallback state, and agreement metadata are exposed in the JSON payloads. However, the latest provider bakeoff on the `click` external pack shows:
+
+* identical planning quality across `native`, `lsp`, and `hybrid`
+* worse wall-clock for provider-backed modes:
+  * `native`: `68.374s`
+  * `lsp`: `89.79s`
+  * `hybrid`: `89.382s`
+
+The correct product reading is that the semantic-provider feature is implemented and useful for experimentation, IDE surfaces, and hard semantic cases, but it has not yet earned the right to become the default planning path.
+
+### 5.4 Research Alignment
+
+Recent work reinforces the current `tensor-grep` direction:
+
+* **RepoGraph** argues that repository-level code graphs improve software engineering retrieval.
+* **RANGER** argues that graph-enhanced repository retrieval improves agent planning.
+* **ContextBench** and **SWE Context Bench** separate retrieval quality from downstream code generation.
+* **Agentless** and **Agentless Lite** show that strong repository-level scaffolds can be competitive even without a large interactive tool loop.
+
+The practical interpretation is straightforward: the repo is already betting on the right substrate. The next proof obligation is not more navigation surface area; it is an end-to-end patch benchmark showing that an agent using `tensor-grep` produces better final code changes than a generic search-and-reason loop.
+
 ## 6. Conclusion
 
 `tensor-grep` represents a significant leap forward in bridging the gap between DevOps CLI utilities and modern GPU-accelerated Machine Learning frameworks. By dynamically routing workloads between highly optimized CPU paths for small files or exact strings, and `cuDF` or PyTorch backends for massive complex logs and AST graphs, it provides a resilient, enterprise-grade solution capable of true line-rate analytics. Future work will focus on optimizing the Python AST-to-Tensor serialization pipeline and completely bypassing the CPU memory bounce-buffer via NVIDIA GPUDirect Storage (GDS) APIs to map NVMe drives directly into GPU VRAM.
@@ -478,3 +572,9 @@ Based on the 2026-03 analysis and benchmark evidence, the architecture converges
 5. Wang, X., et al. (2025). *GRACE: Graph-Guided Repository-Aware Code Completion through Hierarchical Code Fusion*. arXiv:2509.05980.
 6. Wang, Y., et al. (2024). *STATIC: Fast and Constrained Decoding for LLM-based Generative Retrieval*. arXiv:2403.19317.
 7. MarkTechPost (2026). *Google AI Introduces STATIC: A Sparse Matrix Framework Delivering 94.8x Faster Constrained Decoding for LLM-based Generative Retrieval*.
+8. Ouyang, S., et al. (2025). *RepoGraph: Enhancing AI Software Engineering with Repository-Level Code Graph*. arXiv:2410.14684.
+9. Shah, P., et al. (2025). *RANGER: Repository-Level Agent for Graph-Enhanced Retrieval*. arXiv:2509.25257.
+10. Li, H., et al. (2026). *ContextBench: A Benchmark for Context Retrieval in Coding Agents*. arXiv:2602.05892.
+11. Zhu, J., Hu, M., & Wu, J. (2026). *SWE Context Bench: A Benchmark for Context Learning in Coding*. arXiv:2602.08316.
+12. Xia, C. S., Deng, Y., Dunn, S., & Zhang, L. (2024). *Agentless: Demystifying LLM-based Software Engineering Agents*. arXiv:2407.01489.
+13. sorendunn. (2025). *Agentless-Lite*. GitHub repository. https://github.com/sorendunn/Agentless-Lite
