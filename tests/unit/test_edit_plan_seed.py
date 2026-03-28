@@ -231,6 +231,54 @@ def _build_circular_project(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+def _build_python_depth_rank_project(tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    examples_dir = project / "examples"
+
+    _write(
+        src_dir / "utils.py",
+        "def open_file(path: str) -> str:\n"
+        "    return path\n",
+    )
+    _write(
+        src_dir / "core.py",
+        "from src.utils import open_file\n"
+        "\n"
+        "def use_core() -> str:\n"
+        "    return open_file('core')\n",
+    )
+    _write(
+        src_dir / "termui.py",
+        "from src.utils import open_file\n"
+        "\n"
+        "def use_termui() -> str:\n"
+        "    return open_file('termui')\n",
+    )
+    _write(
+        src_dir / "decorators.py",
+        "from src.core import use_core\n"
+        "\n"
+        "def use_decorators() -> str:\n"
+        "    return use_core()\n",
+    )
+    _write(
+        examples_dir / "demo.py",
+        "from src.termui import use_termui\n"
+        "\n"
+        "def run_demo() -> str:\n"
+        "    return use_termui()\n",
+    )
+    return {
+        "project": project,
+        "utils": src_dir / "utils.py",
+        "core": src_dir / "core.py",
+        "termui": src_dir / "termui.py",
+        "decorators": src_dir / "decorators.py",
+        "example": examples_dir / "demo.py",
+    }
+
+
 def _build_missing_symbol_project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     _write(
@@ -416,6 +464,25 @@ def test_dependent_files_include_callers_and_importers_but_not_unrelated(
         str(paths["report"].resolve()),
     ]
     assert str(paths["unrelated"].resolve()) not in seed["dependent_files"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_python_utility_symbols_prefer_depth_one_dependents(tmp_path: Path, renderer: Renderer) -> None:
+    paths = _build_python_depth_rank_project(tmp_path)
+
+    payload = renderer(paths["project"])
+    if renderer is _render_context:
+        payload = repo_map.build_context_render("open_file", paths["project"])
+    else:
+        payload = repo_map.build_symbol_blast_radius_render("open_file", paths["project"])
+    seed = _edit_plan_seed(payload)
+
+    assert seed["dependent_files"] == [
+        str(paths["core"].resolve()),
+        str(paths["termui"].resolve()),
+    ]
+    assert str(paths["decorators"].resolve()) not in seed["dependent_files"]
+    assert str(paths["example"].resolve()) not in seed["dependent_files"]
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)

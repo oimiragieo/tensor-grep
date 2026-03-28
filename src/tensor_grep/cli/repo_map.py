@@ -4860,6 +4860,8 @@ def _ordered_dependent_file_matches(
             }
         )
 
+    matches = _narrow_python_depth_two_dependency_matches(matches, primary_file=primary_file)
+
     matches.sort(
         key=lambda current: (
             int(current["depth"]),
@@ -4870,6 +4872,29 @@ def _ordered_dependent_file_matches(
         )
     )
     return matches
+
+
+def _narrow_python_depth_two_dependency_matches(
+    matches: list[dict[str, Any]],
+    *,
+    primary_file: str | None,
+) -> list[dict[str, Any]]:
+    if not primary_file:
+        return matches
+    primary_name = Path(primary_file).name
+    if primary_name not in {"utils.py", "exceptions.py", "termui.py", "_compat.py"}:
+        return matches
+    caller_backed = any("caller" in list(current.get("reasons", [])) for current in matches)
+    if not caller_backed:
+        return matches
+    filtered: list[dict[str, Any]] = []
+    for current in matches:
+        reasons = list(current.get("reasons", []))
+        depth = int(current.get("depth", 0))
+        if "caller" not in reasons and depth > 1:
+            continue
+        filtered.append(current)
+    return filtered
 
 
 def _related_spans_from_blast_radius(
