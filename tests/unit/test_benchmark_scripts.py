@@ -31,6 +31,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_patch_bakeoff.py",
     "benchmarks/run_tensor_grep_patch_driver.py",
     "benchmarks/run_gemini_patch_predictions.py",
+    "benchmarks/run_copilot_patch_predictions.py",
     "benchmarks/run_claude_competitor_eval.py",
     "benchmarks/run_codex_competitor_eval.py",
     "benchmarks/run_copilot_competitor_eval.py",
@@ -3329,6 +3330,96 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(m
 
     assert ("communicate", 7) in calls
     assert any(call[0] == "taskkill" and "/PID" in call[1] for call in calls)
+
+
+def test_run_copilot_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
+    module = _load_script_module("run_copilot_patch_predictions_script", "benchmarks/run_copilot_patch_predictions.py")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-1",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Return only a diff patch.",
+                "actual_test_files": ["tests/test_demo.py"],
+                "actual_validation_commands": ["pytest -q"],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        module,
+        "_run_copilot_command",
+        lambda *args, **kwargs: "```diff\n"
+        "diff --git a/demo.py b/demo.py\n"
+        "--- a/demo.py\n"
+        "+++ b/demo.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+        "```",
+    )
+
+    payload = module.build_payload(driver_payload, model="gpt-5.2")
+
+    assert payload["suite"] == "run_copilot_patch_predictions"
+    assert payload["records"][0]["system"] == "copilot"
+    assert "diff --git a/demo.py b/demo.py" in payload["records"][0]["model_patch"]
+    assert payload["records"][0]["actual_validation_commands"] == ["pytest -q"]
+
+
+def test_run_copilot_patch_predictions_should_strip_invalid_index_lines(monkeypatch, tmp_path):
+    module = _load_script_module("run_copilot_patch_predictions_normalize_script", "benchmarks/run_copilot_patch_predictions.py")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-1",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Return only a diff patch.",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        module,
+        "_run_copilot_command",
+        lambda *args, **kwargs: "diff --git a/demo.py b/demo.py\n"
+        "index XXXXXXX..XXXXXXX 100644\n"
+        "--- a/demo.py\n"
+        "+++ b/demo.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n",
+    )
+
+    payload = module.build_payload(driver_payload, model="gpt-5.2")
+
+    assert "index XXXXXXX..XXXXXXX 100644" not in payload["records"][0]["model_patch"]
+    assert "diff --git a/demo.py b/demo.py" in payload["records"][0]["model_patch"]
+
+
+def test_run_copilot_patch_predictions_should_capture_timeout_as_empty_patch(monkeypatch, tmp_path):
+    module = _load_script_module("run_copilot_patch_predictions_timeout_script", "benchmarks/run_copilot_patch_predictions.py")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-timeout",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Return only a diff patch.",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+            }
+        ]
+    }
+
+    def _raise_timeout(*args, **kwargs):
+        raise module.subprocess.TimeoutExpired(cmd="copilot", timeout=5)
+
+    monkeypatch.setattr(module, "_run_copilot_command", _raise_timeout)
+
+    payload = module.build_payload(driver_payload, model="gpt-5.2", timeout_seconds=5)
+
+    assert payload["records"][0]["model_patch"] == ""
+    assert payload["records"][0]["notes"] == "timeout after 5s"
 
 
 def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, tmp_path):
