@@ -2629,7 +2629,7 @@ def test_run_external_eval_should_aggregate_manifest_packs(tmp_path):
 
     scenario = module.run_bakeoff.load_scenarios(scenario_pack)[0]
 
-    def _fake_evaluate(_scenario, *, profile=False):
+    def _fake_evaluate(_scenario, *, profile=False, provider="native"):
         row = {
             "actual_primary_file": "a.py",
             "actual_primary_span": {"start_line": 1, "end_line": 2},
@@ -2641,6 +2641,7 @@ def test_run_external_eval_should_aggregate_manifest_packs(tmp_path):
         }
         if profile:
             row["_profiling"] = {"total_elapsed_s": 0.1, "phases": []}
+        row["semantic_provider"] = provider
         return module.run_bakeoff.score_scenario(scenario, row)
 
     module.run_bakeoff.evaluate_scenario = _fake_evaluate
@@ -3022,6 +3023,114 @@ def test_run_codex_competitor_eval_should_cleanup_ephemeral_agents_file(tmp_path
         assert agents_path.exists()
 
     assert not agents_path.exists()
+
+
+def test_run_bakeoff_should_pass_provider_to_blast_radius(monkeypatch, tmp_path):
+    module = _load_script_module("run_bakeoff_provider_script", "benchmarks/run_bakeoff.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        module.repo_map,
+        "build_symbol_blast_radius_render",
+        lambda symbol, path, profile=False, semantic_provider="native": captured.update(
+            {"symbol": symbol, "path": str(path), "provider": semantic_provider}
+        )
+        or {
+            "edit_plan_seed": {
+                "primary_file": "a.py",
+                "primary_span": {"start_line": 1, "end_line": 2},
+                "dependent_files": [],
+                "suggested_edits": [],
+                "validation_tests": [],
+                "validation_commands": [],
+            },
+            "tests": [],
+            "token_estimate": 12,
+            "semantic_provider": semantic_provider,
+        },
+    )
+
+    result = module.run_scenario(
+        {
+            "repo_fixture": str(repo_root),
+            "query_or_symbol": "create_invoice",
+            "mode": "blast-radius",
+            "expected_primary_file": "a.py",
+            "expected_primary_span": {"start_line": 1, "end_line": 2},
+            "expected_dependent_files": [],
+            "expected_suggested_edit_files": [],
+            "expected_test_files": [],
+            "expected_validation_commands_contain": [],
+        },
+        provider="hybrid",
+    )
+
+    assert captured["provider"] == "hybrid"
+    assert result["semantic_provider"] == "hybrid"
+
+
+def test_run_external_eval_should_include_provider_in_payload(monkeypatch, tmp_path):
+    module = _load_script_module("run_external_eval_provider_script", "benchmarks/run_external_eval.py")
+    manifest = {"manifest_path": "manifest.json", "packs": [{"name": "demo", "language": "python", "scenario_pack": "demo.json"}]}
+    monkeypatch.setattr(
+        module,
+        "run_pack",
+        lambda entry, profile=False, provider="native": {
+            "name": entry["name"],
+            "language": entry["language"],
+            "scenario_pack": entry["scenario_pack"],
+            "scenario_count": 1,
+            "summary": {
+                "scenario_count": 1,
+                "mean_file_hit_rate": 1.0,
+                "mean_file_precision": 1.0,
+                "mean_span_hit_rate": 1.0,
+                "mean_test_hit_rate": 1.0,
+                "mean_validation_cmd_hit_rate": 1.0,
+                "mean_context_token_count": 1.0,
+                "mean_false_positive_file_count": 0.0,
+            },
+            "analysis": {"bucket_counts": {}, "mean_file_precision": 1.0, "scenarios_with_false_positives": 0},
+            "rows": [{"language": entry["language"], "file_hit_rate": 1.0, "file_precision": 1.0, "span_hit_rate": 1.0, "test_hit_rate": 1.0, "validation_cmd_hit_rate": 1.0, "context_token_count": 1, "false_positive_files": []}],
+            "payload": {},
+        },
+    )
+
+    payload = module.build_external_eval_payload(manifest, provider="lsp")
+
+    assert payload["semantic_provider"] == "lsp"
+
+
+def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, tmp_path):
+    module = _load_script_module("run_editor_profiling_provider_script", "benchmarks/run_editor_profiling.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        module.repo_map,
+        "build_symbol_blast_radius_render",
+        lambda symbol, path, max_depth=3, max_files=6, max_sources=6, profile=True, semantic_provider="native": captured.update(
+            {"provider": semantic_provider}
+        )
+        or {
+            "_profiling": {"total_elapsed_s": 0.2, "breakdown_pct": {}, "phases": []},
+            "files": [],
+            "tests": [],
+            "token_estimate": 0,
+            "truncated": False,
+        },
+    )
+
+    row = module.benchmark_blast_radius_fixture(
+        {"root": str(repo_root), "name": "demo", "target_symbol": "create_invoice", "file_count": 1},
+        repeats=1,
+        provider="hybrid",
+    )
+
+    assert captured["provider"] == "hybrid"
+    assert row["semantic_provider"] == "hybrid"
 
 
 def test_run_codex_competitor_eval_should_retry_without_schema_when_first_result_is_empty(tmp_path, monkeypatch):

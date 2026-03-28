@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=str(default_output_path()))
     parser.add_argument("--profile", action="store_true", help="Include per-scenario profiling output.")
     parser.add_argument(
+        "--provider",
+        default="native",
+        choices=("native", "lsp", "hybrid"),
+        help="Semantic provider mode for symbol-driven scenario packs.",
+    )
+    parser.add_argument(
         "--write-pack-artifacts",
         action="store_true",
         help="Write per-pack bakeoff and analysis artifacts declared in the manifest.",
@@ -71,11 +77,16 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
     return {"manifest_path": str(manifest_path), "packs": resolved_packs}
 
 
-def run_pack(entry: dict[str, Any], *, profile: bool = False) -> dict[str, Any]:
+def run_pack(
+    entry: dict[str, Any],
+    *,
+    profile: bool = False,
+    provider: str = "native",
+) -> dict[str, Any]:
     scenarios = run_bakeoff.load_scenarios(entry["scenario_pack"])
     rows: list[dict[str, Any]] = []
     for scenario in scenarios:
-        evaluated = run_bakeoff.evaluate_scenario(scenario, profile=profile)
+        evaluated = run_bakeoff.evaluate_scenario(scenario, profile=profile, provider=provider)
         evaluated["pack"] = str(entry["name"])
         evaluated["language"] = str(entry["language"])
         rows.append(evaluated)
@@ -89,6 +100,7 @@ def run_pack(entry: dict[str, Any], *, profile: bool = False) -> dict[str, Any]:
             "python_version": platform.python_version(),
         },
         "repeats": 2,
+        "semantic_provider": provider,
         "rows": rows,
         "summary": run_bakeoff.build_summary(rows),
     }
@@ -112,12 +124,17 @@ def _language_summary(rows: list[dict[str, Any]]) -> dict[str, dict[str, float |
     return {language: run_bakeoff.build_summary(group_rows) for language, group_rows in sorted(grouped.items())}
 
 
-def build_external_eval_payload(manifest: dict[str, Any], *, profile: bool = False) -> dict[str, Any]:
+def build_external_eval_payload(
+    manifest: dict[str, Any],
+    *,
+    profile: bool = False,
+    provider: str = "native",
+) -> dict[str, Any]:
     packs: list[dict[str, Any]] = []
     all_rows: list[dict[str, Any]] = []
     aggregate_bucket_counts: dict[str, int] = {}
     for entry in manifest["packs"]:
-        pack_result = run_pack(entry, profile=profile)
+        pack_result = run_pack(entry, profile=profile, provider=provider)
         packs.append(
             {
                 "name": pack_result["name"],
@@ -145,6 +162,7 @@ def build_external_eval_payload(manifest: dict[str, Any], *, profile: bool = Fal
         "generated_at_epoch_s": time.time(),
         "manifest_path": manifest["manifest_path"],
         "profile": bool(profile),
+        "semantic_provider": provider,
         "pack_count": len(packs),
         "packs": packs,
         "summary": run_bakeoff.build_summary(all_rows),
@@ -174,7 +192,7 @@ def write_pack_artifacts(entry: dict[str, Any], pack_result: dict[str, Any]) -> 
 def main() -> int:
     args = parse_args()
     manifest = load_manifest(args.manifest)
-    pack_results = [run_pack(entry, profile=args.profile) for entry in manifest["packs"]]
+    pack_results = [run_pack(entry, profile=args.profile, provider=args.provider) for entry in manifest["packs"]]
     if args.write_pack_artifacts:
         for entry, pack_result in zip(manifest["packs"], pack_results, strict=True):
             write_pack_artifacts(entry, pack_result)
@@ -184,6 +202,7 @@ def main() -> int:
         "generated_at_epoch_s": time.time(),
         "manifest_path": manifest["manifest_path"],
         "profile": bool(args.profile),
+        "semantic_provider": args.provider,
         "pack_count": len(pack_results),
         "packs": [
             {

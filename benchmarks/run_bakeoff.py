@@ -60,6 +60,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scenarios", required=True, help="Path to the scenarios JSON file.")
     parser.add_argument("--output", default=str(default_output_path()))
     parser.add_argument("--profile", action="store_true", help="Include per-scenario profiling output.")
+    parser.add_argument(
+        "--provider",
+        default="native",
+        choices=("native", "lsp", "hybrid"),
+        help="Semantic provider mode for symbol-driven scenarios.",
+    )
     return parser.parse_args()
 
 
@@ -171,14 +177,24 @@ def load_scenarios(path: str | Path) -> list[Scenario]:
     return validated
 
 
-def run_scenario(scenario: Scenario, *, profile: bool = False) -> ResultRow:
+def run_scenario(
+    scenario: Scenario,
+    *,
+    profile: bool = False,
+    provider: str = "native",
+) -> ResultRow:
     repo_fixture = Path(str(scenario["repo_fixture"]))
     query_or_symbol = str(scenario["query_or_symbol"])
     mode = str(scenario["mode"])
     if mode == "context-render":
         payload = repo_map.build_context_render(query_or_symbol, repo_fixture, profile=profile)
     elif mode == "blast-radius":
-        payload = repo_map.build_symbol_blast_radius_render(query_or_symbol, repo_fixture, profile=profile)
+        payload = repo_map.build_symbol_blast_radius_render(
+            query_or_symbol,
+            repo_fixture,
+            profile=profile,
+            semantic_provider=provider,
+        )
     else:
         raise ValueError(f"Unsupported bakeoff mode: {mode}")
 
@@ -202,6 +218,7 @@ def run_scenario(scenario: Scenario, *, profile: bool = False) -> ResultRow:
         ),
         "actual_validation_commands": _ordered_unique_strings(edit_plan_seed.get("validation_commands")),
         "context_token_count": int(payload.get("token_estimate", 0)),
+        "semantic_provider": str(payload.get("semantic_provider", provider)),
     }
     if profile and "_profiling" in payload:
         result["_profiling"] = payload["_profiling"]
@@ -301,12 +318,18 @@ def score_scenario(scenario: Scenario, actual: ResultRow) -> ResultRow:
     return row
 
 
-def evaluate_scenario(scenario: Scenario, *, profile: bool = False) -> ResultRow:
-    first = score_scenario(scenario, run_scenario(scenario, profile=profile))
-    second = score_scenario(scenario, run_scenario(scenario, profile=profile))
+def evaluate_scenario(
+    scenario: Scenario,
+    *,
+    profile: bool = False,
+    provider: str = "native",
+) -> ResultRow:
+    first = score_scenario(scenario, run_scenario(scenario, profile=profile, provider=provider))
+    second = score_scenario(scenario, run_scenario(scenario, profile=profile, provider=provider))
     if _determinism_snapshot(first) != _determinism_snapshot(second):
         raise DeterminismError(f"Scenario was not deterministic: {_scenario_name(scenario)}")
     first["deterministic"] = True
+    first["semantic_provider"] = provider
     return first
 
 
@@ -344,7 +367,7 @@ def main() -> int:
         print(json.dumps({"errors": exc.errors}, indent=2), file=sys.stderr)
         return 2
 
-    rows = [evaluate_scenario(scenario, profile=args.profile) for scenario in scenarios]
+    rows = [evaluate_scenario(scenario, profile=args.profile, provider=args.provider) for scenario in scenarios]
     payload = {
         "artifact": "bench_bakeoff",
         "suite": "run_bakeoff",
@@ -355,6 +378,7 @@ def main() -> int:
             "python_version": platform.python_version(),
         },
         "repeats": 2,
+        "semantic_provider": args.provider,
         "rows": rows,
         "summary": build_summary(rows),
     }

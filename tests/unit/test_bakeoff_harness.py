@@ -402,10 +402,12 @@ def test_run_scenario_calls_blast_radius_and_forwards_profile(
         path: str | Path,
         *,
         profile: bool = False,
+        semantic_provider: str = "native",
     ) -> dict[str, object]:
         seen["symbol"] = symbol
         seen["path"] = str(path)
         seen["profile"] = profile
+        seen["semantic_provider"] = semantic_provider
         return {
             "token_estimate": 45,
             "_profiling": {"phases": [{"name": "caller_scan", "elapsed_s": 0.01, "calls": 1}]},
@@ -434,6 +436,7 @@ def test_run_scenario_calls_blast_radius_and_forwards_profile(
         "symbol": "create_invoice",
         "path": str(project),
         "profile": True,
+        "semantic_provider": "native",
     }
     assert result["_profiling"] == {"phases": [{"name": "caller_scan", "elapsed_s": 0.01, "calls": 1}]}
 
@@ -471,7 +474,12 @@ def test_evaluate_scenario_rejects_nondeterministic_results(
     project = _build_project(tmp_path)["project"]
     calls = {"count": 0}
 
-    def _fake_run_scenario(scenario: dict[str, object], *, profile: bool = False) -> dict[str, object]:
+    def _fake_run_scenario(
+        scenario: dict[str, object],
+        *,
+        profile: bool = False,
+        provider: str = "native",
+    ) -> dict[str, object]:
         calls["count"] += 1
         return _actual(context_token_count=calls["count"])
 
@@ -536,7 +544,7 @@ def test_main_writes_standard_benchmark_json_with_summary(
     monkeypatch.setattr(
         module,
         "evaluate_scenario",
-        lambda scenario, *, profile=False: {
+        lambda scenario, *, profile=False, provider="native": {
             "name": f"{scenario['mode']}:{scenario['query_or_symbol']}",
             "mode": scenario["mode"],
             "query_or_symbol": scenario["query_or_symbol"],
@@ -585,7 +593,7 @@ def test_main_profile_keeps_per_scenario_profiling(
     monkeypatch.setattr(
         module,
         "evaluate_scenario",
-        lambda current, *, profile=False: {
+        lambda current, *, profile=False, provider="native": {
             "name": "context-render:alpha",
             "mode": current["mode"],
             "query_or_symbol": current["query_or_symbol"],

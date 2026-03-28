@@ -34,6 +34,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output", default=str(default_output_path()))
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument(
+        "--provider",
+        default="native",
+        choices=("native", "lsp", "hybrid"),
+        help="Semantic provider mode for blast-radius-render measurements.",
+    )
     return parser.parse_args()
 
 
@@ -117,6 +123,7 @@ def benchmark_blast_radius_fixture(
     fixture: dict[str, Any],
     *,
     repeats: int,
+    provider: str = "native",
 ) -> dict[str, Any]:
     root = Path(str(fixture["root"]))
     symbol, max_depth = _blast_radius_target(fixture)
@@ -128,6 +135,7 @@ def benchmark_blast_radius_fixture(
             max_files=6,
             max_sources=6,
             profile=True,
+            semantic_provider=provider,
         ),
         repeats=repeats,
     )
@@ -139,6 +147,7 @@ def benchmark_blast_radius_fixture(
         "file_count": int(fixture.get("file_count", 0)),
         "symbol": symbol,
         "max_depth": max_depth,
+        "semantic_provider": provider,
         "samples_s": samples,
         "median_s": round(float(statistics.median(samples)), 6),
         "profiling_samples_s": profiling_samples,
@@ -166,7 +175,7 @@ def main() -> int:
         fixture = dict(fixtures[name])
         fixture["name"] = name
         rows.append(benchmark_context_render_fixture(fixture, repeats=args.repeats))
-        rows.append(benchmark_blast_radius_fixture(fixture, repeats=args.repeats))
+        rows.append(benchmark_blast_radius_fixture(fixture, repeats=args.repeats, provider=args.provider))
 
     payload = {
         "artifact": "bench_editor_profiling",
@@ -178,6 +187,7 @@ def main() -> int:
             "python_version": platform.python_version(),
         },
         "repeats": args.repeats,
+        "semantic_provider": args.provider,
         "rows": rows,
     }
     write_json(output_path, payload)

@@ -187,12 +187,13 @@ def test_run_editor_profiling_writes_standard_json_with_phase_breakdown_rows(
     monkeypatch.setattr(
         module,
         "benchmark_blast_radius_fixture",
-        lambda fixture, *, repeats: {
+        lambda fixture, *, repeats, provider="native": {
             "fixture": fixture["name"],
             "mode": "blast-radius-render",
             "file_count": fixture["file_count"],
             "symbol": "create_invoice",
             "max_depth": 3,
+            "semantic_provider": provider,
             "samples_s": [0.2, 0.19, 0.21],
             "median_s": 0.2,
             "profiling_total_elapsed_s": 0.16,
