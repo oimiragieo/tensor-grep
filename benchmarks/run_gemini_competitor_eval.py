@@ -115,6 +115,12 @@ def _extract_text_from_gemini_output(stdout: str) -> str:
     raise ValueError("Unable to extract Gemini response from JSON output")
 
 
+def _coerce_int(value: Any) -> int:
+    if value in (None, ""):
+        return 0
+    return int(value)
+
+
 def run_gemini_scenario(
     scenario: dict[str, Any],
     *,
@@ -161,7 +167,7 @@ def run_gemini_scenario(
         "actual_suggested_edit_files": list(record.get("actual_suggested_edit_files", [])),
         "actual_test_files": list(record.get("actual_test_files", [])),
         "actual_validation_commands": list(record.get("actual_validation_commands", [])),
-        "context_token_count": int(record.get("context_token_count", 0)),
+        "context_token_count": _coerce_int(record.get("context_token_count", 0)),
         "wall_clock_seconds": wall_clock_seconds,
         "deterministic_repeat_match": False,
         "notes": str(record.get("notes", "")),
