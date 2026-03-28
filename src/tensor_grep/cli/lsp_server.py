@@ -10,7 +10,9 @@ from lsprotocol.types import (
     TEXT_DOCUMENT_DID_OPEN,
     TEXT_DOCUMENT_DID_SAVE,
     TEXT_DOCUMENT_DOCUMENT_SYMBOL,
+    TEXT_DOCUMENT_PREPARE_RENAME,
     TEXT_DOCUMENT_REFERENCES,
+    TEXT_DOCUMENT_RENAME,
     WORKSPACE_SYMBOL,
     DefinitionParams,
     DidChangeTextDocumentParams,
@@ -21,11 +23,18 @@ from lsprotocol.types import (
     Location,
     LogMessageParams,
     MessageType,
+    OptionalVersionedTextDocumentIdentifier,
     Position,
+    PrepareRenameParams,
+    PrepareRenamePlaceholder,
     Range,
     ReferenceParams,
+    RenameParams,
     SymbolInformation,
     SymbolKind,
+    TextDocumentEdit,
+    TextEdit,
+    WorkspaceEdit,
     WorkspaceSymbolParams,
 )
 from pygls.lsp.server import LanguageServer
@@ -152,6 +161,14 @@ def _word_range_at_position(text: str, position: Position) -> tuple[str, Range] 
     )
 
 
+def _symbol_and_range_for_position(
+    ls: TensorGrepLSPServer,
+    uri: str,
+    position: Position,
+) -> tuple[str, Range] | None:
+    return _word_range_at_position(_document_text(ls, uri), position)
+
+
 def _kind_to_symbol_kind(kind: str) -> SymbolKind:
     normalized = kind.lower()
     if normalized == "class":
@@ -252,13 +269,61 @@ def _definitions_for_position(ls: TensorGrepLSPServer, uri: str, position: Posit
 
 
 def _references_for_position(ls: TensorGrepLSPServer, uri: str, position: Position) -> list[Location]:
-    text = _document_text(ls, uri)
-    resolved = _word_range_at_position(text, position)
+    resolved = _symbol_and_range_for_position(ls, uri, position)
     if resolved is None:
         return []
     symbol, _ = resolved
     payload = repo_map.build_symbol_refs_from_map(_get_repo_map(ls, uri), symbol)
     return [_location_from_entry(dict(current)) for current in payload.get("references", [])]
+
+
+def _workspace_edit_for_symbol(
+    ls: TensorGrepLSPServer,
+    uri: str,
+    position: Position,
+    new_name: str,
+) -> WorkspaceEdit | None:
+    resolved = _symbol_and_range_for_position(ls, uri, position)
+    if resolved is None:
+        return None
+    symbol, _ = resolved
+    current_repo_map = _get_repo_map(ls, uri)
+    defs_payload = repo_map.build_symbol_defs_from_map(current_repo_map, symbol)
+    refs_payload = repo_map.build_symbol_refs_from_map(current_repo_map, symbol)
+    entries_by_file: dict[str, list[dict[str, Any]]] = {}
+    for current in [*defs_payload.get("definitions", []), *refs_payload.get("references", [])]:
+        entries_by_file.setdefault(str(current["file"]), []).append(dict(current))
+
+    document_changes: list[TextDocumentEdit] = []
+    for current_file, entries in sorted(entries_by_file.items()):
+        edits: list[TextEdit] = []
+        seen_ranges: set[tuple[int, int, int, int]] = set()
+        for entry in sorted(entries, key=lambda item: (int(item.get("line", 0)), str(item.get("text", "")))):
+            location = _location_from_entry(entry)
+            current_range = (
+                int(location.range.start.line),
+                int(location.range.start.character),
+                int(location.range.end.line),
+                int(location.range.end.character),
+            )
+            if current_range in seen_ranges:
+                continue
+            seen_ranges.add(current_range)
+            edits.append(TextEdit(range=location.range, new_text=new_name))
+        if edits:
+            document_changes.append(
+                TextDocumentEdit(
+                    text_document=OptionalVersionedTextDocumentIdentifier(
+                        uri=_path_to_uri(current_file),
+                        version=None,
+                    ),
+                    edits=edits,
+                )
+            )
+
+    if not document_changes:
+        return None
+    return WorkspaceEdit(document_changes=document_changes)
 
 
 @server.feature(TEXT_DOCUMENT_DID_OPEN)  # type: ignore
@@ -296,6 +361,25 @@ def definition(ls: TensorGrepLSPServer, params: DefinitionParams) -> list[Locati
 def references(ls: TensorGrepLSPServer, params: ReferenceParams) -> list[Location]:
     """Return semantic references for the symbol under the cursor."""
     return _references_for_position(ls, params.text_document.uri, params.position)
+
+
+@server.feature(TEXT_DOCUMENT_PREPARE_RENAME)  # type: ignore
+def prepare_rename(
+    ls: TensorGrepLSPServer,
+    params: PrepareRenameParams,
+) -> PrepareRenamePlaceholder | None:
+    """Return the renamable symbol range under the cursor."""
+    resolved = _symbol_and_range_for_position(ls, params.text_document.uri, params.position)
+    if resolved is None:
+        return None
+    symbol, current_range = resolved
+    return PrepareRenamePlaceholder(range=current_range, placeholder=symbol)
+
+
+@server.feature(TEXT_DOCUMENT_RENAME)  # type: ignore
+def rename(ls: TensorGrepLSPServer, params: RenameParams) -> WorkspaceEdit | None:
+    """Return a workspace edit that renames a symbol across known definitions and references."""
+    return _workspace_edit_for_symbol(ls, params.text_document.uri, params.position, params.new_name)
 
 
 @server.feature(TEXT_DOCUMENT_DOCUMENT_SYMBOL)  # type: ignore
