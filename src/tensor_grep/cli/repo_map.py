@@ -6195,12 +6195,14 @@ def build_symbol_impact(
     symbol: str,
     path: str | Path = ".",
     *,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     payload = build_repo_map(path, _profiling_collector=_profiling_collector)
     return build_symbol_impact_from_map(
         payload,
         symbol,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
 
@@ -6209,9 +6211,10 @@ def build_symbol_impact_from_map(
     repo_map: dict[str, Any],
     symbol: str,
     *,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
@@ -6330,11 +6333,17 @@ def build_symbol_impact_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
+    payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     return _attach_profiling(payload, _profiling_collector)
 
 
-def build_symbol_impact_json(symbol: str, path: str | Path = ".") -> str:
-    return json.dumps(build_symbol_impact(symbol, path), indent=2)
+def build_symbol_impact_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    semantic_provider: str = "native",
+) -> str:
+    return json.dumps(build_symbol_impact(symbol, path, semantic_provider=semantic_provider), indent=2)
 
 
 def build_symbol_refs(
@@ -6584,6 +6593,7 @@ def build_symbol_blast_radius(
     path: str | Path = ".",
     *,
     max_depth: int = 3,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
@@ -6591,6 +6601,7 @@ def build_symbol_blast_radius(
         repo_map,
         symbol,
         max_depth=max_depth,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
 
@@ -6600,17 +6611,20 @@ def build_symbol_blast_radius_from_map(
     symbol: str,
     *,
     max_depth: int = 3,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     callers_payload = build_symbol_callers_from_map(
         repo_map,
         symbol,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
     impact_payload = build_symbol_impact_from_map(
         repo_map,
         symbol,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
@@ -6618,14 +6632,18 @@ def build_symbol_blast_radius_from_map(
     definitions = [
         {
             **dict(current),
-            "provenance": _symbol_navigation_provenance_for_path(str(current["file"])),
+            "provenance": str(
+                current.get("provenance", _symbol_navigation_provenance_for_path(str(current["file"])))
+            ),
         }
         for current in defs_payload["definitions"]
         if str(current["file"]) in preferred_definition_file_set
     ] or [
         {
             **dict(current),
-            "provenance": _symbol_navigation_provenance_for_path(str(current["file"])),
+            "provenance": str(
+                current.get("provenance", _symbol_navigation_provenance_for_path(str(current["file"])))
+            ),
         }
         for current in defs_payload["definitions"]
     ]
@@ -6872,6 +6890,7 @@ def build_symbol_blast_radius_from_map(
     payload["related_paths"] = related_paths
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
+    payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -6880,9 +6899,10 @@ def build_symbol_blast_radius_json(
     path: str | Path = ".",
     *,
     max_depth: int = 3,
+    semantic_provider: str = "native",
 ) -> str:
     return json.dumps(
-        build_symbol_blast_radius(symbol, path, max_depth=max_depth),
+        build_symbol_blast_radius(symbol, path, max_depth=max_depth, semantic_provider=semantic_provider),
         indent=2,
     )
 
@@ -6894,6 +6914,7 @@ def build_symbol_blast_radius_plan(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
@@ -6903,6 +6924,7 @@ def build_symbol_blast_radius_plan(
         max_depth=max_depth,
         max_files=max_files,
         max_symbols=max_symbols,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
 
@@ -6914,12 +6936,14 @@ def build_symbol_blast_radius_plan_from_map(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     payload = build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
     normalized_max_files = max(1, max_files)
@@ -6953,6 +6977,7 @@ def build_symbol_blast_radius_plan_json(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    semantic_provider: str = "native",
 ) -> str:
     return json.dumps(
         build_symbol_blast_radius_plan(
@@ -6961,6 +6986,7 @@ def build_symbol_blast_radius_plan_json(
             max_depth=max_depth,
             max_files=max_files,
             max_symbols=max_symbols,
+            semantic_provider=semantic_provider,
         ),
         indent=2,
     )
@@ -6978,6 +7004,7 @@ def build_symbol_blast_radius_render(
     optimize_context: bool = False,
     render_profile: str = "full",
     profile: bool = False,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
@@ -6993,6 +7020,7 @@ def build_symbol_blast_radius_render(
         optimize_context=optimize_context,
         render_profile=render_profile,
         profile=profile,
+        semantic_provider=semantic_provider,
         _profiling_collector=collector,
     )
 
@@ -7009,6 +7037,7 @@ def build_symbol_blast_radius_render_from_map(
     optimize_context: bool = False,
     render_profile: str = "full",
     profile: bool = False,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
@@ -7016,6 +7045,7 @@ def build_symbol_blast_radius_render_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
+        semantic_provider=semantic_provider,
         _profiling_collector=collector,
     )
     normalized_profile = _normalize_render_profile(render_profile, optimize_context)
@@ -7115,6 +7145,7 @@ def build_symbol_blast_radius_render_json(
     optimize_context: bool = False,
     render_profile: str = "full",
     profile: bool = False,
+    semantic_provider: str = "native",
 ) -> str:
     return json.dumps(
         build_symbol_blast_radius_render(
@@ -7128,6 +7159,7 @@ def build_symbol_blast_radius_render_json(
             optimize_context=optimize_context,
             render_profile=render_profile,
             profile=profile,
+            semantic_provider=semantic_provider,
         ),
         indent=2,
     )

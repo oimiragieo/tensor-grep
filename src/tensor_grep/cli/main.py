@@ -2320,6 +2320,7 @@ def source(
 def impact(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to evaluate."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return likely impacted files and tests for a symbol change."""
@@ -2327,10 +2328,10 @@ def impact(
 
     try:
         if json_output:
-            typer.echo(build_symbol_impact_json(symbol, path))
+            typer.echo(build_symbol_impact_json(symbol, path, semantic_provider=provider))
             return
 
-        payload = build_symbol_impact(symbol, path)
+        payload = build_symbol_impact(symbol, path, semantic_provider=provider)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2391,6 +2392,7 @@ def callers(
 def blast_radius(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -2407,10 +2409,10 @@ def blast_radius(
 
     try:
         if json_output:
-            typer.echo(build_symbol_blast_radius_json(symbol, path, max_depth=max_depth))
+            typer.echo(build_symbol_blast_radius_json(symbol, path, max_depth=max_depth, semantic_provider=provider))
             return
 
-        payload = build_symbol_blast_radius(symbol, path, max_depth=max_depth)
+        payload = build_symbol_blast_radius(symbol, path, max_depth=max_depth, semantic_provider=provider)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2426,6 +2428,7 @@ def blast_radius(
 def blast_radius_render(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -2473,6 +2476,7 @@ def blast_radius_render(
                     optimize_context=optimize_context,
                     render_profile=render_profile,
                     profile=profile,
+                    semantic_provider=provider,
                 )
             )
             return
@@ -2488,6 +2492,7 @@ def blast_radius_render(
             optimize_context=optimize_context,
             render_profile=render_profile,
             profile=profile,
+            semantic_provider=provider,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -2500,6 +2505,7 @@ def blast_radius_render(
 def blast_radius_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -2527,6 +2533,7 @@ def blast_radius_plan(
                     max_depth=max_depth,
                     max_files=max_files,
                     max_symbols=max_symbols,
+                    semantic_provider=provider,
                 )
             )
             return
@@ -2537,6 +2544,7 @@ def blast_radius_plan(
             max_depth=max_depth,
             max_files=max_files,
             max_symbols=max_symbols,
+            semantic_provider=provider,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)

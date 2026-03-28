@@ -1058,6 +1058,7 @@ def tg_symbol_blast_radius_plan(
     max_depth: int = 3,
     max_files: int = 3,
     max_symbols: int = 5,
+    provider: str = "native",
 ) -> str:
     """
     Return a machine-readable blast-radius planning bundle without rendered source text.
@@ -1079,6 +1080,7 @@ def tg_symbol_blast_radius_plan(
                 max_depth=max_depth,
                 max_files=max_files,
                 max_symbols=max_symbols,
+                semantic_provider=provider,
             ),
             indent=2,
         )
@@ -1289,7 +1291,7 @@ def tg_symbol_source(symbol: str, path: str = ".") -> str:
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_impact(symbol: str, path: str = ".") -> str:
+def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> str:
     """
     Return likely impacted files and tests for a symbol change.
 
@@ -1298,7 +1300,7 @@ def tg_symbol_impact(symbol: str, path: str = ".") -> str:
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_impact(symbol, path), indent=2)
+        return json.dumps(build_symbol_impact(symbol, path, semantic_provider=provider), indent=2)
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),
@@ -1370,7 +1372,12 @@ def tg_symbol_callers(symbol: str, path: str = ".", provider: str = "native") ->
 
 
 @mcp.tool()
-def tg_symbol_blast_radius(symbol: str, path: str = ".", max_depth: int = 3) -> str:
+def tg_symbol_blast_radius(
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    provider: str = "native",
+) -> str:
     """
     Return exact callers plus a transitive file/test blast radius for a symbol.
 
@@ -1381,7 +1388,7 @@ def tg_symbol_blast_radius(symbol: str, path: str = ".", max_depth: int = 3) -> 
     """
     try:
         return json.dumps(
-            build_symbol_blast_radius(symbol, path, max_depth=max_depth),
+            build_symbol_blast_radius(symbol, path, max_depth=max_depth, semantic_provider=provider),
             indent=2,
         )
     except FileNotFoundError:
@@ -1413,6 +1420,7 @@ def tg_symbol_blast_radius_render(
     optimize_context: bool = False,
     render_profile: str = "full",
     profile: bool = False,
+    provider: str = "native",
 ) -> str:
     """
     Return a prompt-ready blast-radius bundle for a symbol.
@@ -1441,6 +1449,7 @@ def tg_symbol_blast_radius_render(
                 optimize_context=optimize_context,
                 render_profile=render_profile,
                 profile=profile,
+                semantic_provider=provider,
             ),
             indent=2,
         )
