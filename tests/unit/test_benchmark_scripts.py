@@ -3011,6 +3011,18 @@ def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path,
     assert payload["records"][0]["actual_primary_file"] == "a.py"
 
 
+def test_run_codex_competitor_eval_should_cleanup_ephemeral_agents_file(tmp_path):
+    module = _load_script_module(
+        "run_codex_competitor_eval_cleanup_script", "benchmarks/run_codex_competitor_eval.py"
+    )
+    agents_path = tmp_path / "AGENTS.md"
+
+    with module._ephemeral_repo_instructions(tmp_path):
+        assert agents_path.exists()
+
+    assert not agents_path.exists()
+
+
 def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_path, monkeypatch):
     module = _load_script_module(
         "run_copilot_competitor_eval_script", "benchmarks/run_copilot_competitor_eval.py"
@@ -3072,6 +3084,18 @@ def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_pat
     assert payload["suite"] == "run_copilot_competitor_eval"
     assert payload["records"][0]["system"] == "copilot"
     assert payload["records"][0]["actual_primary_file"] == "a.py"
+
+
+def test_run_copilot_competitor_eval_should_cleanup_ephemeral_agents_file(tmp_path):
+    module = _load_script_module(
+        "run_copilot_competitor_eval_cleanup_script", "benchmarks/run_copilot_competitor_eval.py"
+    )
+    agents_path = tmp_path / "AGENTS.md"
+
+    with module._ephemeral_repo_instructions(tmp_path):
+        assert agents_path.exists()
+
+    assert not agents_path.exists()
 
 
 def test_run_copilot_competitor_eval_should_parse_wrapped_final_json():

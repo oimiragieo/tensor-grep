@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import platform
@@ -68,6 +69,36 @@ def _normalize_candidate_json(candidate: str) -> str | None:
         if isinstance(parsed, dict):
             return json.dumps(parsed, separators=(",", ":"))
     return None
+
+
+def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextManager[None]:
+    @contextlib.contextmanager
+    def _manager() -> Any:
+        instructions_path = repo_root / "AGENTS.md"
+        if instructions_path.exists():
+            yield
+            return
+        instructions_path.write_text(
+            "\n".join(
+                [
+                    "# Evaluation Instructions",
+                    "",
+                    "You are running inside an automated competitor evaluation harness.",
+                    "Analyze this repository directly.",
+                    "Do not stop or complain because other AGENTS.md files are missing.",
+                    "Do not mention AGENTS.md in the answer.",
+                    "Return only the structured output requested by the prompt.",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        try:
+            yield
+        finally:
+            instructions_path.unlink(missing_ok=True)
+
+    return _manager()
 
 
 def _scenario_prompt(scenario: dict[str, Any]) -> str:
@@ -143,28 +174,29 @@ def run_copilot_scenario(
     env = dict(os.environ)
     env["COLUMNS"] = "4000"
     env["LINES"] = "200"
-    proc = subprocess.run(
-        [
-            resolve_copilot_binary(),
-            "-p",
-            prompt,
-            "--silent",
-            "--allow-all-tools",
-            "--stream",
-            "off",
-            "--no-color",
-            "--model",
-            model,
-        ],
-        cwd=str(repo_root),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=True,
-        timeout=timeout_seconds,
-        env=env,
-    )
+    with _ephemeral_repo_instructions(repo_root):
+        proc = subprocess.run(
+            [
+                resolve_copilot_binary(),
+                "-p",
+                prompt,
+                "--silent",
+                "--allow-all-tools",
+                "--stream",
+                "off",
+                "--no-color",
+                "--model",
+                model,
+            ],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=True,
+            timeout=timeout_seconds,
+            env=env,
+        )
     wall_clock_seconds = round(time.perf_counter() - started, 6)
     record = json.loads(_extract_text_from_copilot_output(proc.stdout))
     return {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import platform
 import shutil
@@ -79,6 +80,36 @@ def _expected_schema() -> dict[str, Any]:
     }
 
 
+def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextManager[None]:
+    @contextlib.contextmanager
+    def _manager() -> Any:
+        instructions_path = repo_root / "AGENTS.md"
+        if instructions_path.exists():
+            yield
+            return
+        instructions_path.write_text(
+            "\n".join(
+                [
+                    "# Evaluation Instructions",
+                    "",
+                    "You are running inside an automated competitor evaluation harness.",
+                    "Analyze this repository directly.",
+                    "Do not stop or complain because other AGENTS.md files are missing.",
+                    "Do not mention AGENTS.md in the answer.",
+                    "Return only the structured output requested by the prompt.",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        try:
+            yield
+        finally:
+            instructions_path.unlink(missing_ok=True)
+
+    return _manager()
+
+
 def _scenario_prompt(scenario: dict[str, Any]) -> str:
     repo_root = Path(str(scenario["repo_fixture"])).resolve()
     expected = {
@@ -123,29 +154,30 @@ def run_codex_scenario(
         schema_path = Path(schema_file.name)
         json.dump(_expected_schema(), schema_file)
     try:
-        proc = subprocess.run(
-            [
-                resolve_codex_binary(),
-                "exec",
-                "--json",
-                "--model",
-                model,
-                "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--cd",
-                str(repo_root),
-                "--output-schema",
-                str(schema_path),
-                prompt,
-            ],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=True,
-            timeout=timeout_seconds,
-        )
+        with _ephemeral_repo_instructions(repo_root):
+            proc = subprocess.run(
+                [
+                    resolve_codex_binary(),
+                    "exec",
+                    "--json",
+                    "--model",
+                    model,
+                    "--skip-git-repo-check",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    "--cd",
+                    str(repo_root),
+                    "--output-schema",
+                    str(schema_path),
+                    prompt,
+                ],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=True,
+                timeout=timeout_seconds,
+            )
     finally:
         schema_path.unlink(missing_ok=True)
     wall_clock_seconds = round(time.perf_counter() - started, 6)
