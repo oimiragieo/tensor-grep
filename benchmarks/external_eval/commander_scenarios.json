@@ -218,6 +218,98 @@
         "jest tests/useColor.test.js",
         "jest"
       ]
+    },
+    {
+      "id": "commander-dualoptions",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.DualOptions.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "DualOptions",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/option.js",
+      "expected_primary_span": {
+        "start_line": 268,
+        "end_line": 306
+      },
+      "expected_dependent_files": [
+        "lib/command.js"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js"
+      ],
+      "expected_test_files": [
+        "tests/options.dual-options.test.js",
+        "tests/args.literal.test.js",
+        "tests/command.chain.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/options.dual-options.test.js --testNamePattern \"when unrelated positive and negative options then no dual options\"",
+        "jest tests/options.dual-options.test.js",
+        "jest tests/args.literal.test.js",
+        "jest tests/command.chain.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-suggestsimilar",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.suggestSimilar.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "suggestSimilar",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/suggestSimilar.js",
+      "expected_primary_span": {
+        "start_line": 3,
+        "end_line": 46
+      },
+      "expected_dependent_files": [
+        "lib/command.js"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js"
+      ],
+      "expected_test_files": [
+        "tests/help.suggestion.test.js",
+        "tests/command.addCommand.test.js",
+        "tests/command.chain.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/help.suggestion.test.js --testNamePattern \"when similar alias then suggest alias\"",
+        "jest tests/help.suggestion.test.js",
+        "jest tests/command.addCommand.test.js",
+        "jest tests/command.chain.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-splitoptionflags",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.splitOptionFlags.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "splitOptionFlags",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/option.js",
+      "expected_primary_span": {
+        "start_line": 328,
+        "end_line": 377
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/command.addHelpOption.test.js",
+        "tests/command.chain.test.js",
+        "tests/command.copySettings.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/command.addHelpOption.test.js --testNamePattern \"when addHelpOption has custom flags then custom long flag invokes help\"",
+        "jest tests/command.addHelpOption.test.js",
+        "jest tests/command.chain.test.js",
+        "jest tests/command.copySettings.test.js",
+        "jest"
+      ]
     }
   ]
 }

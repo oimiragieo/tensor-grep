@@ -103,6 +103,116 @@
       "expected_validation_commands_contain": [
         "cargo test"
       ]
+    },
+    {
+      "id": "claplex-to_long",
+      "language": "rust",
+      "category": "external-clap-lex-baseline",
+      "description": "Baseline external-repo scenario for clap_lex::ParsedArg::to_long.",
+      "repo_fixture": "../external_repos/clap/clap_lex",
+      "query_or_symbol": "to_long",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/lib.rs",
+      "expected_primary_span": {
+        "start_line": 324,
+        "end_line": 339
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [
+        "src/lib.rs"
+      ],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": [
+        "cargo test"
+      ]
+    },
+    {
+      "id": "claplex-to_short",
+      "language": "rust",
+      "category": "external-clap-lex-baseline",
+      "description": "Baseline external-repo scenario for clap_lex::ParsedArg::to_short.",
+      "repo_fixture": "../external_repos/clap/clap_lex",
+      "query_or_symbol": "to_short",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/lib.rs",
+      "expected_primary_span": {
+        "start_line": 347,
+        "end_line": 360
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [
+        "src/lib.rs"
+      ],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": [
+        "cargo test"
+      ]
+    },
+    {
+      "id": "claplex-next_flag",
+      "language": "rust",
+      "category": "external-clap-lex-baseline",
+      "description": "Baseline external-repo scenario for clap_lex::ShortFlags::next_flag.",
+      "repo_fixture": "../external_repos/clap/clap_lex",
+      "query_or_symbol": "next_flag",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/lib.rs",
+      "expected_primary_span": {
+        "start_line": 439,
+        "end_line": 450
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [
+        "src/lib.rs"
+      ],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": [
+        "cargo test"
+      ]
+    },
+    {
+      "id": "claplex-remaining",
+      "language": "rust",
+      "category": "external-clap-lex-baseline",
+      "description": "Baseline external-repo scenario for clap_lex::RawArgs::remaining.",
+      "repo_fixture": "../external_repos/clap/clap_lex",
+      "query_or_symbol": "remaining",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/lib.rs",
+      "expected_primary_span": {
+        "start_line": 227,
+        "end_line": 231
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [
+        "src/lib.rs"
+      ],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": [
+        "cargo test"
+      ]
+    },
+    {
+      "id": "claplex-peek_os",
+      "language": "rust",
+      "category": "external-clap-lex-baseline",
+      "description": "Baseline external-repo scenario for clap_lex::RawArgs::peek_os.",
+      "repo_fixture": "../external_repos/clap/clap_lex",
+      "query_or_symbol": "peek_os",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/lib.rs",
+      "expected_primary_span": {
+        "start_line": 210,
+        "end_line": 212
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [
+        "src/lib.rs"
+      ],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": [
+        "cargo test"
+      ]
     }
   ]
 }
