@@ -3718,10 +3718,19 @@ def new() -> None:
 
 
 @app.command()
-def lsp() -> None:
+def lsp(
+    provider: str = typer.Option(
+        "native",
+        "--provider",
+        help="Semantic provider mode: native, lsp, or hybrid.",
+    ),
+) -> None:
     """Start the structural search language server."""
+    import os
+
     from tensor_grep.cli.lsp_server import run_lsp
 
+    os.environ["TG_LSP_PROVIDER"] = provider
     run_lsp()
 
 

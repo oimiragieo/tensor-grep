@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlparse
@@ -40,6 +41,7 @@ from lsprotocol.types import (
 from pygls.lsp.server import LanguageServer
 
 from tensor_grep.cli import repo_map
+from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 
 
 class TensorGrepLSPServer(LanguageServer):  # type: ignore
@@ -49,6 +51,8 @@ class TensorGrepLSPServer(LanguageServer):  # type: ignore
         # In a real enterprise version, we would keep the AST graph warm in VRAM here.
         self.tensor_cache: dict[str, Any] = {}
         self.repo_map_cache: dict[str, dict[str, Any]] = {}
+        self.provider_mode = "native"
+        self.external_providers = ExternalLSPProviderManager()
 
 
 server = TensorGrepLSPServer("tensor-grep-lsp", "v0.3.0")
@@ -95,6 +99,17 @@ def _get_repo_map(ls: TensorGrepLSPServer, uri: str) -> dict[str, Any]:
     current = repo_map.build_repo_map(repo_root)
     ls.repo_map_cache[cache_key] = current
     return current
+
+
+def _external_client_for_uri(ls: TensorGrepLSPServer, uri: str) -> Any | None:
+    language = _infer_language(uri)
+    workspace_root = _resolve_repo_root(_uri_to_path(uri))
+    try:
+        client = ls.external_providers.get_client(language=language, workspace_root=workspace_root)
+        client.ensure_document(uri=uri, text=_document_text(ls, uri), language_id=language)
+        return client
+    except (FileNotFoundError, LSPTransportError, ValueError):
+        return None
 
 
 def _document_text(ls: TensorGrepLSPServer, uri: str) -> str:
@@ -204,7 +219,69 @@ def _location_from_entry(entry: dict[str, Any]) -> Location:
     )
 
 
+def _location_from_external_payload(entry: dict[str, Any]) -> Location | None:
+    try:
+        payload_range = dict(entry["range"])
+        payload_start = dict(payload_range["start"])
+        payload_end = dict(payload_range["end"])
+        return Location(
+            uri=str(entry["uri"]),
+            range=Range(
+                start=Position(line=int(payload_start["line"]), character=int(payload_start["character"])),
+                end=Position(line=int(payload_end["line"]), character=int(payload_end["character"])),
+            ),
+        )
+    except Exception:
+        return None
+
+
 def _document_symbols_for_uri(ls: TensorGrepLSPServer, uri: str) -> list[DocumentSymbol]:
+    if ls.provider_mode != "native":
+        client = _external_client_for_uri(ls, uri)
+        if client is not None:
+            try:
+                external_result = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
+            except LSPTransportError:
+                external_result = None
+            if isinstance(external_result, list):
+                external_symbols: list[DocumentSymbol] = []
+                for current in external_result:
+                    if not isinstance(current, dict):
+                        continue
+                    if "selectionRange" not in current or "range" not in current:
+                        continue
+                    payload_range = dict(current["range"])
+                    payload_selection = dict(current["selectionRange"])
+                    external_symbols.append(
+                        DocumentSymbol(
+                            name=str(current.get("name", "")),
+                            kind=_kind_to_symbol_kind(str(current.get("kind", "symbol"))),
+                            range=Range(
+                                start=Position(
+                                    line=int(payload_range["start"]["line"]),
+                                    character=int(payload_range["start"]["character"]),
+                                ),
+                                end=Position(
+                                    line=int(payload_range["end"]["line"]),
+                                    character=int(payload_range["end"]["character"]),
+                                ),
+                            ),
+                            selection_range=Range(
+                                start=Position(
+                                    line=int(payload_selection["start"]["line"]),
+                                    character=int(payload_selection["start"]["character"]),
+                                ),
+                                end=Position(
+                                    line=int(payload_selection["end"]["line"]),
+                                    character=int(payload_selection["end"]["character"]),
+                                ),
+                            ),
+                            detail=str(current.get("detail", "")) or None,
+                            children=None,
+                        )
+                    )
+                if external_symbols:
+                    return external_symbols
     path = _uri_to_path(uri)
     current_repo_map = _get_repo_map(ls, uri)
     symbols = [
@@ -213,10 +290,10 @@ def _document_symbols_for_uri(ls: TensorGrepLSPServer, uri: str) -> list[Documen
         if str(Path(str(current.get("file", ""))).resolve()) == str(path)
     ]
     symbols.sort(key=lambda item: (int(item.get("line", 0)), str(item.get("name", ""))))
-    result: list[DocumentSymbol] = []
+    native_symbols: list[DocumentSymbol] = []
     for current in symbols:
         location = _location_from_entry(current)
-        result.append(
+        native_symbols.append(
             DocumentSymbol(
                 name=str(current.get("name", "")),
                 kind=_kind_to_symbol_kind(str(current.get("kind", "symbol"))),
@@ -226,10 +303,38 @@ def _document_symbols_for_uri(ls: TensorGrepLSPServer, uri: str) -> list[Documen
                 children=None,
             )
         )
-    return result
+    return native_symbols
 
 
 def _workspace_symbols(ls: TensorGrepLSPServer, query: str, path_hint: str | None = None) -> list[SymbolInformation]:
+    if ls.provider_mode != "native" and path_hint is not None:
+        client = _external_client_for_uri(ls, path_hint)
+        if client is not None:
+            try:
+                result = client.request("workspace/symbol", {"query": query})
+            except LSPTransportError:
+                result = None
+            if isinstance(result, list):
+                external_symbols: list[SymbolInformation] = []
+                for current in result:
+                    if not isinstance(current, dict):
+                        continue
+                    location_payload = current.get("location")
+                    if not isinstance(location_payload, dict):
+                        continue
+                    resolved = _location_from_external_payload(location_payload)
+                    if resolved is None:
+                        continue
+                    external_symbols.append(
+                        SymbolInformation(
+                            name=str(current.get("name", "")),
+                            kind=_kind_to_symbol_kind(str(current.get("kind", "symbol"))),
+                            location=resolved,
+                            container_name=str(current.get("containerName", "")) or None,
+                        )
+                    )
+                if external_symbols:
+                    return external_symbols
     repo_root = None
     if path_hint:
         repo_root = _resolve_repo_root(_uri_to_path(path_hint))
@@ -264,8 +369,46 @@ def _definitions_for_position(ls: TensorGrepLSPServer, uri: str, position: Posit
     if resolved is None:
         return []
     symbol, _ = resolved
-    payload = repo_map.build_symbol_defs_from_map(_get_repo_map(ls, uri), symbol)
-    return [_location_from_entry(dict(current)) for current in payload.get("definitions", [])]
+    native_locations = [
+        _location_from_entry(dict(current))
+        for current in repo_map.build_symbol_defs_from_map(_get_repo_map(ls, uri), symbol).get("definitions", [])
+    ]
+    if ls.provider_mode == "native":
+        return native_locations
+    client = _external_client_for_uri(ls, uri)
+    if client is None:
+        return native_locations
+    try:
+        result = client.request(
+            "textDocument/definition",
+            {"textDocument": {"uri": uri}, "position": {"line": position.line, "character": position.character}},
+        )
+    except LSPTransportError:
+        return native_locations
+    external_locations: list[Location] = []
+    if isinstance(result, dict):
+        current = _location_from_external_payload(result)
+        if current is not None:
+            external_locations.append(current)
+    elif isinstance(result, list):
+        for current in result:
+            if isinstance(current, dict):
+                resolved_location = _location_from_external_payload(current)
+                if resolved_location is not None:
+                    external_locations.append(resolved_location)
+    if ls.provider_mode == "lsp":
+        return external_locations or native_locations
+    deduped: dict[tuple[str, int, int, int, int], Location] = {}
+    for current in [*external_locations, *native_locations]:
+        key = (
+            current.uri,
+            int(current.range.start.line),
+            int(current.range.start.character),
+            int(current.range.end.line),
+            int(current.range.end.character),
+        )
+        deduped[key] = current
+    return list(deduped.values())
 
 
 def _references_for_position(ls: TensorGrepLSPServer, uri: str, position: Position) -> list[Location]:
@@ -273,8 +416,46 @@ def _references_for_position(ls: TensorGrepLSPServer, uri: str, position: Positi
     if resolved is None:
         return []
     symbol, _ = resolved
-    payload = repo_map.build_symbol_refs_from_map(_get_repo_map(ls, uri), symbol)
-    return [_location_from_entry(dict(current)) for current in payload.get("references", [])]
+    native_locations = [
+        _location_from_entry(dict(current))
+        for current in repo_map.build_symbol_refs_from_map(_get_repo_map(ls, uri), symbol).get("references", [])
+    ]
+    if ls.provider_mode == "native":
+        return native_locations
+    client = _external_client_for_uri(ls, uri)
+    if client is None:
+        return native_locations
+    try:
+        result = client.request(
+            "textDocument/references",
+            {
+                "textDocument": {"uri": uri},
+                "position": {"line": position.line, "character": position.character},
+                "context": {"includeDeclaration": True},
+            },
+        )
+    except LSPTransportError:
+        return native_locations
+    external_locations: list[Location] = []
+    if isinstance(result, list):
+        for current in result:
+            if isinstance(current, dict):
+                resolved_location = _location_from_external_payload(current)
+                if resolved_location is not None:
+                    external_locations.append(resolved_location)
+    if ls.provider_mode == "lsp":
+        return external_locations or native_locations
+    deduped: dict[tuple[str, int, int, int, int], Location] = {}
+    for current in [*external_locations, *native_locations]:
+        key = (
+            current.uri,
+            int(current.range.start.line),
+            int(current.range.start.character),
+            int(current.range.end.line),
+            int(current.range.end.character),
+        )
+        deduped[key] = current
+    return list(deduped.values())
 
 
 def _workspace_edit_for_symbol(
@@ -287,6 +468,25 @@ def _workspace_edit_for_symbol(
     if resolved is None:
         return None
     symbol, _ = resolved
+    if ls.provider_mode != "native":
+        client = _external_client_for_uri(ls, uri)
+        if client is not None:
+            try:
+                result = client.request(
+                    "textDocument/rename",
+                    {
+                        "textDocument": {"uri": uri},
+                        "position": {"line": position.line, "character": position.character},
+                        "newName": new_name,
+                    },
+                )
+            except LSPTransportError:
+                result = None
+            if isinstance(result, dict) and result:
+                try:
+                    return WorkspaceEdit(**result)
+                except Exception:
+                    pass
     current_repo_map = _get_repo_map(ls, uri)
     defs_payload = repo_map.build_symbol_defs_from_map(current_repo_map, symbol)
     refs_payload = repo_map.build_symbol_refs_from_map(current_repo_map, symbol)
@@ -332,6 +532,14 @@ def did_open(ls: TensorGrepLSPServer, params: DidOpenTextDocumentParams) -> None
     ls.documents_cache[params.text_document.uri] = params.text_document.text
     _invalidate_repo_map_cache(ls, params.text_document.uri)
     _update_ast_tensor(ls, params.text_document.uri, params.text_document.text)
+    if ls.provider_mode != "native":
+        client = _external_client_for_uri(ls, params.text_document.uri)
+        if client is not None:
+            client.ensure_document(
+                uri=params.text_document.uri,
+                text=params.text_document.text,
+                language_id=str(params.text_document.language_id),
+            )
 
 
 @server.feature(TEXT_DOCUMENT_DID_CHANGE)  # type: ignore
@@ -341,6 +549,14 @@ def did_change(ls: TensorGrepLSPServer, params: DidChangeTextDocumentParams) -> 
         new_text = cast(Any, params.content_changes[0]).text
         ls.documents_cache[params.text_document.uri] = new_text
         _invalidate_repo_map_cache(ls, params.text_document.uri)
+        if ls.provider_mode != "native":
+            client = _external_client_for_uri(ls, params.text_document.uri)
+            if client is not None:
+                client.did_change(
+                    uri=params.text_document.uri,
+                    text=new_text,
+                    version=int(getattr(params.text_document, "version", 1) or 1),
+                )
 
 
 @server.feature(TEXT_DOCUMENT_DID_SAVE)  # type: ignore
@@ -349,6 +565,10 @@ def did_save(ls: TensorGrepLSPServer, params: DidSaveTextDocumentParams) -> None
     text = ls.documents_cache.get(params.text_document.uri, "")
     _invalidate_repo_map_cache(ls, params.text_document.uri)
     _update_ast_tensor(ls, params.text_document.uri, text)
+    if ls.provider_mode != "native":
+        client = _external_client_for_uri(ls, params.text_document.uri)
+        if client is not None:
+            client.did_save(uri=params.text_document.uri)
 
 
 @server.feature(TEXT_DOCUMENT_DEFINITION)  # type: ignore
@@ -433,6 +653,7 @@ def _update_ast_tensor(ls: TensorGrepLSPServer, uri: str, text: str) -> None:
 
 def run_lsp() -> None:
     """Start the pygls language server on standard IO."""
+    server.provider_mode = os.environ.get("TG_LSP_PROVIDER", "native").strip().lower() or "native"
     server.start_io()
 
 
