@@ -655,6 +655,8 @@ Example: [`examples/defs.json`](examples/defs.json)
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name requested. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Native-vs-provider merge summary including agreement status, counts, and fallback usage. |
+| `provider_status` | `object` | Provider health snapshot including attempted providers, capabilities, and last error. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
 | `files` | `array<string>` | Files containing exact definitions. |
@@ -683,6 +685,8 @@ Example: [`examples/source.json`](examples/source.json)
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name requested. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Same native-vs-provider merge summary exposed by Symbol Defs JSON. |
+| `provider_status` | `object` | Same provider health snapshot exposed by Symbol Defs JSON. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `sources` | `array<object>` | Exact Python blocks or heuristic JS/TS/Rust blocks for the resolved symbol. |
 | `files` | `array<string>` | Files containing exact definitions. |
@@ -707,6 +711,8 @@ Example: [`examples/impact.json`](examples/impact.json)
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Same native-vs-provider merge summary exposed by Symbol Defs JSON. |
+| `provider_status` | `object` | Same provider health snapshot exposed by Symbol Defs JSON. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `files` | `array<string>` | Likely impacted source files, definition file first. |
 | `file_matches` | `array<object>` | Ranked impacted file metadata with stable `path`, `score`, and provenance `reasons`. |
@@ -741,6 +747,8 @@ This is currently a Python-first symbol navigation contract. It finds exact name
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Native-vs-provider merge summary for reference discovery. |
+| `provider_status` | `object` | Provider health snapshot for reference discovery. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
 | `references` | `array<object>` | Python-first reference rows. |
@@ -777,6 +785,8 @@ This is currently a Python-first symbol navigation contract. It finds exact Pyth
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Native-vs-provider merge summary for caller discovery. |
+| `provider_status` | `object` | Provider health snapshot for caller discovery. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `callers` | `array<object>` | Python-first call rows. |
 | `files` | `array<string>` | Files containing call sites. |
@@ -807,6 +817,8 @@ Use this shape when an agent needs an explicit downstream change radius instead 
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Same native-vs-provider merge summary exposed by Symbol Callers JSON. |
+| `provider_status` | `object` | Same provider health snapshot exposed by Symbol Callers JSON. |
 | `max_depth` | `integer` | Maximum reverse-import depth included in the radius. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `callers` | `array<object>` | Exact caller rows discovered by the symbol navigation layer. |
@@ -852,6 +864,8 @@ The shape matches Symbol Blast Radius JSON and additionally includes:
 | `routing_reason` | `string` | `symbol-blast-radius-plan`. |
 | `query` | `string` | Deterministic planning query used to seed the edit plan, currently `blast radius: <symbol>`. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Same native-vs-provider merge summary exposed by Symbol Blast Radius JSON. |
+| `provider_status` | `object` | Same provider health snapshot exposed by Symbol Blast Radius JSON. |
 | `max_files` | `integer` | Maximum files retained in the plan payload. |
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
@@ -873,6 +887,8 @@ The shape matches Context Render JSON and additionally includes:
 | `routing_reason` | `string` | `symbol-blast-radius-render`. |
 | `symbol` | `string` | Exact symbol used to seed the blast radius. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
+| `provider_agreement` | `object` | Same native-vs-provider merge summary exposed by Symbol Blast Radius JSON. |
+| `provider_status` | `object` | Same provider health snapshot exposed by Symbol Blast Radius JSON. |
 | `max_depth` | `integer` | Maximum reverse-import depth included in the rendered radius. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `callers` | `array<object>` | Exact caller rows. |

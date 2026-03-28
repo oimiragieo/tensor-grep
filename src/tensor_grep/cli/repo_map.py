@@ -5913,6 +5913,100 @@ def _symbol_character_in_file(path: Path, line_number: int, symbol: str) -> int:
     return max(0, line.find(symbol))
 
 
+def _provider_languages_for_symbol(
+    repo_map: dict[str, Any],
+    symbol: str,
+    definitions: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    languages: set[str] = set()
+    for current in definitions or []:
+        languages.add(_language_for_path(str(current.get("file", ""))))
+    if languages:
+        return sorted(languages)
+    for current in repo_map.get("symbols", []):
+        if str(current.get("name", "")) == symbol:
+            languages.add(_language_for_path(str(current.get("file", ""))))
+    return sorted(languages)
+
+
+def _provider_status_snapshot(
+    repo_root: Path,
+    *,
+    semantic_provider: str,
+    languages: list[str],
+    fallback_used: bool = False,
+) -> dict[str, Any]:
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    providers = [
+        _EXTERNAL_LSP_PROVIDER_MANAGER.provider_status(language=language, workspace_root=repo_root)
+        for language in languages
+    ]
+    return {
+        "mode": normalized_provider,
+        "fallback_used": bool(fallback_used),
+        "providers": providers,
+    }
+
+
+def _merge_agreement_status(
+    *,
+    semantic_provider: str,
+    native_count: int,
+    lsp_count: int,
+    merged_count: int,
+    fallback_used: bool,
+) -> dict[str, Any]:
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    if normalized_provider == "native":
+        agreement_status = "native-only"
+    elif fallback_used and lsp_count == 0:
+        agreement_status = "fallback-native"
+    elif normalized_provider == "lsp":
+        agreement_status = "lsp-only" if lsp_count > 0 else "native-fallback"
+    elif native_count > 0 and lsp_count > 0 and merged_count == native_count == lsp_count:
+        agreement_status = "agreed"
+    elif native_count > 0 and lsp_count > 0:
+        agreement_status = "diverged"
+    elif lsp_count > 0:
+        agreement_status = "lsp-only"
+    else:
+        agreement_status = "native-only"
+    return {
+        "mode": normalized_provider,
+        "agreement_status": agreement_status,
+        "native_count": native_count,
+        "lsp_count": lsp_count,
+        "merged_count": merged_count,
+        "fallback_used": fallback_used,
+    }
+
+
+def _default_provider_metadata(
+    repo_root: Path,
+    repo_map: dict[str, Any],
+    symbol: str,
+    *,
+    semantic_provider: str,
+    definitions: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    normalized_provider = _normalize_semantic_provider(semantic_provider)
+    return (
+        _merge_agreement_status(
+            semantic_provider=normalized_provider,
+            native_count=len(definitions or []),
+            lsp_count=0,
+            merged_count=len(definitions or []),
+            fallback_used=normalized_provider == "lsp",
+        ),
+        _provider_status_snapshot(
+            repo_root,
+            semantic_provider=normalized_provider,
+            languages=_provider_languages_for_symbol(repo_map, symbol, definitions),
+            fallback_used=normalized_provider == "lsp",
+        ),
+    )
+
+
 def _external_workspace_symbols(repo_root: Path, symbol: str) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
     languages = {
@@ -6082,9 +6176,12 @@ def build_symbol_defs_from_map(
     )
     normalized_provider = _normalize_semantic_provider(semantic_provider)
     definitions = [dict(current) for current in native_definitions]
+    external_definitions: list[dict[str, Any]] = []
+    fallback_used = False
     if normalized_provider != "native":
         external_definitions = _external_workspace_symbols(Path(str(repo_map["path"])).resolve(), symbol)
         if normalized_provider == "lsp":
+            fallback_used = not bool(external_definitions)
             definitions = external_definitions or definitions
         else:
             merged: dict[tuple[str, int, int, str], dict[str, Any]] = {}
@@ -6119,6 +6216,19 @@ def build_symbol_defs_from_map(
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "strong"
     payload["semantic_provider"] = normalized_provider
+    payload["provider_agreement"] = _merge_agreement_status(
+        semantic_provider=normalized_provider,
+        native_count=len(native_definitions),
+        lsp_count=len(external_definitions),
+        merged_count=len(definitions),
+        fallback_used=fallback_used,
+    )
+    payload["provider_status"] = _provider_status_snapshot(
+        Path(str(repo_map["path"])).resolve(),
+        semantic_provider=normalized_provider,
+        languages=_provider_languages_for_symbol(repo_map, symbol, definitions),
+        fallback_used=fallback_used,
+    )
     return payload
 
 
@@ -6155,6 +6265,13 @@ def build_symbol_source_from_map(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    default_agreement, default_status = _default_provider_metadata(
+        Path(str(repo_map["path"])).resolve(),
+        repo_map,
+        symbol,
+        semantic_provider=semantic_provider,
+        definitions=defs_payload.get("definitions"),
+    )
     sources: list[dict[str, Any]] = []
     seen_files: set[str] = set()
     with _profiling_phase(_profiling_collector, "source_extraction"):
@@ -6188,6 +6305,8 @@ def build_symbol_source_from_map(
     payload["related_paths"] = related_paths
     payload["sources"] = sources
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
+    payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
+    payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -6224,6 +6343,13 @@ def build_symbol_impact_from_map(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    default_agreement, default_status = _default_provider_metadata(
+        Path(str(repo_map["path"])).resolve(),
+        repo_map,
+        symbol,
+        semantic_provider=semantic_provider,
+        definitions=defs_payload.get("definitions"),
+    )
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
@@ -6343,6 +6469,8 @@ def build_symbol_impact_from_map(
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
+    payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
+    payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -6420,9 +6548,12 @@ def build_symbol_refs_from_map(
         )
 
     normalized_provider = _normalize_semantic_provider(semantic_provider)
+    external_refs: list[dict[str, Any]] = []
+    fallback_used = False
     if normalized_provider != "native":
         external_refs = _external_references(repo_root, symbol, [dict(current) for current in payload["definitions"]])
         if normalized_provider == "lsp":
+            fallback_used = not bool(external_refs)
             references = external_refs or references
         else:
             merged_refs: dict[tuple[str, int, int], dict[str, Any]] = {}
@@ -6453,6 +6584,19 @@ def build_symbol_refs_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
+    payload["provider_agreement"] = _merge_agreement_status(
+        semantic_provider=normalized_provider,
+        native_count=len([current for current in references if not str(current.get("provenance", "")).startswith("lsp-")]),
+        lsp_count=len(external_refs),
+        merged_count=len(references),
+        fallback_used=fallback_used,
+    )
+    payload["provider_status"] = _provider_status_snapshot(
+        repo_root,
+        semantic_provider=normalized_provider,
+        languages=_provider_languages_for_symbol(repo_map, symbol, payload["definitions"]),
+        fallback_used=fallback_used,
+    )
     return payload
 
 
@@ -6522,9 +6666,10 @@ def build_symbol_callers_from_map(
                 calls.append(call_payload)
 
     normalized_provider = _normalize_semantic_provider(semantic_provider)
+    external_calls: list[dict[str, Any]] = []
+    fallback_used = False
     if normalized_provider != "native":
         external_refs = _external_references(repo_root, symbol, [dict(current) for current in defs_payload["definitions"]])
-        external_calls: list[dict[str, Any]] = []
         for external_ref in external_refs:
             text = str(external_ref.get("text", ""))
             if f"{symbol}(" in text or f"{symbol}!" in text or symbol in text:
@@ -6535,6 +6680,7 @@ def build_symbol_callers_from_map(
                     }
                 )
         if normalized_provider == "lsp":
+            fallback_used = not bool(external_calls)
             calls = external_calls or calls
         else:
             merged_calls: dict[tuple[str, int, int], dict[str, Any]] = {}
@@ -6585,6 +6731,19 @@ def build_symbol_callers_from_map(
     )
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = normalized_provider
+    payload["provider_agreement"] = _merge_agreement_status(
+        semantic_provider=normalized_provider,
+        native_count=len([current for current in calls if not str(current.get("provenance", "")).startswith("lsp-")]),
+        lsp_count=len(external_calls),
+        merged_count=len(calls),
+        fallback_used=fallback_used,
+    )
+    payload["provider_status"] = _provider_status_snapshot(
+        repo_root,
+        semantic_provider=normalized_provider,
+        languages=_provider_languages_for_symbol(repo_map, symbol, defs_payload["definitions"]),
+        fallback_used=fallback_used,
+    )
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -6624,6 +6783,13 @@ def build_symbol_blast_radius_from_map(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    default_agreement, default_status = _default_provider_metadata(
+        Path(str(repo_map["path"])).resolve(),
+        repo_map,
+        symbol,
+        semantic_provider=semantic_provider,
+        definitions=defs_payload.get("definitions"),
+    )
     callers_payload = build_symbol_callers_from_map(
         repo_map,
         symbol,
@@ -6900,6 +7066,8 @@ def build_symbol_blast_radius_from_map(
     payload["ranking_quality"] = _ranking_quality(payload["file_matches"], payload["test_matches"])
     payload["coverage_summary"] = _coverage_summary(payload)
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
+    payload["provider_agreement"] = dict(callers_payload.get("provider_agreement", default_agreement))
+    payload["provider_status"] = dict(callers_payload.get("provider_status", default_status))
     return _attach_profiling(payload, _profiling_collector)
 
 

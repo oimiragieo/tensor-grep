@@ -32,6 +32,8 @@ def test_repo_map_defs_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None
 
     assert payload["semantic_provider"] == "lsp"
     assert payload["definitions"][0]["provenance"] == "lsp-python"
+    assert payload["provider_agreement"]["agreement_status"] == "lsp-only"
+    assert payload["provider_status"]["mode"] == "lsp"
 
 
 def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
@@ -57,6 +59,7 @@ def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> No
 
     assert payload["semantic_provider"] == "lsp"
     assert payload["definitions"][0]["provenance"] == "lsp-python"
+    assert payload["provider_status"]["mode"] == "lsp"
 
 
 def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeypatch) -> None:
@@ -90,6 +93,8 @@ def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeyp
     assert payload["semantic_provider"] == "hybrid"
     assert any(current["provenance"] == "lsp-python" for current in payload["references"])
     assert any(current["file"] == str(consumer_path.resolve()) for current in payload["references"])
+    assert payload["provider_agreement"]["agreement_status"] in {"diverged", "agreed"}
+    assert payload["provider_status"]["mode"] == "hybrid"
 
 
 def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
@@ -122,6 +127,7 @@ def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> N
 
     assert payload["semantic_provider"] == "lsp"
     assert any(current["provenance"] == "lsp-python" for current in payload["callers"])
+    assert payload["provider_agreement"]["agreement_status"] == "lsp-only"
 
 
 def test_repo_map_impact_propagates_semantic_provider(tmp_path: Path, monkeypatch) -> None:
@@ -152,6 +158,7 @@ def test_repo_map_impact_propagates_semantic_provider(tmp_path: Path, monkeypatc
 
     assert payload["semantic_provider"] == "hybrid"
     assert payload["definitions"][0]["provenance"] == "lsp-python"
+    assert payload["provider_agreement"]["mode"] == "hybrid"
 
 
 def test_repo_map_blast_radius_propagates_semantic_provider(tmp_path: Path, monkeypatch) -> None:
@@ -178,6 +185,7 @@ def test_repo_map_blast_radius_propagates_semantic_provider(tmp_path: Path, monk
 
     assert payload["semantic_provider"] == "lsp"
     assert payload["definitions"][0]["provenance"] == "lsp-python"
+    assert payload["provider_agreement"]["mode"] == "lsp"
 
 
 def test_cli_defs_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:

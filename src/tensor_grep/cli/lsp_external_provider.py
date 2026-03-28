@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import shutil
 import subprocess
 import threading
@@ -68,7 +69,7 @@ def _provider_command(language: str) -> list[str]:
 
 
 class ExternalLSPClient:
-    def __init__(self, *, language: str, workspace_root: Path) -> None:
+    def __init__(self, *, language: str, workspace_root: Path, request_timeout_seconds: float = 10.0) -> None:
         self.language = language
         self.workspace_root = workspace_root.resolve()
         self.command = _provider_command(language)
@@ -76,10 +77,17 @@ class ExternalLSPClient:
         self._request_id = 0
         self._lock = threading.Lock()
         self._opened_documents: set[str] = set()
+        self._message_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
+        self._reader_thread: threading.Thread | None = None
+        self.request_timeout_seconds = request_timeout_seconds
+        self.capabilities: dict[str, Any] = {}
+        self.last_error: str | None = None
 
     def start(self) -> None:
-        if self.process is not None:
+        if self.process is not None and self.process.poll() is None:
             return
+        if self.process is not None:
+            self.stop()
         self.process = subprocess.Popen(
             self.command,
             cwd=str(self.workspace_root),
@@ -90,7 +98,10 @@ class ExternalLSPClient:
             encoding="utf-8",
             errors="replace",
         )
-        self.request(
+        self._message_queue = queue.Queue()
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self._reader_thread.start()
+        result = self.request(
             "initialize",
             {
                 "processId": None,
@@ -104,6 +115,8 @@ class ExternalLSPClient:
                 ],
             },
         )
+        if isinstance(result, dict):
+            self.capabilities = dict(result.get("capabilities", {}))
         self.notify("initialized", {})
 
     def stop(self) -> None:
@@ -111,7 +124,7 @@ class ExternalLSPClient:
             return
         with self._lock:
             try:
-                self.notify("shutdown", {})
+                self._write_notification("shutdown", {})
             except Exception:
                 pass
             try:
@@ -120,6 +133,9 @@ class ExternalLSPClient:
                 pass
             self.process = None
             self._opened_documents.clear()
+            self.capabilities = {}
+            self._reader_thread = None
+            self._message_queue = queue.Queue()
 
     def request(self, method: str, params: dict[str, Any]) -> Any:
         self.start()
@@ -128,20 +144,24 @@ class ExternalLSPClient:
         with self._lock:
             self._request_id += 1
             request_id = self._request_id
-            _write_message(
-                self.process.stdin,
-                {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
-            )
+            self._write_request(request_id, method, params)
             while True:
-                message = _read_message(self.process.stdout)
+                try:
+                    message = self._message_queue.get(timeout=self.request_timeout_seconds)
+                except queue.Empty as exc:
+                    self.last_error = f"timeout waiting for LSP response: {method}"
+                    raise LSPTransportError(self.last_error) from exc
                 if message is None:
+                    self.last_error = f"LSP process closed during request: {method}"
                     raise LSPTransportError(f"LSP process closed during request: {method}")
                 if "id" not in message:
                     continue
                 if int(message["id"]) != request_id:
                     continue
                 if "error" in message:
-                    raise LSPTransportError(str(message["error"]))
+                    self.last_error = str(message["error"])
+                    raise LSPTransportError(self.last_error)
+                self.last_error = None
                 return message.get("result")
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
@@ -149,10 +169,7 @@ class ExternalLSPClient:
         if self.process is None or self.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
         with self._lock:
-            _write_message(
-                self.process.stdin,
-                {"jsonrpc": "2.0", "method": method, "params": params},
-            )
+            self._write_notification(method, params)
 
     def ensure_document(self, *, uri: str, text: str, language_id: str) -> None:
         if uri in self._opened_documents:
@@ -186,6 +203,49 @@ class ExternalLSPClient:
             return
         self.notify("textDocument/didSave", {"textDocument": {"uri": uri}})
 
+    def status(self) -> dict[str, Any]:
+        return {
+            "language": self.language,
+            "workspace_root": str(self.workspace_root),
+            "command": list(self.command),
+            "running": self.process is not None and self.process.poll() is None,
+            "capabilities": dict(self.capabilities),
+            "last_error": self.last_error,
+            "opened_documents": len(self._opened_documents),
+        }
+
+    def _write_request(self, request_id: int, method: str, params: dict[str, Any]) -> None:
+        if self.process is None or self.process.stdin is None:
+            raise LSPTransportError("LSP process is not available")
+        _write_message(
+            self.process.stdin,
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+        )
+
+    def _write_notification(self, method: str, params: dict[str, Any]) -> None:
+        if self.process is None or self.process.stdin is None:
+            raise LSPTransportError("LSP process is not available")
+        _write_message(
+            self.process.stdin,
+            {"jsonrpc": "2.0", "method": method, "params": params},
+        )
+
+    def _reader_loop(self) -> None:
+        process = self.process
+        if process is None or process.stdout is None:
+            self._message_queue.put(None)
+            return
+        try:
+            while True:
+                message = _read_message(process.stdout)
+                if message is None:
+                    self._message_queue.put(None)
+                    return
+                self._message_queue.put(message)
+        except Exception as exc:
+            self.last_error = str(exc)
+            self._message_queue.put(None)
+
 
 class ExternalLSPProviderManager:
     def __init__(self) -> None:
@@ -198,6 +258,37 @@ class ExternalLSPProviderManager:
             current = ExternalLSPClient(language=language, workspace_root=workspace_root)
             self._clients[key] = current
         return current
+
+    def provider_status(self, *, language: str, workspace_root: Path) -> dict[str, Any]:
+        key = (language.lower(), str(workspace_root.resolve()))
+        current = self._clients.get(key)
+        if current is not None:
+            status = current.status()
+            status["available"] = True
+            return status
+        try:
+            command = _provider_command(language)
+        except (FileNotFoundError, ValueError) as exc:
+            return {
+                "language": language.lower(),
+                "workspace_root": str(workspace_root.resolve()),
+                "available": False,
+                "running": False,
+                "command": [],
+                "capabilities": {},
+                "last_error": str(exc),
+                "opened_documents": 0,
+            }
+        return {
+            "language": language.lower(),
+            "workspace_root": str(workspace_root.resolve()),
+            "available": True,
+            "running": False,
+            "command": command,
+            "capabilities": {},
+            "last_error": None,
+            "opened_documents": 0,
+        }
 
     def close_all(self) -> None:
         for current in self._clients.values():
