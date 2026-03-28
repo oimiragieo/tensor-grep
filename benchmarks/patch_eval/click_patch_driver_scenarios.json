@@ -1,0 +1,11 @@
+{
+  "scenarios": [
+    {
+      "instance_id": "click-format-filename-shorten",
+      "repo_fixture": "../patch_fixtures/click_format_filename",
+      "query_or_symbol": "format_filename",
+      "mode": "blast-radius",
+      "problem_statement": "Fix format_filename so shorten=True strips parent directories and the filename formatting tests pass."
+    }
+  ]
+}

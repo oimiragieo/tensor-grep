@@ -168,7 +168,14 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
             patch_path = worktree / "candidate.patch"
             patch_path.write_text(patch_text, encoding="utf-8")
             applied = subprocess.run(
-                ["git", "apply", "--whitespace=nowarn", str(patch_path)],
+                [
+                    "git",
+                    "apply",
+                    "--ignore-space-change",
+                    "--ignore-whitespace",
+                    "--whitespace=nowarn",
+                    str(patch_path),
+                ],
                 cwd=worktree,
                 capture_output=True,
                 text=True,

@@ -1,0 +1,18 @@
+{
+  "scenarios": [
+    {
+      "instance_id": "click-format-filename-shorten",
+      "repo_fixture": "../patch_fixtures/click_format_filename",
+      "query_or_symbol": "format_filename",
+      "mode": "blast-radius",
+      "problem_statement": "Fix format_filename so shorten=True strips parent directories and the filename formatting tests pass."
+    },
+    {
+      "instance_id": "commander-human-readable-arg-name",
+      "repo_fixture": "../patch_fixtures/commander_human_readable_arg_name",
+      "query_or_symbol": "humanReadableArgName",
+      "mode": "blast-radius",
+      "problem_statement": "Fix humanReadableArgName so required arguments use angle brackets and optional arguments use square brackets."
+    }
+  ]
+}

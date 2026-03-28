@@ -1,0 +1,11 @@
+{
+  "scenarios": [
+    {
+      "instance_id": "commander-human-readable-arg-name",
+      "repo_fixture": "../patch_fixtures/commander_human_readable_arg_name",
+      "query_or_symbol": "humanReadableArgName",
+      "mode": "blast-radius",
+      "problem_statement": "Fix humanReadableArgName so required arguments use angle brackets and optional arguments use square brackets."
+    }
+  ]
+}

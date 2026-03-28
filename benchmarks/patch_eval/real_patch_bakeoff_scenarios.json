@@ -1,0 +1,46 @@
+{
+  "scenarios": [
+    {
+      "instance_id": "click-format-filename-shorten",
+      "repo_fixture": "../patch_fixtures/click_format_filename",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 7,
+        "end_line": 24
+      },
+      "expected_changed_files": [
+        "src/click/utils.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_utils.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest -q"
+      ]
+    },
+    {
+      "instance_id": "commander-human-readable-arg-name",
+      "repo_fixture": "../patch_fixtures/commander_human_readable_arg_name",
+      "expected_primary_file": "lib/argument.js",
+      "expected_primary_span": {
+        "start_line": 32,
+        "end_line": 36
+      },
+      "expected_changed_files": [
+        "lib/argument.js"
+      ],
+      "expected_test_files": [
+        "tests/argument.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/argument.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test"
+      ]
+    }
+  ]
+}

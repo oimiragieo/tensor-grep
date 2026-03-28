@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -2869,6 +2871,91 @@ def test_render_patch_scorecard_should_emit_summary_and_failures():
     assert "`copilot`" in markdown
     assert "`gemini-cli`" in markdown
     assert "timeout after 10s" in markdown
+
+
+def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(tmp_path):
+    driver_module = _load_script_module(
+        "run_tensor_grep_patch_driver_real_fixture_script",
+        "benchmarks/run_tensor_grep_patch_driver.py",
+    )
+    bakeoff_module = _load_script_module(
+        "run_patch_bakeoff_real_fixture_script",
+        "benchmarks/run_patch_bakeoff.py",
+    )
+
+    driver_scenarios = driver_module.load_driver_scenarios(
+        Path("benchmarks/patch_eval/real_patch_driver_scenarios.json")
+    )
+    bakeoff_scenarios = bakeoff_module.load_patch_scenarios(
+        Path("benchmarks/patch_eval/real_patch_bakeoff_scenarios.json")
+    )
+
+    assert len(driver_scenarios) == 2
+    assert len(bakeoff_scenarios) == 2
+
+    def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            a_root = temp_root / "a"
+            b_root = temp_root / "b"
+            shutil.copytree(repo_root, a_root)
+            shutil.copytree(repo_root, b_root)
+            (b_root / relative_path).write_text(updated_text, encoding="utf-8")
+            completed = subprocess.run(
+                ["git", "diff", "--no-index", "--", f"a/{relative_path}", f"b/{relative_path}"],
+                cwd=temp_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            patch = completed.stdout
+            patch = patch.replace(f"diff --git a/a/{relative_path} b/b/{relative_path}", f"diff --git a/{relative_path} b/{relative_path}")
+            patch = patch.replace(f"--- a/a/{relative_path}", f"--- a/{relative_path}")
+            patch = patch.replace(f"+++ b/b/{relative_path}", f"+++ b/{relative_path}")
+            return patch
+
+    click_repo = Path("benchmarks/patch_fixtures/click_format_filename")
+    click_source = click_repo / "src/click/utils.py"
+    click_original = click_source.read_text(encoding="utf-8")
+    click_fixed = click_original.replace(
+        "        filename = os.fspath(filename)\n",
+        "        filename = os.path.basename(filename)\n",
+        1,
+    )
+    click_patch = _build_git_patch(click_repo, "src/click/utils.py", click_fixed)
+    click_prediction = {
+        "instance_id": "click-format-filename-shorten",
+        "system": "oracle",
+        "model_patch": click_patch,
+        "actual_test_files": ["tests/test_utils.py"],
+        "actual_validation_commands": ["pytest -q"],
+    }
+    commander_repo = Path("benchmarks/patch_fixtures/commander_human_readable_arg_name")
+    commander_source = commander_repo / "lib/argument.js"
+    commander_original = commander_source.read_text(encoding="utf-8")
+    commander_fixed = commander_original.replace(
+        "  return arg.required ? '[' + nameOutput + ']' : '<' + nameOutput + '>';\n",
+        "  return arg.required ? '<' + nameOutput + '>' : '[' + nameOutput + ']';\n",
+        1,
+    )
+    commander_patch = _build_git_patch(commander_repo, "lib/argument.js", commander_fixed)
+    commander_prediction = {
+        "instance_id": "commander-human-readable-arg-name",
+        "system": "oracle",
+        "model_patch": commander_patch,
+        "actual_test_files": ["tests/argument.test.js"],
+        "actual_validation_commands": ["node --test tests/argument.test.js"],
+    }
+
+    payload = bakeoff_module.build_patch_bakeoff_payload(
+        bakeoff_scenarios,
+        [click_prediction, commander_prediction],
+    )
+
+    assert payload["summary"]["scenario_count"] == 2
+    assert payload["summary"]["mean_patch_applied_rate"] == 1.0
+    assert payload["summary"]["mean_validation_pass_rate"] == 1.0
+    assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0
 
 
 def test_render_world_class_report_should_include_baseline_and_competitor_sections():
