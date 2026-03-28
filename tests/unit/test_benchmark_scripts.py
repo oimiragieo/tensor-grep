@@ -27,6 +27,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_external_eval.py",
     "benchmarks/analyze_external_profiling.py",
     "benchmarks/normalize_competitor_eval.py",
+    "benchmarks/render_patch_scorecard.py",
     "benchmarks/render_world_class_report.py",
     "benchmarks/run_patch_bakeoff.py",
     "benchmarks/run_tensor_grep_patch_driver.py",
@@ -2827,6 +2828,47 @@ def test_render_comparison_scorecard_should_emit_ranked_markdown():
 
     assert markdown.startswith("# Competitor Evaluation Scorecard")
     assert markdown.index("`system-a`") < markdown.index("`system-b`")
+
+
+def test_render_patch_scorecard_should_emit_summary_and_failures():
+    module = _load_script_module("render_patch_scorecard_script", "benchmarks/render_patch_scorecard.py")
+    markdown = module.render_patch_scorecard(
+        [
+            {
+                "rows": [
+                    {
+                        "instance_id": "demo-1",
+                        "system": "copilot",
+                        "patch_applied": 1.0,
+                        "validation_passed": 1.0,
+                        "primary_file_hit": 1.0,
+                        "primary_span_hit": 1.0,
+                        "changed_file_recall": 1.0,
+                        "predicted_test_hit_rate": 1.0,
+                        "predicted_validation_cmd_hit_rate": 1.0,
+                        "apply_error": "",
+                    },
+                    {
+                        "instance_id": "demo-2",
+                        "system": "gemini-cli",
+                        "patch_applied": 0.0,
+                        "validation_passed": 0.0,
+                        "primary_file_hit": 0.0,
+                        "primary_span_hit": 0.0,
+                        "changed_file_recall": 0.0,
+                        "predicted_test_hit_rate": 1.0,
+                        "predicted_validation_cmd_hit_rate": 1.0,
+                        "apply_error": "timeout after 10s",
+                    },
+                ]
+            }
+        ]
+    )
+
+    assert markdown.startswith("# Patch Evaluation Scorecard")
+    assert "`copilot`" in markdown
+    assert "`gemini-cli`" in markdown
+    assert "timeout after 10s" in markdown
 
 
 def test_render_world_class_report_should_include_baseline_and_competitor_sections():
