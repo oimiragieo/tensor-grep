@@ -174,6 +174,22 @@ def test_cli_defs_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
     assert payload["semantic_provider"] == "hybrid"
 
 
+def test_cli_impact_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_impact_json",
+        lambda symbol, path, semantic_provider="native": json.dumps(
+            {"symbol": symbol, "path": str(path), "semantic_provider": semantic_provider}
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["impact", str(tmp_path), "--symbol", "create_invoice", "--provider", "lsp", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["semantic_provider"] == "lsp"
+
+
 def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         repo_map,
@@ -198,6 +214,57 @@ def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -
     assert payload["semantic_provider"] == "hybrid"
 
 
+def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_blast_radius_plan_json",
+        lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native": json.dumps(
+            {
+                "symbol": symbol,
+                "path": str(path),
+                "max_depth": max_depth,
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+                "semantic_provider": semantic_provider,
+            }
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["blast-radius-plan", str(tmp_path), "--symbol", "create_invoice", "--provider", "hybrid", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["semantic_provider"] == "hybrid"
+
+
+def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_blast_radius_render_json",
+        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None,
+        optimize_context=False, render_profile="full", profile=False, semantic_provider="native": json.dumps(
+            {
+                "symbol": symbol,
+                "path": str(path),
+                "max_depth": max_depth,
+                "semantic_provider": semantic_provider,
+            }
+        ),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["blast-radius-render", str(tmp_path), "--symbol", "create_invoice", "--provider", "lsp", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["semantic_provider"] == "lsp"
+
+
 def test_mcp_defs_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
     module_path = tmp_path / "module.py"
     module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
@@ -218,6 +285,27 @@ def test_mcp_defs_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> Non
     assert payload["semantic_provider"] == "lsp"
 
 
+def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_server,
+        "build_symbol_impact",
+        lambda symbol, path, semantic_provider="native": {
+            "symbol": symbol,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+            "definitions": [],
+            "files": [],
+            "tests": [],
+            "imports": [],
+            "symbols": [],
+        },
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", str(tmp_path), provider="hybrid"))
+
+    assert payload["semantic_provider"] == "hybrid"
+
+
 def test_mcp_blast_radius_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         mcp_server,
@@ -235,5 +323,55 @@ def test_mcp_blast_radius_accepts_provider_parameter(tmp_path: Path, monkeypatch
     )
 
     payload = json.loads(mcp_server.tg_symbol_blast_radius("create_invoice", str(tmp_path), max_depth=2, provider="lsp"))
+
+    assert payload["semantic_provider"] == "lsp"
+
+
+def test_mcp_blast_radius_plan_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_blast_radius_plan",
+        lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native": {
+            "symbol": symbol,
+            "path": str(path),
+            "max_depth": max_depth,
+            "max_files": max_files,
+            "max_symbols": max_symbols,
+            "semantic_provider": semantic_provider,
+            "definitions": [],
+            "callers": [],
+            "files": [],
+            "tests": [],
+        },
+    )
+
+    payload = json.loads(
+        mcp_server.tg_symbol_blast_radius_plan("create_invoice", str(tmp_path), max_depth=2, provider="hybrid")
+    )
+
+    assert payload["semantic_provider"] == "hybrid"
+
+
+def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_server,
+        "build_symbol_blast_radius_render",
+        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None,
+        optimize_context=False, render_profile="full", profile=False, semantic_provider="native": {
+            "symbol": symbol,
+            "path": str(path),
+            "max_depth": max_depth,
+            "semantic_provider": semantic_provider,
+            "rendered_context": "",
+            "definitions": [],
+            "callers": [],
+            "files": [],
+            "tests": [],
+        },
+    )
+
+    payload = json.loads(
+        mcp_server.tg_symbol_blast_radius_render("create_invoice", str(tmp_path), max_depth=2, provider="lsp")
+    )
 
     assert payload["semantic_provider"] == "lsp"
