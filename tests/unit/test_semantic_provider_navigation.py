@@ -34,6 +34,31 @@ def test_repo_map_defs_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None
     assert payload["definitions"][0]["provenance"] == "lsp-python"
 
 
+def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None:
+    module_path = tmp_path / "module.py"
+    module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        repo_map,
+        "_external_workspace_symbols",
+        lambda root, symbol: [
+            {
+                "name": symbol,
+                "kind": "function",
+                "file": str(module_path.resolve()),
+                "line": 1,
+                "end_line": 2,
+                "provenance": "lsp-python",
+            }
+        ],
+    )
+
+    payload = repo_map.build_symbol_source("create_invoice", tmp_path, semantic_provider="lsp")
+
+    assert payload["semantic_provider"] == "lsp"
+    assert payload["definitions"][0]["provenance"] == "lsp-python"
+
+
 def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeypatch) -> None:
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
@@ -190,6 +215,22 @@ def test_cli_impact_accepts_provider_option(tmp_path: Path, monkeypatch) -> None
     assert payload["semantic_provider"] == "lsp"
 
 
+def test_cli_source_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        repo_map,
+        "build_symbol_source_json",
+        lambda symbol, path, semantic_provider="native": json.dumps(
+            {"symbol": symbol, "path": str(path), "semantic_provider": semantic_provider}
+        ),
+    )
+
+    result = CliRunner().invoke(app, ["source", str(tmp_path), "--symbol", "create_invoice", "--provider", "hybrid", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["semantic_provider"] == "hybrid"
+
+
 def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         repo_map,
@@ -304,6 +345,25 @@ def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
     payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", str(tmp_path), provider="hybrid"))
 
     assert payload["semantic_provider"] == "hybrid"
+
+
+def test_mcp_source_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        mcp_server,
+        "build_symbol_source",
+        lambda symbol, path, semantic_provider="native": {
+            "symbol": symbol,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+            "definitions": [],
+            "sources": [],
+            "files": [],
+        },
+    )
+
+    payload = json.loads(mcp_server.tg_symbol_source("create_invoice", str(tmp_path), provider="lsp"))
+
+    assert payload["semantic_provider"] == "lsp"
 
 
 def test_mcp_blast_radius_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:

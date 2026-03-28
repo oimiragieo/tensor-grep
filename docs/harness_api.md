@@ -682,6 +682,7 @@ Example: [`examples/source.json`](examples/source.json)
 | `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `path` | `string` | Inventory root. |
 | `symbol` | `string` | Exact symbol name requested. |
+| `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `sources` | `array<object>` | Exact Python blocks or heuristic JS/TS/Rust blocks for the resolved symbol. |
 | `files` | `array<string>` | Files containing exact definitions. |

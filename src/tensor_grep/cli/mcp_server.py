@@ -1264,7 +1264,7 @@ def tg_symbol_defs(symbol: str, path: str = ".", provider: str = "native") -> st
 
 
 @mcp.tool()  # type: ignore
-def tg_symbol_source(symbol: str, path: str = ".") -> str:
+def tg_symbol_source(symbol: str, path: str = ".", provider: str = "native") -> str:
     """
     Return exact source blocks for a symbol definition.
 
@@ -1273,7 +1273,7 @@ def tg_symbol_source(symbol: str, path: str = ".") -> str:
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_source(symbol, path), indent=2)
+        return json.dumps(build_symbol_source(symbol, path, semantic_provider=provider), indent=2)
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),

@@ -2297,6 +2297,7 @@ def defs(
 def source(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact source blocks for a symbol definition."""
@@ -2304,10 +2305,10 @@ def source(
 
     try:
         if json_output:
-            typer.echo(build_symbol_source_json(symbol, path))
+            typer.echo(build_symbol_source_json(symbol, path, semantic_provider=provider))
             return
 
-        payload = build_symbol_source(symbol, path)
+        payload = build_symbol_source(symbol, path, semantic_provider=provider)
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc

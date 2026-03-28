@@ -6135,12 +6135,14 @@ def build_symbol_source(
     symbol: str,
     path: str | Path = ".",
     *,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
     return build_symbol_source_from_map(
         repo_map,
         symbol,
+        semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
 
@@ -6149,9 +6151,10 @@ def build_symbol_source_from_map(
     repo_map: dict[str, Any],
     symbol: str,
     *,
+    semantic_provider: str = "native",
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    defs_payload = build_symbol_defs_from_map(repo_map, symbol)
+    defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     sources: list[dict[str, Any]] = []
     seen_files: set[str] = set()
     with _profiling_phase(_profiling_collector, "source_extraction"):
@@ -6184,11 +6187,17 @@ def build_symbol_source_from_map(
     payload["tests"] = defs_payload["tests"]
     payload["related_paths"] = related_paths
     payload["sources"] = sources
+    payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     return _attach_profiling(payload, _profiling_collector)
 
 
-def build_symbol_source_json(symbol: str, path: str | Path = ".") -> str:
-    return json.dumps(build_symbol_source(symbol, path), indent=2)
+def build_symbol_source_json(
+    symbol: str,
+    path: str | Path = ".",
+    *,
+    semantic_provider: str = "native",
+) -> str:
+    return json.dumps(build_symbol_source(symbol, path, semantic_provider=semantic_provider), indent=2)
 
 
 def build_symbol_impact(
