@@ -16,7 +16,7 @@ def test_repo_map_defs_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(
         repo_map,
         "_external_workspace_symbols",
-        lambda root, symbol: [
+        lambda root, symbol, **kwargs: [
             {
                 "name": symbol,
                 "kind": "function",
@@ -43,7 +43,7 @@ def test_repo_map_source_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(
         repo_map,
         "_external_workspace_symbols",
-        lambda root, symbol: [
+        lambda root, symbol, **kwargs: [
             {
                 "name": symbol,
                 "kind": "function",
@@ -71,7 +71,7 @@ def test_repo_map_refs_hybrid_merges_external_and_native(tmp_path: Path, monkeyp
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol: [])
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
     monkeypatch.setattr(
         repo_map,
         "_external_references",
@@ -106,7 +106,7 @@ def test_repo_map_callers_can_use_lsp_provider(tmp_path: Path, monkeypatch) -> N
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol: [])
+    monkeypatch.setattr(repo_map, "_external_workspace_symbols", lambda root, symbol, **kwargs: [])
     monkeypatch.setattr(
         repo_map,
         "_external_references",
@@ -168,7 +168,7 @@ def test_repo_map_blast_radius_propagates_semantic_provider(tmp_path: Path, monk
     monkeypatch.setattr(
         repo_map,
         "_external_workspace_symbols",
-        lambda root, symbol: [
+        lambda root, symbol, **kwargs: [
             {
                 "name": symbol,
                 "kind": "function",

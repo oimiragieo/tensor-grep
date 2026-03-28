@@ -5,6 +5,7 @@ import queue
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -69,7 +70,14 @@ def _provider_command(language: str) -> list[str]:
 
 
 class ExternalLSPClient:
-    def __init__(self, *, language: str, workspace_root: Path, request_timeout_seconds: float = 10.0) -> None:
+    def __init__(
+        self,
+        *,
+        language: str,
+        workspace_root: Path,
+        request_timeout_seconds: float = 3.0,
+        retry_cooldown_seconds: float = 30.0,
+    ) -> None:
         self.language = language
         self.workspace_root = workspace_root.resolve()
         self.command = _provider_command(language)
@@ -80,12 +88,16 @@ class ExternalLSPClient:
         self._message_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         self._reader_thread: threading.Thread | None = None
         self.request_timeout_seconds = request_timeout_seconds
+        self.retry_cooldown_seconds = retry_cooldown_seconds
         self.capabilities: dict[str, Any] = {}
         self.last_error: str | None = None
+        self.disabled_until_monotonic = 0.0
 
     def start(self) -> None:
         if self.process is not None and self.process.poll() is None:
             return
+        if self.disabled_until_monotonic > time.monotonic():
+            raise LSPTransportError(self.last_error or "LSP provider temporarily unavailable")
         if self.process is not None:
             self.stop()
         self.process = subprocess.Popen(
@@ -101,20 +113,26 @@ class ExternalLSPClient:
         self._message_queue = queue.Queue()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
-        result = self.request(
-            "initialize",
-            {
-                "processId": None,
-                "rootUri": self.workspace_root.as_uri(),
-                "capabilities": {},
-                "workspaceFolders": [
-                    {
-                        "uri": self.workspace_root.as_uri(),
-                        "name": self.workspace_root.name,
-                    }
-                ],
-            },
-        )
+        try:
+            result = self.request(
+                "initialize",
+                {
+                    "processId": None,
+                    "rootUri": self.workspace_root.as_uri(),
+                    "capabilities": {},
+                    "workspaceFolders": [
+                        {
+                            "uri": self.workspace_root.as_uri(),
+                            "name": self.workspace_root.name,
+                        }
+                    ],
+                },
+            )
+        except LSPTransportError as exc:
+            self.last_error = str(exc)
+            self.disabled_until_monotonic = time.monotonic() + self.retry_cooldown_seconds
+            self.stop()
+            raise
         if isinstance(result, dict):
             self.capabilities = dict(result.get("capabilities", {}))
         self.notify("initialized", {})
@@ -212,6 +230,7 @@ class ExternalLSPClient:
             "capabilities": dict(self.capabilities),
             "last_error": self.last_error,
             "opened_documents": len(self._opened_documents),
+            "cooldown_remaining_s": max(0.0, self.disabled_until_monotonic - time.monotonic()),
         }
 
     def _write_request(self, request_id: int, method: str, params: dict[str, Any]) -> None:
@@ -288,6 +307,7 @@ class ExternalLSPProviderManager:
             "capabilities": {},
             "last_error": None,
             "opened_documents": 0,
+            "cooldown_remaining_s": 0.0,
         }
 
     def close_all(self) -> None:

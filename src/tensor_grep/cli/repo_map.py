@@ -6007,11 +6007,16 @@ def _default_provider_metadata(
     )
 
 
-def _external_workspace_symbols(repo_root: Path, symbol: str) -> list[dict[str, Any]]:
+def _external_workspace_symbols(
+    repo_root: Path,
+    symbol: str,
+    *,
+    repo_map: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
     languages = {
         _language_for_path(current.get("file", ""))
-        for current in build_repo_map(repo_root).get("symbols", [])
+        for current in (repo_map or build_repo_map(repo_root)).get("symbols", [])
         if current.get("file")
     }
     for language in sorted(languages):
@@ -6179,7 +6184,11 @@ def build_symbol_defs_from_map(
     external_definitions: list[dict[str, Any]] = []
     fallback_used = False
     if normalized_provider != "native":
-        external_definitions = _external_workspace_symbols(Path(str(repo_map["path"])).resolve(), symbol)
+        external_definitions = _external_workspace_symbols(
+            Path(str(repo_map["path"])).resolve(),
+            symbol,
+            repo_map=repo_map,
+        )
         if normalized_provider == "lsp":
             fallback_used = not bool(external_definitions)
             definitions = external_definitions or definitions
