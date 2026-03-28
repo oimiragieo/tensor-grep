@@ -28,6 +28,8 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/analyze_external_profiling.py",
     "benchmarks/normalize_competitor_eval.py",
     "benchmarks/render_world_class_report.py",
+    "benchmarks/run_patch_bakeoff.py",
+    "benchmarks/run_tensor_grep_patch_driver.py",
     "benchmarks/run_claude_competitor_eval.py",
     "benchmarks/run_codex_competitor_eval.py",
     "benchmarks/run_copilot_competitor_eval.py",
@@ -3101,6 +3103,133 @@ def test_run_external_eval_should_include_provider_in_payload(monkeypatch, tmp_p
     payload = module.build_external_eval_payload(manifest, provider="lsp")
 
     assert payload["semantic_provider"] == "lsp"
+
+
+def test_run_patch_bakeoff_should_score_applied_patch_and_validation(tmp_path):
+    module = _load_script_module("run_patch_bakeoff_script", "benchmarks/run_patch_bakeoff.py")
+    repo_root = tmp_path / "repo"
+    src_dir = repo_root / "src"
+    tests_dir = repo_root / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+    (src_dir / "payments.py").write_text(
+        "def create_invoice(total):\n    return total + 1\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        "    assert create_invoice(2) == 4\n",
+        encoding="utf-8",
+    )
+    patch_text = "\n".join(
+        [
+            "diff --git a/src/payments.py b/src/payments.py",
+            "--- a/src/payments.py",
+            "+++ b/src/payments.py",
+            "@@ -1,2 +1,2 @@",
+            " def create_invoice(total):",
+            "-    return total + 1",
+            "+    return total + 2",
+            "",
+        ]
+    )
+    scenario = {
+        "instance_id": "demo-1",
+        "repo_fixture": str(repo_root),
+        "expected_primary_file": "src/payments.py",
+        "expected_primary_span": {"start_line": 1, "end_line": 2},
+        "expected_changed_files": ["src/payments.py"],
+        "expected_test_files": ["tests/test_payments.py"],
+        "validation_commands": [
+            "python -c \"import sys; sys.path.insert(0, 'src'); import payments; sys.exit(0 if payments.create_invoice(2) == 4 else 1)\""
+        ],
+        "expected_validation_commands_contain": ["python -c"],
+    }
+    prediction = {
+        "instance_id": "demo-1",
+        "system": "demo",
+        "model_patch": patch_text,
+        "actual_test_files": ["tests/test_payments.py"],
+        "actual_validation_commands": ["python -c \"...\""],
+    }
+
+    row = module.evaluate_prediction(scenario, prediction)
+
+    assert row["patch_applied"] is True
+    assert row["validation_passed"] is True
+    assert row["primary_file_hit"] == 1.0
+    assert row["primary_span_hit"] == 1.0
+    assert row["changed_file_recall"] == 1.0
+    assert row["changed_file_precision"] == 1.0
+    assert row["predicted_test_hit_rate"] == 1.0
+    assert row["predicted_validation_cmd_hit_rate"] == 1.0
+
+
+def test_run_patch_bakeoff_should_build_summary_payload(tmp_path):
+    module = _load_script_module("run_patch_bakeoff_payload_script", "benchmarks/run_patch_bakeoff.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    scenarios = [
+        {
+            "instance_id": "demo-1",
+            "repo_fixture": str(repo_root),
+            "expected_primary_file": "a.py",
+            "expected_primary_span": {"start_line": 1, "end_line": 1},
+            "expected_changed_files": ["a.py"],
+            "expected_test_files": [],
+            "validation_commands": [],
+            "expected_validation_commands_contain": [],
+        }
+    ]
+    predictions = [{"instance_id": "demo-1", "system": "demo", "model_patch": "", "actual_validation_commands": []}]
+
+    payload = module.build_patch_bakeoff_payload(scenarios, predictions)
+
+    assert payload["suite"] == "run_patch_bakeoff"
+    assert payload["summary"]["scenario_count"] == 1
+    assert payload["rows"][0]["system"] == "demo"
+
+
+def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypatch, tmp_path):
+    module = _load_script_module("run_tensor_grep_patch_driver_script", "benchmarks/run_tensor_grep_patch_driver.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    monkeypatch.setattr(
+        module.repo_map,
+        "build_symbol_blast_radius_render",
+        lambda symbol, path, max_files=6, max_sources=6, max_symbols_per_file=6, semantic_provider="native": {
+            "semantic_provider": semantic_provider,
+            "rendered_context": "def create_invoice(total):\n    return total + 1\n",
+            "token_estimate": 42,
+            "tests": ["tests/test_payments.py"],
+            "edit_plan_seed": {
+                "primary_file": "src/payments.py",
+                "primary_span": {"start_line": 1, "end_line": 2},
+                "dependent_files": ["src/service.py"],
+                "suggested_edits": [{"file": "src/service.py"}],
+                "validation_tests": ["tests/test_payments.py"],
+                "validation_commands": ["pytest -q"],
+            },
+        },
+    )
+    scenarios = [
+        {
+            "instance_id": "demo-1",
+            "repo_fixture": str(repo_root),
+            "query_or_symbol": "create_invoice",
+            "mode": "blast-radius",
+            "problem_statement": "Change create_invoice to add 2 instead of 1.",
+        }
+    ]
+
+    payload = module.build_payload(scenarios, provider="hybrid")
+
+    assert payload["suite"] == "run_tensor_grep_patch_driver"
+    assert payload["semantic_provider"] == "hybrid"
+    assert payload["records"][0]["actual_primary_file"] == "src/payments.py"
+    assert payload["records"][0]["semantic_provider"] == "hybrid"
+    assert "Return a unified diff patch only." in payload["records"][0]["prompt"]
 
 
 def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, tmp_path):
