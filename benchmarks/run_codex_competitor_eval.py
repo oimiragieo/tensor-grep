@@ -128,6 +128,28 @@ def _scenario_prompt(scenario: dict[str, Any]) -> str:
     )
 
 
+def _fallback_prompt(scenario: dict[str, Any]) -> str:
+    repo_root = Path(str(scenario["repo_fixture"])).resolve()
+    scenario_payload = {
+        "query_or_symbol": scenario["query_or_symbol"],
+        "mode": scenario["mode"],
+        "repo_root": str(repo_root),
+    }
+    return " ".join(
+        [
+            "Task: produce a code-edit plan for this repository scenario.",
+            "Return exactly one JSON object.",
+            'Required keys: "actual_primary_file", "actual_primary_span", "actual_dependent_files", '
+            '"actual_suggested_edit_files", "actual_test_files", "actual_validation_commands", '
+            '"context_token_count", "notes".',
+            "Use repository-relative paths.",
+            "Do not mention AGENTS.md.",
+            "Do not ask for more input.",
+            f"Scenario: {json.dumps(scenario_payload, separators=(',', ':'))}",
+        ]
+    )
+
+
 def _extract_text_from_codex_output(stdout: str) -> str:
     for line in stdout.splitlines():
         if not line.strip():
@@ -139,6 +161,71 @@ def _extract_text_from_codex_output(stdout: str) -> str:
         if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
             return str(item["text"])
     raise ValueError("Unable to extract Codex agent_message from JSONL output")
+
+
+def _run_codex_exec(
+    repo_root: Path,
+    *,
+    model: str,
+    timeout_seconds: int,
+    prompt: str,
+    schema_path: Path | None,
+) -> str:
+    command = [
+        resolve_codex_binary(),
+        "exec",
+        "--json",
+        "--model",
+        model,
+        "--skip-git-repo-check",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--cd",
+        str(repo_root),
+    ]
+    if schema_path is not None:
+        command.extend(["--output-schema", str(schema_path)])
+    command.append(prompt)
+    proc = subprocess.run(
+        command,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        timeout=timeout_seconds,
+    )
+    return _extract_text_from_codex_output(proc.stdout)
+
+
+def _should_retry_without_schema(record: dict[str, Any]) -> bool:
+    if record.get("actual_primary_file"):
+        return False
+    notes = str(record.get("notes", "")).lower()
+    return "agents.md" in notes or "awaiting" in notes or "task" in notes
+
+
+def _normalize_primary_span(record: dict[str, Any]) -> dict[str, Any]:
+    current = dict(record)
+    span = current.get("actual_primary_span")
+    if isinstance(span, dict):
+        return current
+    if not isinstance(span, str):
+        return current
+    text = span.strip()
+    if ":" not in text or "-" not in text:
+        return current
+    try:
+        file_part, line_part = text.rsplit(":", 1)
+        start_text, end_text = line_part.split("-", 1)
+        start_line = int(start_text)
+        end_line = int(end_text)
+    except ValueError:
+        return current
+    if not current.get("actual_primary_file"):
+        current["actual_primary_file"] = file_part.replace("\\", "/")
+    current["actual_primary_span"] = {"start_line": start_line, "end_line": end_line}
+    return current
 
 
 def run_codex_scenario(
@@ -155,33 +242,28 @@ def run_codex_scenario(
         json.dump(_expected_schema(), schema_file)
     try:
         with _ephemeral_repo_instructions(repo_root):
-            proc = subprocess.run(
-                [
-                    resolve_codex_binary(),
-                    "exec",
-                    "--json",
-                    "--model",
-                    model,
-                    "--skip-git-repo-check",
-                    "--dangerously-bypass-approvals-and-sandbox",
-                    "--cd",
-                    str(repo_root),
-                    "--output-schema",
-                    str(schema_path),
-                    prompt,
-                ],
-                cwd=str(repo_root),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=True,
-                timeout=timeout_seconds,
+            text = _run_codex_exec(
+                repo_root,
+                model=model,
+                timeout_seconds=timeout_seconds,
+                prompt=prompt,
+                schema_path=schema_path,
             )
+            record = json.loads(text)
+            if _should_retry_without_schema(record):
+                record = json.loads(
+                    _run_codex_exec(
+                        repo_root,
+                        model=model,
+                        timeout_seconds=timeout_seconds,
+                        prompt=_fallback_prompt(scenario),
+                        schema_path=None,
+                    )
+                )
+            record = _normalize_primary_span(record)
     finally:
         schema_path.unlink(missing_ok=True)
     wall_clock_seconds = round(time.perf_counter() - started, 6)
-    record = json.loads(_extract_text_from_codex_output(proc.stdout))
     return {
         "system": "codex",
         "scenario_pack": "",

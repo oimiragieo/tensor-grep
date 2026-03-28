@@ -3023,6 +3023,102 @@ def test_run_codex_competitor_eval_should_cleanup_ephemeral_agents_file(tmp_path
     assert not agents_path.exists()
 
 
+def test_run_codex_competitor_eval_should_retry_without_schema_when_first_result_is_empty(tmp_path, monkeypatch):
+    module = _load_script_module(
+        "run_codex_competitor_eval_retry_script", "benchmarks/run_codex_competitor_eval.py"
+    )
+    scenario = {
+        "id": "demo",
+        "language": "python",
+        "repo_fixture": str(tmp_path),
+        "query_or_symbol": "symbol",
+        "mode": "blast-radius",
+    }
+    monkeypatch.setattr(module, "resolve_codex_binary", lambda: "codex")
+    calls: list[list[str]] = []
+
+    def fake_run(*args, **kwargs):
+        command = list(args[0])
+        calls.append(command)
+        if "--output-schema" in command:
+            stdout = "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "agent_message",
+                                "text": json.dumps(
+                                    {
+                                        "actual_primary_file": None,
+                                        "actual_primary_span": None,
+                                        "actual_dependent_files": [],
+                                        "actual_suggested_edit_files": [],
+                                        "actual_test_files": [],
+                                        "actual_validation_commands": [],
+                                        "context_token_count": 0,
+                                        "notes": "Awaiting code-edit task to plan against.",
+                                    }
+                                ),
+                            },
+                        }
+                    ),
+                ]
+            )
+        else:
+            stdout = "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "agent_message",
+                                "text": json.dumps(
+                                    {
+                                        "actual_primary_file": "a.py",
+                                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                        "actual_dependent_files": [],
+                                        "actual_suggested_edit_files": [],
+                                        "actual_test_files": [],
+                                        "actual_validation_commands": ["pytest -q"],
+                                        "context_token_count": 123,
+                                        "notes": "ok",
+                                    }
+                                ),
+                            },
+                        }
+                    ),
+                ]
+            )
+        return type("Proc", (), {"stdout": stdout})()
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    record = module.run_codex_scenario(scenario, model="gpt-5-codex", timeout_seconds=30)
+
+    assert record["actual_primary_file"] == "a.py"
+    assert len(calls) == 2
+    assert any("--output-schema" in command for command in calls)
+
+
+def test_run_codex_competitor_eval_should_normalize_string_primary_span():
+    module = _load_script_module(
+        "run_codex_competitor_eval_span_script", "benchmarks/run_codex_competitor_eval.py"
+    )
+
+    record = module._normalize_primary_span(
+        {
+            "actual_primary_file": None,
+            "actual_primary_span": "src/pkg/mod.py:10-14",
+        }
+    )
+
+    assert record["actual_primary_file"] == "src/pkg/mod.py"
+    assert record["actual_primary_span"] == {"start_line": 10, "end_line": 14}
+
+
 def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_path, monkeypatch):
     module = _load_script_module(
         "run_copilot_competitor_eval_script", "benchmarks/run_copilot_competitor_eval.py"
