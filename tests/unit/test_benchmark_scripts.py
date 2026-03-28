@@ -28,6 +28,9 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/analyze_external_profiling.py",
     "benchmarks/normalize_competitor_eval.py",
     "benchmarks/render_world_class_report.py",
+    "benchmarks/run_claude_competitor_eval.py",
+    "benchmarks/run_codex_competitor_eval.py",
+    "benchmarks/run_copilot_competitor_eval.py",
 ]
 
 
@@ -2732,6 +2735,66 @@ def test_normalize_competitor_eval_should_score_manual_records(tmp_path):
     assert row["validation_cmd_hit"] == 1.0
 
 
+def test_normalize_competitor_eval_should_normalize_windows_style_paths(tmp_path):
+    module = _load_script_module(
+        "normalize_competitor_eval_windows_script", "benchmarks/normalize_competitor_eval.py"
+    )
+    scenario_pack = tmp_path / "scenarios.json"
+    scenario_pack.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "src/pkg/mod.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": ["tests/test_mod.py"],
+                        "expected_suggested_edit_files": ["tests/test_mod.py"],
+                        "expected_test_files": ["tests/test_mod.py"],
+                        "expected_validation_commands_contain": ["pytest tests/test_mod.py -q"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = {
+        "scenario_packs": [str(scenario_pack.name)],
+        "records": [
+            {
+                "system": "copilot",
+                "scenario_pack": str(scenario_pack.name),
+                "scenario_id": "demo",
+                "repo": tmp_path.name,
+                "language": "python",
+                "difficulty": "medium",
+                "actual_primary_file": r"src\pkg\mod.py",
+                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                "actual_dependent_files": [r"tests\test_mod.py"],
+                "actual_suggested_edit_files": [r"tests\test_mod.py"],
+                "actual_test_files": [r"tests\test_mod.py"],
+                "actual_validation_commands": ["pytest tests/test_mod.py -q"],
+                "context_token_count": 100,
+                "wall_clock_seconds": 1.0,
+                "deterministic_repeat_match": False,
+                "notes": "",
+            }
+        ],
+    }
+
+    normalized = module.normalize_competitor_eval(payload, base_dir=tmp_path)
+
+    row = normalized["records"][0]
+    assert row["primary_file_hit"] == 1.0
+    assert row["dependent_file_recall"] == 1.0
+
+
 def test_render_comparison_scorecard_should_emit_ranked_markdown():
     module = _load_script_module(
         "render_comparison_scorecard_script", "benchmarks/render_comparison_scorecard.py"
@@ -2805,3 +2868,228 @@ def test_render_world_class_report_should_include_baseline_and_competitor_sectio
     assert "## External Baseline" in report
     assert "## Dominant Profiling Phases" in report
     assert "## Competitor Summary" in report
+
+
+def test_run_claude_competitor_eval_should_build_records_from_scenarios(tmp_path, monkeypatch):
+    module = _load_script_module(
+        "run_claude_competitor_eval_script", "benchmarks/run_claude_competitor_eval.py"
+    )
+    scenario_pack = tmp_path / "scenarios.json"
+    scenario_pack.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(module, "resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Proc",
+            (),
+            {
+                "stdout": json.dumps(
+                    {
+                        "result": json.dumps(
+                            {
+                                "actual_primary_file": "a.py",
+                                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                "actual_dependent_files": [],
+                                "actual_suggested_edit_files": [],
+                                "actual_test_files": [],
+                                "actual_validation_commands": ["pytest -q"],
+                                "context_token_count": 123,
+                                "notes": "ok",
+                            }
+                        )
+                    }
+                )
+            },
+        )(),
+    )
+
+    payload = module.build_payload(scenario_pack, model="sonnet", permission_mode="bypassPermissions")
+
+    assert payload["artifact"] == "claude_competitor_eval"
+    assert payload["suite"] == "run_claude_competitor_eval"
+    assert payload["records"][0]["system"] == "claude-code"
+    assert payload["records"][0]["actual_primary_file"] == "a.py"
+
+
+def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path, monkeypatch):
+    module = _load_script_module(
+        "run_codex_competitor_eval_script", "benchmarks/run_codex_competitor_eval.py"
+    )
+    scenario_pack = tmp_path / "scenarios.json"
+    scenario_pack.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(module, "resolve_codex_binary", lambda: "codex")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Proc",
+            (),
+            {
+                "stdout": "\n".join(
+                    [
+                        json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "agent_message",
+                                    "text": json.dumps(
+                                        {
+                                            "actual_primary_file": "a.py",
+                                            "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                            "actual_dependent_files": [],
+                                            "actual_suggested_edit_files": [],
+                                            "actual_test_files": [],
+                                            "actual_validation_commands": ["pytest -q"],
+                                            "context_token_count": 123,
+                                            "notes": "ok",
+                                        }
+                                    ),
+                                },
+                            }
+                        ),
+                    ]
+                )
+            },
+        )(),
+    )
+
+    payload = module.build_payload(scenario_pack, model="gpt-5-codex")
+
+    assert payload["artifact"] == "codex_competitor_eval"
+    assert payload["suite"] == "run_codex_competitor_eval"
+    assert payload["records"][0]["system"] == "codex"
+    assert payload["records"][0]["actual_primary_file"] == "a.py"
+
+
+def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_path, monkeypatch):
+    module = _load_script_module(
+        "run_copilot_competitor_eval_script", "benchmarks/run_copilot_competitor_eval.py"
+    )
+    scenario_pack = tmp_path / "scenarios.json"
+    scenario_pack.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(module, "resolve_copilot_binary", lambda: "copilot")
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: type(
+            "Proc",
+            (),
+            {
+                "stdout": "● "
+                + json.dumps(
+                    {
+                        "actual_primary_file": "a.py",
+                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                        "actual_dependent_files": [],
+                        "actual_suggested_edit_files": [],
+                        "actual_test_files": [],
+                        "actual_validation_commands": ["pytest -q"],
+                        "context_token_count": 123,
+                        "notes": "ok",
+                    }
+                )
+            },
+        )(),
+    )
+
+    payload = module.build_payload(scenario_pack, model="gpt-5.2")
+
+    assert payload["artifact"] == "copilot_competitor_eval"
+    assert payload["suite"] == "run_copilot_competitor_eval"
+    assert payload["records"][0]["system"] == "copilot"
+    assert payload["records"][0]["actual_primary_file"] == "a.py"
+
+
+def test_run_copilot_competitor_eval_should_parse_wrapped_final_json():
+    module = _load_script_module(
+        "run_copilot_competitor_eval_wrapped_script", "benchmarks/run_copilot_competitor_eval.py"
+    )
+    stdout = "\n".join(
+        [
+            "● Planning the answer first.",
+            "",
+            '● {"actual_primary_file":"a.py","actual_primary_span":{"start_li',
+            '  ne":1,"end_line":2},"actual_dependent_files":[],"actual_suggested_',
+            '  edit_files":[],"actual_test_files":[],"actual_validation_commands":[',
+            '  "pytest -q"],"context_token_count":123,"notes":"ok"}',
+            "",
+        ]
+    )
+
+    extracted = module._extract_text_from_copilot_output(stdout)
+
+    assert json.loads(extracted)["actual_primary_file"] == "a.py"

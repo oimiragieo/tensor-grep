@@ -55,13 +55,39 @@ def _mean(values: Any) -> float:
     return sum(items) / len(items)
 
 
+def _normalize_repo_relative_path(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    return trimmed.replace("\\", "/")
+
+
 def _score_row(record: dict[str, Any], scenario: dict[str, Any]) -> dict[str, Any]:
     actual = {
-        "actual_primary_file": record.get("actual_primary_file"),
+        "actual_primary_file": _normalize_repo_relative_path(record.get("actual_primary_file")),
         "actual_primary_span": record.get("actual_primary_span"),
-        "actual_dependent_files": list(record.get("actual_dependent_files", [])),
-        "actual_suggested_edit_files": list(record.get("actual_suggested_edit_files", [])),
-        "actual_test_files": list(record.get("actual_test_files", [])),
+        "actual_dependent_files": [
+            item
+            for item in (
+                _normalize_repo_relative_path(entry) for entry in list(record.get("actual_dependent_files", []))
+            )
+            if item is not None
+        ],
+        "actual_suggested_edit_files": [
+            item
+            for item in (
+                _normalize_repo_relative_path(entry)
+                for entry in list(record.get("actual_suggested_edit_files", []))
+            )
+            if item is not None
+        ],
+        "actual_test_files": [
+            item
+            for item in (_normalize_repo_relative_path(entry) for entry in list(record.get("actual_test_files", [])))
+            if item is not None
+        ],
         "actual_validation_commands": list(record.get("actual_validation_commands", [])),
         "context_token_count": int(record.get("context_token_count", 0)),
     }
