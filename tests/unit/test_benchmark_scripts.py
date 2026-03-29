@@ -4403,6 +4403,106 @@ def test_run_claude_skill_ab_matrix_should_build_payload(monkeypatch, tmp_path):
     assert experiment["system_score_summary"]["claude-enhanced"]["mean_patch_applied_rate"] == 1.0
 
 
+def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_matrix_resume_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    driver_path = tmp_path / "driver.json"
+    scenarios_path = tmp_path / "scenarios.json"
+    output_path = tmp_path / "matrix.json"
+    driver_path.write_text(json.dumps({"records": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+    scenarios_path.write_text(json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+
+    monkeypatch.setattr(
+        module.ab_runner,
+        "load_driver_payload",
+        lambda path: {"records": [{"instance_id": "demo-1", "prompt": "Fix it."}]},
+    )
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "load_patch_scenarios",
+        lambda path: [{"instance_id": "demo-1", "repo_fixture": "x"}],
+    )
+
+    seen: list[tuple[str, str]] = []
+
+    def _fake_build_payload(*_args, **kwargs):
+        seen.append((kwargs["enhanced_output_contract"], kwargs["enhanced_task_contract"]))
+        return {
+            "artifact": "claude_skill_ab",
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "wall_clock_seconds": 20.0,
+                }
+            ],
+            "trace_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                    "asked_meta_question": False,
+                    "tg_invocation_count": 0,
+                    "tg_seconds_total": 0.0,
+                    "changed_file_count": 1,
+                    "first_tg_seconds": None,
+                    "first_patch_seconds": 5.0,
+                    "first_file_change_seconds": 0.1,
+                    "post_edit_deliberation_seconds": 4.9,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(module.ab_runner, "build_payload", _fake_build_payload)
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "build_patch_bakeoff_payload",
+        lambda scenarios, predictions: {
+            "summary": {"scenario_count": len(predictions)},
+            "rows": [
+                {"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True}
+            ],
+        },
+    )
+
+    partial = module.build_partial_payload([])
+    partial["experiments"].append(
+        {
+            "name": "output-standard__task-standard",
+            "enhanced_output_contract": "standard",
+            "enhanced_task_contract": "standard",
+            "prediction_record_count": 2,
+            "trace_record_count": 2,
+            "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
+            "bakeoff_summary": {"scenario_count": 2},
+            "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 0.0}},
+        }
+    )
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_matrix_payload(
+        input_path=driver_path,
+        scenarios_path=scenarios_path,
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=30,
+        skill_dir=tmp_path / "skill",
+        work_root=tmp_path / "work",
+        limit=1,
+        output_contracts=["standard", "terse"],
+        task_contracts=["standard"],
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == [("terse", "standard")]
+    assert payload["experiment_count"] == 2
+    assert [experiment["name"] for experiment in payload["experiments"]] == [
+        "output-standard__task-standard",
+        "output-terse__task-standard",
+    ]
+
+
 def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
     module = _load_script_module("render_claude_skill_ab_matrix_script", "benchmarks/render_claude_skill_ab_matrix.py")
     payload_path = tmp_path / "matrix.json"

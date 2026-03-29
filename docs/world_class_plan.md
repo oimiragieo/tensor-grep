@@ -132,6 +132,7 @@ Accepted comparison-surface upgrade:
 
 * harness now includes `benchmarks/run_claude_skill_ab_matrix.py`
 * reporting surface now includes `benchmarks/render_claude_skill_ab_matrix.py`
+* matrix runner now checkpoints after each experiment and supports `--resume`
 * it reuses:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
@@ -151,6 +152,7 @@ Accepted comparison-surface upgrade:
   * keep current default unchanged
   * stop shipping prompt-default changes from single probes
   * use the matrix harness for the next small acceptance slice before changing defaults
+  * use checkpointed matrix runs for broader slices so interrupted runs still leave a valid artifact
 
 Rejected latency shortcut:
 

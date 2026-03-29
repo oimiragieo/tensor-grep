@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import platform
 import sys
 import time
@@ -40,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--work-root", default=str(ab_runner.DEFAULT_WORK_ROOT))
     parser.add_argument("--output-contracts", default="standard,terse")
     parser.add_argument("--task-contracts", default="standard,engage")
+    parser.add_argument("--resume", action="store_true", help="Resume from an existing matrix output artifact.")
     return parser.parse_args()
 
 
@@ -133,6 +135,31 @@ def summarize_score_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     return summary
 
 
+def build_partial_payload(experiments: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "artifact": "claude_skill_ab_matrix",
+        "suite": "run_claude_skill_ab_matrix",
+        "generated_at_epoch_s": time.time(),
+        "environment": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "python_version": platform.python_version(),
+        },
+        "experiment_count": len(experiments),
+        "experiments": experiments,
+    }
+
+
+def load_existing_experiments(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    experiments = payload.get("experiments", [])
+    if not isinstance(experiments, list):
+        return []
+    return [dict(experiment) for experiment in experiments if isinstance(experiment, dict)]
+
+
 def build_matrix_payload(
     *,
     input_path: Path,
@@ -145,11 +172,19 @@ def build_matrix_payload(
     limit: int,
     output_contracts: list[str],
     task_contracts: list[str],
+    output_path: Path | None = None,
+    resume: bool = False,
 ) -> dict[str, Any]:
     driver_payload = ab_runner.load_driver_payload(input_path)
     scenarios = patch_bakeoff.load_patch_scenarios(scenarios_path)
     experiments: list[dict[str, Any]] = []
+    completed_names: set[str] = set()
+    if resume and output_path is not None:
+        experiments = load_existing_experiments(output_path)
+        completed_names = {str(experiment.get("name", "")) for experiment in experiments}
     for config in build_experiment_configs(output_contracts, task_contracts):
+        if config["name"] in completed_names:
+            continue
         ab_payload = ab_runner.build_payload(
             driver_payload,
             model=model,
@@ -172,22 +207,15 @@ def build_matrix_payload(
                 "system_score_summary": summarize_score_rows(list(bakeoff_payload.get("rows", []))),
             }
         )
-    return {
-        "artifact": "claude_skill_ab_matrix",
-        "suite": "run_claude_skill_ab_matrix",
-        "generated_at_epoch_s": time.time(),
-        "environment": {
-            "platform": platform.platform(),
-            "machine": platform.machine(),
-            "python_version": platform.python_version(),
-        },
-        "experiment_count": len(experiments),
-        "experiments": experiments,
-    }
+        if output_path is not None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(output_path, build_partial_payload(experiments))
+    return build_partial_payload(experiments)
 
 
 def main() -> int:
     args = parse_args()
+    output_path = Path(args.output).expanduser().resolve()
     payload = build_matrix_payload(
         input_path=Path(args.input).expanduser().resolve(),
         scenarios_path=Path(args.scenarios).expanduser().resolve(),
@@ -199,8 +227,9 @@ def main() -> int:
         limit=args.limit,
         output_contracts=_parse_contract_values(args.output_contracts),
         task_contracts=_parse_contract_values(args.task_contracts),
+        output_path=output_path,
+        resume=args.resume,
     )
-    output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(output_path, payload)
     print(f"Results written to {output_path}")
