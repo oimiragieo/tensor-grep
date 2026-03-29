@@ -2891,8 +2891,8 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         Path("benchmarks/patch_eval/real_patch_bakeoff_scenarios.json")
     )
 
-    assert len(driver_scenarios) == 5
-    assert len(bakeoff_scenarios) == 5
+    assert len(driver_scenarios) == 6
+    assert len(bakeoff_scenarios) == 6
 
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2997,6 +2997,28 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_termui.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    click_style_repo = Path("benchmarks/patch_fixtures/click_style_non_text")
+    click_style_source = click_style_repo / "src/click/termui.py"
+    click_style_original = click_style_source.read_text(encoding="utf-8")
+    click_style_fixed = click_style_original.replace(
+        "def style(\n",
+        "def style(\n",
+        1,
+    ).replace(
+        "    bits: list[str] = []\n",
+        "    if not isinstance(text, str):\n        text = str(text)\n\n    bits: list[str] = []\n",
+        1,
+    )
+    click_style_patch = _build_git_patch(
+        click_style_repo, "src/click/termui.py", click_style_fixed
+    )
+    click_style_prediction = {
+        "instance_id": "click-style-non-text-coercion",
+        "system": "oracle",
+        "model_patch": click_style_patch,
+        "actual_test_files": ["tests/test_utils.py"],
+        "actual_validation_commands": ["pytest -q"],
+    }
 
     payload = bakeoff_module.build_patch_bakeoff_payload(
         bakeoff_scenarios,
@@ -3006,10 +3028,11 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
             click_unstyle_prediction,
             commander_error_prediction,
             click_secho_prediction,
+            click_style_prediction,
         ],
     )
 
-    assert payload["summary"]["scenario_count"] == 5
+    assert payload["summary"]["scenario_count"] == 6
     assert payload["summary"]["mean_patch_applied_rate"] == 1.0
     assert payload["summary"]["mean_validation_pass_rate"] == 1.0
     assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0

@@ -34,6 +34,13 @@
       "query_or_symbol": "secho",
       "mode": "blast-radius",
       "problem_statement": "Fix secho so bytes messages pass through without being styled while non-text values are still styled."
+    },
+    {
+      "instance_id": "click-style-non-text-coercion",
+      "repo_fixture": "../patch_fixtures/click_style_non_text",
+      "query_or_symbol": "style",
+      "mode": "blast-radius",
+      "problem_statement": "Fix style so non-string values are coerced to strings before ANSI styling is applied."
     }
   ]
 }

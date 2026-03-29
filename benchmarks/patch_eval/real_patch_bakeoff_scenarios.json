@@ -104,6 +104,27 @@
       "expected_validation_commands_contain": [
         "pytest -q"
       ]
+    },
+    {
+      "instance_id": "click-style-non-text-coercion",
+      "repo_fixture": "../patch_fixtures/click_style_non_text",
+      "expected_primary_file": "src/click/termui.py",
+      "expected_primary_span": {
+        "start_line": 7,
+        "end_line": 20
+      },
+      "expected_changed_files": [
+        "src/click/termui.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_utils.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest -q"
+      ]
     }
   ]
 }
