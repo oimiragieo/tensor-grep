@@ -36,6 +36,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_gemini_patch_predictions.py",
     "benchmarks/run_copilot_patch_predictions.py",
     "benchmarks/run_claude_patch_predictions.py",
+    "benchmarks/run_claude_skill_ab.py",
     "benchmarks/run_claude_competitor_eval.py",
     "benchmarks/run_codex_competitor_eval.py",
     "benchmarks/run_copilot_competitor_eval.py",
@@ -3988,6 +3989,200 @@ def test_run_claude_patch_predictions_should_separate_prompt_from_add_dir(monkey
     assert output.startswith("diff --git")
     assert "--" in calls[0]
     assert calls[0][-2:] == ["--", "Return only a diff patch."]
+
+
+def test_run_claude_skill_ab_should_install_project_skill(tmp_path):
+    module = _load_script_module("run_claude_skill_ab_skill_script", "benchmarks/run_claude_skill_ab.py")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    installed = module.install_skill_package(repo_root, skill_dir)
+
+    assert installed == repo_root / ".claude" / "skills" / "tensor-grep"
+    assert (repo_root / ".claude" / "skills" / "tensor-grep" / "SKILL.md").exists()
+    assert (repo_root / ".claude" / "skills" / "tensor-grep" / "REFERENCE.md").exists()
+
+
+def test_run_claude_skill_ab_should_write_claude_md(tmp_path):
+    module = _load_script_module("run_claude_skill_ab_claude_md_script", "benchmarks/run_claude_skill_ab.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    guidance_path = module.write_claude_md(repo_root)
+
+    assert guidance_path == repo_root / "CLAUDE.md"
+    text = guidance_path.read_text(encoding="utf-8")
+    assert "Use the tensor-grep project skill" in text
+    assert "make the change directly" in text
+
+
+def test_run_claude_skill_ab_prompt_should_require_non_interactive_action(tmp_path):
+    module = _load_script_module("run_claude_skill_ab_prompt_script", "benchmarks/run_claude_skill_ab.py")
+
+    prompt = module._build_claude_prompt("Fix the bug.")
+
+    assert "edit the repository files directly" in prompt
+    assert "do not print a summary" in prompt
+    assert prompt.endswith("Fix the bug.")
+
+
+def test_run_claude_skill_ab_should_prepend_explicit_skill_instruction():
+    module = _load_script_module("run_claude_skill_ab_enhanced_prompt_script", "benchmarks/run_claude_skill_ab.py")
+
+    prompt = module.build_system_prompt("Fix the bug.", use_skill=True)
+
+    assert "Use the tensor-grep project skill" in prompt
+    assert prompt.endswith("Fix the bug.")
+
+
+def test_run_claude_skill_ab_should_rewrite_prompt_repo_paths(tmp_path):
+    module = _load_script_module("run_claude_skill_ab_rewrite_script", "benchmarks/run_claude_skill_ab.py")
+    source_repo = tmp_path / "source"
+    copied_repo = tmp_path / "copy"
+    source_repo.mkdir()
+    copied_repo.mkdir()
+    original = (
+        f"File: {source_repo}\\src\\demo.py\n"
+        f"Context path: {source_repo / 'tests' / 'test_demo.py'}"
+    )
+
+    rewritten = module.rewrite_prompt_repo_paths(original, source_repo, copied_repo)
+
+    assert str(source_repo) not in rewritten
+    assert str(copied_repo) in rewritten
+
+
+def test_run_claude_skill_ab_default_work_root_should_live_outside_repo():
+    module = _load_script_module("run_claude_skill_ab_work_root_script", "benchmarks/run_claude_skill_ab.py")
+
+    assert Path(module.DEFAULT_WORK_ROOT) != Path(module.ROOT_DIR)
+    assert Path(module.DEFAULT_WORK_ROOT).is_absolute()
+    assert module.ROOT_DIR not in Path(module.DEFAULT_WORK_ROOT).parents
+
+
+def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_script", "benchmarks/run_claude_skill_ab.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+
+    calls: list[tuple[str, str, str, str]] = []
+
+    def _fake_run(repo_dir, prompt, **kwargs):
+        has_skill = (Path(repo_dir) / ".claude" / "skills" / "tensor-grep" / "SKILL.md").exists()
+        calls.append((str(repo_dir), str(repo_dir), prompt, str(has_skill)))
+        if has_skill:
+            assert (Path(repo_dir) / "CLAUDE.md").exists()
+            (Path(repo_dir) / "demo.py").write_text("new\n", encoding="utf-8")
+        return "ok"
+
+    monkeypatch.setattr(module, "_run_claude_command", _fake_run)
+
+    payload = module.build_payload(
+        {
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "repo_fixture": str(repo_root),
+                    "prompt": "Fix the bug.",
+                    "actual_validation_commands": ["pytest -q"],
+                }
+            ]
+        },
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        work_root=tmp_path / "work",
+    )
+
+    assert payload["artifact"] == "claude_skill_ab"
+    assert [record["system"] for record in payload["records"]] == [
+        "claude-baseline",
+        "claude-enhanced",
+    ]
+    assert payload["records"][0]["model_patch"] == ""
+    assert "diff --git a/demo.py b/demo.py" in payload["records"][1]["model_patch"]
+    assert calls[0][3] == "False"
+    assert calls[1][3] == "True"
+    assert "edit the repository files directly" in calls[0][2]
+    assert "Use the tensor-grep project skill" not in calls[0][2]
+    assert "Use the tensor-grep project skill" in calls[1][2]
+
+
+def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_command_script", "benchmarks/run_claude_skill_ab.py")
+    calls: list[list[str]] = []
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return ("ok", "")
+
+    monkeypatch.setattr(module, "resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(
+        module.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.append(list(command)) or FakeProc(),
+    )
+
+    output = module._run_claude_command(
+        tmp_path,
+        "Say hi in one word.",
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+    )
+
+    assert output == "ok"
+    assert "--dangerously-skip-permissions" in calls[0]
+    assert "--" in calls[0]
+    assert calls[0][-2:] == ["--", "Say hi in one word."]
+
+
+def test_run_claude_skill_ab_should_omit_model_flag_when_model_is_empty(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_model_script", "benchmarks/run_claude_skill_ab.py")
+    calls: list[list[str]] = []
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return ("ok", "")
+
+    monkeypatch.setattr(module, "resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(
+        module.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.append(list(command)) or FakeProc(),
+    )
+
+    module._run_claude_command(
+        tmp_path,
+        "Say hi in one word.",
+        model="",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+    )
+
+    assert "--model" not in calls[0]
+
+
+def test_tensor_grep_claude_skill_should_require_non_interactive_action():
+    skill_text = Path(".claude/skills/tensor-grep/SKILL.md").read_text(encoding="utf-8")
+
+    assert "do not ask for confirmation" in skill_text
+    assert "make the change directly" in skill_text
+    assert "want me to apply this?" in skill_text
 
 
 def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, tmp_path):

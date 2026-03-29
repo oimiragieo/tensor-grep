@@ -247,16 +247,19 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
 
 
 def build_patch_bakeoff_payload(scenarios: list[Scenario], predictions: list[Prediction]) -> dict[str, Any]:
-    prediction_by_id = {str(record["instance_id"]): record for record in predictions}
+    predictions_by_id: dict[str, list[Prediction]] = {}
+    for record in predictions:
+        predictions_by_id.setdefault(str(record["instance_id"]), []).append(record)
     rows: list[ResultRow] = []
     missing_predictions: list[str] = []
     for scenario in scenarios:
         instance_id = str(scenario["instance_id"])
-        prediction = prediction_by_id.get(instance_id)
-        if prediction is None:
+        matched_predictions = predictions_by_id.get(instance_id, [])
+        if not matched_predictions:
             missing_predictions.append(instance_id)
             continue
-        rows.append(evaluate_prediction(scenario, prediction))
+        for prediction in matched_predictions:
+            rows.append(evaluate_prediction(scenario, prediction))
     summary = {
         "scenario_count": len(rows),
         "missing_predictions": missing_predictions,

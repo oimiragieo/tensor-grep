@@ -23,7 +23,7 @@ _IGNORED_DIFF_NAMES = {
 
 @contextlib.contextmanager
 def isolated_repo_pair(repo_root: Path) -> Iterator[tuple[Path, Path]]:
-    with tempfile.TemporaryDirectory(prefix="tg_patch_runner_") as tmp_dir:
+    with tempfile.TemporaryDirectory(prefix="tg_patch_runner_", ignore_cleanup_errors=True) as tmp_dir:
         root = Path(tmp_dir)
         before_root = root / "a"
         work_root = root / "b"
