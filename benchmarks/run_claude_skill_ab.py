@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -56,6 +57,13 @@ def resolve_claude_binary() -> str:
     if binary:
         return binary
     raise FileNotFoundError("claude binary not found on PATH")
+
+
+def resolve_tg_binary() -> str:
+    binary = shutil.which("tg")
+    if binary:
+        return binary
+    raise FileNotFoundError("tg binary not found on PATH")
 
 
 def load_driver_payload(path: str | Path) -> dict[str, Any]:
@@ -164,6 +172,60 @@ def write_claude_md(repo_root: Path) -> Path:
     return guidance_path
 
 
+def install_tg_trace_wrapper(run_root: Path) -> tuple[Path, Path]:
+    wrapper_dir = run_root / ".claude-bin"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    log_path = run_root / "tg_trace.jsonl"
+    wrapper_script = wrapper_dir / "tg.ps1"
+    wrapper_script.write_text(
+        "\n".join(
+            [
+                "param(",
+                "  [Parameter(ValueFromRemainingArguments = $true)]",
+                "  [string[]] $Args",
+                ")",
+                "$ErrorActionPreference = 'Stop'",
+                "$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()",
+                "& $env:TENSOR_GREP_REAL @Args",
+                "$exitCode = $LASTEXITCODE",
+                "$stopwatch.Stop()",
+                "$record = @{",
+                "  argv = $Args",
+                "  exit_code = $exitCode",
+                "  duration_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 6)",
+                "  timestamp_epoch_s = [Math]::Round(([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0), 6)",
+                "} | ConvertTo-Json -Compress",
+                "Add-Content -Path $env:TENSOR_GREP_TRACE_LOG -Value $record",
+                "exit $exitCode",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    wrapper_cmd = wrapper_dir / "tg.cmd"
+    wrapper_cmd.write_text(
+        "@echo off\r\n"
+        "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0tg.ps1\" %*\r\n"
+        "exit /b %ERRORLEVEL%\r\n",
+        encoding="utf-8",
+    )
+    return wrapper_dir, log_path
+
+
+def load_tg_trace_records(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        value = json.loads(line)
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
 def prepare_persistent_repo_copy(
     source_repo: Path,
     work_root: Path,
@@ -188,6 +250,7 @@ def _run_claude_command(
     model: str,
     permission_mode: str,
     timeout_seconds: int,
+    extra_env: dict[str, str] | None = None,
 ) -> str:
     command = [
         resolve_claude_binary(),
@@ -208,6 +271,10 @@ def _run_claude_command(
         "encoding": "utf-8",
         "errors": "replace",
     }
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+    popen_kwargs["env"] = env
     if platform.system().lower().startswith("win"):
         popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
@@ -240,6 +307,7 @@ def run_ab_record(
         started = time.perf_counter()
         notes = ""
         timing: dict[str, float] = {}
+        tg_trace_records: list[dict[str, Any]] = []
         phase_started = time.perf_counter()
         before_root, repo_root = prepare_persistent_repo_copy(
             source_repo,
@@ -247,6 +315,7 @@ def run_ab_record(
             str(record["instance_id"]),
             system_name,
         )
+        run_root = repo_root.parent
         timing["repo_copy_seconds"] = round(time.perf_counter() - phase_started, 6)
         phase_started = time.perf_counter()
         prompt = build_system_prompt(
@@ -256,9 +325,16 @@ def run_ab_record(
         )
         timing["prompt_build_seconds"] = round(time.perf_counter() - phase_started, 6)
         phase_started = time.perf_counter()
+        extra_env: dict[str, str] | None = None
         if use_skill:
             install_skill_package(repo_root, skill_dir)
             write_claude_md(repo_root)
+            wrapper_dir, tg_log_path = install_tg_trace_wrapper(run_root)
+            extra_env = {
+                "PATH": f"{wrapper_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "TENSOR_GREP_REAL": resolve_tg_binary(),
+                "TENSOR_GREP_TRACE_LOG": str(tg_log_path),
+            }
         timing["skill_setup_seconds"] = round(time.perf_counter() - phase_started, 6)
         phase_started = time.perf_counter()
         try:
@@ -269,6 +345,7 @@ def run_ab_record(
                     model=model,
                     permission_mode=permission_mode,
                     timeout_seconds=timeout_seconds,
+                    extra_env=extra_env,
                 )
             notes = stdout.strip()
         except subprocess.TimeoutExpired:
@@ -276,6 +353,8 @@ def run_ab_record(
         except subprocess.CalledProcessError as exc:
             notes = (exc.stderr or exc.output or str(exc)).strip()
         timing["claude_seconds"] = round(time.perf_counter() - phase_started, 6)
+        if use_skill:
+            tg_trace_records = load_tg_trace_records(tg_log_path)
         phase_started = time.perf_counter()
         patch_text = derive_patch_from_repo_changes(before_root, repo_root)
         timing["diff_seconds"] = round(time.perf_counter() - phase_started, 6)
@@ -310,6 +389,12 @@ def run_ab_record(
                 "emitted_patch": bool(patch_text.strip()),
                 "changed_file_count": len(changed_files),
                 "changed_files": changed_files,
+                "tg_invocation_count": len(tg_trace_records),
+                "tg_seconds_total": round(
+                    sum(float(record.get("duration_seconds", 0.0)) for record in tg_trace_records),
+                    6,
+                ),
+                "tg_trace_records": tg_trace_records,
                 "actual_validation_command_count": len(record.get("actual_validation_commands", [])),
                 "actual_test_file_count": len(record.get("actual_test_files", [])),
                 "timing": {**timing, "total_seconds": wall_clock_seconds},

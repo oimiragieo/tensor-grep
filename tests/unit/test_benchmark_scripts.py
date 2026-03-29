@@ -4020,6 +4020,20 @@ def test_run_claude_skill_ab_should_write_claude_md(tmp_path):
     assert "make the change directly" in text
 
 
+def test_run_claude_skill_ab_should_install_tg_trace_wrapper(tmp_path):
+    module = _load_script_module("run_claude_skill_ab_tg_wrapper_script", "benchmarks/run_claude_skill_ab.py")
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+
+    wrapper_dir, log_path = module.install_tg_trace_wrapper(run_root)
+
+    assert wrapper_dir == run_root / ".claude-bin"
+    assert log_path == run_root / "tg_trace.jsonl"
+    assert (wrapper_dir / "tg.cmd").exists()
+    assert (wrapper_dir / "tg.ps1").exists()
+    assert "TENSOR_GREP_TRACE_LOG" in (wrapper_dir / "tg.ps1").read_text(encoding="utf-8")
+
+
 def test_run_claude_skill_ab_prompt_should_require_non_interactive_action(tmp_path):
     module = _load_script_module("run_claude_skill_ab_prompt_script", "benchmarks/run_claude_skill_ab.py")
 
@@ -4082,6 +4096,10 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
         if has_skill:
             assert (Path(repo_dir) / "CLAUDE.md").exists()
             (Path(repo_dir) / "demo.py").write_text("new\n", encoding="utf-8")
+            Path(kwargs["extra_env"]["TENSOR_GREP_TRACE_LOG"]).write_text(
+                '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.125}\n',
+                encoding="utf-8",
+            )
         return "ok"
 
     monkeypatch.setattr(module, "_run_claude_command", _fake_run)
@@ -4121,12 +4139,16 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert payload["trace_records"][0]["use_skill"] is False
     assert payload["trace_records"][1]["use_skill"] is True
     assert payload["trace_records"][1]["changed_file_count"] == 1
+    assert payload["trace_records"][1]["tg_invocation_count"] == 1
+    assert payload["trace_records"][1]["tg_seconds_total"] == 0.125
+    assert payload["trace_records"][1]["tg_trace_records"][0]["argv"] == ["tg", "defs", "Demo"]
     assert "claude_seconds" in payload["trace_records"][0]["timing"]
 
 
 def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypatch, tmp_path):
     module = _load_script_module("run_claude_skill_ab_command_script", "benchmarks/run_claude_skill_ab.py")
     calls: list[list[str]] = []
+    kwargs_calls: list[dict[str, object]] = []
 
     class FakeProc:
         returncode = 0
@@ -4135,10 +4157,11 @@ def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypat
             return ("ok", "")
 
     monkeypatch.setattr(module, "resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda: "C:/tools/tg.exe")
     monkeypatch.setattr(
         module.subprocess,
         "Popen",
-        lambda command, **kwargs: calls.append(list(command)) or FakeProc(),
+        lambda command, **kwargs: calls.append(list(command)) or kwargs_calls.append(kwargs) or FakeProc(),
     )
 
     output = module._run_claude_command(
@@ -4147,12 +4170,40 @@ def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypat
         model="sonnet",
         permission_mode="bypassPermissions",
         timeout_seconds=5,
+        extra_env={
+            "PATH": "C:/tmp/bin",
+            "TENSOR_GREP_REAL": "C:/tools/tg.exe",
+            "TENSOR_GREP_TRACE_LOG": "C:/tmp/tg.jsonl",
+        },
     )
 
     assert output == "ok"
     assert "--dangerously-skip-permissions" in calls[0]
     assert "--" in calls[0]
     assert calls[0][-2:] == ["--", "Say hi in one word."]
+    assert kwargs_calls[0]["env"]["TENSOR_GREP_REAL"] == "C:/tools/tg.exe"
+    assert kwargs_calls[0]["env"]["TENSOR_GREP_TRACE_LOG"] == "C:/tmp/tg.jsonl"
+
+
+def test_run_claude_skill_ab_should_load_tg_trace_records(tmp_path):
+    module = _load_script_module("run_claude_skill_ab_trace_log_script", "benchmarks/run_claude_skill_ab.py")
+    log_path = tmp_path / "tg_trace.jsonl"
+    log_path.write_text(
+        '\n'.join(
+            [
+                '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.5}',
+                '{"argv":["tg","refs","Demo"],"exit_code":0,"duration_seconds":1.25}',
+            ]
+        )
+        + '\n',
+        encoding="utf-8",
+    )
+
+    records = module.load_tg_trace_records(log_path)
+
+    assert len(records) == 2
+    assert records[0]["argv"] == ["tg", "defs", "Demo"]
+    assert records[1]["duration_seconds"] == 1.25
 
 
 def test_run_claude_skill_ab_should_omit_model_flag_when_model_is_empty(monkeypatch, tmp_path):
