@@ -76,6 +76,14 @@ Current accepted response-shape observability baseline:
 * enhanced details: `tg_invocation_count = 0`, `changed_file_count = 0`, `patch_chars = 0`
 * accepted interpretation: a primary remaining bottleneck is prompt-level task non-engagement, not search cost
 
+Next observability target:
+
+* record time-to-first-useful-action in the A/B trace:
+  * first `tg` call
+  * first emitted patch
+  * first file change
+* accepted reason: response shape alone tells us what failed; first-action timing tells us how long the agent spent before doing something useful
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
@@ -162,7 +170,11 @@ Deliverables:
    * `direct_patch`
    * `analysis_only`
    * `empty`
-4. narrower agent prompt / skill experiments accepted only when they improve the traced A/B benchmark
+4. first-action timing:
+   * `first_tg_seconds`
+   * `first_patch_seconds`
+   * `first_file_change_seconds`
+5. narrower agent prompt / skill experiments accepted only when they improve the traced A/B benchmark
 
 Implementation notes:
 
@@ -178,6 +190,7 @@ Acceptance:
   * `tg` runtime cost
   * local harness cost
   * response-shape failure modes
+  * time-to-first-useful-action
 * no prompt/skill latency change is accepted if it regresses correctness on the A/B slice
 
 ## Milestone 1: Patch-Correctness Bakeoff
