@@ -91,6 +91,7 @@ def normalize_model_patch_text(patch_text: str) -> str:
     normalized = patch_text.replace("\r", "")
     if not is_probably_patch_text(normalized):
         return normalized.strip()
-    if normalized.endswith("\n"):
-        return normalized
-    return normalized + "\n \n"
+    normalized = normalized.rstrip("\n")
+    if not normalized.endswith("\n "):
+        normalized = normalized + "\n "
+    return normalized + "\n"
