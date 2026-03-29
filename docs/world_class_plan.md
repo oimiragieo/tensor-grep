@@ -137,21 +137,25 @@ Accepted comparison-surface upgrade:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
 * first real matrix artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_matrix.json`
-* accepted 1-task matrix read:
+* accepted broader matrix artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit3_matrix.json`
+* accepted 3-task matrix read:
   * `standard/standard` is still the losing corner:
-    * enhanced `meta_question_rate = 1.0`
-    * enhanced `patch_applied = 0.0`
-  * `standard/engage` succeeds but is slow:
-    * enhanced `first_tg_seconds = 24.150118`
-    * enhanced `post_edit_deliberation_seconds = 55.151629`
-  * `terse/engage` succeeds but still spends `43.357743s` in post-edit deliberation
-  * `terse/standard` is currently the cheapest non-losing corner on this probe:
+    * enhanced `patch_applied = 0.67`
+    * enhanced `validation = 0.67`
+    * enhanced `meta_question_rate = 0.33`
+  * `standard/engage` succeeds:
     * enhanced `patch_applied = 1.0`
-    * enhanced `post_edit_deliberation_seconds = 41.545078`
+    * enhanced `post_edit_deliberation_seconds = 48.56`
+  * `terse/standard` succeeds:
+    * enhanced `patch_applied = 1.0`
+    * enhanced `post_edit_deliberation_seconds = 61.83`
+  * `terse/engage` is currently the cheapest successful corner on the broader slice:
+    * enhanced `patch_applied = 1.0`
+    * enhanced `post_edit_deliberation_seconds = 41.11`
 * accepted decision:
-  * keep current default unchanged
+  * keep current shipped default unchanged for now
   * stop shipping prompt-default changes from single probes
-  * use the matrix harness for the next small acceptance slice before changing defaults
+  * use the matrix harness for broader acceptance slices before changing defaults
   * use checkpointed matrix runs for broader slices so interrupted runs still leave a valid artifact
 
 Rejected latency shortcut:
@@ -165,9 +169,9 @@ The next proof step is not another generic patch heuristic. It is expanding the 
 
 Near-term acceptance order:
 
-1. run the Claude contract matrix on a 3-5 task slice
+1. run the Claude contract matrix on a 5-task slice
 2. reject any candidate that loses correctness anywhere on that slice
-3. only then consider promoting the best matrix corner into the default enhanced contract
+3. if `terse/engage` remains the cheapest successful corner, promote it to the next default probe
 
 ## External References To Reuse
 
