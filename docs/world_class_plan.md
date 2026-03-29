@@ -57,9 +57,9 @@ Current accepted real patch benchmark baseline:
 
 Current accepted user-style Claude A/B baseline:
 
-* artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit10_bakeoff.json`
-* `claude-baseline`: `mean_patch_applied_rate = 0.8`, `mean_validation_pass_rate = 0.8`, mean wall clock `26.67s`
-* `claude-enhanced`: `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`, mean wall clock `45.65s`
+* artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit12_samepack_bakeoff.json`
+* `claude-baseline`: `mean_patch_applied_rate = 0.75`, `mean_validation_pass_rate = 0.75`, mean wall clock `29.64s`
+* `claude-enhanced`: `mean_patch_applied_rate = 0.916667`, `mean_validation_pass_rate = 0.916667`, mean wall clock `47.73s`
 * accepted interpretation: `tensor-grep` materially improves correctness for the current agent workflow, but not speed
 
 Current accepted command-level observability baseline:
@@ -188,6 +188,14 @@ Accepted corpus expansion:
   * `commander-use-color-env-conventions`
 * both direct fixture tests fail in the intended historical state
 * the oracle scorer test passes on the expanded pack
+* same-pack Claude A/B rerun on the full 12-scenario corpus now exists and remains the accepted user-style line
+* the enhanced path still wins, but it no longer clears the whole pack:
+  * baseline misses:
+    * `click-unstyle-other-ansi`
+    * `commander-invalid-argument-error-code`
+    * `click-style-non-text-coercion`
+  * enhanced miss:
+    * `click-choice-invalid-message`
 
 Rejected latency shortcut:
 
@@ -200,12 +208,15 @@ The next proof step is not another generic patch heuristic. It is expanding the 
 
 Near-term acceptance order:
 
-1. expand the real patch corpus again, biased toward multi-file and ambiguity cases
-2. keep the current enhanced default until a new full-pack probe shows both:
+1. use the accepted 12-scenario same-pack A/B failure to drive the next product fix
+   * immediate target:
+     * `click-choice-invalid-message`
+2. expand the real patch corpus again, biased toward multi-file and ambiguity cases
+3. keep the current enhanced default until a new full-pack probe shows both:
    * no correctness loss
    * lower mean wall clock than the accepted enhanced baseline
-3. rerun same-pack competitor lines after the accepted corpus is stable
-4. only then promote a new default probe or scorecard claim
+4. rerun same-pack competitor lines after the accepted corpus is stable
+5. only then promote a new default probe or scorecard claim
 
 ## Next TDD Finish Plan
 
@@ -227,10 +238,10 @@ The next execution line to finish this codebase should be:
      * reduce `meta_question_rate` to `0.0`
      * reduce post-edit deliberation without losing correctness
    * benchmark gate:
-     * compare against the accepted `claude-enhanced` baseline, not memory
+      * compare against the accepted `claude-enhanced` baseline, not memory
 
 3. comparative finish line
-   * rerun Copilot and Gemini on the current accepted real patch pack
+   * rerun Copilot and Gemini on the current accepted 12-scenario real patch pack
    * rerun user-style A/B only after the Claude default probe is accepted
    * update scorecards only from completed, same-pack runs
 
