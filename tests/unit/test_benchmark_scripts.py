@@ -3465,6 +3465,27 @@ def test_patch_runner_common_should_ignore_ephemeral_files_when_diffing(tmp_path
     assert "AGENTS.md" not in patch_text
 
 
+def test_patch_runner_common_should_normalize_truncated_model_patch():
+    module = _load_script_module("patch_runner_common_normalize_script", "benchmarks/patch_runner_common.py")
+    patch_text = "\n".join(
+        [
+            "diff --git a/src/demo.py b/src/demo.py",
+            "index 1111111..2222222 100644",
+            "--- a/src/demo.py",
+            "+++ b/src/demo.py",
+            "@@ -1,3 +1,3 @@",
+            " line1",
+            "-old",
+            "+new",
+            " line3",
+        ]
+    )
+
+    normalized = module.normalize_model_patch_text(patch_text)
+
+    assert normalized.endswith("\n \n")
+
+
 def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
     module = _load_script_module("run_gemini_patch_predictions_script", "benchmarks/run_gemini_patch_predictions.py")
     driver_payload = {

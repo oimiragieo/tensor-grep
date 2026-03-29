@@ -22,6 +22,7 @@ from patch_runner_common import (  # noqa: E402
     derive_patch_from_repo_changes,
     is_probably_patch_text,
     isolated_repo_pair,
+    normalize_model_patch_text,
 )
 
 from tensor_grep.perf_guard import write_json  # noqa: E402
@@ -189,7 +190,7 @@ def run_claude_patch_record(
                     permission_mode=permission_mode,
                     timeout_seconds=timeout_seconds,
                 )
-            patch_text = _extract_patch_from_claude_output(stdout)
+            patch_text = normalize_model_patch_text(_extract_patch_from_claude_output(stdout))
             if not is_probably_patch_text(patch_text):
                 patch_text = ""
         except subprocess.TimeoutExpired:
