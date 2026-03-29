@@ -2891,8 +2891,8 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         Path("benchmarks/patch_eval/real_patch_bakeoff_scenarios.json")
     )
 
-    assert len(driver_scenarios) == 8
-    assert len(bakeoff_scenarios) == 8
+    assert len(driver_scenarios) == 10
+    assert len(bakeoff_scenarios) == 10
 
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3035,6 +3035,24 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_commands.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    click_binary_repo = Path("benchmarks/patch_fixtures/click_get_binary_stream")
+    click_binary_source = click_binary_repo / "src/click/utils.py"
+    click_binary_original = click_binary_source.read_text(encoding="utf-8")
+    click_binary_fixed = click_binary_original.replace(
+        "    opener = text_streams.get(name)\n",
+        "    opener = binary_streams.get(name)\n",
+        1,
+    )
+    click_binary_patch = _build_git_patch(
+        click_binary_repo, "src/click/utils.py", click_binary_fixed
+    )
+    click_binary_prediction = {
+        "instance_id": "click-get-binary-stream-uses-binary-map",
+        "system": "oracle",
+        "model_patch": click_binary_patch,
+        "actual_test_files": ["tests/test_utils.py"],
+        "actual_validation_commands": ["pytest -q"],
+    }
     commander_strip_repo = Path("benchmarks/patch_fixtures/commander_strip_color")
     commander_strip_source = commander_strip_repo / "lib/help.js"
     commander_strip_original = commander_strip_source.read_text(encoding="utf-8")
@@ -3053,6 +3071,24 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/help.test.js"],
         "actual_validation_commands": ["node --test tests/help.test.js"],
     }
+    commander_dual_repo = Path("benchmarks/patch_fixtures/commander_dual_options")
+    commander_dual_source = commander_dual_repo / "lib/option.js"
+    commander_dual_original = commander_dual_source.read_text(encoding="utf-8")
+    commander_dual_fixed = commander_dual_original.replace(
+        "      if (!this.positiveOptions.has(key)) {\n",
+        "      if (this.positiveOptions.has(key)) {\n",
+        1,
+    )
+    commander_dual_patch = _build_git_patch(
+        commander_dual_repo, "lib/option.js", commander_dual_fixed
+    )
+    commander_dual_prediction = {
+        "instance_id": "commander-dual-options-unrelated-flags",
+        "system": "oracle",
+        "model_patch": commander_dual_patch,
+        "actual_test_files": ["tests/options.dual-options.test.js"],
+        "actual_validation_commands": ["node --test tests/options.dual-options.test.js"],
+    }
 
     payload = bakeoff_module.build_patch_bakeoff_payload(
         bakeoff_scenarios,
@@ -3064,11 +3100,13 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
             click_secho_prediction,
             click_style_prediction,
             click_abort_prediction,
+            click_binary_prediction,
             commander_strip_prediction,
+            commander_dual_prediction,
         ],
     )
 
-    assert payload["summary"]["scenario_count"] == 8
+    assert payload["summary"]["scenario_count"] == 10
     assert payload["summary"]["mean_patch_applied_rate"] == 1.0
     assert payload["summary"]["mean_validation_pass_rate"] == 1.0
     assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0

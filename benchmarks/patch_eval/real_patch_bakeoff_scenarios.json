@@ -149,6 +149,28 @@
       ]
     },
     {
+      "instance_id": "click-get-binary-stream-uses-binary-map",
+      "repo_fixture": "../patch_fixtures/click_get_binary_stream",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 41,
+        "end_line": 46
+      },
+      "expected_changed_files": [
+        "src/click/utils.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_utils.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_utils.py -q",
+        "-q"
+      ]
+    },
+    {
       "instance_id": "commander-strip-color-implicit-reset",
       "repo_fixture": "../patch_fixtures/commander_strip_color",
       "expected_primary_file": "lib/help.js",
@@ -168,6 +190,28 @@
       "expected_validation_commands_contain": [
         "node --test",
         "tests/help.test.js"
+      ]
+    },
+    {
+      "instance_id": "commander-dual-options-unrelated-flags",
+      "repo_fixture": "../patch_fixtures/commander_dual_options",
+      "expected_primary_file": "lib/option.js",
+      "expected_primary_span": {
+        "start_line": 19,
+        "end_line": 25
+      },
+      "expected_changed_files": [
+        "lib/option.js"
+      ],
+      "expected_test_files": [
+        "tests/options.dual-options.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/options.dual-options.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test",
+        "options.dual-options.test.js"
       ]
     }
   ]

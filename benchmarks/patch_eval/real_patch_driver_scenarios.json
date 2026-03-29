@@ -50,11 +50,25 @@
       "problem_statement": "Fix Context.abort so it raises click.Abort."
     },
     {
+      "instance_id": "click-get-binary-stream-uses-binary-map",
+      "repo_fixture": "../patch_fixtures/click_get_binary_stream",
+      "query_or_symbol": "get_binary_stream",
+      "mode": "blast-radius",
+      "problem_statement": "Fix get_binary_stream so it opens the binary stream mapping instead of returning text streams."
+    },
+    {
       "instance_id": "commander-strip-color-implicit-reset",
       "repo_fixture": "../patch_fixtures/commander_strip_color",
       "query_or_symbol": "stripColor",
       "mode": "blast-radius",
       "problem_statement": "Fix stripColor so it removes ANSI implicit reset sequences like ESC[m."
+    },
+    {
+      "instance_id": "commander-dual-options-unrelated-flags",
+      "repo_fixture": "../patch_fixtures/commander_dual_options",
+      "query_or_symbol": "DualOptions",
+      "mode": "blast-radius",
+      "problem_statement": "Fix DualOptions so unrelated positive and negative options are not treated as dual options."
     }
   ]
 }

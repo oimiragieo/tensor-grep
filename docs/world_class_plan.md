@@ -20,7 +20,34 @@ Weak or unfinished:
 * Rust test targeting still trails
 * `lsp` / `hybrid` do not currently improve benchmark outcomes
 * current benchmarks are mostly planning-oriented, not final-patch-oriented
-* no accepted end-to-end "agent uses tensor-grep to edit code and pass tests" harness yet
+* no broad accepted end-to-end "agent uses tensor-grep to edit code and pass tests" corpus yet
+
+## TDD Execution Policy
+
+The remaining work should be executed in a strict red/green/benchmark loop.
+
+For every new feature or benchmark extension:
+
+1. add or expand a real repo-backed failing fixture first
+2. add or update the narrow oracle/unit test that proves the fixture and scorer are valid
+3. implement the smallest runner, planner, or ranking change
+4. rerun the narrow suite
+5. rerun the relevant real benchmark pack
+6. keep the change only if the real metric improves or the new fixture coverage is accepted intentionally
+
+This matters because recent patch-runner work proved that some plausible changes regress real patch correctness even when unit tests stay green. The benchmark, not intuition, is the final acceptance gate.
+
+## Current Accepted Patch Benchmark State
+
+Current accepted real patch benchmark baseline:
+
+* hard real patch pack: `10` repo-backed scenarios
+* oracle: validated by the fixture/oracle unit gate at `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
+* Claude direct-edit-first runner on the `10`-scenario pack: `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
+* Copilot comparative baseline: last full rerun remains the older `8`-scenario pack at `0.625 / 0.625`
+* Gemini comparative baseline: last full rerun remains the older `8`-scenario pack at `0.0 / 0.0`
+
+The next proof step is not another generic patch heuristic. It is expanding the real patch corpus and keeping only runner changes that improve the expanded pack.
 
 ## External References To Reuse
 
@@ -115,6 +142,7 @@ Acceptance:
 * deterministic artifact format
 * can evaluate `tensor-grep` planning + external patch application loop
 * can later ingest competitor-produced patches without changing the schema
+* every new fixture must have an oracle-scored proof path before competitor numbers are accepted
 
 ## Milestone 2: Tensor-Grep Patch Driver
 
@@ -140,6 +168,7 @@ Acceptance:
 
 * same scenario produces reproducible retrieval/planning artifacts
 * patch attempts can be replayed and audited
+* system-specific patch contracts are allowed if they win on the real pack
 
 ## Milestone 3: Python Precision Program
 
