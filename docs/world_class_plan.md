@@ -99,6 +99,14 @@ Current accepted first-action timing baseline:
   * `first_tg_seconds = null`
 * accepted interpretation: once the task is engaged, the remaining latency is mostly post-edit deliberation / patch finalization; when the task is not engaged, the failure is prompt-level non-engagement rather than search cost
 
+Current accepted optimization implication:
+
+* do not spend the next batch on `tg` speed for this agent path
+* do not spend the next batch on file-targeting heuristics
+* the next candidate should target one of two things only:
+  * reduce `meta_question` response shape frequency
+  * reduce `post_edit_deliberation_seconds` when the task is already engaged
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
