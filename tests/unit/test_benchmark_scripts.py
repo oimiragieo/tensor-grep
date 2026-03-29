@@ -3524,6 +3524,8 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
     assert payload["records"][0]["semantic_provider"] == "hybrid"
     prompt = payload["records"][0]["prompt"]
     assert "Prefer editing the repository files directly." in prompt
+    assert "include diff --git headers" in prompt
+    assert "Do not emit fragile one-line hunks." in prompt
     assert "Do not run the test suite or create caches like .pytest_cache." in prompt
 
 
