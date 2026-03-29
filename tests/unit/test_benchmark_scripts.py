@@ -2891,8 +2891,8 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         Path("benchmarks/patch_eval/real_patch_bakeoff_scenarios.json")
     )
 
-    assert len(driver_scenarios) == 4
-    assert len(bakeoff_scenarios) == 4
+    assert len(driver_scenarios) == 5
+    assert len(bakeoff_scenarios) == 5
 
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2979,6 +2979,24 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/error.test.js"],
         "actual_validation_commands": ["node --test tests/error.test.js"],
     }
+    click_secho_repo = Path("benchmarks/patch_fixtures/click_secho_non_text")
+    click_secho_source = click_secho_repo / "src/click/termui.py"
+    click_secho_original = click_secho_source.read_text(encoding="utf-8")
+    click_secho_fixed = click_secho_original.replace(
+        "    if message is not None:\n",
+        "    if message is not None and not isinstance(message, (bytes, bytearray)):\n",
+        1,
+    )
+    click_secho_patch = _build_git_patch(
+        click_secho_repo, "src/click/termui.py", click_secho_fixed
+    )
+    click_secho_prediction = {
+        "instance_id": "click-secho-bytes-pass-through",
+        "system": "oracle",
+        "model_patch": click_secho_patch,
+        "actual_test_files": ["tests/test_termui.py"],
+        "actual_validation_commands": ["pytest -q"],
+    }
 
     payload = bakeoff_module.build_patch_bakeoff_payload(
         bakeoff_scenarios,
@@ -2987,10 +3005,11 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
             commander_prediction,
             click_unstyle_prediction,
             commander_error_prediction,
+            click_secho_prediction,
         ],
     )
 
-    assert payload["summary"]["scenario_count"] == 4
+    assert payload["summary"]["scenario_count"] == 5
     assert payload["summary"]["mean_patch_applied_rate"] == 1.0
     assert payload["summary"]["mean_validation_pass_rate"] == 1.0
     assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0
@@ -3464,6 +3483,34 @@ def test_run_gemini_patch_predictions_should_capture_timeout_as_empty_patch(monk
     assert payload["records"][0]["notes"] == "timeout after 5s"
 
 
+def test_run_gemini_patch_predictions_should_fallback_to_repo_diff(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_patch_predictions_diff_script", "benchmarks/run_gemini_patch_predictions.py")
+    (tmp_path / "demo.py").write_text("old\n", encoding="utf-8")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-diff",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Return only a diff patch.",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+            }
+        ]
+    }
+
+    def _edit_repo(repo_root, prompt, **kwargs):
+        del prompt, kwargs
+        (repo_root / "demo.py").write_text("new\n", encoding="utf-8")
+        return json.dumps({"response": "no diff emitted"})
+
+    monkeypatch.setattr(module, "_run_gemini_command", _edit_repo)
+
+    payload = module.build_payload(driver_payload, model="gemini-2.5-flash")
+
+    assert "diff --git a/demo.py b/demo.py" in payload["records"][0]["model_patch"]
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "old\n"
+
+
 def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(monkeypatch, tmp_path):
     module = _load_script_module("run_gemini_patch_predictions_kill_script", "benchmarks/run_gemini_patch_predictions.py")
     calls: list[tuple[str, object]] = []
@@ -3589,6 +3636,34 @@ def test_run_copilot_patch_predictions_should_capture_timeout_as_empty_patch(mon
     assert payload["records"][0]["notes"] == "timeout after 5s"
 
 
+def test_run_copilot_patch_predictions_should_fallback_to_repo_diff(monkeypatch, tmp_path):
+    module = _load_script_module("run_copilot_patch_predictions_diff_script", "benchmarks/run_copilot_patch_predictions.py")
+    (tmp_path / "demo.py").write_text("old\n", encoding="utf-8")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-diff",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Return only a diff patch.",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+            }
+        ]
+    }
+
+    def _edit_repo(repo_root, prompt, **kwargs):
+        del prompt, kwargs
+        (repo_root / "demo.py").write_text("new\n", encoding="utf-8")
+        return "no diff emitted"
+
+    monkeypatch.setattr(module, "_run_copilot_command", _edit_repo)
+
+    payload = module.build_payload(driver_payload, model="gpt-5.2")
+
+    assert "diff --git a/demo.py b/demo.py" in payload["records"][0]["model_patch"]
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "old\n"
+
+
 def test_run_claude_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
     module = _load_script_module("run_claude_patch_predictions_script", "benchmarks/run_claude_patch_predictions.py")
     driver_payload = {
@@ -3651,6 +3726,34 @@ def test_run_claude_patch_predictions_should_capture_timeout_as_empty_patch(monk
 
     assert payload["records"][0]["model_patch"] == ""
     assert payload["records"][0]["notes"] == "timeout after 5s"
+
+
+def test_run_claude_patch_predictions_should_fallback_to_repo_diff(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_patch_predictions_diff_script", "benchmarks/run_claude_patch_predictions.py")
+    (tmp_path / "demo.py").write_text("old\n", encoding="utf-8")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-diff",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Return only a diff patch.",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+            }
+        ]
+    }
+
+    def _edit_repo(repo_root, prompt, **kwargs):
+        del prompt, kwargs
+        (repo_root / "demo.py").write_text("new\n", encoding="utf-8")
+        return "no diff emitted"
+
+    monkeypatch.setattr(module, "_run_claude_command", _edit_repo)
+
+    payload = module.build_payload(driver_payload, model="sonnet", permission_mode="bypassPermissions")
+
+    assert "diff --git a/demo.py b/demo.py" in payload["records"][0]["model_patch"]
+    assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "old\n"
 
 
 def test_run_claude_patch_predictions_should_separate_prompt_from_add_dir(monkeypatch, tmp_path):

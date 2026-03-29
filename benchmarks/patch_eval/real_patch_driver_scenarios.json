@@ -27,6 +27,13 @@
       "query_or_symbol": "InvalidArgumentError",
       "mode": "blast-radius",
       "problem_statement": "Fix InvalidArgumentError so it uses the commander.invalidArgument code."
+    },
+    {
+      "instance_id": "click-secho-bytes-pass-through",
+      "repo_fixture": "../patch_fixtures/click_secho_non_text",
+      "query_or_symbol": "secho",
+      "mode": "blast-radius",
+      "problem_statement": "Fix secho so bytes messages pass through without being styled while non-text values are still styled."
     }
   ]
 }

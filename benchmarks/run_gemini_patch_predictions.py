@@ -19,6 +19,12 @@ for candidate in (SRC_DIR, BENCHMARKS_DIR):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from patch_runner_common import (  # noqa: E402
+    derive_patch_from_repo_changes,
+    is_probably_patch_text,
+    isolated_repo_pair,
+)
+
 from tensor_grep.perf_guard import write_json  # noqa: E402
 
 
@@ -168,21 +174,26 @@ def run_gemini_patch_record(
     started = time.perf_counter()
     notes = ""
     patch_text = ""
-    try:
-        with _ephemeral_repo_instructions(repo_root):
-            stdout = _run_gemini_command(
-                repo_root,
-                prompt,
-                model=model,
-                timeout_seconds=timeout_seconds,
-            )
-        patch_text = _extract_response_text(stdout)
-    except subprocess.TimeoutExpired:
-        notes = f"timeout after {timeout_seconds}s"
-    except subprocess.CalledProcessError as exc:
-        notes = (exc.stderr or exc.stdout or str(exc)).strip()
-    except ValueError as exc:
-        notes = str(exc)
+    with isolated_repo_pair(repo_root) as (before_root, work_root):
+        try:
+            with _ephemeral_repo_instructions(work_root):
+                stdout = _run_gemini_command(
+                    work_root,
+                    prompt,
+                    model=model,
+                    timeout_seconds=timeout_seconds,
+                )
+            patch_text = _extract_response_text(stdout)
+            if not is_probably_patch_text(patch_text):
+                patch_text = ""
+        except subprocess.TimeoutExpired:
+            notes = f"timeout after {timeout_seconds}s"
+        except subprocess.CalledProcessError as exc:
+            notes = (exc.stderr or exc.stdout or str(exc)).strip()
+        except ValueError as exc:
+            notes = str(exc)
+        if not patch_text.strip():
+            patch_text = derive_patch_from_repo_changes(before_root, work_root)
     wall_clock_seconds = round(time.perf_counter() - started, 6)
     return {
         "instance_id": str(record["instance_id"]),
