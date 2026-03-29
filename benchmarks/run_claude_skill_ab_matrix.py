@@ -135,6 +135,26 @@ def summarize_score_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     return summary
 
 
+def summarize_bakeoff_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "scenario_count": 0,
+            "missing_predictions": [],
+            "mean_patch_applied_rate": 0.0,
+            "mean_validation_pass_rate": 0.0,
+            "mean_primary_file_hit_rate": 0.0,
+            "mean_primary_span_hit_rate": 0.0,
+        }
+    return {
+        "scenario_count": len(rows),
+        "missing_predictions": [],
+        "mean_patch_applied_rate": _mean_numeric([float(row.get("patch_applied", 0.0)) for row in rows]) or 0.0,
+        "mean_validation_pass_rate": _mean_numeric([float(row.get("validation_passed", 0.0)) for row in rows]) or 0.0,
+        "mean_primary_file_hit_rate": _mean_numeric([float(row.get("primary_file_hit", 0.0)) for row in rows]) or 0.0,
+        "mean_primary_span_hit_rate": _mean_numeric([float(row.get("primary_span_hit", 0.0)) for row in rows]) or 0.0,
+    }
+
+
 def build_partial_payload(experiments: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "artifact": "claude_skill_ab_matrix",
@@ -165,6 +185,78 @@ def write_checkpoint(output_path: Path, experiments: list[dict[str, Any]]) -> No
     write_json(output_path, build_partial_payload(experiments))
 
 
+def _scenario_map(scenarios: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {str(scenario["instance_id"]): dict(scenario) for scenario in scenarios if isinstance(scenario, dict)}
+
+
+def build_experiment_payload(
+    *,
+    config: dict[str, str],
+    driver_records: list[dict[str, Any]],
+    scenarios_by_id: dict[str, dict[str, Any]],
+    model: str,
+    permission_mode: str,
+    timeout_seconds: int,
+    skill_dir: Path,
+    work_root: Path,
+    existing_experiment: dict[str, Any] | None = None,
+    checkpoint_callback: Any = None,
+) -> dict[str, Any]:
+    experiment = dict(existing_experiment or {})
+    prediction_records = list(experiment.get("prediction_records", []))
+    trace_records = list(experiment.get("trace_records", []))
+    bakeoff_rows = list(experiment.get("bakeoff_rows", []))
+    completed_instance_ids = {str(row.get("instance_id", "")) for row in prediction_records if row.get("instance_id")}
+
+    for record in driver_records:
+        instance_id = str(record["instance_id"])
+        if instance_id in completed_instance_ids:
+            continue
+        rows, trace_rows = ab_runner.run_ab_record(
+            dict(record),
+            model=model,
+            permission_mode=permission_mode,
+            timeout_seconds=timeout_seconds,
+            skill_dir=skill_dir,
+            work_root=work_root,
+            enhanced_output_contract=config["enhanced_output_contract"],
+            enhanced_task_contract=config["enhanced_task_contract"],
+        )
+        prediction_records.extend(rows)
+        trace_records.extend(trace_rows)
+        scenario = scenarios_by_id.get(instance_id)
+        if scenario is not None:
+            for prediction in rows:
+                bakeoff_rows.append(patch_bakeoff.evaluate_prediction(scenario, prediction))
+        completed_instance_ids.add(instance_id)
+        experiment = {
+            **config,
+            "prediction_records": prediction_records,
+            "trace_records": trace_records,
+            "bakeoff_rows": bakeoff_rows,
+            "prediction_record_count": len(prediction_records),
+            "trace_record_count": len(trace_records),
+            "trace_summary": summarize_trace_rows(trace_records),
+            "bakeoff_summary": summarize_bakeoff_rows(bakeoff_rows),
+            "system_score_summary": summarize_score_rows(bakeoff_rows),
+        }
+        if checkpoint_callback is not None:
+            checkpoint_callback(experiment)
+    if not experiment:
+        experiment = {
+            **config,
+            "prediction_records": prediction_records,
+            "trace_records": trace_records,
+            "bakeoff_rows": bakeoff_rows,
+            "prediction_record_count": len(prediction_records),
+            "trace_record_count": len(trace_records),
+            "trace_summary": summarize_trace_rows(trace_records),
+            "bakeoff_summary": summarize_bakeoff_rows(bakeoff_rows),
+            "system_score_summary": summarize_score_rows(bakeoff_rows),
+        }
+    return experiment
+
+
 def build_matrix_payload(
     *,
     input_path: Path,
@@ -181,40 +273,47 @@ def build_matrix_payload(
     resume: bool = False,
 ) -> dict[str, Any]:
     driver_payload = ab_runner.load_driver_payload(input_path)
+    driver_records = list(driver_payload.get("records", []))
+    if limit > 0:
+        driver_records = driver_records[:limit]
     scenarios = patch_bakeoff.load_patch_scenarios(scenarios_path)
+    scenarios_by_id = _scenario_map(scenarios)
     experiments: list[dict[str, Any]] = []
-    completed_names: set[str] = set()
+    experiments_by_name: dict[str, dict[str, Any]] = {}
     if resume and output_path is not None:
         experiments = load_existing_experiments(output_path)
-        completed_names = {str(experiment.get("name", "")) for experiment in experiments}
+        experiments_by_name = {str(experiment.get("name", "")): experiment for experiment in experiments}
+    ordered_experiments = list(experiments)
     for config in build_experiment_configs(output_contracts, task_contracts):
-        if config["name"] in completed_names:
-            continue
-        ab_payload = ab_runner.build_payload(
-            driver_payload,
+        experiment_name = config["name"]
+
+        def _checkpoint(current_experiment: dict[str, Any], *, _experiment_name: str = experiment_name) -> None:
+            replaced = False
+            for index, existing in enumerate(ordered_experiments):
+                if str(existing.get("name", "")) == _experiment_name:
+                    ordered_experiments[index] = current_experiment
+                    replaced = True
+                    break
+            if not replaced:
+                ordered_experiments.append(current_experiment)
+            if output_path is not None:
+                write_checkpoint(output_path, ordered_experiments)
+
+        experiment = build_experiment_payload(
+            config=config,
+            driver_records=driver_records,
+            scenarios_by_id=scenarios_by_id,
             model=model,
             permission_mode=permission_mode,
             timeout_seconds=timeout_seconds,
             skill_dir=skill_dir,
             work_root=work_root,
-            enhanced_output_contract=config["enhanced_output_contract"],
-            enhanced_task_contract=config["enhanced_task_contract"],
-            limit=limit,
+            existing_experiment=experiments_by_name.get(config["name"]),
+            checkpoint_callback=_checkpoint if output_path is not None else None,
         )
-        bakeoff_payload = patch_bakeoff.build_patch_bakeoff_payload(scenarios, list(ab_payload.get("records", [])))
-        experiments.append(
-            {
-                **config,
-                "prediction_record_count": len(list(ab_payload.get("records", []))),
-                "trace_record_count": len(list(ab_payload.get("trace_records", []))),
-                "trace_summary": summarize_trace_rows(list(ab_payload.get("trace_records", []))),
-                "bakeoff_summary": dict(bakeoff_payload.get("summary", {})),
-                "system_score_summary": summarize_score_rows(list(bakeoff_payload.get("rows", []))),
-            }
-        )
-        if output_path is not None:
-            write_checkpoint(output_path, experiments)
-    return build_partial_payload(experiments)
+        if output_path is None:
+            _checkpoint(experiment)
+    return build_partial_payload(ordered_experiments)
 
 
 def main() -> int:

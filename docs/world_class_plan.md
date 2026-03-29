@@ -173,6 +173,54 @@ Near-term acceptance order:
 2. reject any candidate that loses correctness anywhere on that slice
 3. if `terse/engage` remains the cheapest successful corner, promote it to the next default probe
 
+## Next TDD Finish Plan
+
+The next execution line to finish this codebase should be:
+
+1. default-contract finish line
+   * red:
+     * run the checkpointed 5-task Claude contract matrix
+     * treat any corner that loses a single task as rejected
+   * green:
+     * if `terse/engage` stays lossless and cheapest, add it as the next explicit default-probe mode
+   * benchmark gate:
+     * rerun the full 10-task Claude A/B and keep it only if correctness stays at least equal to the accepted enhanced baseline
+
+2. broader corpus finish line
+   * red:
+     * add at least 5 more real repo-backed patch scenarios, biased toward multi-file and ambiguity cases
+   * green:
+     * keep only fixture expansions that pass the oracle gate cleanly
+   * benchmark gate:
+     * rerun Claude baseline vs enhanced on the expanded corpus
+
+3. agent-speed finish line
+   * red:
+     * trace the promoted default probe on the 10-task pack
+   * green:
+     * reduce `meta_question_rate` to `0.0`
+     * reduce post-edit deliberation without losing correctness
+   * benchmark gate:
+     * compare against the accepted `claude-enhanced` baseline, not memory
+
+4. comparative finish line
+   * rerun Copilot and Gemini on the current accepted real patch pack
+   * rerun user-style A/B only after the Claude default probe is accepted
+   * update scorecards only from completed, same-pack runs
+
+5. precision and test-targeting finish line
+   * use the expanded corpus failures to drive:
+     * Python dependent-file precision
+     * Rust test targeting when host support is available
+   * reject any internal heuristic that does not move an end-to-end benchmark
+
+The implementation rule for the next few batches is simple:
+
+* tests first
+* artifact-producing benchmark second
+* docs last
+* no default flip without a broader matrix win
+
 ## External References To Reuse
 
 We should borrow structure aggressively instead of rebuilding from scratch.

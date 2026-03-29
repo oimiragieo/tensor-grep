@@ -4355,29 +4355,30 @@ def test_run_claude_skill_ab_matrix_should_build_payload(monkeypatch, tmp_path):
         lambda path: [{"instance_id": "demo-1", "repo_fixture": "x"}],
     )
 
-    def _fake_build_payload(*_args, **kwargs):
-        return {
-            "artifact": "claude_skill_ab",
-            "records": [
+    monkeypatch.setattr(
+        module.ab_runner,
+        "run_ab_record",
+        lambda record, **kwargs: (
+            [
                 {"instance_id": "demo-1", "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 10.0},
                 {"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 20.0},
             ],
-            "trace_records": [
+            [
                 {"instance_id": "demo-1", "system": "claude-baseline", "response_shape": "analysis_only", "asked_meta_question": False, "tg_invocation_count": 0, "tg_seconds_total": 0.0, "changed_file_count": 0, "first_tg_seconds": None, "first_patch_seconds": None, "first_file_change_seconds": None, "post_edit_deliberation_seconds": None},
                 {"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch", "asked_meta_question": False, "tg_invocation_count": 1, "tg_seconds_total": 0.1, "changed_file_count": 1, "first_tg_seconds": 0.5, "first_patch_seconds": 5.0, "first_file_change_seconds": 0.1, "post_edit_deliberation_seconds": 4.9},
             ],
-        }
-
-    monkeypatch.setattr(module.ab_runner, "build_payload", _fake_build_payload)
+        ),
+    )
     monkeypatch.setattr(
         module.patch_bakeoff,
-        "build_patch_bakeoff_payload",
-        lambda scenarios, predictions: {
-            "summary": {"scenario_count": len(predictions)},
-            "rows": [
-                {"instance_id": "demo-1", "system": "claude-baseline", "patch_applied": False, "validation_passed": False},
-                {"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True},
-            ],
+        "evaluate_prediction",
+        lambda scenario, prediction: {
+            "instance_id": "demo-1",
+            "system": str(prediction["system"]),
+            "patch_applied": prediction["system"] == "claude-enhanced",
+            "validation_passed": prediction["system"] == "claude-enhanced",
+            "primary_file_hit": float(prediction["system"] == "claude-enhanced"),
+            "primary_span_hit": float(prediction["system"] == "claude-enhanced"),
         },
     )
 
@@ -4408,37 +4409,46 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
     driver_path = tmp_path / "driver.json"
     scenarios_path = tmp_path / "scenarios.json"
     output_path = tmp_path / "matrix.json"
-    driver_path.write_text(json.dumps({"records": [{"instance_id": "demo-1"}]}), encoding="utf-8")
-    scenarios_path.write_text(json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+    driver_path.write_text(
+        json.dumps({"records": [{"instance_id": "demo-1"}, {"instance_id": "demo-2"}]}),
+        encoding="utf-8",
+    )
+    scenarios_path.write_text(
+        json.dumps({"scenarios": [{"instance_id": "demo-1"}, {"instance_id": "demo-2"}]}),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(
         module.ab_runner,
         "load_driver_payload",
-        lambda path: {"records": [{"instance_id": "demo-1", "prompt": "Fix it."}]},
+        lambda path: {"records": [{"instance_id": "demo-1", "prompt": "Fix it."}, {"instance_id": "demo-2", "prompt": "Fix it."}]},
     )
     monkeypatch.setattr(
         module.patch_bakeoff,
         "load_patch_scenarios",
-        lambda path: [{"instance_id": "demo-1", "repo_fixture": "x"}],
+        lambda path: [{"instance_id": "demo-1", "repo_fixture": "x"}, {"instance_id": "demo-2", "repo_fixture": "x"}],
     )
 
     seen: list[tuple[str, str]] = []
 
     def _fake_build_payload(*_args, **kwargs):
-        seen.append((kwargs["enhanced_output_contract"], kwargs["enhanced_task_contract"]))
-        return {
-            "artifact": "claude_skill_ab",
-            "records": [
+        raise AssertionError("_fake_build_payload should not be used")
+
+    monkeypatch.setattr(
+        module.ab_runner,
+        "run_ab_record",
+        lambda record, **kwargs: (
+            seen.append(str(record["instance_id"])) or [
                 {
-                    "instance_id": "demo-1",
+                    "instance_id": str(record["instance_id"]),
                     "system": "claude-enhanced",
                     "model_patch": "diff --git a/x b/x",
                     "wall_clock_seconds": 20.0,
                 }
             ],
-            "trace_records": [
+            [
                 {
-                    "instance_id": "demo-1",
+                    "instance_id": str(record["instance_id"]),
                     "system": "claude-enhanced",
                     "response_shape": "analysis_then_patch",
                     "asked_meta_question": False,
@@ -4451,17 +4461,18 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
                     "post_edit_deliberation_seconds": 4.9,
                 }
             ],
-        }
-
-    monkeypatch.setattr(module.ab_runner, "build_payload", _fake_build_payload)
+        ),
+    )
     monkeypatch.setattr(
         module.patch_bakeoff,
-        "build_patch_bakeoff_payload",
-        lambda scenarios, predictions: {
-            "summary": {"scenario_count": len(predictions)},
-            "rows": [
-                {"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True}
-            ],
+        "evaluate_prediction",
+        lambda scenario, prediction: {
+            "instance_id": str(prediction["instance_id"]),
+            "system": str(prediction["system"]),
+            "patch_applied": True,
+            "validation_passed": True,
+            "primary_file_hit": 1.0,
+            "primary_span_hit": 1.0,
         },
     )
 
@@ -4471,11 +4482,14 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
             "name": "output-standard__task-standard",
             "enhanced_output_contract": "standard",
             "enhanced_task_contract": "standard",
-            "prediction_record_count": 2,
-            "trace_record_count": 2,
+            "prediction_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x"}],
+            "trace_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch"}],
+            "bakeoff_rows": [{"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True}],
+            "prediction_record_count": 1,
+            "trace_record_count": 1,
             "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
-            "bakeoff_summary": {"scenario_count": 2},
-            "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 0.0}},
+            "bakeoff_summary": {"scenario_count": 1},
+            "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 1.0}},
         }
     )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
@@ -4488,18 +4502,17 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
         timeout_seconds=30,
         skill_dir=tmp_path / "skill",
         work_root=tmp_path / "work",
-        limit=1,
-        output_contracts=["standard", "terse"],
+        limit=2,
+        output_contracts=["standard"],
         task_contracts=["standard"],
         output_path=output_path,
         resume=True,
     )
 
-    assert seen == [("terse", "standard")]
-    assert payload["experiment_count"] == 2
+    assert seen == ["demo-2"]
+    assert payload["experiment_count"] == 1
     assert [experiment["name"] for experiment in payload["experiments"]] == [
         "output-standard__task-standard",
-        "output-terse__task-standard",
     ]
 
 
@@ -4515,13 +4528,13 @@ def test_run_claude_skill_ab_matrix_should_write_checkpoint_per_experiment(monke
     monkeypatch.setattr(module.patch_bakeoff, "load_patch_scenarios", lambda path: [{"instance_id": "demo-1"}])
     monkeypatch.setattr(
         module.ab_runner,
-        "build_payload",
-        lambda *_args, **_kwargs: {"records": [], "trace_records": []},
+        "run_ab_record",
+        lambda *_args, **_kwargs: ([], []),
     )
     monkeypatch.setattr(
         module.patch_bakeoff,
-        "build_patch_bakeoff_payload",
-        lambda scenarios, predictions: {"summary": {"scenario_count": len(predictions)}, "rows": []},
+        "evaluate_prediction",
+        lambda scenario, prediction: {"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True},
     )
 
     writes: list[int] = []
@@ -4549,6 +4562,117 @@ def test_run_claude_skill_ab_matrix_should_write_checkpoint_per_experiment(monke
 
     assert payload["experiment_count"] == 2
     assert writes == [1, 2]
+
+
+def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_matrix_record_resume_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    driver_path = tmp_path / "driver.json"
+    scenarios_path = tmp_path / "scenarios.json"
+    output_path = tmp_path / "matrix.json"
+    driver_path.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {"instance_id": "demo-1"},
+                    {"instance_id": "demo-2"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    scenarios_path.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {"instance_id": "demo-1"},
+                    {"instance_id": "demo-2"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        module.ab_runner,
+        "load_driver_payload",
+        lambda path: {"records": [{"instance_id": "demo-1"}, {"instance_id": "demo-2"}]},
+    )
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "load_patch_scenarios",
+        lambda path: [{"instance_id": "demo-1"}, {"instance_id": "demo-2"}],
+    )
+
+    seen: list[str] = []
+
+    def _fake_run_ab_record(record, **_kwargs):
+        seen.append(str(record["instance_id"]))
+        return (
+            [{"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "model_patch": "diff --git a/x b/x"}],
+            [{"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "response_shape": "analysis_then_patch"}],
+        )
+
+    monkeypatch.setattr(module.ab_runner, "run_ab_record", _fake_run_ab_record)
+
+    def _fake_evaluate(scenario, prediction):
+        return {
+            "instance_id": str(scenario["instance_id"]),
+            "system": str(prediction["system"]),
+            "patch_applied": True,
+            "validation_passed": True,
+            "primary_file_hit": 1.0,
+            "primary_span_hit": 1.0,
+        }
+
+    monkeypatch.setattr(module.patch_bakeoff, "evaluate_prediction", _fake_evaluate)
+
+    writes: list[tuple[int, int]] = []
+
+    def _fake_write_json(path, payload):
+        if Path(path) == output_path:
+            writes.append((int(payload["experiment_count"]), len(payload["experiments"][0]["prediction_records"])))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    partial = module.build_partial_payload(
+        [
+            {
+                "name": "output-standard__task-standard",
+                "enhanced_output_contract": "standard",
+                "enhanced_task_contract": "standard",
+                "prediction_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x"}],
+                "trace_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch"}],
+                "bakeoff_rows": [{"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True}],
+                "prediction_record_count": 1,
+                "trace_record_count": 1,
+                "trace_summary": {"claude-enhanced": {"record_count": 1}},
+                "bakeoff_summary": {"scenario_count": 1},
+                "system_score_summary": {"claude-enhanced": {"record_count": 1}},
+            }
+        ]
+    )
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_matrix_payload(
+        input_path=driver_path,
+        scenarios_path=scenarios_path,
+        model="",
+        permission_mode="bypassPermissions",
+        timeout_seconds=30,
+        skill_dir=tmp_path / "skill",
+        work_root=tmp_path / "work",
+        limit=2,
+        output_contracts=["standard"],
+        task_contracts=["standard"],
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-2"]
+    experiment = payload["experiments"][0]
+    assert [row["instance_id"] for row in experiment["prediction_records"]] == ["demo-1", "demo-2"]
+    assert experiment["prediction_record_count"] == 2
+    assert writes == [(1, 2)]
 
 
 def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
