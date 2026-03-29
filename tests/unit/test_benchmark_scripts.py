@@ -4129,6 +4129,42 @@ def test_run_claude_skill_ab_should_prepend_explicit_skill_instruction():
     assert "Start working on it immediately" in engage_prompt
 
 
+def test_run_claude_skill_ab_should_resolve_contract_profiles(monkeypatch):
+    module = _load_script_module("run_claude_skill_ab_contract_profile_script", "benchmarks/run_claude_skill_ab.py")
+
+    assert module.resolve_contract_profile(
+        "current",
+        enhanced_output_contract="terse",
+        enhanced_task_contract="engage",
+    ) == ("terse", "engage")
+    assert module.resolve_contract_profile(
+        "probe-standard-engage",
+        enhanced_output_contract="terse",
+        enhanced_task_contract="standard",
+    ) == ("standard", "engage")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_claude_skill_ab.py",
+            "--input",
+            "driver.json",
+            "--enhanced-output-contract",
+            "terse",
+            "--enhanced-task-contract",
+            "standard",
+            "--enhanced-contract-profile",
+            "probe-standard-engage",
+        ],
+    )
+
+    args = module.parse_args()
+
+    assert args.enhanced_output_contract == "standard"
+    assert args.enhanced_task_contract == "engage"
+
+
 def test_run_claude_skill_ab_should_rewrite_prompt_repo_paths(tmp_path):
     module = _load_script_module("run_claude_skill_ab_rewrite_script", "benchmarks/run_claude_skill_ab.py")
     source_repo = tmp_path / "source"

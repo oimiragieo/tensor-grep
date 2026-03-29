@@ -27,6 +27,10 @@ from tensor_grep.perf_guard import write_json  # noqa: E402
 
 DEFAULT_SKILL_DIR = ROOT_DIR / ".claude" / "skills" / "tensor-grep"
 DEFAULT_WORK_ROOT = Path(tempfile.gettempdir()) / "tensor_grep_claude_ab"
+CONTRACT_PROFILES: dict[str, tuple[str, str]] = {
+    "current": ("standard", "standard"),
+    "probe-standard-engage": ("standard", "engage"),
+}
 
 
 def default_output_path() -> Path:
@@ -52,7 +56,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trace-output", default="")
     parser.add_argument("--enhanced-output-contract", choices=("standard", "terse"), default="standard")
     parser.add_argument("--enhanced-task-contract", choices=("standard", "engage"), default="standard")
-    return parser.parse_args()
+    parser.add_argument(
+        "--enhanced-contract-profile",
+        choices=tuple(CONTRACT_PROFILES.keys()),
+        default="current",
+        help="Named enhanced contract probe profile. Overrides explicit contract flags when not 'current'.",
+    )
+    args = parser.parse_args()
+    output_contract, task_contract = resolve_contract_profile(
+        args.enhanced_contract_profile,
+        enhanced_output_contract=args.enhanced_output_contract,
+        enhanced_task_contract=args.enhanced_task_contract,
+    )
+    args.enhanced_output_contract = output_contract
+    args.enhanced_task_contract = task_contract
+    return args
+
+
+def resolve_contract_profile(
+    profile: str,
+    *,
+    enhanced_output_contract: str,
+    enhanced_task_contract: str,
+) -> tuple[str, str]:
+    if profile == "current":
+        return enhanced_output_contract, enhanced_task_contract
+    return CONTRACT_PROFILES[profile]
 
 
 def resolve_claude_binary() -> str:

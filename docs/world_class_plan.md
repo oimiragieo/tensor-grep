@@ -137,26 +137,27 @@ Accepted comparison-surface upgrade:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
 * first real matrix artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_matrix.json`
-* accepted broader matrix artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit3_matrix.json`
-* accepted 3-task matrix read:
+* accepted broader matrix artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit5_matrix.json`
+* accepted 5-task matrix read:
   * `standard/standard` is still the losing corner:
-    * enhanced `patch_applied = 0.67`
-    * enhanced `validation = 0.67`
-    * enhanced `meta_question_rate = 0.33`
+    * enhanced `patch_applied = 0.60`
+    * enhanced `validation = 0.60`
+    * enhanced `meta_question_rate = 0.20`
   * `standard/engage` succeeds:
     * enhanced `patch_applied = 1.0`
-    * enhanced `post_edit_deliberation_seconds = 48.56`
-  * `terse/standard` succeeds:
+    * enhanced `post_edit_deliberation_seconds = 37.02`
+  * `terse/standard` regresses:
+    * enhanced `patch_applied = 0.80`
+    * enhanced `post_edit_deliberation_seconds = 47.19`
+  * `terse/engage` still succeeds:
     * enhanced `patch_applied = 1.0`
-    * enhanced `post_edit_deliberation_seconds = 61.83`
-  * `terse/engage` is currently the cheapest successful corner on the broader slice:
-    * enhanced `patch_applied = 1.0`
-    * enhanced `post_edit_deliberation_seconds = 41.11`
+    * enhanced `post_edit_deliberation_seconds = 46.46`
 * accepted decision:
   * keep current shipped default unchanged for now
   * stop shipping prompt-default changes from single probes
   * use the matrix harness for broader acceptance slices before changing defaults
   * use checkpointed matrix runs for broader slices so interrupted runs still leave a valid artifact
+  * expose the broader-slice winner as the next explicit probe profile, not as a silent default flip
 
 Rejected latency shortcut:
 
@@ -171,7 +172,8 @@ Near-term acceptance order:
 
 1. run the Claude contract matrix on a 5-task slice
 2. reject any candidate that loses correctness anywhere on that slice
-3. if `terse/engage` remains the cheapest successful corner, promote it to the next default probe
+3. run the 10-task Claude A/B with the explicit `probe-standard-engage` profile
+4. only promote it further if it beats or ties the accepted enhanced correctness line while reducing latency
 
 ## Next TDD Finish Plan
 
