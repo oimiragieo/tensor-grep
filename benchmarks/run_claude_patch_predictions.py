@@ -168,6 +168,14 @@ def _run_claude_command(
     return stdout
 
 
+def _build_claude_prompt(prompt: str) -> str:
+    prefix = (
+        "If file-editing tools are available, edit the repository files directly instead of printing a patch. "
+        "If you edit files directly, do not print a summary or any extra text."
+    )
+    return f"{prefix}\n\n{prompt}".strip()
+
+
 def run_claude_patch_record(
     record: dict[str, Any],
     *,
@@ -185,7 +193,7 @@ def run_claude_patch_record(
             with _ephemeral_repo_instructions(work_root):
                 stdout = _run_claude_command(
                     work_root,
-                    prompt,
+                    _build_claude_prompt(prompt),
                     model=model,
                     permission_mode=permission_mode,
                     timeout_seconds=timeout_seconds,

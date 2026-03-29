@@ -3848,6 +3848,19 @@ def test_run_claude_patch_predictions_should_build_patch_records(monkeypatch, tm
     assert payload["records"][0]["actual_validation_commands"] == ["pytest -q"]
 
 
+def test_run_claude_patch_predictions_should_prefix_direct_edit_instruction():
+    module = _load_script_module(
+        "run_claude_patch_predictions_prompt_script",
+        "benchmarks/run_claude_patch_predictions.py",
+    )
+
+    prompt = module._build_claude_prompt("Return only a diff patch.")
+
+    assert "edit the repository files directly" in prompt
+    assert "do not print a summary" in prompt
+    assert prompt.endswith("Return only a diff patch.")
+
+
 def test_run_claude_patch_predictions_should_capture_timeout_as_empty_patch(monkeypatch, tmp_path):
     module = _load_script_module("run_claude_patch_predictions_timeout_script", "benchmarks/run_claude_patch_predictions.py")
     driver_payload = {
