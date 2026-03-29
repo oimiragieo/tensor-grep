@@ -160,6 +160,26 @@ Accepted comparison-surface upgrade:
   * use checkpointed matrix runs for broader slices so interrupted runs still leave a valid artifact
   * expose the broader-slice winner as the next explicit probe profile, not as a silent default flip
 
+Rejected default-promotion probe:
+
+* probe profile: `--enhanced-contract-profile probe-standard-engage`
+* full-pack artifact:
+  * `artifacts/patch_eval_demo/claude_skill_ab_limit10_probe_standard_engage.json`
+  * `artifacts/patch_eval_demo/claude_skill_ab_limit10_probe_standard_engage_bakeoff.json`
+* result:
+  * `claude-enhanced` preserved correctness:
+    * `patch_applied = 1.0`
+    * `validation = 1.0`
+  * but latency regressed versus the accepted enhanced baseline:
+    * probe `mean wall_clock_seconds = 46.590416`
+    * accepted baseline `mean wall_clock_seconds = 45.64775`
+* accepted decision:
+  * keep `probe-standard-engage` available as an explicit profile
+  * reject it as the default enhanced contract
+  * do not promote a new default until a full 10-task run shows both:
+    * no correctness loss
+    * a real latency win
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
@@ -173,8 +193,10 @@ Near-term acceptance order:
 
 1. run the Claude contract matrix on a 5-task slice
 2. reject any candidate that loses correctness anywhere on that slice
-3. run the 10-task Claude A/B with the explicit `probe-standard-engage` profile
-4. only promote it further if it beats or ties the accepted enhanced correctness line while reducing latency
+3. expand the contract space or corpus instead of promoting `probe-standard-engage`
+4. only promote a new default after a full 10-task run shows both:
+   * no correctness loss
+   * lower mean wall clock than the accepted enhanced baseline
 
 ## Next TDD Finish Plan
 
