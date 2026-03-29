@@ -68,6 +68,14 @@ Current accepted command-level observability baseline:
 * traced probe shows `claude-enhanced` taking `24.64s` with `tg_invocation_count = 0`
 * accepted interpretation: the first observed latency gap is at least partly Claude deliberation, not local harness overhead or `tg` runtime
 
+Current accepted response-shape observability baseline:
+
+* artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_trace_shape_trace.json`
+* baseline response shape: `analysis_then_patch`
+* enhanced response shape: `meta_question`
+* enhanced details: `tg_invocation_count = 0`, `changed_file_count = 0`, `patch_chars = 0`
+* accepted interpretation: a primary remaining bottleneck is prompt-level task non-engagement, not search cost
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
@@ -148,7 +156,13 @@ Deliverables:
    * `tg` invocation count
    * `tg` total runtime
 2. command-level logging for real `tg` calls in the enhanced workspace
-3. narrower agent prompt / skill experiments accepted only when they improve the traced A/B benchmark
+3. explicit response-shape classification:
+   * `meta_question`
+   * `analysis_then_patch`
+   * `direct_patch`
+   * `analysis_only`
+   * `empty`
+4. narrower agent prompt / skill experiments accepted only when they improve the traced A/B benchmark
 
 Implementation notes:
 
@@ -163,6 +177,7 @@ Acceptance:
   * Claude deliberation cost
   * `tg` runtime cost
   * local harness cost
+  * response-shape failure modes
 * no prompt/skill latency change is accepted if it regresses correctness on the A/B slice
 
 ## Milestone 1: Patch-Correctness Bakeoff

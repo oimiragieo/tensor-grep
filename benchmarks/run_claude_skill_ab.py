@@ -226,6 +226,31 @@ def load_tg_trace_records(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+META_QUESTION_PATTERNS = (
+    "what would you like me to do",
+    "what task would you like me to do",
+    "what task would you like me to perform",
+    "what would you like me to help with",
+    "you haven't specified a task",
+    "you haven't provided a specific task",
+    "i'm ready to help",
+)
+
+
+def classify_response_shape(notes: str, patch_text: str) -> str:
+    normalized_notes = notes.strip().lower()
+    emitted_patch = bool(patch_text.strip())
+    if any(pattern in normalized_notes for pattern in META_QUESTION_PATTERNS):
+        return "meta_question"
+    if emitted_patch and not normalized_notes:
+        return "direct_patch"
+    if emitted_patch:
+        return "analysis_then_patch"
+    if normalized_notes:
+        return "analysis_only"
+    return "empty"
+
+
 def prepare_persistent_repo_copy(
     source_repo: Path,
     work_root: Path,
@@ -377,11 +402,14 @@ def run_ab_record(
                 "notes": notes,
             }
         )
+        response_shape = classify_response_shape(notes, patch_text)
         trace_rows.append(
             {
                 "instance_id": str(record["instance_id"]),
                 "system": system_name,
                 "use_skill": use_skill,
+                "response_shape": response_shape,
+                "asked_meta_question": response_shape == "meta_question",
                 "prompt_chars": len(prompt),
                 "prompt_lines": len(prompt.splitlines()),
                 "notes_chars": len(notes),

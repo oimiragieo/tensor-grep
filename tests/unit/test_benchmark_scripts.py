@@ -4034,6 +4034,16 @@ def test_run_claude_skill_ab_should_install_tg_trace_wrapper(tmp_path):
     assert "TENSOR_GREP_TRACE_LOG" in (wrapper_dir / "tg.ps1").read_text(encoding="utf-8")
 
 
+def test_run_claude_skill_ab_should_classify_response_shape():
+    module = _load_script_module("run_claude_skill_ab_response_shape_script", "benchmarks/run_claude_skill_ab.py")
+
+    assert module.classify_response_shape("What would you like me to do?", "") == "meta_question"
+    assert module.classify_response_shape("", "diff --git a/x b/x") == "direct_patch"
+    assert module.classify_response_shape("Fixed the bug.", "diff --git a/x b/x") == "analysis_then_patch"
+    assert module.classify_response_shape("I inspected the repo.", "") == "analysis_only"
+    assert module.classify_response_shape("", "") == "empty"
+
+
 def test_run_claude_skill_ab_prompt_should_require_non_interactive_action(tmp_path):
     module = _load_script_module("run_claude_skill_ab_prompt_script", "benchmarks/run_claude_skill_ab.py")
 
@@ -4138,6 +4148,9 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert "Use the tensor-grep project skill" in calls[1][2]
     assert payload["trace_records"][0]["use_skill"] is False
     assert payload["trace_records"][1]["use_skill"] is True
+    assert payload["trace_records"][0]["response_shape"] == "analysis_only"
+    assert payload["trace_records"][1]["response_shape"] == "analysis_then_patch"
+    assert payload["trace_records"][1]["asked_meta_question"] is False
     assert payload["trace_records"][1]["changed_file_count"] == 1
     assert payload["trace_records"][1]["tg_invocation_count"] == 1
     assert payload["trace_records"][1]["tg_seconds_total"] == 0.125
