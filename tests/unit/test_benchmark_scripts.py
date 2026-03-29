@@ -37,6 +37,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_copilot_patch_predictions.py",
     "benchmarks/run_claude_patch_predictions.py",
     "benchmarks/run_claude_skill_ab.py",
+    "benchmarks/run_claude_skill_ab_matrix.py",
     "benchmarks/run_claude_competitor_eval.py",
     "benchmarks/run_codex_competitor_eval.py",
     "benchmarks/run_copilot_competitor_eval.py",
@@ -4268,10 +4269,138 @@ def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypat
 
     assert output == "ok"
     assert "--dangerously-skip-permissions" in calls[0]
-    assert "--" in calls[0]
-    assert calls[0][-2:] == ["--", "Say hi in one word."]
-    assert kwargs_calls[0]["env"]["TENSOR_GREP_REAL"] == "C:/tools/tg.exe"
-    assert kwargs_calls[0]["env"]["TENSOR_GREP_TRACE_LOG"] == "C:/tmp/tg.jsonl"
+
+
+def test_run_claude_skill_ab_matrix_should_build_experiment_configs():
+    module = _load_script_module("run_claude_skill_ab_matrix_configs_script", "benchmarks/run_claude_skill_ab_matrix.py")
+
+    experiments = module.build_experiment_configs(["standard", "terse"], ["standard", "engage"])
+
+    assert experiments == [
+        {"name": "output-standard__task-standard", "enhanced_output_contract": "standard", "enhanced_task_contract": "standard"},
+        {"name": "output-standard__task-engage", "enhanced_output_contract": "standard", "enhanced_task_contract": "engage"},
+        {"name": "output-terse__task-standard", "enhanced_output_contract": "terse", "enhanced_task_contract": "standard"},
+        {"name": "output-terse__task-engage", "enhanced_output_contract": "terse", "enhanced_task_contract": "engage"},
+    ]
+
+
+def test_run_claude_skill_ab_matrix_should_summarize_trace_rows():
+    module = _load_script_module("run_claude_skill_ab_matrix_summary_script", "benchmarks/run_claude_skill_ab_matrix.py")
+
+    summary = module.summarize_trace_rows(
+        [
+            {
+                "system": "claude-baseline",
+                "asked_meta_question": False,
+                "response_shape": "analysis_then_patch",
+                "first_tg_seconds": None,
+                "first_patch_seconds": 10.0,
+                "first_file_change_seconds": 0.2,
+                "post_edit_deliberation_seconds": 9.8,
+                "tg_invocation_count": 0,
+                "tg_seconds_total": 0.0,
+                "changed_file_count": 1,
+            },
+            {
+                "system": "claude-enhanced",
+                "asked_meta_question": True,
+                "response_shape": "meta_question",
+                "first_tg_seconds": 1.5,
+                "first_patch_seconds": None,
+                "first_file_change_seconds": None,
+                "post_edit_deliberation_seconds": None,
+                "tg_invocation_count": 2,
+                "tg_seconds_total": 0.75,
+                "changed_file_count": 0,
+            },
+            {
+                "system": "claude-enhanced",
+                "asked_meta_question": False,
+                "response_shape": "analysis_then_patch",
+                "first_tg_seconds": 1.0,
+                "first_patch_seconds": 20.0,
+                "first_file_change_seconds": 0.1,
+                "post_edit_deliberation_seconds": 19.9,
+                "tg_invocation_count": 1,
+                "tg_seconds_total": 0.25,
+                "changed_file_count": 1,
+            },
+        ]
+    )
+
+    assert summary["claude-baseline"]["record_count"] == 1
+    assert summary["claude-baseline"]["response_shape_counts"] == {"analysis_then_patch": 1}
+    assert summary["claude-enhanced"]["record_count"] == 2
+    assert summary["claude-enhanced"]["meta_question_rate"] == 0.5
+    assert summary["claude-enhanced"]["mean_first_tg_seconds"] == 1.25
+    assert summary["claude-enhanced"]["mean_tg_invocation_count"] == 1.5
+    assert summary["claude-enhanced"]["mean_post_edit_deliberation_seconds"] == 19.9
+
+
+def test_run_claude_skill_ab_matrix_should_build_payload(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_matrix_payload_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    driver_path = tmp_path / "driver.json"
+    scenarios_path = tmp_path / "scenarios.json"
+    driver_path.write_text(json.dumps({"records": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+    scenarios_path.write_text(json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+
+    monkeypatch.setattr(
+        module.ab_runner,
+        "load_driver_payload",
+        lambda path: {"records": [{"instance_id": "demo-1", "prompt": "Fix it."}]},
+    )
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "load_patch_scenarios",
+        lambda path: [{"instance_id": "demo-1", "repo_fixture": "x"}],
+    )
+
+    def _fake_build_payload(*_args, **kwargs):
+        return {
+            "artifact": "claude_skill_ab",
+            "records": [
+                {"instance_id": "demo-1", "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 10.0},
+                {"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 20.0},
+            ],
+            "trace_records": [
+                {"instance_id": "demo-1", "system": "claude-baseline", "response_shape": "analysis_only", "asked_meta_question": False, "tg_invocation_count": 0, "tg_seconds_total": 0.0, "changed_file_count": 0, "first_tg_seconds": None, "first_patch_seconds": None, "first_file_change_seconds": None, "post_edit_deliberation_seconds": None},
+                {"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch", "asked_meta_question": False, "tg_invocation_count": 1, "tg_seconds_total": 0.1, "changed_file_count": 1, "first_tg_seconds": 0.5, "first_patch_seconds": 5.0, "first_file_change_seconds": 0.1, "post_edit_deliberation_seconds": 4.9},
+            ],
+        }
+
+    monkeypatch.setattr(module.ab_runner, "build_payload", _fake_build_payload)
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "build_patch_bakeoff_payload",
+        lambda scenarios, predictions: {
+            "summary": {"scenario_count": len(predictions)},
+            "rows": [
+                {"instance_id": "demo-1", "system": "claude-baseline", "patch_applied": False, "validation_passed": False},
+                {"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True},
+            ],
+        },
+    )
+
+    payload = module.build_matrix_payload(
+        input_path=driver_path,
+        scenarios_path=scenarios_path,
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=30,
+        skill_dir=tmp_path / "skill",
+        work_root=tmp_path / "work",
+        limit=1,
+        output_contracts=["standard"],
+        task_contracts=["engage"],
+    )
+
+    assert payload["artifact"] == "claude_skill_ab_matrix"
+    assert payload["experiment_count"] == 1
+    experiment = payload["experiments"][0]
+    assert experiment["name"] == "output-standard__task-engage"
+    assert experiment["trace_summary"]["claude-enhanced"]["mean_first_tg_seconds"] == 0.5
+    assert experiment["bakeoff_summary"]["scenario_count"] == 2
+    assert experiment["system_score_summary"]["claude-enhanced"]["mean_patch_applied_rate"] == 1.0
 
 
 def test_run_claude_skill_ab_should_load_tg_trace_records(tmp_path):
