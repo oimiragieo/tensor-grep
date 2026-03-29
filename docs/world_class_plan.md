@@ -133,6 +133,7 @@ Accepted comparison-surface upgrade:
 * harness now includes `benchmarks/run_claude_skill_ab_matrix.py`
 * reporting surface now includes `benchmarks/render_claude_skill_ab_matrix.py`
 * matrix runner now checkpoints after each experiment via an explicit helper and supports `--resume`
+* user-style Claude A/B runner now also checkpoints and resumes at record granularity
 * it reuses:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`

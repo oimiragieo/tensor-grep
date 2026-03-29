@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trace-output", default="")
     parser.add_argument("--enhanced-output-contract", choices=("standard", "terse"), default="standard")
     parser.add_argument("--enhanced-task-contract", choices=("standard", "engage"), default="standard")
+    parser.add_argument("--resume", action="store_true", help="Resume from an existing A/B output artifact.")
     parser.add_argument(
         "--enhanced-contract-profile",
         choices=tuple(CONTRACT_PROFILES.keys()),
@@ -549,37 +550,13 @@ def run_ab_record(
     return rows, trace_rows
 
 
-def build_payload(
-    driver_payload: dict[str, Any],
+def build_partial_payload(
+    records: list[dict[str, Any]],
+    trace_records: list[dict[str, Any]],
     *,
-    model: str,
-    permission_mode: str,
-    timeout_seconds: int,
-    skill_dir: Path,
-    work_root: Path,
-    enhanced_output_contract: str = "standard",
-    enhanced_task_contract: str = "standard",
-    limit: int = 0,
+    enhanced_output_contract: str,
+    enhanced_task_contract: str,
 ) -> dict[str, Any]:
-    records = list(driver_payload.get("records", []))
-    if limit > 0:
-        records = records[:limit]
-    prediction_records: list[dict[str, Any]] = []
-    trace_records: list[dict[str, Any]] = []
-    work_root.mkdir(parents=True, exist_ok=True)
-    for record in records:
-        rows, trace_rows = run_ab_record(
-            dict(record),
-            model=model,
-            permission_mode=permission_mode,
-            timeout_seconds=timeout_seconds,
-            skill_dir=skill_dir,
-            work_root=work_root,
-            enhanced_output_contract=enhanced_output_contract,
-            enhanced_task_contract=enhanced_task_contract,
-        )
-        prediction_records.extend(rows)
-        trace_records.extend(trace_rows)
     return {
         "artifact": "claude_skill_ab",
         "trace_artifact": "claude_skill_ab_trace",
@@ -592,14 +569,100 @@ def build_payload(
             "machine": platform.machine().lower(),
             "python_version": platform.python_version(),
         },
-        "records": prediction_records,
+        "records": records,
         "trace_records": trace_records,
     }
+
+
+def load_existing_payload(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not path.exists():
+        return [], []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    records = [dict(record) for record in list(payload.get("records", [])) if isinstance(record, dict)]
+    trace_records = [dict(record) for record in list(payload.get("trace_records", [])) if isinstance(record, dict)]
+    return records, trace_records
+
+
+def write_checkpoint(
+    output_path: Path,
+    records: list[dict[str, Any]],
+    trace_records: list[dict[str, Any]],
+    *,
+    enhanced_output_contract: str,
+    enhanced_task_contract: str,
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(
+        output_path,
+        build_partial_payload(
+            records,
+            trace_records,
+            enhanced_output_contract=enhanced_output_contract,
+            enhanced_task_contract=enhanced_task_contract,
+        ),
+    )
+
+
+def build_payload(
+    driver_payload: dict[str, Any],
+    *,
+    model: str,
+    permission_mode: str,
+    timeout_seconds: int,
+    skill_dir: Path,
+    work_root: Path,
+    enhanced_output_contract: str = "standard",
+    enhanced_task_contract: str = "standard",
+    limit: int = 0,
+    output_path: Path | None = None,
+    resume: bool = False,
+) -> dict[str, Any]:
+    records = list(driver_payload.get("records", []))
+    if limit > 0:
+        records = records[:limit]
+    prediction_records: list[dict[str, Any]] = []
+    trace_records: list[dict[str, Any]] = []
+    if resume and output_path is not None:
+        prediction_records, trace_records = load_existing_payload(output_path)
+    completed_instance_ids = {str(record.get("instance_id", "")) for record in prediction_records if record.get("instance_id")}
+    work_root.mkdir(parents=True, exist_ok=True)
+    for record in records:
+        instance_id = str(record["instance_id"])
+        if instance_id in completed_instance_ids:
+            continue
+        rows, trace_rows = run_ab_record(
+            dict(record),
+            model=model,
+            permission_mode=permission_mode,
+            timeout_seconds=timeout_seconds,
+            skill_dir=skill_dir,
+            work_root=work_root,
+            enhanced_output_contract=enhanced_output_contract,
+            enhanced_task_contract=enhanced_task_contract,
+        )
+        prediction_records.extend(rows)
+        trace_records.extend(trace_rows)
+        completed_instance_ids.add(instance_id)
+        if output_path is not None:
+            write_checkpoint(
+                output_path,
+                prediction_records,
+                trace_records,
+                enhanced_output_contract=enhanced_output_contract,
+                enhanced_task_contract=enhanced_task_contract,
+            )
+    return build_partial_payload(
+        prediction_records,
+        trace_records,
+        enhanced_output_contract=enhanced_output_contract,
+        enhanced_task_contract=enhanced_task_contract,
+    )
 
 
 def main() -> int:
     args = parse_args()
     driver_payload = load_driver_payload(args.input)
+    output_path = Path(args.output).expanduser().resolve()
     payload = build_payload(
         driver_payload,
         model=args.model,
@@ -610,8 +673,9 @@ def main() -> int:
         enhanced_output_contract=args.enhanced_output_contract,
         enhanced_task_contract=args.enhanced_task_contract,
         limit=args.limit,
+        output_path=output_path,
+        resume=args.resume,
     )
-    output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(output_path, payload)
     trace_output_path = (

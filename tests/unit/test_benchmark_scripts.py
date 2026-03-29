@@ -4271,6 +4271,127 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert "claude_seconds" in payload["trace_records"][0]["timing"]
 
 
+def test_run_claude_skill_ab_should_support_partial_resume(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_resume_script", "benchmarks/run_claude_skill_ab.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    output_path = tmp_path / "ab.json"
+
+    seen: list[str] = []
+
+    def _fake_run_ab_record(record, **kwargs):
+        seen.append(str(record["instance_id"]))
+        return (
+            [
+                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 1.0},
+                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 2.0},
+            ],
+            [
+                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "response_shape": "analysis_only"},
+                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "response_shape": "analysis_then_patch"},
+            ],
+        )
+
+    monkeypatch.setattr(module, "run_ab_record", _fake_run_ab_record)
+
+    partial = module.build_partial_payload(
+        [
+            {"instance_id": "demo-1", "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 1.0},
+            {"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 2.0},
+        ],
+        [
+            {"instance_id": "demo-1", "system": "claude-baseline", "response_shape": "analysis_only"},
+            {"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch"},
+        ],
+        enhanced_output_contract="standard",
+        enhanced_task_contract="engage",
+    )
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_payload(
+        {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."},
+                {"instance_id": "demo-2", "repo_fixture": str(repo_root), "prompt": "Fix two."},
+            ]
+        },
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        work_root=tmp_path / "work",
+        enhanced_output_contract="standard",
+        enhanced_task_contract="engage",
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-2"]
+    assert len(payload["records"]) == 4
+    assert len(payload["trace_records"]) == 4
+
+
+def test_run_claude_skill_ab_should_checkpoint_per_record(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_checkpoint_script", "benchmarks/run_claude_skill_ab.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    output_path = tmp_path / "ab.json"
+
+    monkeypatch.setattr(
+        module,
+        "run_ab_record",
+        lambda record, **kwargs: (
+            [
+                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 1.0},
+                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 2.0},
+            ],
+            [
+                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "response_shape": "analysis_only"},
+                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "response_shape": "analysis_then_patch"},
+            ],
+        ),
+    )
+
+    writes: list[int] = []
+
+    def _fake_write_json(path, payload):
+        if Path(path) == output_path:
+            writes.append(len(payload["records"]))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    payload = module.build_payload(
+        {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."},
+                {"instance_id": "demo-2", "repo_fixture": str(repo_root), "prompt": "Fix two."},
+            ]
+        },
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        work_root=tmp_path / "work",
+        enhanced_output_contract="standard",
+        enhanced_task_contract="engage",
+        output_path=output_path,
+        resume=False,
+    )
+
+    assert len(payload["records"]) == 4
+    assert writes == [2, 4]
+
+
 def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypatch, tmp_path):
     module = _load_script_module("run_claude_skill_ab_command_script", "benchmarks/run_claude_skill_ab.py")
     calls: list[list[str]] = []
