@@ -68,6 +68,13 @@ Current accepted command-level observability baseline:
 * traced probe shows `claude-enhanced` taking `24.64s` with `tg_invocation_count = 0`
 * accepted interpretation: the first observed latency gap is at least partly Claude deliberation, not local harness overhead or `tg` runtime
 
+Rejected latency shortcut:
+
+* candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
+* measured result on a 1-task probe: runtime improved (`37.43s` baseline vs `10.62s` tightened enhanced)
+* but correctness collapsed: tightened enhanced returned no patch and effectively reverted to a “what do you want me to do?” response
+* accepted decision: reject this shortcut; keep explicit skill guidance intact until a traced multi-task run proves a safer speed win
+
 The next proof step is not another generic patch heuristic. It is expanding the real patch corpus and keeping only runner changes that improve the expanded pack.
 
 ## External References To Reuse
