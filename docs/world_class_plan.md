@@ -107,6 +107,16 @@ Current accepted optimization implication:
   * reduce `meta_question` response shape frequency
   * reduce `post_edit_deliberation_seconds` when the task is already engaged
 
+Rejected output-contract candidate:
+
+* harness now supports `enhanced_output_contract = standard | terse` for controlled experiments
+* first terse probe artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_terse_trace.json`
+* result:
+  * enhanced remained correct
+  * but `post_edit_deliberation_seconds` increased to `102.634616`
+  * total wall clock increased to `102.927492`
+* accepted decision: keep the harness support, reject `terse` as the default enhanced contract
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file

@@ -50,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skill-dir", default=str(DEFAULT_SKILL_DIR))
     parser.add_argument("--work-root", default=str(DEFAULT_WORK_ROOT))
     parser.add_argument("--trace-output", default="")
+    parser.add_argument("--enhanced-output-contract", choices=("standard", "terse"), default="standard")
     return parser.parse_args()
 
 
@@ -120,16 +121,22 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
     return _manager()
 
 
-def _build_claude_prompt(prompt: str) -> str:
-    prefix = (
-        "If file-editing tools are available, edit the repository files directly instead of printing a patch. "
-        "If you edit files directly, do not print a summary or any extra text."
-    )
+def _build_claude_prompt(prompt: str, *, terse_output: bool = False) -> str:
+    if terse_output:
+        prefix = (
+            "If file-editing tools are available, edit the repository files directly instead of printing a patch. "
+            "After the change is complete, stop immediately. Do not print any explanation, summary, or status text."
+        )
+    else:
+        prefix = (
+            "If file-editing tools are available, edit the repository files directly instead of printing a patch. "
+            "If you edit files directly, do not print a summary or any extra text."
+        )
     return f"{prefix}\n\n{prompt}".strip()
 
 
-def build_system_prompt(prompt: str, *, use_skill: bool) -> str:
-    rendered = _build_claude_prompt(prompt)
+def build_system_prompt(prompt: str, *, use_skill: bool, enhanced_output_contract: str = "standard") -> str:
+    rendered = _build_claude_prompt(prompt, terse_output=(use_skill and enhanced_output_contract == "terse"))
     if not use_skill:
         return rendered
     skill_prefix = (
@@ -367,6 +374,7 @@ def run_ab_record(
     timeout_seconds: int,
     skill_dir: Path,
     work_root: Path,
+    enhanced_output_contract: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     source_repo = Path(str(record["repo_fixture"])).resolve()
     systems: list[tuple[str, bool]] = [("claude-baseline", False), ("claude-enhanced", True)]
@@ -393,6 +401,7 @@ def run_ab_record(
             rewrite_prompt_repo_paths(str(record["prompt"]), source_repo, repo_root)
             ,
             use_skill=use_skill,
+            enhanced_output_contract=enhanced_output_contract,
         )
         timing["prompt_build_seconds"] = round(time.perf_counter() - phase_started, 6)
         phase_started = time.perf_counter()
@@ -467,6 +476,7 @@ def run_ab_record(
                 "instance_id": str(record["instance_id"]),
                 "system": system_name,
                 "use_skill": use_skill,
+                "enhanced_output_contract": enhanced_output_contract if use_skill else "baseline",
                 "response_shape": response_shape,
                 "asked_meta_question": response_shape == "meta_question",
                 "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
@@ -505,6 +515,7 @@ def build_payload(
     timeout_seconds: int,
     skill_dir: Path,
     work_root: Path,
+    enhanced_output_contract: str = "standard",
     limit: int = 0,
 ) -> dict[str, Any]:
     records = list(driver_payload.get("records", []))
@@ -521,6 +532,7 @@ def build_payload(
             timeout_seconds=timeout_seconds,
             skill_dir=skill_dir,
             work_root=work_root,
+            enhanced_output_contract=enhanced_output_contract,
         )
         prediction_records.extend(rows)
         trace_records.extend(trace_rows)
@@ -528,6 +540,7 @@ def build_payload(
         "artifact": "claude_skill_ab",
         "trace_artifact": "claude_skill_ab_trace",
         "suite": "run_claude_skill_ab",
+        "enhanced_output_contract": enhanced_output_contract,
         "generated_at_epoch_s": time.time(),
         "environment": {
             "platform": platform.system().lower(),
@@ -549,6 +562,7 @@ def main() -> int:
         timeout_seconds=args.timeout_seconds,
         skill_dir=Path(args.skill_dir).expanduser().resolve(),
         work_root=Path(args.work_root).expanduser().resolve(),
+        enhanced_output_contract=args.enhanced_output_contract,
         limit=args.limit,
     )
     output_path = Path(args.output).expanduser().resolve()

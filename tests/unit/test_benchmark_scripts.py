@@ -4106,19 +4106,24 @@ def test_run_claude_skill_ab_prompt_should_require_non_interactive_action(tmp_pa
     module = _load_script_module("run_claude_skill_ab_prompt_script", "benchmarks/run_claude_skill_ab.py")
 
     prompt = module._build_claude_prompt("Fix the bug.")
+    terse_prompt = module._build_claude_prompt("Fix the bug.", terse_output=True)
 
     assert "edit the repository files directly" in prompt
     assert "do not print a summary" in prompt
     assert prompt.endswith("Fix the bug.")
+    assert "stop immediately" in terse_prompt
+    assert "Do not print any explanation" in terse_prompt
 
 
 def test_run_claude_skill_ab_should_prepend_explicit_skill_instruction():
     module = _load_script_module("run_claude_skill_ab_enhanced_prompt_script", "benchmarks/run_claude_skill_ab.py")
 
     prompt = module.build_system_prompt("Fix the bug.", use_skill=True)
+    terse_prompt = module.build_system_prompt("Fix the bug.", use_skill=True, enhanced_output_contract="terse")
 
     assert "Use the tensor-grep project skill" in prompt
     assert prompt.endswith("Fix the bug.")
+    assert "stop immediately" in terse_prompt
 
 
 def test_run_claude_skill_ab_should_rewrite_prompt_repo_paths(tmp_path):
@@ -4188,9 +4193,11 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
         timeout_seconds=5,
         skill_dir=skill_dir,
         work_root=tmp_path / "work",
+        enhanced_output_contract="terse",
     )
 
     assert payload["artifact"] == "claude_skill_ab"
+    assert payload["enhanced_output_contract"] == "terse"
     assert payload["trace_artifact"] == "claude_skill_ab_trace"
     assert len(payload["trace_records"]) == 2
     assert [record["system"] for record in payload["records"]] == [
@@ -4206,6 +4213,7 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert "Use the tensor-grep project skill" in calls[1][2]
     assert payload["trace_records"][0]["use_skill"] is False
     assert payload["trace_records"][1]["use_skill"] is True
+    assert payload["trace_records"][1]["enhanced_output_contract"] == "terse"
     assert payload["trace_records"][0]["response_shape"] == "analysis_only"
     assert payload["trace_records"][1]["response_shape"] == "analysis_then_patch"
     assert payload["trace_records"][1]["asked_meta_question"] is False
