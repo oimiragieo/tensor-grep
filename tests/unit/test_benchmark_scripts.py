@@ -3417,7 +3417,29 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
     assert payload["semantic_provider"] == "hybrid"
     assert payload["records"][0]["actual_primary_file"] == "src/payments.py"
     assert payload["records"][0]["semantic_provider"] == "hybrid"
-    assert "Return a unified diff patch only." in payload["records"][0]["prompt"]
+    prompt = payload["records"][0]["prompt"]
+    assert "Prefer editing the repository files directly." in prompt
+    assert "Do not run the test suite or create caches like .pytest_cache." in prompt
+
+
+def test_patch_runner_common_should_ignore_ephemeral_files_when_diffing(tmp_path):
+    module = _load_script_module("patch_runner_common_script", "benchmarks/patch_runner_common.py")
+    before_root = tmp_path / "a"
+    work_root = tmp_path / "b"
+    (before_root / "src").mkdir(parents=True)
+    (work_root / "src").mkdir(parents=True)
+    (before_root / ".pytest_cache").mkdir()
+    (work_root / ".pytest_cache").mkdir()
+    (before_root / "src" / "demo.py").write_text("old\n", encoding="utf-8")
+    (work_root / "src" / "demo.py").write_text("new\n", encoding="utf-8")
+    (work_root / ".pytest_cache" / ".gitignore").write_text("*\n", encoding="utf-8")
+    (work_root / "AGENTS.md").write_text("temp\n", encoding="utf-8")
+
+    patch_text = module.derive_patch_from_repo_changes(before_root, work_root)
+
+    assert "diff --git a/src/demo.py b/src/demo.py" in patch_text
+    assert ".pytest_cache" not in patch_text
+    assert "AGENTS.md" not in patch_text
 
 
 def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):

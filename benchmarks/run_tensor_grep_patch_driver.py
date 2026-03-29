@@ -143,7 +143,10 @@ def build_patch_prompt(scenario: Scenario, payload: dict[str, Any]) -> str:
     return "\n\n".join(
         [
             "You are preparing a repository patch.",
-            "Return a unified diff patch only. Do not include prose.",
+            "Apply the smallest correct repository change for the problem statement.",
+            "Prefer editing the repository files directly. If you do that, do not create unrelated files.",
+            "If you choose not to edit files directly, return a unified diff patch only. Do not include prose.",
+            "Do not run the test suite or create caches like .pytest_cache.",
             f"Problem statement:\n{problem_statement}",
             f"Context:\n{rendered_context}",
         ]
