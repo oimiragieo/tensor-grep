@@ -3377,6 +3377,52 @@ def test_run_patch_bakeoff_should_score_applied_patch_and_validation(tmp_path):
     assert row["predicted_validation_cmd_hit_rate"] == 1.0
 
 
+def test_run_patch_bakeoff_should_normalize_truncated_patch_before_apply(tmp_path):
+    module = _load_script_module(
+        "run_patch_bakeoff_truncated_script", "benchmarks/run_patch_bakeoff.py"
+    )
+    repo_root = tmp_path / "repo"
+    src_dir = repo_root / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "demo.py").write_text(
+        "def value():\n    return 'old'\n",
+        encoding="utf-8",
+    )
+    scenario = {
+        "instance_id": "demo-truncated",
+        "repo_fixture": str(repo_root),
+        "expected_primary_file": "src/demo.py",
+        "expected_primary_span": {"start_line": 1, "end_line": 2},
+        "expected_changed_files": ["src/demo.py"],
+        "expected_test_files": [],
+        "validation_commands": [],
+        "expected_validation_commands_contain": [],
+    }
+    prediction = {
+        "instance_id": "demo-truncated",
+        "system": "demo",
+        "model_patch": "\n".join(
+            [
+                "diff --git a/src/demo.py b/src/demo.py",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -1,2 +1,2 @@",
+                " def value():",
+                "-    return 'old'",
+                "+    return 'new'",
+            ]
+        ),
+        "actual_test_files": [],
+        "actual_validation_commands": [],
+    }
+
+    row = module.evaluate_prediction(scenario, prediction)
+
+    assert row["patch_applied"] is True
+    assert row["primary_file_hit"] == 1.0
+    assert row["primary_span_hit"] == 1.0
+
+
 def test_run_patch_bakeoff_should_build_summary_payload(tmp_path):
     module = _load_script_module("run_patch_bakeoff_payload_script", "benchmarks/run_patch_bakeoff.py")
     repo_root = tmp_path / "repo"

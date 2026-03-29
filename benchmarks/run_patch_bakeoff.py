@@ -18,6 +18,8 @@ for candidate in (SRC_DIR, BENCHMARKS_DIR):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from patch_runner_common import normalize_model_patch_text  # noqa: E402
+
 from tensor_grep.perf_guard import write_json  # noqa: E402
 
 Scenario = dict[str, Any]
@@ -148,7 +150,7 @@ def load_patch_predictions(path: str | Path) -> list[Prediction]:
 
 def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow:
     repo_root = Path(str(scenario["repo_fixture"])).resolve()
-    patch_text = str(prediction.get("model_patch") or "")
+    patch_text = normalize_model_patch_text(str(prediction.get("model_patch") or ""))
     touched_files = _files_in_patch(patch_text)
     changed_lines = {
         _normalize_path(path, repo_root): lines for path, lines in _changed_lines_by_file(patch_text).items()
