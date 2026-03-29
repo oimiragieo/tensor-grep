@@ -4403,6 +4403,64 @@ def test_run_claude_skill_ab_matrix_should_build_payload(monkeypatch, tmp_path):
     assert experiment["system_score_summary"]["claude-enhanced"]["mean_patch_applied_rate"] == 1.0
 
 
+def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
+    module = _load_script_module("render_claude_skill_ab_matrix_script", "benchmarks/render_claude_skill_ab_matrix.py")
+    payload_path = tmp_path / "matrix.json"
+    payload_path.write_text(
+        json.dumps(
+            {
+                "artifact": "claude_skill_ab_matrix",
+                "experiments": [
+                    {
+                        "name": "output-standard__task-standard",
+                        "enhanced_output_contract": "standard",
+                        "enhanced_task_contract": "standard",
+                        "system_score_summary": {
+                            "claude-enhanced": {
+                                "mean_patch_applied_rate": 0.0,
+                                "mean_validation_pass_rate": 0.0,
+                            }
+                        },
+                        "trace_summary": {
+                            "claude-enhanced": {
+                                "meta_question_rate": 1.0,
+                                "mean_post_edit_deliberation_seconds": None,
+                                "mean_first_tg_seconds": None,
+                            }
+                        },
+                    },
+                    {
+                        "name": "output-terse__task-standard",
+                        "enhanced_output_contract": "terse",
+                        "enhanced_task_contract": "standard",
+                        "system_score_summary": {
+                            "claude-enhanced": {
+                                "mean_patch_applied_rate": 1.0,
+                                "mean_validation_pass_rate": 1.0,
+                            }
+                        },
+                        "trace_summary": {
+                            "claude-enhanced": {
+                                "meta_question_rate": 0.0,
+                                "mean_post_edit_deliberation_seconds": 41.545078,
+                                "mean_first_tg_seconds": None,
+                            }
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    markdown = module.render_markdown([payload_path])
+
+    assert "# Claude Skill A/B Matrix" in markdown
+    assert "output-terse__task-standard" in markdown
+    assert "Recommended Next Default Probe" in markdown
+    assert "meta_question_rate=`0.0`" in markdown
+
+
 def test_run_claude_skill_ab_should_load_tg_trace_records(tmp_path):
     module = _load_script_module("run_claude_skill_ab_trace_log_script", "benchmarks/run_claude_skill_ab.py")
     log_path = tmp_path / "tg_trace.jsonl"

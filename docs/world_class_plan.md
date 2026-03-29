@@ -131,6 +131,7 @@ Rejected task-contract candidate:
 Accepted comparison-surface upgrade:
 
 * harness now includes `benchmarks/run_claude_skill_ab_matrix.py`
+* reporting surface now includes `benchmarks/render_claude_skill_ab_matrix.py`
 * it reuses:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
