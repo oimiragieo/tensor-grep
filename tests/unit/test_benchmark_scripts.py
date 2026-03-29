@@ -2891,8 +2891,8 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         Path("benchmarks/patch_eval/real_patch_bakeoff_scenarios.json")
     )
 
-    assert len(driver_scenarios) == 2
-    assert len(bakeoff_scenarios) == 2
+    assert len(driver_scenarios) == 4
+    assert len(bakeoff_scenarios) == 4
 
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -2947,13 +2947,50 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/argument.test.js"],
         "actual_validation_commands": ["node --test tests/argument.test.js"],
     }
+    click_unstyle_repo = Path("benchmarks/patch_fixtures/click_unstyle_ansi")
+    click_unstyle_source = click_unstyle_repo / "src/click/_compat.py"
+    click_unstyle_original = click_unstyle_source.read_text(encoding="utf-8")
+    click_unstyle_fixed = click_unstyle_original.replace(
+        r're.compile(r"\x1b\[[0-9;]*m")',
+        r're.compile(r"\x1b\[[0-9;?]*[A-Za-z]")',
+        1,
+    )
+    click_unstyle_patch = _build_git_patch(click_unstyle_repo, "src/click/_compat.py", click_unstyle_fixed)
+    click_unstyle_prediction = {
+        "instance_id": "click-unstyle-other-ansi",
+        "system": "oracle",
+        "model_patch": click_unstyle_patch,
+        "actual_test_files": ["tests/test_termui.py"],
+        "actual_validation_commands": ["pytest -q"],
+    }
+    commander_error_repo = Path("benchmarks/patch_fixtures/commander_invalid_argument_error")
+    commander_error_source = commander_error_repo / "lib/error.js"
+    commander_error_original = commander_error_source.read_text(encoding="utf-8")
+    commander_error_fixed = commander_error_original.replace(
+        "    super(1, 'commander.invalidOptionArgument', message);\n",
+        "    super(1, 'commander.invalidArgument', message);\n",
+        1,
+    )
+    commander_error_patch = _build_git_patch(commander_error_repo, "lib/error.js", commander_error_fixed)
+    commander_error_prediction = {
+        "instance_id": "commander-invalid-argument-error-code",
+        "system": "oracle",
+        "model_patch": commander_error_patch,
+        "actual_test_files": ["tests/error.test.js"],
+        "actual_validation_commands": ["node --test tests/error.test.js"],
+    }
 
     payload = bakeoff_module.build_patch_bakeoff_payload(
         bakeoff_scenarios,
-        [click_prediction, commander_prediction],
+        [
+            click_prediction,
+            commander_prediction,
+            click_unstyle_prediction,
+            commander_error_prediction,
+        ],
     )
 
-    assert payload["summary"]["scenario_count"] == 2
+    assert payload["summary"]["scenario_count"] == 4
     assert payload["summary"]["mean_patch_applied_rate"] == 1.0
     assert payload["summary"]["mean_validation_pass_rate"] == 1.0
     assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0

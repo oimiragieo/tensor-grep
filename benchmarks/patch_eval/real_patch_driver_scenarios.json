@@ -13,6 +13,20 @@
       "query_or_symbol": "humanReadableArgName",
       "mode": "blast-radius",
       "problem_statement": "Fix humanReadableArgName so required arguments use angle brackets and optional arguments use square brackets."
+    },
+    {
+      "instance_id": "click-unstyle-other-ansi",
+      "repo_fixture": "../patch_fixtures/click_unstyle_ansi",
+      "query_or_symbol": "unstyle",
+      "mode": "blast-radius",
+      "problem_statement": "Fix unstyle so ANSI cursor visibility escape sequences are stripped and the termui tests pass."
+    },
+    {
+      "instance_id": "commander-invalid-argument-error-code",
+      "repo_fixture": "../patch_fixtures/commander_invalid_argument_error",
+      "query_or_symbol": "InvalidArgumentError",
+      "mode": "blast-radius",
+      "problem_statement": "Fix InvalidArgumentError so it uses the commander.invalidArgument code."
     }
   ]
 }

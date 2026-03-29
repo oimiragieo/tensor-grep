@@ -41,6 +41,48 @@
       "expected_validation_commands_contain": [
         "node --test"
       ]
+    },
+    {
+      "instance_id": "click-unstyle-other-ansi",
+      "repo_fixture": "../patch_fixtures/click_unstyle_ansi",
+      "expected_primary_file": "src/click/_compat.py",
+      "expected_primary_span": {
+        "start_line": 5,
+        "end_line": 8
+      },
+      "expected_changed_files": [
+        "src/click/_compat.py"
+      ],
+      "expected_test_files": [
+        "tests/test_termui.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_termui.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest -q"
+      ]
+    },
+    {
+      "instance_id": "commander-invalid-argument-error-code",
+      "repo_fixture": "../patch_fixtures/commander_invalid_argument_error",
+      "expected_primary_file": "lib/error.js",
+      "expected_primary_span": {
+        "start_line": 11,
+        "end_line": 16
+      },
+      "expected_changed_files": [
+        "lib/error.js"
+      ],
+      "expected_test_files": [
+        "tests/error.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/error.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test"
+      ]
     }
   ]
 }
