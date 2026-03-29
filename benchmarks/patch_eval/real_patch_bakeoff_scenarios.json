@@ -125,6 +125,50 @@
       "expected_validation_commands_contain": [
         "pytest -q"
       ]
+    },
+    {
+      "instance_id": "click-abort-raises-abort",
+      "repo_fixture": "../patch_fixtures/click_abort",
+      "expected_primary_file": "src/click/core.py",
+      "expected_primary_span": {
+        "start_line": 7,
+        "end_line": 9
+      },
+      "expected_changed_files": [
+        "src/click/core.py"
+      ],
+      "expected_test_files": [
+        "tests/test_commands.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_commands.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_commands.py -q",
+        "-q"
+      ]
+    },
+    {
+      "instance_id": "commander-strip-color-implicit-reset",
+      "repo_fixture": "../patch_fixtures/commander_strip_color",
+      "expected_primary_file": "lib/help.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 5
+      },
+      "expected_changed_files": [
+        "lib/help.js"
+      ],
+      "expected_test_files": [
+        "tests/help.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/help.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test",
+        "tests/help.test.js"
+      ]
     }
   ]
 }

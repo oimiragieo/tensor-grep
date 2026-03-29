@@ -41,6 +41,20 @@
       "query_or_symbol": "style",
       "mode": "blast-radius",
       "problem_statement": "Fix style so non-string values are coerced to strings before ANSI styling is applied."
+    },
+    {
+      "instance_id": "click-abort-raises-abort",
+      "repo_fixture": "../patch_fixtures/click_abort",
+      "query_or_symbol": "Abort",
+      "mode": "blast-radius",
+      "problem_statement": "Fix Context.abort so it raises click.Abort."
+    },
+    {
+      "instance_id": "commander-strip-color-implicit-reset",
+      "repo_fixture": "../patch_fixtures/commander_strip_color",
+      "query_or_symbol": "stripColor",
+      "mode": "blast-radius",
+      "problem_statement": "Fix stripColor so it removes ANSI implicit reset sequences like ESC[m."
     }
   ]
 }

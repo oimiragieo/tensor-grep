@@ -2891,8 +2891,8 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         Path("benchmarks/patch_eval/real_patch_bakeoff_scenarios.json")
     )
 
-    assert len(driver_scenarios) == 6
-    assert len(bakeoff_scenarios) == 6
+    assert len(driver_scenarios) == 8
+    assert len(bakeoff_scenarios) == 8
 
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3019,6 +3019,40 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_utils.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    click_abort_repo = Path("benchmarks/patch_fixtures/click_abort")
+    click_abort_source = click_abort_repo / "src/click/core.py"
+    click_abort_original = click_abort_source.read_text(encoding="utf-8")
+    click_abort_fixed = click_abort_original.replace(
+        '        raise RuntimeError("aborted")\n',
+        "        raise Abort()\n",
+        1,
+    )
+    click_abort_patch = _build_git_patch(click_abort_repo, "src/click/core.py", click_abort_fixed)
+    click_abort_prediction = {
+        "instance_id": "click-abort-raises-abort",
+        "system": "oracle",
+        "model_patch": click_abort_patch,
+        "actual_test_files": ["tests/test_commands.py"],
+        "actual_validation_commands": ["pytest -q"],
+    }
+    commander_strip_repo = Path("benchmarks/patch_fixtures/commander_strip_color")
+    commander_strip_source = commander_strip_repo / "lib/help.js"
+    commander_strip_original = commander_strip_source.read_text(encoding="utf-8")
+    commander_strip_fixed = commander_strip_original.replace(
+        r"  const sgrPattern = /\x1b\[\d+(;\d+)*m/g;",
+        r"  const sgrPattern = /\x1b\[(\d+(;\d+)*)?m/g;",
+        1,
+    )
+    commander_strip_patch = _build_git_patch(
+        commander_strip_repo, "lib/help.js", commander_strip_fixed
+    )
+    commander_strip_prediction = {
+        "instance_id": "commander-strip-color-implicit-reset",
+        "system": "oracle",
+        "model_patch": commander_strip_patch,
+        "actual_test_files": ["tests/help.test.js"],
+        "actual_validation_commands": ["node --test tests/help.test.js"],
+    }
 
     payload = bakeoff_module.build_patch_bakeoff_payload(
         bakeoff_scenarios,
@@ -3029,10 +3063,12 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
             commander_error_prediction,
             click_secho_prediction,
             click_style_prediction,
+            click_abort_prediction,
+            commander_strip_prediction,
         ],
     )
 
-    assert payload["summary"]["scenario_count"] == 6
+    assert payload["summary"]["scenario_count"] == 8
     assert payload["summary"]["mean_patch_applied_rate"] == 1.0
     assert payload["summary"]["mean_validation_pass_rate"] == 1.0
     assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0
