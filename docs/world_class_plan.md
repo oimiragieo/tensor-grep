@@ -86,16 +86,18 @@ Next observability target:
 
 Current accepted first-action timing baseline:
 
-* artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_first_action_trace.json`
+* artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_post_edit_final_trace.json`
 * baseline:
-  * `first_file_change_seconds = 0.095203`
-  * `first_patch_seconds = 48.853135`
+  * `first_file_change_seconds = 0.094174`
+  * `first_patch_seconds = 36.642202`
   * `first_tg_seconds = null`
+  * `post_edit_deliberation_seconds = 36.548028`
 * enhanced:
-  * `first_file_change_seconds = 0.054514`
-  * `first_patch_seconds = 87.72348`
+  * `response_shape = meta_question`
+  * `first_file_change_seconds = null`
+  * `first_patch_seconds = null`
   * `first_tg_seconds = null`
-* accepted interpretation: on this probe, both agents reach the target file quickly; the remaining latency is mostly post-edit deliberation / patch finalization, not search
+* accepted interpretation: once the task is engaged, the remaining latency is mostly post-edit deliberation / patch finalization; when the task is not engaged, the failure is prompt-level non-engagement rather than search cost
 
 Rejected latency shortcut:
 

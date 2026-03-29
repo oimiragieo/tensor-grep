@@ -231,7 +231,9 @@ META_QUESTION_PATTERNS = (
     "what would you like me to do",
     "what task would you like me to do",
     "what task would you like me to perform",
+    "what task would you like me to work on",
     "what would you like me to help with",
+    "what would you like me to help you with",
     "you haven't specified a task",
     "you haven't provided a specific task",
     "i'm ready to help",
@@ -259,6 +261,15 @@ def first_tg_seconds(run_started_epoch_s: float, tg_trace_records: list[dict[str
     if not isinstance(first_timestamp, (int, float)):
         return None
     return round(max(0.0, float(first_timestamp) - run_started_epoch_s), 6)
+
+
+def post_edit_deliberation_seconds(
+    first_file_change_seconds: float | None,
+    first_patch_seconds: float | None,
+) -> float | None:
+    if first_file_change_seconds is None or first_patch_seconds is None:
+        return None
+    return round(max(0.0, first_patch_seconds - first_file_change_seconds), 6)
 
 
 def _watch_first_repo_change(
@@ -447,6 +458,8 @@ def run_ab_record(
             }
         )
         response_shape = classify_response_shape(notes, patch_text)
+        if not changed_files:
+            first_action["first_file_change_seconds"] = None
         if first_action["first_file_change_seconds"] is None and changed_files:
             first_action["first_file_change_seconds"] = timing["claude_seconds"]
         trace_rows.append(
@@ -459,6 +472,10 @@ def run_ab_record(
                 "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
                 "first_patch_seconds": timing["claude_seconds"] if patch_text.strip() else None,
                 "first_file_change_seconds": first_action["first_file_change_seconds"],
+                "post_edit_deliberation_seconds": post_edit_deliberation_seconds(
+                    first_action["first_file_change_seconds"],
+                    timing["claude_seconds"] if patch_text.strip() else None,
+                ),
                 "prompt_chars": len(prompt),
                 "prompt_lines": len(prompt.splitlines()),
                 "notes_chars": len(notes),

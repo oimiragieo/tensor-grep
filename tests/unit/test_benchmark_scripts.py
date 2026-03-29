@@ -4038,6 +4038,8 @@ def test_run_claude_skill_ab_should_classify_response_shape():
     module = _load_script_module("run_claude_skill_ab_response_shape_script", "benchmarks/run_claude_skill_ab.py")
 
     assert module.classify_response_shape("What would you like me to do?", "") == "meta_question"
+    assert module.classify_response_shape("What would you like me to help you with?", "") == "meta_question"
+    assert module.classify_response_shape("What task would you like me to work on?", "") == "meta_question"
     assert module.classify_response_shape("", "diff --git a/x b/x") == "direct_patch"
     assert module.classify_response_shape("Fixed the bug.", "diff --git a/x b/x") == "analysis_then_patch"
     assert module.classify_response_shape("I inspected the repo.", "") == "analysis_only"
@@ -4049,6 +4051,55 @@ def test_run_claude_skill_ab_should_compute_first_tg_seconds():
 
     assert module.first_tg_seconds(100.0, []) is None
     assert module.first_tg_seconds(100.0, [{"timestamp_epoch_s": 100.75}]) == 0.75
+
+
+def test_run_claude_skill_ab_should_compute_post_edit_deliberation_seconds():
+    module = _load_script_module("run_claude_skill_ab_post_edit_script", "benchmarks/run_claude_skill_ab.py")
+
+    assert module.post_edit_deliberation_seconds(None, 10.0) is None
+    assert module.post_edit_deliberation_seconds(0.5, None) is None
+    assert module.post_edit_deliberation_seconds(0.5, 10.0) == 9.5
+
+
+def test_run_claude_skill_ab_should_clear_transient_file_change_when_no_final_diff(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_transient_change_script", "benchmarks/run_claude_skill_ab.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+
+    def _fake_run(repo_dir, prompt, **kwargs):
+        path = Path(repo_dir) / "demo.py"
+        path.write_text("temp\n", encoding="utf-8")
+        path.write_text("old\n", encoding="utf-8")
+        return "What would you like me to do?"
+
+    monkeypatch.setattr(module, "_run_claude_command", _fake_run)
+
+    payload = module.build_payload(
+        {
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "repo_fixture": str(repo_root),
+                    "prompt": "Fix the bug.",
+                    "actual_validation_commands": ["pytest -q"],
+                }
+            ]
+        },
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        work_root=tmp_path / "work",
+    )
+
+    baseline_trace = payload["trace_records"][0]
+    assert baseline_trace["changed_file_count"] == 0
+    assert baseline_trace["first_file_change_seconds"] is None
 
 
 def test_run_claude_skill_ab_prompt_should_require_non_interactive_action(tmp_path):
@@ -4161,6 +4212,7 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert payload["trace_records"][0]["first_patch_seconds"] is None
     assert payload["trace_records"][1]["first_patch_seconds"] is not None
     assert payload["trace_records"][1]["first_file_change_seconds"] is not None
+    assert payload["trace_records"][1]["post_edit_deliberation_seconds"] is not None
     assert payload["trace_records"][1]["changed_file_count"] == 1
     assert payload["trace_records"][1]["tg_invocation_count"] == 1
     assert payload["trace_records"][1]["tg_seconds_total"] == 0.125
