@@ -51,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--work-root", default=str(DEFAULT_WORK_ROOT))
     parser.add_argument("--trace-output", default="")
     parser.add_argument("--enhanced-output-contract", choices=("standard", "terse"), default="standard")
+    parser.add_argument("--enhanced-task-contract", choices=("standard", "engage"), default="standard")
     return parser.parse_args()
 
 
@@ -135,14 +136,23 @@ def _build_claude_prompt(prompt: str, *, terse_output: bool = False) -> str:
     return f"{prefix}\n\n{prompt}".strip()
 
 
-def build_system_prompt(prompt: str, *, use_skill: bool, enhanced_output_contract: str = "standard") -> str:
+def build_system_prompt(
+    prompt: str,
+    *,
+    use_skill: bool,
+    enhanced_output_contract: str = "standard",
+    enhanced_task_contract: str = "standard",
+) -> str:
     rendered = _build_claude_prompt(prompt, terse_output=(use_skill and enhanced_output_contract == "terse"))
     if not use_skill:
         return rendered
-    skill_prefix = (
-        "Use the tensor-grep project skill and follow its workflow for this task. "
-        "Use tg against the current repository before editing when it helps target the right file or span."
-    )
+    parts = ["Use the tensor-grep project skill and follow its workflow for this task."]
+    if enhanced_task_contract == "engage":
+        parts.append(
+            "The task is already specified below. Start working on it immediately and do not ask the user what task to perform."
+        )
+    parts.append("Use tg against the current repository before editing when it helps target the right file or span.")
+    skill_prefix = " ".join(parts)
     return f"{skill_prefix}\n\n{rendered}".strip()
 
 
@@ -375,6 +385,7 @@ def run_ab_record(
     skill_dir: Path,
     work_root: Path,
     enhanced_output_contract: str,
+    enhanced_task_contract: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     source_repo = Path(str(record["repo_fixture"])).resolve()
     systems: list[tuple[str, bool]] = [("claude-baseline", False), ("claude-enhanced", True)]
@@ -402,6 +413,7 @@ def run_ab_record(
             ,
             use_skill=use_skill,
             enhanced_output_contract=enhanced_output_contract,
+            enhanced_task_contract=enhanced_task_contract,
         )
         timing["prompt_build_seconds"] = round(time.perf_counter() - phase_started, 6)
         phase_started = time.perf_counter()
@@ -477,6 +489,7 @@ def run_ab_record(
                 "system": system_name,
                 "use_skill": use_skill,
                 "enhanced_output_contract": enhanced_output_contract if use_skill else "baseline",
+                "enhanced_task_contract": enhanced_task_contract if use_skill else "baseline",
                 "response_shape": response_shape,
                 "asked_meta_question": response_shape == "meta_question",
                 "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
@@ -516,6 +529,7 @@ def build_payload(
     skill_dir: Path,
     work_root: Path,
     enhanced_output_contract: str = "standard",
+    enhanced_task_contract: str = "standard",
     limit: int = 0,
 ) -> dict[str, Any]:
     records = list(driver_payload.get("records", []))
@@ -533,6 +547,7 @@ def build_payload(
             skill_dir=skill_dir,
             work_root=work_root,
             enhanced_output_contract=enhanced_output_contract,
+            enhanced_task_contract=enhanced_task_contract,
         )
         prediction_records.extend(rows)
         trace_records.extend(trace_rows)
@@ -541,6 +556,7 @@ def build_payload(
         "trace_artifact": "claude_skill_ab_trace",
         "suite": "run_claude_skill_ab",
         "enhanced_output_contract": enhanced_output_contract,
+        "enhanced_task_contract": enhanced_task_contract,
         "generated_at_epoch_s": time.time(),
         "environment": {
             "platform": platform.system().lower(),
@@ -563,6 +579,7 @@ def main() -> int:
         skill_dir=Path(args.skill_dir).expanduser().resolve(),
         work_root=Path(args.work_root).expanduser().resolve(),
         enhanced_output_contract=args.enhanced_output_contract,
+        enhanced_task_contract=args.enhanced_task_contract,
         limit=args.limit,
     )
     output_path = Path(args.output).expanduser().resolve()

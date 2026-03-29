@@ -117,6 +117,17 @@ Rejected output-contract candidate:
   * total wall clock increased to `102.927492`
 * accepted decision: keep the harness support, reject `terse` as the default enhanced contract
 
+Rejected task-contract candidate:
+
+* harness now supports `enhanced_task_contract = standard | engage` for controlled experiments
+* first engage probe artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_engage_trace.json`
+* result:
+  * enhanced no longer returned a `meta_question`
+  * enhanced produced the correct patch
+  * but `post_edit_deliberation_seconds` still increased to `56.017607`
+  * total wall clock increased to `56.423431`
+* accepted decision: keep the harness support, reject `engage` as the default enhanced contract until a broader slice shows a net win
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
