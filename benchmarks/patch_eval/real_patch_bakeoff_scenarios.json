@@ -213,6 +213,50 @@
         "node --test",
         "options.dual-options.test.js"
       ]
+    },
+    {
+      "instance_id": "click-choice-invalid-message",
+      "repo_fixture": "../patch_fixtures/click_choice_invalid_message",
+      "expected_primary_file": "src/click/types.py",
+      "expected_primary_span": {
+        "start_line": 6,
+        "end_line": 30
+      },
+      "expected_changed_files": [
+        "src/click/types.py"
+      ],
+      "expected_test_files": [
+        "tests/test_types.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_types.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_types.py -q",
+        "-q"
+      ]
+    },
+    {
+      "instance_id": "commander-use-color-env-conventions",
+      "repo_fixture": "../patch_fixtures/commander_use_color",
+      "expected_primary_file": "lib/command.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 5
+      },
+      "expected_changed_files": [
+        "lib/command.js"
+      ],
+      "expected_test_files": [
+        "tests/useColor.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/useColor.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test",
+        "tests/useColor.test.js"
+      ]
     }
   ]
 }

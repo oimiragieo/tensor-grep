@@ -21,7 +21,7 @@ Weak or unfinished:
 * `lsp` / `hybrid` do not currently improve benchmark outcomes
 * the enhanced agent path is more accurate but still slower than the plain agent baseline
 * observability is still incomplete at the command-decision level
-* there is still no broad accepted end-to-end corpus beyond the current 10-scenario real patch pack
+* there is still no broad accepted end-to-end corpus beyond the current 12-scenario real patch pack
 
 ## TDD Execution Policy
 
@@ -49,9 +49,9 @@ The same rule now applies to skill and prompt changes:
 
 Current accepted real patch benchmark baseline:
 
-* hard real patch pack: `10` repo-backed scenarios
+* hard real patch pack: `12` repo-backed scenarios
 * oracle: validated by the fixture/oracle unit gate at `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
-* Claude direct-edit-first runner on the `10`-scenario pack: `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
+* Claude direct-edit-first runner on the accepted earlier `10`-scenario pack: `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
 * Copilot comparative baseline: last full rerun remains the older `8`-scenario pack at `0.625 / 0.625`
 * Gemini comparative baseline: last full rerun remains the older `8`-scenario pack at `0.0 / 0.0`
 
@@ -180,6 +180,15 @@ Rejected default-promotion probe:
     * no correctness loss
     * a real latency win
 
+Accepted corpus expansion:
+
+* the hard real patch pack now includes `12` committed scenarios
+* two new validator-backed fixtures landed:
+  * `click-choice-invalid-message`
+  * `commander-use-color-env-conventions`
+* both direct fixture tests fail in the intended historical state
+* the oracle scorer test passes on the expanded pack
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
@@ -191,49 +200,41 @@ The next proof step is not another generic patch heuristic. It is expanding the 
 
 Near-term acceptance order:
 
-1. run the Claude contract matrix on a 5-task slice
-2. reject any candidate that loses correctness anywhere on that slice
-3. expand the contract space or corpus instead of promoting `probe-standard-engage`
-4. only promote a new default after a full 10-task run shows both:
+1. expand the real patch corpus again, biased toward multi-file and ambiguity cases
+2. keep the current enhanced default until a new full-pack probe shows both:
    * no correctness loss
    * lower mean wall clock than the accepted enhanced baseline
+3. rerun same-pack competitor lines after the accepted corpus is stable
+4. only then promote a new default probe or scorecard claim
 
 ## Next TDD Finish Plan
 
 The next execution line to finish this codebase should be:
 
-1. default-contract finish line
-   * red:
-     * run the checkpointed 5-task Claude contract matrix
-     * treat any corner that loses a single task as rejected
-   * green:
-     * if `terse/engage` stays lossless and cheapest, add it as the next explicit default-probe mode
-   * benchmark gate:
-     * rerun the full 10-task Claude A/B and keep it only if correctness stays at least equal to the accepted enhanced baseline
-
-2. broader corpus finish line
+1. broader corpus finish line
    * red:
      * add at least 5 more real repo-backed patch scenarios, biased toward multi-file and ambiguity cases
    * green:
      * keep only fixture expansions that pass the oracle gate cleanly
    * benchmark gate:
      * rerun Claude baseline vs enhanced on the expanded corpus
+     * rerun competitor baselines only on the same accepted corpus
 
-3. agent-speed finish line
+2. agent-speed finish line
    * red:
-     * trace the promoted default probe on the 10-task pack
+     * trace any new default-probe candidate on the accepted corpus
    * green:
      * reduce `meta_question_rate` to `0.0`
      * reduce post-edit deliberation without losing correctness
    * benchmark gate:
      * compare against the accepted `claude-enhanced` baseline, not memory
 
-4. comparative finish line
+3. comparative finish line
    * rerun Copilot and Gemini on the current accepted real patch pack
    * rerun user-style A/B only after the Claude default probe is accepted
    * update scorecards only from completed, same-pack runs
 
-5. precision and test-targeting finish line
+4. precision and test-targeting finish line
    * use the expanded corpus failures to drive:
      * Python dependent-file precision
      * Rust test targeting when host support is available

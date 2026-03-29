@@ -2893,8 +2893,8 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         Path("benchmarks/patch_eval/real_patch_bakeoff_scenarios.json")
     )
 
-    assert len(driver_scenarios) == 10
-    assert len(bakeoff_scenarios) == 10
+    assert len(driver_scenarios) == 12
+    assert len(bakeoff_scenarios) == 12
 
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -3091,6 +3091,55 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/options.dual-options.test.js"],
         "actual_validation_commands": ["node --test tests/options.dual-options.test.js"],
     }
+    click_choice_repo = Path("benchmarks/patch_fixtures/click_choice_invalid_message")
+    click_choice_source = click_choice_repo / "src/click/types.py"
+    click_choice_original = click_choice_source.read_text(encoding="utf-8")
+    click_choice_fixed = click_choice_original.replace(
+        "        choices_str = \", \".join(map(repr, self.choices))\n"
+        "        raise ValueError(f\"{value!r} is not one of {choices_str}.\")\n",
+        "        raise ValueError(self.get_invalid_choice_message(value, ctx=ctx))\n\n"
+        "    def get_invalid_choice_message(self, value: t.Any, ctx: t.Any) -> str:\n"
+        "        choices_str = \", \".join(map(repr, self.choices))\n"
+        "        return f\"{value!r} is not one of {choices_str}.\"\n",
+        1,
+    )
+    click_choice_patch = _build_git_patch(
+        click_choice_repo, "src/click/types.py", click_choice_fixed
+    )
+    click_choice_prediction = {
+        "instance_id": "click-choice-invalid-message",
+        "system": "oracle",
+        "model_patch": click_choice_patch,
+        "actual_test_files": ["tests/test_types.py"],
+        "actual_validation_commands": ["pytest -q"],
+    }
+    commander_color_repo = Path("benchmarks/patch_fixtures/commander_use_color")
+    commander_color_source = commander_color_repo / "lib/command.js"
+    commander_color_original = commander_color_source.read_text(encoding="utf-8")
+    commander_color_fixed = commander_color_original.replace(
+        "function useColor() {\n"
+        "  if (process.env.NO_COLOR !== undefined) return false;\n"
+        "  if (process.env.FORCE_COLOR || process.env.CLICOLOR_FORCE) return true;\n"
+        "  return undefined;\n"
+        "}\n",
+        "function useColor() {\n"
+        "  if (process.env.NO_COLOR) return false;\n"
+        "  if (process.env.FORCE_COLOR === '0' || process.env.FORCE_COLOR === 'false') return false;\n"
+        "  if (process.env.FORCE_COLOR || process.env.CLICOLOR_FORCE !== undefined) return true;\n"
+        "  return undefined;\n"
+        "}\n",
+        1,
+    )
+    commander_color_patch = _build_git_patch(
+        commander_color_repo, "lib/command.js", commander_color_fixed
+    )
+    commander_color_prediction = {
+        "instance_id": "commander-use-color-env-conventions",
+        "system": "oracle",
+        "model_patch": commander_color_patch,
+        "actual_test_files": ["tests/useColor.test.js"],
+        "actual_validation_commands": ["node --test tests/useColor.test.js"],
+    }
 
     payload = bakeoff_module.build_patch_bakeoff_payload(
         bakeoff_scenarios,
@@ -3105,10 +3154,12 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
             click_binary_prediction,
             commander_strip_prediction,
             commander_dual_prediction,
+            click_choice_prediction,
+            commander_color_prediction,
         ],
     )
 
-    assert payload["summary"]["scenario_count"] == 10
+    assert payload["summary"]["scenario_count"] == 12
     assert payload["summary"]["mean_patch_applied_rate"] == 1.0
     assert payload["summary"]["mean_validation_pass_rate"] == 1.0
     assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0

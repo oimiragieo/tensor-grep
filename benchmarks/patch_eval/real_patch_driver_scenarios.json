@@ -69,6 +69,20 @@
       "query_or_symbol": "DualOptions",
       "mode": "blast-radius",
       "problem_statement": "Fix DualOptions so unrelated positive and negative options are not treated as dual options."
+    },
+    {
+      "instance_id": "click-choice-invalid-message",
+      "repo_fixture": "../patch_fixtures/click_choice_invalid_message",
+      "query_or_symbol": "Choice",
+      "mode": "blast-radius",
+      "problem_statement": "Fix Choice so invalid choices expose get_invalid_choice_message and produce the current invalid-choice message."
+    },
+    {
+      "instance_id": "commander-use-color-env-conventions",
+      "repo_fixture": "../patch_fixtures/commander_use_color",
+      "query_or_symbol": "useColor",
+      "mode": "blast-radius",
+      "problem_statement": "Fix useColor so it follows current NO_COLOR, FORCE_COLOR, and CLICOLOR_FORCE conventions."
     }
   ]
 }
