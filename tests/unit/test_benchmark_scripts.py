@@ -4044,6 +4044,13 @@ def test_run_claude_skill_ab_should_classify_response_shape():
     assert module.classify_response_shape("", "") == "empty"
 
 
+def test_run_claude_skill_ab_should_compute_first_tg_seconds():
+    module = _load_script_module("run_claude_skill_ab_first_tg_script", "benchmarks/run_claude_skill_ab.py")
+
+    assert module.first_tg_seconds(100.0, []) is None
+    assert module.first_tg_seconds(100.0, [{"timestamp_epoch_s": 100.75}]) == 0.75
+
+
 def test_run_claude_skill_ab_prompt_should_require_non_interactive_action(tmp_path):
     module = _load_script_module("run_claude_skill_ab_prompt_script", "benchmarks/run_claude_skill_ab.py")
 
@@ -4107,7 +4114,7 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
             assert (Path(repo_dir) / "CLAUDE.md").exists()
             (Path(repo_dir) / "demo.py").write_text("new\n", encoding="utf-8")
             Path(kwargs["extra_env"]["TENSOR_GREP_TRACE_LOG"]).write_text(
-                '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.125}\n',
+                '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.125,"timestamp_epoch_s":100.125}\n',
                 encoding="utf-8",
             )
         return "ok"
@@ -4151,9 +4158,13 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert payload["trace_records"][0]["response_shape"] == "analysis_only"
     assert payload["trace_records"][1]["response_shape"] == "analysis_then_patch"
     assert payload["trace_records"][1]["asked_meta_question"] is False
+    assert payload["trace_records"][0]["first_patch_seconds"] is None
+    assert payload["trace_records"][1]["first_patch_seconds"] is not None
+    assert payload["trace_records"][1]["first_file_change_seconds"] is not None
     assert payload["trace_records"][1]["changed_file_count"] == 1
     assert payload["trace_records"][1]["tg_invocation_count"] == 1
     assert payload["trace_records"][1]["tg_seconds_total"] == 0.125
+    assert payload["trace_records"][1]["first_tg_seconds"] is not None
     assert payload["trace_records"][1]["tg_trace_records"][0]["argv"] == ["tg", "defs", "Demo"]
     assert "claude_seconds" in payload["trace_records"][0]["timing"]
 

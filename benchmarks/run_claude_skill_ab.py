@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -251,6 +252,38 @@ def classify_response_shape(notes: str, patch_text: str) -> str:
     return "empty"
 
 
+def first_tg_seconds(run_started_epoch_s: float, tg_trace_records: list[dict[str, Any]]) -> float | None:
+    if not tg_trace_records:
+        return None
+    first_timestamp = tg_trace_records[0].get("timestamp_epoch_s")
+    if not isinstance(first_timestamp, (int, float)):
+        return None
+    return round(max(0.0, float(first_timestamp) - run_started_epoch_s), 6)
+
+
+def _watch_first_repo_change(
+    before_root: Path,
+    repo_root: Path,
+    run_started: float,
+    result: dict[str, float | None],
+    stop_event: threading.Event,
+    poll_interval_s: float = 0.05,
+) -> None:
+    while not stop_event.is_set():
+        changed = any(
+            (
+                not (before_root / path.relative_to(repo_root)).exists()
+                or path.read_bytes() != (before_root / path.relative_to(repo_root)).read_bytes()
+            )
+            for path in repo_root.rglob("*")
+            if path.is_file()
+        )
+        if changed:
+            result["first_file_change_seconds"] = round(time.perf_counter() - run_started, 6)
+            return
+        stop_event.wait(poll_interval_s)
+
+
 def prepare_persistent_repo_copy(
     source_repo: Path,
     work_root: Path,
@@ -330,9 +363,11 @@ def run_ab_record(
     trace_rows: list[dict[str, Any]] = []
     for system_name, use_skill in systems:
         started = time.perf_counter()
+        started_epoch_s = time.time()
         notes = ""
         timing: dict[str, float] = {}
         tg_trace_records: list[dict[str, Any]] = []
+        first_action: dict[str, float | None] = {"first_file_change_seconds": None}
         phase_started = time.perf_counter()
         before_root, repo_root = prepare_persistent_repo_copy(
             source_repo,
@@ -361,6 +396,13 @@ def run_ab_record(
                 "TENSOR_GREP_TRACE_LOG": str(tg_log_path),
             }
         timing["skill_setup_seconds"] = round(time.perf_counter() - phase_started, 6)
+        monitor_stop = threading.Event()
+        monitor_thread = threading.Thread(
+            target=_watch_first_repo_change,
+            args=(before_root, repo_root, started, first_action, monitor_stop),
+            daemon=True,
+        )
+        monitor_thread.start()
         phase_started = time.perf_counter()
         try:
             with _ephemeral_repo_instructions(repo_root):
@@ -378,6 +420,8 @@ def run_ab_record(
         except subprocess.CalledProcessError as exc:
             notes = (exc.stderr or exc.output or str(exc)).strip()
         timing["claude_seconds"] = round(time.perf_counter() - phase_started, 6)
+        monitor_stop.set()
+        monitor_thread.join(timeout=1)
         if use_skill:
             tg_trace_records = load_tg_trace_records(tg_log_path)
         phase_started = time.perf_counter()
@@ -403,6 +447,8 @@ def run_ab_record(
             }
         )
         response_shape = classify_response_shape(notes, patch_text)
+        if first_action["first_file_change_seconds"] is None and changed_files:
+            first_action["first_file_change_seconds"] = timing["claude_seconds"]
         trace_rows.append(
             {
                 "instance_id": str(record["instance_id"]),
@@ -410,6 +456,9 @@ def run_ab_record(
                 "use_skill": use_skill,
                 "response_shape": response_shape,
                 "asked_meta_question": response_shape == "meta_question",
+                "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
+                "first_patch_seconds": timing["claude_seconds"] if patch_text.strip() else None,
+                "first_file_change_seconds": first_action["first_file_change_seconds"],
                 "prompt_chars": len(prompt),
                 "prompt_lines": len(prompt.splitlines()),
                 "notes_chars": len(notes),

@@ -84,6 +84,19 @@ Next observability target:
   * first file change
 * accepted reason: response shape alone tells us what failed; first-action timing tells us how long the agent spent before doing something useful
 
+Current accepted first-action timing baseline:
+
+* artifact: `artifacts/patch_eval_demo/claude_skill_ab_limit1_first_action_trace.json`
+* baseline:
+  * `first_file_change_seconds = 0.095203`
+  * `first_patch_seconds = 48.853135`
+  * `first_tg_seconds = null`
+* enhanced:
+  * `first_file_change_seconds = 0.054514`
+  * `first_patch_seconds = 87.72348`
+  * `first_tg_seconds = null`
+* accepted interpretation: on this probe, both agents reach the target file quickly; the remaining latency is mostly post-edit deliberation / patch finalization, not search
+
 Rejected latency shortcut:
 
 * candidate: tell the enhanced path to skip `tg` whenever the task prompt already names the target file
