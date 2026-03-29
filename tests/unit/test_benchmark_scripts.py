@@ -4503,6 +4503,54 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
     ]
 
 
+def test_run_claude_skill_ab_matrix_should_write_checkpoint_per_experiment(monkeypatch, tmp_path):
+    module = _load_script_module("run_claude_skill_ab_matrix_checkpoint_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    driver_path = tmp_path / "driver.json"
+    scenarios_path = tmp_path / "scenarios.json"
+    output_path = tmp_path / "matrix.json"
+    driver_path.write_text(json.dumps({"records": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+    scenarios_path.write_text(json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+
+    monkeypatch.setattr(module.ab_runner, "load_driver_payload", lambda path: {"records": [{"instance_id": "demo-1"}]})
+    monkeypatch.setattr(module.patch_bakeoff, "load_patch_scenarios", lambda path: [{"instance_id": "demo-1"}])
+    monkeypatch.setattr(
+        module.ab_runner,
+        "build_payload",
+        lambda *_args, **_kwargs: {"records": [], "trace_records": []},
+    )
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "build_patch_bakeoff_payload",
+        lambda scenarios, predictions: {"summary": {"scenario_count": len(predictions)}, "rows": []},
+    )
+
+    writes: list[int] = []
+
+    def _fake_write_json(path, payload):
+        if Path(path) == output_path:
+            writes.append(int(payload["experiment_count"]))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    payload = module.build_matrix_payload(
+        input_path=driver_path,
+        scenarios_path=scenarios_path,
+        model="",
+        permission_mode="bypassPermissions",
+        timeout_seconds=30,
+        skill_dir=tmp_path / "skill",
+        work_root=tmp_path / "work",
+        limit=1,
+        output_contracts=["standard", "terse"],
+        task_contracts=["standard"],
+        output_path=output_path,
+        resume=False,
+    )
+
+    assert payload["experiment_count"] == 2
+    assert writes == [1, 2]
+
+
 def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
     module = _load_script_module("render_claude_skill_ab_matrix_script", "benchmarks/render_claude_skill_ab_matrix.py")
     payload_path = tmp_path / "matrix.json"

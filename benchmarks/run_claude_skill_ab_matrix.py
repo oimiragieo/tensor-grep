@@ -160,6 +160,11 @@ def load_existing_experiments(path: Path) -> list[dict[str, Any]]:
     return [dict(experiment) for experiment in experiments if isinstance(experiment, dict)]
 
 
+def write_checkpoint(output_path: Path, experiments: list[dict[str, Any]]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(output_path, build_partial_payload(experiments))
+
+
 def build_matrix_payload(
     *,
     input_path: Path,
@@ -208,8 +213,7 @@ def build_matrix_payload(
             }
         )
         if output_path is not None:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            write_json(output_path, build_partial_payload(experiments))
+            write_checkpoint(output_path, experiments)
     return build_partial_payload(experiments)
 
 
