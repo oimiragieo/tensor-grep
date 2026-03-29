@@ -4105,6 +4105,8 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     )
 
     assert payload["artifact"] == "claude_skill_ab"
+    assert payload["trace_artifact"] == "claude_skill_ab_trace"
+    assert len(payload["trace_records"]) == 2
     assert [record["system"] for record in payload["records"]] == [
         "claude-baseline",
         "claude-enhanced",
@@ -4116,6 +4118,10 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert "edit the repository files directly" in calls[0][2]
     assert "Use the tensor-grep project skill" not in calls[0][2]
     assert "Use the tensor-grep project skill" in calls[1][2]
+    assert payload["trace_records"][0]["use_skill"] is False
+    assert payload["trace_records"][1]["use_skill"] is True
+    assert payload["trace_records"][1]["changed_file_count"] == 1
+    assert "claude_seconds" in payload["trace_records"][0]["timing"]
 
 
 def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypatch, tmp_path):
@@ -4175,6 +4181,14 @@ def test_run_claude_skill_ab_should_omit_model_flag_when_model_is_empty(monkeypa
     )
 
     assert "--model" not in calls[0]
+
+
+def test_run_claude_skill_ab_default_trace_output_path():
+    module = _load_script_module("run_claude_skill_ab_trace_path_script", "benchmarks/run_claude_skill_ab.py")
+
+    trace_path = module.default_trace_output_path(Path("C:/tmp/result.json"))
+
+    assert trace_path == Path("C:/tmp/result_trace.json")
 
 
 def test_tensor_grep_claude_skill_should_require_non_interactive_action():

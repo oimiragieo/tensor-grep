@@ -31,6 +31,10 @@ def default_output_path() -> Path:
     return ROOT_DIR / "artifacts" / "claude_skill_ab.json"
 
 
+def default_trace_output_path(output_path: Path) -> Path:
+    return output_path.with_name(f"{output_path.stem}_trace.json")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run Claude baseline vs Claude + tensor-grep skill on the same task."
@@ -43,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--skill-dir", default=str(DEFAULT_SKILL_DIR))
     parser.add_argument("--work-root", default=str(DEFAULT_WORK_ROOT))
+    parser.add_argument("--trace-output", default="")
     return parser.parse_args()
 
 
@@ -226,27 +231,36 @@ def run_ab_record(
     timeout_seconds: int,
     skill_dir: Path,
     work_root: Path,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     source_repo = Path(str(record["repo_fixture"])).resolve()
     systems: list[tuple[str, bool]] = [("claude-baseline", False), ("claude-enhanced", True)]
     rows: list[dict[str, Any]] = []
+    trace_rows: list[dict[str, Any]] = []
     for system_name, use_skill in systems:
         started = time.perf_counter()
         notes = ""
+        timing: dict[str, float] = {}
+        phase_started = time.perf_counter()
         before_root, repo_root = prepare_persistent_repo_copy(
             source_repo,
             work_root,
             str(record["instance_id"]),
             system_name,
         )
+        timing["repo_copy_seconds"] = round(time.perf_counter() - phase_started, 6)
+        phase_started = time.perf_counter()
         prompt = build_system_prompt(
             rewrite_prompt_repo_paths(str(record["prompt"]), source_repo, repo_root)
             ,
             use_skill=use_skill,
         )
+        timing["prompt_build_seconds"] = round(time.perf_counter() - phase_started, 6)
+        phase_started = time.perf_counter()
         if use_skill:
             install_skill_package(repo_root, skill_dir)
             write_claude_md(repo_root)
+        timing["skill_setup_seconds"] = round(time.perf_counter() - phase_started, 6)
+        phase_started = time.perf_counter()
         try:
             with _ephemeral_repo_instructions(repo_root):
                 stdout = _run_claude_command(
@@ -261,8 +275,18 @@ def run_ab_record(
             notes = f"timeout after {timeout_seconds}s"
         except subprocess.CalledProcessError as exc:
             notes = (exc.stderr or exc.output or str(exc)).strip()
+        timing["claude_seconds"] = round(time.perf_counter() - phase_started, 6)
+        phase_started = time.perf_counter()
         patch_text = derive_patch_from_repo_changes(before_root, repo_root)
+        timing["diff_seconds"] = round(time.perf_counter() - phase_started, 6)
         wall_clock_seconds = round(time.perf_counter() - started, 6)
+        changed_files = sorted(
+            str(path.relative_to(repo_root)).replace("\\", "/")
+            for path in repo_root.rglob("*")
+            if path.is_file()
+            and (before_root / path.relative_to(repo_root)).exists()
+            and path.read_bytes() != (before_root / path.relative_to(repo_root)).read_bytes()
+        )
         rows.append(
             {
                 "instance_id": str(record["instance_id"]),
@@ -274,7 +298,24 @@ def run_ab_record(
                 "notes": notes,
             }
         )
-    return rows
+        trace_rows.append(
+            {
+                "instance_id": str(record["instance_id"]),
+                "system": system_name,
+                "use_skill": use_skill,
+                "prompt_chars": len(prompt),
+                "prompt_lines": len(prompt.splitlines()),
+                "notes_chars": len(notes),
+                "patch_chars": len(patch_text),
+                "emitted_patch": bool(patch_text.strip()),
+                "changed_file_count": len(changed_files),
+                "changed_files": changed_files,
+                "actual_validation_command_count": len(record.get("actual_validation_commands", [])),
+                "actual_test_file_count": len(record.get("actual_test_files", [])),
+                "timing": {**timing, "total_seconds": wall_clock_seconds},
+            }
+        )
+    return rows, trace_rows
 
 
 def build_payload(
@@ -291,20 +332,22 @@ def build_payload(
     if limit > 0:
         records = records[:limit]
     prediction_records: list[dict[str, Any]] = []
+    trace_records: list[dict[str, Any]] = []
     work_root.mkdir(parents=True, exist_ok=True)
     for record in records:
-        prediction_records.extend(
-            run_ab_record(
-                dict(record),
-                model=model,
-                permission_mode=permission_mode,
-                timeout_seconds=timeout_seconds,
-                skill_dir=skill_dir,
-                work_root=work_root,
-            )
+        rows, trace_rows = run_ab_record(
+            dict(record),
+            model=model,
+            permission_mode=permission_mode,
+            timeout_seconds=timeout_seconds,
+            skill_dir=skill_dir,
+            work_root=work_root,
         )
+        prediction_records.extend(rows)
+        trace_records.extend(trace_rows)
     return {
         "artifact": "claude_skill_ab",
+        "trace_artifact": "claude_skill_ab_trace",
         "suite": "run_claude_skill_ab",
         "generated_at_epoch_s": time.time(),
         "environment": {
@@ -313,6 +356,7 @@ def build_payload(
             "python_version": platform.python_version(),
         },
         "records": prediction_records,
+        "trace_records": trace_records,
     }
 
 
@@ -331,6 +375,21 @@ def main() -> int:
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(output_path, payload)
+    trace_output_path = (
+        Path(args.trace_output).expanduser().resolve()
+        if args.trace_output
+        else default_trace_output_path(output_path)
+    )
+    write_json(
+        trace_output_path,
+        {
+            "artifact": payload["trace_artifact"],
+            "suite": payload["suite"],
+            "generated_at_epoch_s": payload["generated_at_epoch_s"],
+            "environment": payload["environment"],
+            "records": payload["trace_records"],
+        },
+    )
     print(f"Results written to {output_path}")
     return 0
 
