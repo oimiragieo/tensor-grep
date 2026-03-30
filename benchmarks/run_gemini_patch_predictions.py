@@ -109,18 +109,28 @@ def _extract_response_text(stdout: str) -> str:
 
 
 def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
-    with contextlib.suppress(Exception):
-        if platform.system().lower().startswith("win"):
+    if platform.system().lower().startswith("win"):
+        try:
             subprocess.run(
                 ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=5,
             )
-        else:
+        except Exception:
+            with contextlib.suppress(Exception):
+                proc.kill()
+    else:
+        with contextlib.suppress(Exception):
             proc.kill()
-    with contextlib.suppress(Exception):
+    try:
         proc.wait(timeout=5)
+    except Exception:
+        with contextlib.suppress(Exception):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=1)
 
 
 def _run_gemini_command(

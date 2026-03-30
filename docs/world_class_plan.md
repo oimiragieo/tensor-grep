@@ -135,6 +135,7 @@ Accepted comparison-surface upgrade:
 * matrix runner now checkpoints after each experiment via an explicit helper and supports `--resume`
 * user-style Claude A/B runner now also checkpoints and resumes at record granularity
 * Copilot and Gemini patch prediction runners now also checkpoint and resume at record granularity
+* Gemini's Windows timeout path is now bounded closely enough to the configured timeout to make resumed same-pack reruns practical
 * it reuses:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
@@ -242,7 +243,7 @@ The next execution line to finish this codebase should be:
 
 3. comparative finish line
    * Copilot same-pack rerun is now complete on the accepted 12-scenario real patch pack
-   * Gemini same-pack rerun remains open because vendor timeouts dominate first-record runtime even after resume support
+   * Gemini same-pack rerun remains open because vendor timeouts still dominate quality, but the timeout-path leak is now fixed and resumed runs are practical
    * rerun user-style A/B only after the Claude default probe is accepted
    * update scorecards only from completed, same-pack runs
 

@@ -3764,6 +3764,9 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(m
             calls.append(("communicate", timeout))
             raise module.subprocess.TimeoutExpired(cmd="gemini", timeout=timeout)
 
+        def kill(self):
+            calls.append(("kill", None))
+
         def wait(self, timeout=None):
             calls.append(("wait", timeout))
             return 0
@@ -3773,7 +3776,8 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(m
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda *args, **kwargs: calls.append(("taskkill", list(args[0]))) or type("Proc", (), {"returncode": 0})(),
+        lambda *args, **kwargs: calls.append(("taskkill", (list(args[0]), kwargs.get("timeout"))))
+        or type("Proc", (), {"returncode": 0})(),
     )
 
     try:
@@ -3784,7 +3788,34 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(m
         raise AssertionError("expected timeout")
 
     assert ("communicate", 7) in calls
-    assert any(call[0] == "taskkill" and "/PID" in call[1] for call in calls)
+    assert any(call[0] == "taskkill" and "/PID" in call[1][0] and call[1][1] == 5 for call in calls)
+
+
+def test_run_gemini_patch_predictions_should_fallback_to_kill_when_taskkill_hangs(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_patch_predictions_kill_fallback_script", "benchmarks/run_gemini_patch_predictions.py")
+    calls: list[tuple[str, object]] = []
+
+    class FakeProc:
+        pid = 4242
+        returncode = None
+
+        def kill(self):
+            calls.append(("kill", None))
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return 0
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(module.subprocess.TimeoutExpired(cmd="taskkill", timeout=5)),
+    )
+
+    module._terminate_process_tree(FakeProc())
+
+    assert ("kill", None) in calls
+    assert ("wait", 5) in calls
 
 
 def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
