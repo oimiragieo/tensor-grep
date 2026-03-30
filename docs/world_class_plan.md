@@ -52,8 +52,8 @@ Current accepted real patch benchmark baseline:
 * hard real patch pack: `12` repo-backed scenarios
 * oracle: validated by the fixture/oracle unit gate at `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
 * Claude direct-edit-first runner on the accepted earlier `10`-scenario pack: `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
-* Copilot comparative baseline: last full rerun remains the older `8`-scenario pack at `0.625 / 0.625`
-* Gemini comparative baseline: last full rerun remains the older `8`-scenario pack at `0.0 / 0.0`
+* Copilot comparative baseline: accepted same-pack `12`-scenario rerun now exists at `0.5 / 0.5`
+* Gemini comparative baseline: last full completed rerun still remains the older `8`-scenario pack at `0.0 / 0.0`; the resumable `12`-scenario line is still timeout-dominated on this host
 
 Current accepted user-style Claude A/B baseline:
 
@@ -134,6 +134,7 @@ Accepted comparison-surface upgrade:
 * reporting surface now includes `benchmarks/render_claude_skill_ab_matrix.py`
 * matrix runner now checkpoints after each experiment via an explicit helper and supports `--resume`
 * user-style Claude A/B runner now also checkpoints and resumes at record granularity
+* Copilot and Gemini patch prediction runners now also checkpoint and resume at record granularity
 * it reuses:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
@@ -240,7 +241,8 @@ The next execution line to finish this codebase should be:
       * compare against the accepted `claude-enhanced` baseline, not memory
 
 3. comparative finish line
-   * rerun Copilot and Gemini on the current accepted 12-scenario real patch pack
+   * Copilot same-pack rerun is now complete on the accepted 12-scenario real patch pack
+   * Gemini same-pack rerun remains open because vendor timeouts dominate first-record runtime even after resume support
    * rerun user-style A/B only after the Claude default probe is accepted
    * update scorecards only from completed, same-pack runs
 
