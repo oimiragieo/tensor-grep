@@ -4069,6 +4069,7 @@ def test_run_claude_skill_ab_should_write_claude_md(tmp_path):
     assert guidance_path == repo_root / "CLAUDE.md"
     text = guidance_path.read_text(encoding="utf-8")
     assert "Use the tensor-grep project skill" in text
+    assert "Do not ask what task to perform" in text
     assert "make the change directly" in text
 
 

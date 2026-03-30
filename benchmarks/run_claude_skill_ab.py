@@ -210,6 +210,7 @@ def write_claude_md(repo_root: Path) -> Path:
                 "# Claude Instructions",
                 "",
                 "Use the tensor-grep project skill for repository search, symbol lookup, blast-radius planning, and edit targeting.",
+                "The task is already specified in the prompt. Do not ask what task to perform; start working on it immediately.",
                 "When the tensor-grep skill is available, use it before editing if it will help identify the right file or span.",
                 "In non-interactive mode, do not ask for confirmation; make the change directly.",
             ]
