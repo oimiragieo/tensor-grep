@@ -3875,6 +3875,23 @@ def test_run_gemini_patch_predictions_should_run_with_isolated_home_env(monkeypa
     assert seen_env["LOCALAPPDATA"] == seen_env["HOME"]
 
 
+def test_gemini_project_context_and_skill_should_exist():
+    repo_root = Path(__file__).resolve().parents[2]
+    project_context = repo_root / "GEMINI.md"
+    skill_dir = repo_root / ".gemini" / "skills" / "tensor-grep"
+
+    assert project_context.exists()
+    assert skill_dir.joinpath("SKILL.md").exists()
+    assert skill_dir.joinpath("REFERENCE.md").exists()
+
+    context_text = project_context.read_text(encoding="utf-8")
+    skill_text = skill_dir.joinpath("SKILL.md").read_text(encoding="utf-8")
+
+    assert "Use the `tensor-grep` skill" in context_text
+    assert "Do not ask what task to perform" in context_text
+    assert "tg source SYMBOL REPO_PATH" in skill_text
+
+
 def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
     module = _load_script_module("run_gemini_patch_predictions_resume_script", "benchmarks/run_gemini_patch_predictions.py")
     output_path = tmp_path / "gemini_predictions.json"

@@ -53,7 +53,7 @@ Current accepted real patch benchmark baseline:
 * oracle: validated by the fixture/oracle unit gate at `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
 * Claude direct-edit-first runner on the accepted earlier `10`-scenario pack: `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
 * Copilot comparative baseline: accepted same-pack `12`-scenario rerun now exists at `0.5 / 0.5`
-* Gemini comparative baseline: accepted same-pack `12`-scenario rerun now exists at `0.0 / 0.0`
+* Gemini comparative baseline: accepted same-pack `12`-scenario baseline rerun now exists at `0.0 / 0.0`
 
 Current accepted user-style Claude A/B baseline:
 
@@ -137,6 +137,10 @@ Accepted comparison-surface upgrade:
 * Copilot and Gemini patch prediction runners now also checkpoint and resume at record granularity
 * Gemini's Windows timeout path is now bounded closely enough to the configured timeout to make resumed same-pack reruns practical
 * Gemini benchmark runs now use an isolated `.gemini` home that preserves auth but strips user-global `GEMINI.md` memory and MCP server config
+* repo now includes an official-shape Gemini project setup:
+  * root `GEMINI.md`
+  * `.gemini/skills/tensor-grep/SKILL.md`
+  * `.gemini/skills/tensor-grep/REFERENCE.md`
 * it reuses:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
@@ -244,9 +248,10 @@ The next execution line to finish this codebase should be:
 
 3. comparative finish line
    * Copilot same-pack rerun is now complete on the accepted 12-scenario real patch pack
-   * Gemini same-pack rerun is now complete on the accepted 12-scenario real patch pack at `0.0 / 0.0`
+   * Gemini same-pack baseline rerun is now complete on the accepted 12-scenario real patch pack at `0.0 / 0.0`
    * rerun user-style A/B only after the Claude default probe is accepted
    * update scorecards only from completed, same-pack runs
+   * next fair-comparison step is a Gemini-enhanced run that uses the committed project `GEMINI.md` + skill setup
 
 4. precision and test-targeting finish line
    * use the expanded corpus failures to drive:
