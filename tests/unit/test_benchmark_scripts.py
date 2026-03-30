@@ -3818,6 +3818,63 @@ def test_run_gemini_patch_predictions_should_fallback_to_kill_when_taskkill_hang
     assert ("wait", 5) in calls
 
 
+def test_run_gemini_patch_predictions_should_prepare_isolated_home_without_mcp(tmp_path):
+    module = _load_script_module("run_gemini_patch_predictions_isolated_home_script", "benchmarks/run_gemini_patch_predictions.py")
+    source_home = tmp_path / "source-home"
+    source_home.mkdir()
+    (source_home / "settings.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {"Exa": {"command": "exa-mcp"}},
+                "security": {"auth": {"selectedType": "oauth-personal"}},
+                "general": {"preferredEditor": "vscode"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (source_home / "oauth_creds.json").write_text("{}", encoding="utf-8")
+    (source_home / "google_accounts.json").write_text("[]", encoding="utf-8")
+    (source_home / "GEMINI.md").write_text("persona", encoding="utf-8")
+
+    isolated_root = module._prepare_isolated_gemini_home(tmp_path / "run-root", source_home)
+    isolated_settings = json.loads((isolated_root / ".gemini" / "settings.json").read_text(encoding="utf-8"))
+
+    assert "mcpServers" not in isolated_settings
+    assert isolated_settings["security"]["auth"]["selectedType"] == "oauth-personal"
+    assert (isolated_root / ".gemini" / "oauth_creds.json").exists()
+    assert not (isolated_root / ".gemini" / "GEMINI.md").exists()
+
+
+def test_run_gemini_patch_predictions_should_run_with_isolated_home_env(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_patch_predictions_env_script", "benchmarks/run_gemini_patch_predictions.py")
+    seen_env: dict[str, str] = {}
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return "{}", ""
+
+    def _fake_popen(*args, **kwargs):
+        env = kwargs["env"]
+        seen_env["HOME"] = env["HOME"]
+        seen_env["USERPROFILE"] = env["USERPROFILE"]
+        seen_env["APPDATA"] = env["APPDATA"]
+        seen_env["LOCALAPPDATA"] = env["LOCALAPPDATA"]
+        return FakeProc()
+
+    monkeypatch.setattr(module, "resolve_gemini_binary", lambda: "gemini")
+    monkeypatch.setattr(module, "_prepare_isolated_gemini_home", lambda repo_root, source_home=None: repo_root / ".gemini-home")
+    monkeypatch.setattr(module.subprocess, "Popen", _fake_popen)
+
+    module._run_gemini_command(tmp_path, "prompt", model="gemini-3-flash-preview", timeout_seconds=5)
+
+    assert seen_env["HOME"].endswith(".gemini-home")
+    assert seen_env["USERPROFILE"] == seen_env["HOME"]
+    assert seen_env["APPDATA"] == seen_env["HOME"]
+    assert seen_env["LOCALAPPDATA"] == seen_env["HOME"]
+
+
 def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
     module = _load_script_module("run_gemini_patch_predictions_resume_script", "benchmarks/run_gemini_patch_predictions.py")
     output_path = tmp_path / "gemini_predictions.json"

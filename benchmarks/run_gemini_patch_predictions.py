@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Gemini headlessly against tensor-grep patch bundles.")
     parser.add_argument("--input", required=True, help="Path to tensor-grep patch driver JSON.")
     parser.add_argument("--output", default=str(default_output_path()))
-    parser.add_argument("--model", default="gemini-2.5-flash")
+    parser.add_argument("--model", default="gemini-3-flash-preview")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--resume", action="store_true", help="Resume from an existing predictions artifact.")
@@ -57,6 +57,31 @@ def load_driver_payload(path: str | Path) -> dict[str, Any]:
     if not isinstance(records, list):
         raise ValueError("driver payload missing records list")
     return payload
+
+
+def _build_sanitized_gemini_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    sanitized = json.loads(json.dumps(settings))
+    sanitized.pop("mcpServers", None)
+    return sanitized
+
+
+def _prepare_isolated_gemini_home(root: Path, source_home: Path | None = None) -> Path:
+    source_root = source_home or (Path.home() / ".gemini")
+    isolated_root = root / ".gemini-home"
+    isolated_gemini_dir = isolated_root / ".gemini"
+    isolated_gemini_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = source_root / "settings.json"
+    if settings_path.exists():
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        (isolated_gemini_dir / "settings.json").write_text(
+            json.dumps(_build_sanitized_gemini_settings(settings), indent=2),
+            encoding="utf-8",
+        )
+    for name in ("oauth_creds.json", "google_accounts.json", "installation_id", "state.json", "trustedFolders.json"):
+        source_path = source_root / name
+        if source_path.exists():
+            shutil.copy2(source_path, isolated_gemini_dir / name)
+    return isolated_root
 
 
 def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextManager[None]:
@@ -140,6 +165,7 @@ def _run_gemini_command(
     model: str,
     timeout_seconds: int,
 ) -> str:
+    isolated_home = _prepare_isolated_gemini_home(repo_root)
     command = [
         resolve_gemini_binary(),
         "-p",
@@ -159,6 +185,13 @@ def _run_gemini_command(
         "text": True,
         "encoding": "utf-8",
         "errors": "replace",
+        "env": {
+            **os.environ,
+            "HOME": str(isolated_home),
+            "USERPROFILE": str(isolated_home),
+            "APPDATA": str(isolated_home),
+            "LOCALAPPDATA": str(isolated_home),
+        },
     }
     if os.name == "nt":
         popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
