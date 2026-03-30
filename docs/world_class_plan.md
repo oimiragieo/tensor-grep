@@ -54,6 +54,12 @@ Current accepted real patch benchmark baseline:
 * Claude direct-edit-first runner on the accepted earlier `10`-scenario pack: `mean_patch_applied_rate = 1.0`, `mean_validation_pass_rate = 1.0`
 * Copilot comparative baseline: accepted same-pack `12`-scenario rerun now exists at `0.5 / 0.5`
 * Gemini comparative baseline: accepted same-pack `12`-scenario baseline rerun now exists at `0.0 / 0.0`
+* accepted same-pack cross-system scorecard now exists:
+  * `artifacts/patch_eval_demo/real_patch_system_scorecard.md`
+  * current accepted line:
+    * `claude-enhanced`: `1.0 / 1.0`
+    * `copilot`: `0.5 / 0.5`
+    * `gemini-cli` baseline: `0.0 / 0.0`
 
 Current accepted user-style Claude A/B baseline:
 
@@ -252,13 +258,14 @@ The next execution line to finish this codebase should be:
    * Copilot same-pack rerun is now complete on the accepted 12-scenario real patch pack
    * Gemini same-pack baseline rerun is now complete on the accepted 12-scenario real patch pack at `0.0 / 0.0`
    * rerun user-style A/B only after the Claude default probe is accepted
-   * update scorecards only from completed, same-pack runs
-   * next fair-comparison step is a Gemini-enhanced run that uses the committed project `GEMINI.md` + skill setup
+   * same-pack scorecard is now updated from completed runs only
+   * next fair-comparison step is a broader Gemini-enhanced run that uses the committed project `GEMINI.md` + skill setup
    * first Gemini-enhanced probe is now complete on one scenario:
      * baseline timed out with no patch
      * enhanced timed out with no patch
    * accepted interpretation:
-     * the documented Gemini project setup alone is not sufficient to recover the Gemini line on this host
+     * the same-pack scorecard remains a baseline-only Gemini line for now
+     * Gemini skill/project setup alone did not recover the host behavior
 
 4. precision and test-targeting finish line
    * use the expanded corpus failures to drive:
