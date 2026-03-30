@@ -3892,6 +3892,123 @@ def test_gemini_project_context_and_skill_should_exist():
     assert "tg source SYMBOL REPO_PATH" in skill_text
 
 
+def test_run_gemini_skill_ab_should_install_project_skill(tmp_path):
+    module = _load_script_module("run_gemini_skill_ab_skill_script", "benchmarks/run_gemini_skill_ab.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    context_path = tmp_path / "GEMINI.md"
+    context_path.write_text("# context\n", encoding="utf-8")
+
+    module.install_skill_package(repo_root, skill_dir, context_path)
+
+    assert (repo_root / "GEMINI.md").read_text(encoding="utf-8") == "# context\n"
+    assert (repo_root / ".gemini" / "skills" / "tensor-grep" / "SKILL.md").exists()
+    assert (repo_root / ".gemini" / "skills" / "tensor-grep" / "REFERENCE.md").exists()
+
+
+def test_run_gemini_skill_ab_should_build_baseline_and_enhanced_records(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_skill_ab_script", "benchmarks/run_gemini_skill_ab.py")
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    context_path = tmp_path / "GEMINI.md"
+    context_path.write_text("# context\n", encoding="utf-8")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-1",
+                "repo_fixture": str(repo_root),
+                "prompt": f"Fix {repo_root}",
+                "actual_test_files": [],
+                "actual_validation_commands": ["pytest -q"],
+            }
+        ]
+    }
+
+    def _fake_run(repo_root, prompt, **kwargs):
+        del kwargs
+        target = repo_root / "demo.py"
+        if (repo_root / "GEMINI.md").exists():
+            target.write_text("enhanced\n", encoding="utf-8")
+        else:
+            target.write_text("baseline\n", encoding="utf-8")
+        return json.dumps({"response": "no diff emitted"})
+
+    monkeypatch.setattr(module.gemini_runner, "_run_gemini_command", _fake_run)
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gemini-3-flash-preview",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        context_path=context_path,
+        work_root=tmp_path / "work",
+    )
+
+    assert payload["artifact"] == "gemini_skill_ab"
+    assert [record["system"] for record in payload["records"]] == ["gemini-baseline", "gemini-enhanced"]
+    assert all("diff --git a/demo.py b/demo.py" in record["model_patch"] for record in payload["records"])
+
+
+def test_run_gemini_skill_ab_should_support_partial_resume(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_skill_ab_resume_script", "benchmarks/run_gemini_skill_ab.py")
+    output_path = tmp_path / "gemini_ab.json"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    context_path = tmp_path / "GEMINI.md"
+    context_path.write_text("# context\n", encoding="utf-8")
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "one"},
+            {"instance_id": "demo-2", "repo_fixture": str(repo_root), "prompt": "two"},
+        ]
+    }
+    seen: list[str] = []
+
+    def _fake_run(record, **kwargs):
+        del kwargs
+        seen.append(str(record["instance_id"]))
+        return [
+            {"instance_id": str(record["instance_id"]), "system": "gemini-baseline", "model_patch": "", "wall_clock_seconds": 1.0, "notes": "", "use_skill": False},
+            {"instance_id": str(record["instance_id"]), "system": "gemini-enhanced", "model_patch": "", "wall_clock_seconds": 2.0, "notes": "", "use_skill": True},
+        ]
+
+    monkeypatch.setattr(module, "run_ab_record", _fake_run)
+    partial = module.build_partial_payload(
+        [
+            {"instance_id": "demo-1", "system": "gemini-baseline", "model_patch": "", "wall_clock_seconds": 1.0, "notes": "", "use_skill": False},
+            {"instance_id": "demo-1", "system": "gemini-enhanced", "model_patch": "", "wall_clock_seconds": 2.0, "notes": "", "use_skill": True},
+        ]
+    )
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gemini-3-flash-preview",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        context_path=context_path,
+        work_root=tmp_path / "work",
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-2"]
+    assert len(payload["records"]) == 4
+
+
 def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
     module = _load_script_module("run_gemini_patch_predictions_resume_script", "benchmarks/run_gemini_patch_predictions.py")
     output_path = tmp_path / "gemini_predictions.json"

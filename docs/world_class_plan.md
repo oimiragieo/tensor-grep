@@ -141,6 +141,8 @@ Accepted comparison-surface upgrade:
   * root `GEMINI.md`
   * `.gemini/skills/tensor-grep/SKILL.md`
   * `.gemini/skills/tensor-grep/REFERENCE.md`
+* repo now also includes a Gemini baseline-vs-enhanced A/B harness:
+  * `benchmarks/run_gemini_skill_ab.py`
 * it reuses:
   * `run_claude_skill_ab.py`
   * `run_patch_bakeoff.py`
@@ -252,6 +254,11 @@ The next execution line to finish this codebase should be:
    * rerun user-style A/B only after the Claude default probe is accepted
    * update scorecards only from completed, same-pack runs
    * next fair-comparison step is a Gemini-enhanced run that uses the committed project `GEMINI.md` + skill setup
+   * first Gemini-enhanced probe is now complete on one scenario:
+     * baseline timed out with no patch
+     * enhanced timed out with no patch
+   * accepted interpretation:
+     * the documented Gemini project setup alone is not sufficient to recover the Gemini line on this host
 
 4. precision and test-targeting finish line
    * use the expanded corpus failures to drive:
