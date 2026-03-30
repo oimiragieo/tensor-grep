@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="gemini-2.5-flash")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--timeout-seconds", type=int, default=300)
+    parser.add_argument("--resume", action="store_true", help="Resume from an existing predictions artifact.")
     return parser.parse_args()
 
 
@@ -207,24 +208,7 @@ def run_gemini_patch_record(
     }
 
 
-def build_payload(
-    driver_payload: dict[str, Any],
-    *,
-    model: str,
-    limit: int = 0,
-    timeout_seconds: int = 300,
-) -> dict[str, Any]:
-    records = list(driver_payload.get("records", []))
-    if limit > 0:
-        records = records[:limit]
-    prediction_records = [
-        run_gemini_patch_record(
-            dict(record),
-            model=model,
-            timeout_seconds=timeout_seconds,
-        )
-        for record in records
-    ]
+def build_partial_payload(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "artifact": "gemini_patch_predictions",
         "suite": "run_gemini_patch_predictions",
@@ -234,20 +218,67 @@ def build_payload(
             "machine": platform.machine().lower(),
             "python_version": platform.python_version(),
         },
-        "records": prediction_records,
+        "records": records,
     }
+
+
+def load_existing_payload(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return [dict(record) for record in list(payload.get("records", [])) if isinstance(record, dict)]
+
+
+def write_checkpoint(output_path: Path, records: list[dict[str, Any]]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(output_path, build_partial_payload(records))
+
+
+def build_payload(
+    driver_payload: dict[str, Any],
+    *,
+    model: str,
+    limit: int = 0,
+    timeout_seconds: int = 300,
+    output_path: Path | None = None,
+    resume: bool = False,
+) -> dict[str, Any]:
+    records = list(driver_payload.get("records", []))
+    if limit > 0:
+        records = records[:limit]
+    prediction_records: list[dict[str, Any]] = []
+    if resume and output_path is not None:
+        prediction_records = load_existing_payload(output_path)
+    completed_instance_ids = {str(record.get("instance_id", "")) for record in prediction_records if record.get("instance_id")}
+    for record in records:
+        instance_id = str(record["instance_id"])
+        if instance_id in completed_instance_ids:
+            continue
+        prediction_records.append(
+            run_gemini_patch_record(
+                dict(record),
+                model=model,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        completed_instance_ids.add(instance_id)
+        if output_path is not None:
+            write_checkpoint(output_path, prediction_records)
+    return build_partial_payload(prediction_records)
 
 
 def main() -> int:
     args = parse_args()
     driver_payload = load_driver_payload(args.input)
+    output_path = Path(args.output).expanduser().resolve()
     payload = build_payload(
         driver_payload,
         model=args.model,
         limit=args.limit,
         timeout_seconds=args.timeout_seconds,
+        output_path=output_path,
+        resume=args.resume,
     )
-    output_path = Path(args.output).expanduser().resolve()
     write_json(output_path, payload)
     print(f"Results written to {output_path}")
     return 0

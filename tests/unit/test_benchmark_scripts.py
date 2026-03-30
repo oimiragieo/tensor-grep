@@ -3787,6 +3787,94 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(m
     assert any(call[0] == "taskkill" and "/PID" in call[1] for call in calls)
 
 
+def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_patch_predictions_resume_script", "benchmarks/run_gemini_patch_predictions.py")
+    output_path = tmp_path / "gemini_predictions.json"
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(tmp_path), "prompt": "one"},
+            {"instance_id": "demo-2", "repo_fixture": str(tmp_path), "prompt": "two"},
+        ]
+    }
+    seen: list[str] = []
+
+    def _fake_run(record, **kwargs):
+        del kwargs
+        seen.append(str(record["instance_id"]))
+        return {
+            "instance_id": str(record["instance_id"]),
+            "system": "gemini-cli",
+            "model_patch": f"diff --git a/{record['instance_id']} b/{record['instance_id']}",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        }
+
+    monkeypatch.setattr(module, "run_gemini_patch_record", _fake_run)
+    partial = module.build_partial_payload(
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "gemini-cli",
+                "model_patch": "diff --git a/demo-1 b/demo-1",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+                "wall_clock_seconds": 1.0,
+                "notes": "",
+            }
+        ]
+    )
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gemini-2.5-flash",
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-2"]
+    assert [record["instance_id"] for record in payload["records"]] == ["demo-1", "demo-2"]
+
+
+def test_run_gemini_patch_predictions_should_checkpoint_per_record(monkeypatch, tmp_path):
+    module = _load_script_module("run_gemini_patch_predictions_checkpoint_script", "benchmarks/run_gemini_patch_predictions.py")
+    output_path = tmp_path / "gemini_predictions.json"
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(tmp_path), "prompt": "one"},
+            {"instance_id": "demo-2", "repo_fixture": str(tmp_path), "prompt": "two"},
+        ]
+    }
+    writes: list[int] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_gemini_patch_record",
+        lambda record, **kwargs: {
+            "instance_id": str(record["instance_id"]),
+            "system": "gemini-cli",
+            "model_patch": f"diff --git a/{record['instance_id']} b/{record['instance_id']}",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        },
+    )
+    monkeypatch.setattr(module, "write_checkpoint", lambda path, records: writes.append(len(records)))
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gemini-2.5-flash",
+        output_path=output_path,
+        resume=False,
+    )
+
+    assert len(payload["records"]) == 2
+    assert writes == [1, 2]
+
+
 def test_run_copilot_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
     module = _load_script_module("run_copilot_patch_predictions_script", "benchmarks/run_copilot_patch_predictions.py")
     driver_payload = {
@@ -3903,6 +3991,94 @@ def test_run_copilot_patch_predictions_should_fallback_to_repo_diff(monkeypatch,
 
     assert "diff --git a/demo.py b/demo.py" in payload["records"][0]["model_patch"]
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "old\n"
+
+
+def test_run_copilot_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
+    module = _load_script_module("run_copilot_patch_predictions_resume_script", "benchmarks/run_copilot_patch_predictions.py")
+    output_path = tmp_path / "copilot_predictions.json"
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(tmp_path), "prompt": "one"},
+            {"instance_id": "demo-2", "repo_fixture": str(tmp_path), "prompt": "two"},
+        ]
+    }
+    seen: list[str] = []
+
+    def _fake_run(record, **kwargs):
+        del kwargs
+        seen.append(str(record["instance_id"]))
+        return {
+            "instance_id": str(record["instance_id"]),
+            "system": "copilot",
+            "model_patch": f"diff --git a/{record['instance_id']} b/{record['instance_id']}",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        }
+
+    monkeypatch.setattr(module, "run_copilot_patch_record", _fake_run)
+    partial = module.build_partial_payload(
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "copilot",
+                "model_patch": "diff --git a/demo-1 b/demo-1",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+                "wall_clock_seconds": 1.0,
+                "notes": "",
+            }
+        ]
+    )
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gpt-5.2",
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-2"]
+    assert [record["instance_id"] for record in payload["records"]] == ["demo-1", "demo-2"]
+
+
+def test_run_copilot_patch_predictions_should_checkpoint_per_record(monkeypatch, tmp_path):
+    module = _load_script_module("run_copilot_patch_predictions_checkpoint_script", "benchmarks/run_copilot_patch_predictions.py")
+    output_path = tmp_path / "copilot_predictions.json"
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(tmp_path), "prompt": "one"},
+            {"instance_id": "demo-2", "repo_fixture": str(tmp_path), "prompt": "two"},
+        ]
+    }
+    writes: list[int] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_copilot_patch_record",
+        lambda record, **kwargs: {
+            "instance_id": str(record["instance_id"]),
+            "system": "copilot",
+            "model_patch": f"diff --git a/{record['instance_id']} b/{record['instance_id']}",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        },
+    )
+    monkeypatch.setattr(module, "write_checkpoint", lambda path, records: writes.append(len(records)))
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gpt-5.2",
+        output_path=output_path,
+        resume=False,
+    )
+
+    assert len(payload["records"]) == 2
+    assert writes == [1, 2]
 
 
 def test_run_claude_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
