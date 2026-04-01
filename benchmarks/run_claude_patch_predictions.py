@@ -18,6 +18,7 @@ for candidate in (SRC_DIR, BENCHMARKS_DIR):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+import attempt_ledger_helpers  # noqa: E402
 from patch_runner_common import (  # noqa: E402
     derive_patch_from_repo_changes,
     is_probably_patch_text,
@@ -33,13 +34,20 @@ def default_output_path() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Claude headlessly against tensor-grep patch bundles.")
+    parser = argparse.ArgumentParser(
+        description="Run Claude headlessly against tensor-grep patch bundles."
+    )
     parser.add_argument("--input", required=True, help="Path to tensor-grep patch driver JSON.")
     parser.add_argument("--output", default=str(default_output_path()))
     parser.add_argument("--model", default="sonnet")
     parser.add_argument("--permission-mode", default="bypassPermissions")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--timeout-seconds", type=int, default=300)
+    parser.add_argument(
+        "--attempt-ledger-dir",
+        default="",
+        help="Optional directory to write one inferred attempt ledger per instance_id.",
+    )
     return parser.parse_args()
 
 
@@ -66,16 +74,14 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
             yield
             return
         instructions_path.write_text(
-            "\n".join(
-                [
-                    "# Evaluation Instructions",
-                    "",
-                    "You are running inside an automated patch evaluation harness.",
-                    "Analyze this repository directly.",
-                    "Return only a unified diff patch that can be applied with git apply.",
-                    "Do not include markdown fences or explanations.",
-                ]
-            )
+            "\n".join([
+                "# Evaluation Instructions",
+                "",
+                "You are running inside an automated patch evaluation harness.",
+                "Analyze this repository directly.",
+                "Return only a unified diff patch that can be applied with git apply.",
+                "Do not include markdown fences or explanations.",
+            ])
             + "\n",
             encoding="utf-8",
         )
@@ -162,7 +168,9 @@ def _run_claude_command(
         stdout, stderr = proc.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         _terminate_process_tree(proc)
-        raise subprocess.TimeoutExpired(command, timeout_seconds, output=exc.output, stderr=exc.stderr) from None
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds, output=exc.output, stderr=exc.stderr
+        ) from None
     if proc.returncode:
         raise subprocess.CalledProcessError(proc.returncode, command, output=stdout, stderr=stderr)
     return stdout
@@ -254,6 +262,20 @@ def build_payload(
     }
 
 
+def build_attempt_ledger_payloads(
+    driver_payload: dict[str, Any],
+    prediction_records: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    return attempt_ledger_helpers.build_prediction_attempt_ledgers(
+        driver_payload,
+        prediction_records,
+        reason_getter=lambda _instance_id, row: str(
+            row.get("notes") or attempt_ledger_helpers.prediction_attempt_status(row)
+        ),
+        outputs_getter=lambda _instance_id, row: [str(row.get("notes") or "")],
+    )
+
+
 def main() -> int:
     args = parse_args()
     driver_payload = load_driver_payload(args.input)
@@ -266,6 +288,13 @@ def main() -> int:
     )
     output_path = Path(args.output).expanduser().resolve()
     write_json(output_path, payload)
+    if args.attempt_ledger_dir:
+        ledger_dir = Path(args.attempt_ledger_dir).expanduser().resolve()
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        for instance_id, ledger in build_attempt_ledger_payloads(
+            driver_payload, list(payload["records"])
+        ).items():
+            write_json(ledger_dir / f"{instance_id}.json", ledger)
     print(f"Results written to {output_path}")
     return 0
 

@@ -25,8 +25,7 @@ def _build_project(tmp_path: Path) -> Path:
 
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         src_dir / "service.py",
@@ -111,28 +110,22 @@ def test_session_serve_profile_requests_include_profiling_without_changing_outpu
         return responses[0]
 
     baseline_context = serve_once({"command": "context_render", "query": "create invoice"})
-    profiled_context = serve_once(
-        {
-            "command": "context_render",
-            "query": "create invoice",
-            "profile": True,
-        }
-    )
-    baseline_blast = serve_once(
-        {
-            "command": "blast_radius_render",
-            "symbol": "create_invoice",
-            "max_depth": 1,
-        }
-    )
-    profiled_blast = serve_once(
-        {
-            "command": "blast_radius_render",
-            "symbol": "create_invoice",
-            "max_depth": 1,
-            "profile": True,
-        }
-    )
+    profiled_context = serve_once({
+        "command": "context_render",
+        "query": "create invoice",
+        "profile": True,
+    })
+    baseline_blast = serve_once({
+        "command": "blast_radius_render",
+        "symbol": "create_invoice",
+        "max_depth": 1,
+    })
+    profiled_blast = serve_once({
+        "command": "blast_radius_render",
+        "symbol": "create_invoice",
+        "max_depth": 1,
+        "profile": True,
+    })
 
     assert "_profiling" not in baseline_context
     assert profiled_context["_profiling"]["phases"]
@@ -162,9 +155,21 @@ def test_run_editor_profiling_writes_standard_json_with_phase_breakdown_rows(
         module,
         "ensure_editor_plane_fixture_set",
         lambda bench_dir: {
-            "small": {"root": tmp_path / "small", "file_count": 12, "target_symbol": "create_invoice"},
-            "medium": {"root": tmp_path / "medium", "file_count": 48, "target_symbol": "create_invoice"},
-            "large": {"root": tmp_path / "large", "file_count": 128, "target_symbol": "create_invoice"},
+            "small": {
+                "root": tmp_path / "small",
+                "file_count": 12,
+                "target_symbol": "create_invoice",
+            },
+            "medium": {
+                "root": tmp_path / "medium",
+                "file_count": 48,
+                "target_symbol": "create_invoice",
+            },
+            "large": {
+                "root": tmp_path / "large",
+                "file_count": 128,
+                "target_symbol": "create_invoice",
+            },
         },
     )
     monkeypatch.setattr(
@@ -213,10 +218,7 @@ def test_run_editor_profiling_writes_standard_json_with_phase_breakdown_rows(
     assert payload["suite"] == "run_editor_profiling"
     assert payload["generated_at_epoch_s"] > 0
     assert payload["repeats"] == 3
-    assert [
-        (row["fixture"], row["mode"])
-        for row in payload["rows"]
-    ] == [
+    assert [(row["fixture"], row["mode"]) for row in payload["rows"]] == [
         ("small", "context-render"),
         ("small", "blast-radius-render"),
         ("medium", "context-render"),

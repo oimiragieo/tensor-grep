@@ -64,18 +64,15 @@ def _validation_commands(
     ("test_source", "expected_filter"),
     [
         (
-            "def test_create_invoice():\n"
-            "    assert True\n",
+            "def test_create_invoice():\n    assert True\n",
             "test_create_invoice",
         ),
         (
-            "def test_create_invoice_smoke():\n"
-            "    assert True\n",
+            "def test_create_invoice_smoke():\n    assert True\n",
             "test_create_invoice_smoke",
         ),
         (
-            "def test_smoke():\n"
-            "    assert True\n",
+            "def test_smoke():\n    assert True\n",
             "test_smoke",
         ),
     ],
@@ -91,8 +88,7 @@ def test_python_target_resolution_patterns(
     src_dir.mkdir(parents=True)
     tests_dir.mkdir()
     (src_dir / "payments.py").write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     test_path = tests_dir / "test_payments.py"
@@ -122,16 +118,12 @@ def test_python_primary_test_without_match_skips_k_command(tmp_path: Path) -> No
     src_dir.mkdir(parents=True)
     tests_dir.mkdir()
     (src_dir / "payments.py").write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     test_path = tests_dir / "test_payments.py"
     test_path.write_text(
-        "def test_shipping_total():\n"
-        "    assert True\n\n"
-        "def test_tax_total():\n"
-        "    assert True\n",
+        "def test_shipping_total():\n    assert True\n\ndef test_tax_total():\n    assert True\n",
         encoding="utf-8",
     )
 
@@ -163,8 +155,7 @@ def test_python_commands_use_relative_paths(
     test_path = project / relative_test_path
     test_path.parent.mkdir(parents=True)
     test_path.write_text(
-        "def test_create_invoice():\n"
-        "    assert True\n",
+        "def test_create_invoice():\n    assert True\n",
         encoding="utf-8",
     )
 
@@ -175,7 +166,10 @@ def test_python_commands_use_relative_paths(
         primary_symbol_name="create_invoice",
     )
 
-    assert commands[0] == f"uv run pytest {relative_test_path.replace(chr(92), '/')} -k test_create_invoice -q"
+    assert (
+        commands[0]
+        == f"uv run pytest {relative_test_path.replace(chr(92), '/')} -k test_create_invoice -q"
+    )
     assert not any(str(project.resolve()) in command for command in commands)
 
 
@@ -184,19 +178,19 @@ def test_python_commands_use_relative_paths(
     [
         (
             {"jest": "^29.0.0"},
-            'npx jest tests/widget.test.js --testNamePattern widget',
+            "npx jest tests/widget.test.js --testNamePattern widget",
             "npx jest tests/widget.test.js",
             "npx jest",
         ),
         (
             {"vitest": "^2.0.0"},
-            'npx vitest run tests/widget.test.js -t widget',
+            "npx vitest run tests/widget.test.js -t widget",
             "npx vitest run tests/widget.test.js",
             "npx vitest run",
         ),
         (
             {"mocha": "^10.0.0"},
-            'npx mocha tests/widget.test.js --grep widget',
+            "npx mocha tests/widget.test.js --grep widget",
             "npx mocha tests/widget.test.js",
             "npx mocha",
         ),
@@ -233,21 +227,21 @@ def test_javascript_runner_detection(
         (
             {"vitest": "^2.0.0"},
             None,
-            'npx vitest run tests/widget.spec.ts -t widget',
+            "npx vitest run tests/widget.spec.ts -t widget",
             "npx vitest run tests/widget.spec.ts",
             "npx vitest run",
         ),
         (
             {"jest": "^29.0.0", "ts-jest": "^29.0.0"},
             None,
-            'npx jest tests/widget.spec.ts --testNamePattern widget',
+            "npx jest tests/widget.spec.ts --testNamePattern widget",
             "npx jest tests/widget.spec.ts",
             "npx jest",
         ),
         (
             {"jest": "^29.0.0"},
             {"preset": "ts-jest"},
-            'npx jest tests/widget.spec.ts --testNamePattern widget',
+            "npx jest tests/widget.spec.ts --testNamePattern widget",
             "npx jest tests/widget.spec.ts",
             "npx jest",
         ),
@@ -290,17 +284,11 @@ def test_typescript_plain_jest_without_ts_jest_skips_file_target(tmp_path: Path)
     ("test_source", "expected_first_command"),
     [
         (
-            "#[test]\n"
-            "fn invoice_smoke() {\n"
-            "    assert_eq!(1, 1);\n"
-            "}\n",
+            "#[test]\nfn invoice_smoke() {\n    assert_eq!(1, 1);\n}\n",
             "cargo test invoice_smoke",
         ),
         (
-            "#[test]\n"
-            "fn smoke_test() {\n"
-            "    assert_eq!(1, 1);\n"
-            "}\n",
+            "#[test]\nfn smoke_test() {\n    assert_eq!(1, 1);\n}\n",
             "cargo test smoke_test",
         ),
     ],
@@ -314,9 +302,7 @@ def test_rust_target_resolution_patterns(
     tests_dir = project / "tests"
     tests_dir.mkdir(parents=True)
     (project / "Cargo.toml").write_text(
-        "[package]\n"
-        'name = "sample"\n'
-        'version = "0.1.0"\n',
+        '[package]\nname = "sample"\nversion = "0.1.0"\n',
         encoding="utf-8",
     )
     test_path = tests_dir / "integration_checks.rs"
@@ -357,12 +343,12 @@ def test_repo_wide_fallback_detection(
     if setup_kind == "python":
         src_dir = project / "src"
         src_dir.mkdir()
-        (src_dir / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+        (src_dir / "payments.py").write_text(
+            "def create_invoice():\n    return 1\n", encoding="utf-8"
+        )
     elif setup_kind == "rust":
         (project / "Cargo.toml").write_text(
-            "[package]\n"
-            'name = "sample"\n'
-            'version = "0.1.0"\n',
+            '[package]\nname = "sample"\nversion = "0.1.0"\n',
             encoding="utf-8",
         )
     elif setup_kind == "jest-unknown":
@@ -389,8 +375,7 @@ def test_multi_language_repo_includes_commands_for_all_detected_languages(tmp_pa
     tests_dir.mkdir()
     _write_package_json(project, dev_dependencies={"vitest": "^2.0.0"})
     (src_dir / "payments.py").write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     python_test = tests_dir / "test_payments.py"
@@ -449,8 +434,7 @@ def test_build_context_render_uses_relative_python_validation_commands(tmp_path:
     src_dir.mkdir(parents=True)
     tests_dir.mkdir()
     (src_dir / "payments.py").write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     (tests_dir / "test_payments.py").write_text(
@@ -476,15 +460,11 @@ def test_build_symbol_blast_radius_render_uses_rust_validation_commands(tmp_path
     src_dir.mkdir(parents=True)
     tests_dir.mkdir()
     (project / "Cargo.toml").write_text(
-        "[package]\n"
-        'name = "sample"\n'
-        'version = "0.1.0"\n',
+        '[package]\nname = "sample"\nversion = "0.1.0"\n',
         encoding="utf-8",
     )
     (src_dir / "billing.rs").write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
     (tests_dir / "integration_checks.rs").write_text(
@@ -532,18 +512,13 @@ def test_rust_nested_integration_tests_use_targeted_commands(tmp_path: Path) -> 
     tests_dir = project / "tests" / "testsuite"
     tests_dir.mkdir(parents=True)
     (project / "Cargo.toml").write_text(
-        "[package]\n"
-        'name = "sample"\n'
-        'version = "0.1.0"\n',
+        '[package]\nname = "sample"\nversion = "0.1.0"\n',
         encoding="utf-8",
     )
     (tests_dir / "main.rs").write_text('automod::dir!("tests/testsuite");\n', encoding="utf-8")
     test_path = tests_dir / "shorts.rs"
     test_path.write_text(
-        "#[test]\n"
-        "fn next_flag() {\n"
-        "    assert!(true);\n"
-        "}\n",
+        "#[test]\nfn next_flag() {\n    assert!(true);\n}\n",
         encoding="utf-8",
     )
 

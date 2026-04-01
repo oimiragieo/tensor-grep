@@ -1,0 +1,28 @@
+{
+  "scenarios": [
+    {
+      "id": "click-getchar-provider-alias",
+      "description": "Python alias wrapper around getchar should require provider-backed caller recovery.",
+      "repo_fixture": "../bakeoff_fixtures/python/provider_alias_getchar",
+      "query_or_symbol": "getchar",
+      "expected_caller_files": [
+        "termui.py"
+      ],
+      "expected_test_files": [
+        "tests/test_termui.py"
+      ]
+    },
+    {
+      "id": "click-raw-terminal-provider-alias",
+      "description": "Python alias wrapper around raw_terminal should require provider-backed caller recovery.",
+      "repo_fixture": "../bakeoff_fixtures/python/provider_alias_raw_terminal",
+      "query_or_symbol": "raw_terminal",
+      "expected_caller_files": [
+        "termui.py"
+      ],
+      "expected_test_files": [
+        "tests/test_termui.py"
+      ]
+    }
+  ]
+}

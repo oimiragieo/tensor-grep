@@ -15,7 +15,9 @@ def _edit_plan_seed(project: Path, symbol: str) -> dict[str, object]:
     return dict(payload["edit_plan_seed"])
 
 
-def _suggested_edit(seed: dict[str, object], *, file_path: Path, edit_kind: str) -> dict[str, object]:
+def _suggested_edit(
+    seed: dict[str, object], *, file_path: Path, edit_kind: str
+) -> dict[str, object]:
     resolved = str(file_path.resolve())
     for current in seed["suggested_edits"]:
         if current["file"] == resolved and current["edit_kind"] == edit_kind:
@@ -39,8 +41,7 @@ def test_python_import_update_targets_exact_import_statement_line(
     src_dir = project / "src"
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         src_dir / "service.py",
@@ -52,7 +53,9 @@ def test_python_import_update_targets_exact_import_statement_line(
 
     seed = _edit_plan_seed(project, "create_invoice")
 
-    import_update = _suggested_edit(seed, file_path=src_dir / "service.py", edit_kind="import-update")
+    import_update = _suggested_edit(
+        seed, file_path=src_dir / "service.py", edit_kind="import-update"
+    )
     assert import_update["symbol"] == "create_invoice"
     assert import_update["start_line"] == 1
     assert import_update["end_line"] == 1
@@ -61,7 +64,9 @@ def test_python_import_update_targets_exact_import_statement_line(
     assert "imports create_invoice" in str(import_update["rationale"])
     assert module_name in str(import_update["rationale"])
 
-    caller_update = _suggested_edit(seed, file_path=src_dir / "service.py", edit_kind="caller-update")
+    caller_update = _suggested_edit(
+        seed, file_path=src_dir / "service.py", edit_kind="caller-update"
+    )
     assert caller_update["symbol"] == "build_receipt"
     assert caller_update["start_line"] == 4
     assert caller_update["end_line"] == 4
@@ -76,9 +81,7 @@ def test_js_ts_import_update_targets_exact_import_statement_line(
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     _write(
         src_dir / f"service{suffix}",
@@ -110,9 +113,7 @@ def test_rust_import_update_targets_exact_use_statement_line(tmp_path: Path) -> 
     src_dir = project / "src"
     _write(
         src_dir / "payments.rs",
-        "pub fn create_invoice(total: i32) -> i32 {\n"
-        "    total + 1\n"
-        "}\n",
+        "pub fn create_invoice(total: i32) -> i32 {\n    total + 1\n}\n",
     )
     _write(
         src_dir / "service.rs",
@@ -125,7 +126,9 @@ def test_rust_import_update_targets_exact_use_statement_line(tmp_path: Path) -> 
 
     seed = _edit_plan_seed(project, "create_invoice")
 
-    import_update = _suggested_edit(seed, file_path=src_dir / "service.rs", edit_kind="import-update")
+    import_update = _suggested_edit(
+        seed, file_path=src_dir / "service.rs", edit_kind="import-update"
+    )
     assert import_update["symbol"] == "create_invoice"
     assert import_update["start_line"] == 1
     assert import_update["end_line"] == 1

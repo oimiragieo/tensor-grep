@@ -15,7 +15,9 @@ def _edit_plan_seed(project: Path, symbol: str) -> dict[str, object]:
     return dict(payload["edit_plan_seed"])
 
 
-def _suggested_edit(seed: dict[str, object], *, file_path: Path, edit_kind: str) -> dict[str, object]:
+def _suggested_edit(
+    seed: dict[str, object], *, file_path: Path, edit_kind: str
+) -> dict[str, object]:
     resolved = str(file_path.resolve())
     for current in seed["suggested_edits"]:
         if current["file"] == resolved and current["edit_kind"] == edit_kind:
@@ -25,20 +27,12 @@ def _suggested_edit(seed: dict[str, object], *, file_path: Path, edit_kind: str)
 
 def _caller_entries(payload: dict[str, object], *, file_path: Path) -> list[dict[str, object]]:
     resolved = str(file_path.resolve())
-    return [
-        dict(current)
-        for current in payload["callers"]
-        if current["file"] == resolved
-    ]
+    return [dict(current) for current in payload["callers"] if current["file"] == resolved]
 
 
 def _reference_entries(payload: dict[str, object], *, file_path: Path) -> list[dict[str, object]]:
     resolved = str(file_path.resolve())
-    return [
-        dict(current)
-        for current in payload["references"]
-        if current["file"] == resolved
-    ]
+    return [dict(current) for current in payload["references"] if current["file"] == resolved]
 
 
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
@@ -49,9 +43,7 @@ def test_default_import_resolution_tracks_aliases_for_callers_and_import_updates
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export default function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export default function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     service_path = src_dir / f"service{suffix}"
     _write(
@@ -85,9 +77,7 @@ def test_default_import_references_include_resolution_metadata(tmp_path: Path, s
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export default function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export default function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     service_path = src_dir / f"service{suffix}"
     _write(
@@ -109,14 +99,14 @@ def test_default_import_references_include_resolution_metadata(tmp_path: Path, s
 
 
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
-def test_default_import_missing_default_export_returns_no_resolution(tmp_path: Path, suffix: str) -> None:
+def test_default_import_missing_default_export_returns_no_resolution(
+    tmp_path: Path, suffix: str
+) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     service_path = src_dir / f"service{suffix}"
     _write(
@@ -141,9 +131,7 @@ def test_named_re_export_chain_resolves_to_original_definition(tmp_path: Path, s
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     _write(
         src_dir / f"barrel{suffix}",
@@ -163,21 +151,23 @@ def test_named_re_export_chain_resolves_to_original_definition(tmp_path: Path, s
     callers_payload = repo_map.build_symbol_callers("createInvoice", project)
     callers = _caller_entries(callers_payload, file_path=service_path)
 
-    assert _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    assert (
+        _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    )
     assert len(callers) == 1
     assert callers[0]["line"] == 4
     assert "re-export-chain" in callers[0]["resolution_provenance"]
 
 
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
-def test_aliased_re_export_chain_resolves_to_original_definition(tmp_path: Path, suffix: str) -> None:
+def test_aliased_re_export_chain_resolves_to_original_definition(
+    tmp_path: Path, suffix: str
+) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     _write(
         src_dir / f"barrel{suffix}",
@@ -197,7 +187,9 @@ def test_aliased_re_export_chain_resolves_to_original_definition(tmp_path: Path,
     callers_payload = repo_map.build_symbol_callers("createInvoice", project)
     callers = _caller_entries(callers_payload, file_path=service_path)
 
-    assert _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    assert (
+        _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    )
     assert len(callers) == 1
     assert callers[0]["line"] == 4
     assert "re-export-chain" in callers[0]["resolution_provenance"]
@@ -210,9 +202,7 @@ def test_default_import_follows_re_exported_default(tmp_path: Path, suffix: str)
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export default function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export default function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     _write(
         src_dir / f"barrel{suffix}",
@@ -254,9 +244,7 @@ def test_re_export_chain_stops_after_depth_five(tmp_path: Path) -> None:
     src_dir = project / "src"
     _write(
         src_dir / "mod0.ts",
-        "export function createInvoice(total: number) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total + 1;\n}\n",
     )
     _write(src_dir / "mod1.ts", 'export { createInvoice as invoiceFn } from "./mod0";\n')
     _write(src_dir / "mod2.ts", 'export { invoiceFn } from "./mod1";\n')
@@ -276,7 +264,7 @@ def test_tsconfig_path_alias_resolution_matches_definition(tmp_path: Path, suffi
     project = tmp_path / "project"
     _write(
         project / "tsconfig.json",
-        '{\n'
+        "{\n"
         '  "compilerOptions": {\n'
         '    "baseUrl": ".",\n'
         '    "paths": {\n'
@@ -288,9 +276,7 @@ def test_tsconfig_path_alias_resolution_matches_definition(tmp_path: Path, suffi
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     service_path = src_dir / f"service{suffix}"
     _write(
@@ -306,7 +292,9 @@ def test_tsconfig_path_alias_resolution_matches_definition(tmp_path: Path, suffi
     callers_payload = repo_map.build_symbol_callers("createInvoice", project)
     callers = _caller_entries(callers_payload, file_path=service_path)
 
-    assert _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    assert (
+        _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    )
     assert len(callers) == 1
     assert "tsconfig-path-alias" in callers[0]["resolution_provenance"]
     assert float(callers[0]["resolution_confidence"]) >= 0.5
@@ -317,18 +305,12 @@ def test_tsconfig_base_url_resolution_matches_definition(tmp_path: Path, suffix:
     project = tmp_path / "project"
     _write(
         project / "tsconfig.json",
-        '{\n'
-        '  "compilerOptions": {\n'
-        '    "baseUrl": "."\n'
-        "  }\n"
-        "}\n",
+        '{\n  "compilerOptions": {\n    "baseUrl": "."\n  }\n}\n',
     )
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     service_path = src_dir / f"service{suffix}"
     _write(
@@ -344,7 +326,9 @@ def test_tsconfig_base_url_resolution_matches_definition(tmp_path: Path, suffix:
     callers_payload = repo_map.build_symbol_callers("createInvoice", project)
     callers = _caller_entries(callers_payload, file_path=service_path)
 
-    assert _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    assert (
+        _suggested_edit(seed, file_path=service_path, edit_kind="import-update")["start_line"] == 1
+    )
     assert len(callers) == 1
     assert "tsconfig-base-url" in callers[0]["resolution_provenance"]
 
@@ -356,9 +340,7 @@ def test_missing_tsconfig_uses_partial_resolution_metadata(tmp_path: Path) -> No
     definition_path = src_dir / "payments.ts"
     _write(
         definition_path,
-        "export function createInvoice(total: number) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total + 1;\n}\n",
     )
     _write(importer_path, 'import { createInvoice } from "src/payments";\n')
 
@@ -380,7 +362,7 @@ def test_tsconfig_is_parsed_once_per_repo_map_build(
     project = tmp_path / "project"
     _write(
         project / "tsconfig.json",
-        '{\n'
+        "{\n"
         '  "compilerOptions": {\n'
         '    "baseUrl": ".",\n'
         '    "paths": {\n'
@@ -392,9 +374,7 @@ def test_tsconfig_is_parsed_once_per_repo_map_build(
     src_dir = project / "src"
     _write(
         src_dir / "payments.ts",
-        "export function createInvoice(total: number) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total + 1;\n}\n",
     )
     _write(
         src_dir / "service.ts",
@@ -427,9 +407,7 @@ def test_existing_named_import_resolution_still_works(tmp_path: Path, suffix: st
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     service_path = src_dir / f"service{suffix}"
     _write(

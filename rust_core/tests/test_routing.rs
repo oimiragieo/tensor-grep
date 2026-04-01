@@ -14,6 +14,10 @@ fn tg() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg"))
 }
 
+fn tg_fast() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_tg-search-fast"))
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -395,6 +399,103 @@ fn test_routing_default_search_prefers_ripgrep_cold_path() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+}
+
+#[test]
+fn test_routing_early_rg_env_preserves_plain_search_contract() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .env("TG_RUST_EARLY_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{RG_SENTINEL}\r\n")
+    );
+}
+
+#[test]
+fn test_routing_early_positional_rg_env_preserves_plain_search_contract() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .env("TG_RUST_EARLY_POSITIONAL_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{RG_SENTINEL}\r\n")
+    );
+}
+
+#[test]
+fn test_routing_early_positional_rg_env_falls_back_for_unsupported_shapes() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("--help")
+        .env("TG_RG_PATH", &rg_wrapper)
+        .env("TG_RUST_EARLY_POSITIONAL_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_fast_search_binary_preserves_plain_search_contract() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg_fast()
+        .arg("--no-ignore")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{RG_SENTINEL}\r\n")
+    );
 }
 
 #[test]

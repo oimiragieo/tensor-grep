@@ -23,8 +23,7 @@ def _build_project(tmp_path: Path) -> Path:
 
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         src_dir / "service.py",
@@ -58,10 +57,7 @@ def _without_profiling(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _phase_lookup(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     profiling = payload["_profiling"]
-    return {
-        str(phase["name"]): dict(phase)
-        for phase in profiling["phases"]
-    }
+    return {str(phase["name"]): dict(phase) for phase in profiling["phases"]}
 
 
 def _build_repo_map_payload(project: Path, collector: Any | None) -> dict[str, Any]:
@@ -259,7 +255,9 @@ def test_build_repo_map_file_parse_call_count_matches_scanned_files(tmp_path: Pa
     assert phases["file_parse"]["calls"] == expected_files
 
 
-def test_context_render_source_rendering_call_count_matches_rendered_sources(tmp_path: Path) -> None:
+def test_context_render_source_rendering_call_count_matches_rendered_sources(
+    tmp_path: Path,
+) -> None:
     project = _build_project(tmp_path)
     collector = repo_map._ProfileCollector()
 

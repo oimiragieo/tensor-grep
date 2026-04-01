@@ -19,8 +19,49 @@ Use these documents as the current product contract instead of relying on scatte
 - [docs/routing_policy.md](docs/routing_policy.md) for current CPU/GPU/index/AST routing behavior
 - [docs/harness_api.md](docs/harness_api.md) for machine-readable CLI and MCP contract shapes
 - [docs/harness_cookbook.md](docs/harness_cookbook.md) for end-to-end harness workflows using `tg.exe search --json`, `tg.exe search --ndjson`, `tg.exe run --rewrite`, `tg.exe calibrate`, and `tg mcp`
+- [docs/installation.md](docs/installation.md) for the supported install paths and operational install notes
+- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the current enterprise release and rollback runbook
 
 The project is benchmark-governed. Public claims should follow the canonical docs above, not historical README snapshots.
+
+## Stable Windows Test Confirmation
+
+On this Windows host, the most reliable repo-wide confirmation path is the file-backed pytest runner:
+
+```powershell
+uv run python scripts/run_pytest_stable.py --log artifacts/pytest_full.log --report artifacts/pytest_full_report.json
+```
+
+Why this exists:
+
+- raw long-running `uv run pytest -q` sessions can be noisy or ambiguous under Windows process/capture behavior
+- the stable runner uses `--capture=tee-sys`, `console_output_style=classic`, and `faulthandler_timeout`
+- it writes both a human-readable log and a machine-readable report artifact
+
+Current accepted full-suite artifact:
+
+- [`artifacts/pytest_full_report.json`](artifacts/pytest_full_report.json)
+
+## Bounded Heavy-Root AI Handoff
+
+For large internal-library roots where full edit-plan assembly is too expensive, `tensor-grep` now supports a bounded context-render path that keeps the AI handoff compact and actionable.
+
+Current accepted production proof:
+
+- [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
+
+What the bounded path preserves:
+
+- compact primary target selection
+- `navigation_pack`
+- phased read groups
+- repo-level validation command
+
+What it intentionally skips:
+
+- the expensive full `edit_plan_seed` on that fast path
+
+Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
 
 [![CI Status](https://github.com/oimiragieo/tensor-grep/actions/workflows/ci.yml/badge.svg)](https://github.com/oimiragieo/tensor-grep/actions)
 [![PyPI version](https://badge.fury.io/py/tensor-grep.svg)](https://pypi.org/project/tensor-grep/)

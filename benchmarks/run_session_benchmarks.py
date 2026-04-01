@@ -88,27 +88,24 @@ def _amplify_work_root(work_root: Path, *, target_file_count: int) -> int:
     for index in range(extra_needed):
         path = src_dir / f"amplify_{index:04d}.py"
         assignment_block = "\n".join(
-            f"AMPLIFY_{index:04d}_{inner:03d} = {index + inner}"
-            for inner in range(240)
+            f"AMPLIFY_{index:04d}_{inner:03d} = {index + inner}" for inner in range(240)
         )
         path.write_text(
-            "\n".join(
-                [
-                    f'"""Synthetic refresh corpus file {index:04d}."""',
-                    "",
-                    assignment_block,
-                    "",
-                    f"def amplify_{index:04d}_seed(value: int) -> int:",
-                    "    return value + 1",
-                    "",
-                    f"def amplify_{index:04d}_branch(value: int) -> int:",
-                    f"    return amplify_{index:04d}_seed(value) + 2",
-                    "",
-                    f"def amplify_{index:04d}_leaf(value: int) -> int:",
-                    f"    return amplify_{index:04d}_branch(value) + 3",
-                    "",
-                ]
-            ),
+            "\n".join([
+                f'"""Synthetic refresh corpus file {index:04d}."""',
+                "",
+                assignment_block,
+                "",
+                f"def amplify_{index:04d}_seed(value: int) -> int:",
+                "    return value + 1",
+                "",
+                f"def amplify_{index:04d}_branch(value: int) -> int:",
+                f"    return amplify_{index:04d}_seed(value) + 2",
+                "",
+                f"def amplify_{index:04d}_leaf(value: int) -> int:",
+                f"    return amplify_{index:04d}_branch(value) + 3",
+                "",
+            ]),
             encoding="utf-8",
         )
     return len(sorted(work_root.rglob("*.py")))
@@ -218,28 +215,24 @@ def benchmark_incremental_refresh_comparison(
             incremental=False,
         )
         ratio = (
-            round(incremental_refresh_s / full_rebuild_s, 4)
-            if full_rebuild_s > 0
-            else float("inf")
+            round(incremental_refresh_s / full_rebuild_s, 4) if full_rebuild_s > 0 else float("inf")
         )
-        rows.append(
-            {
-                "fixture": str(fixture.get("name", Path(str(fixture["root"])).name)),
-                "file_count": int(fixture.get("file_count", 0)),
-                "comparison_file_count": actual_file_count,
-                "modified_file_count": modified_file_count,
-                "modified_paths": modified_paths,
-                "incremental_refresh_s": incremental_refresh_s,
-                "full_rebuild_s": full_rebuild_s,
-                "ratio": ratio,
-                "passed_ratio_gate": bool(
-                    full_rebuild_s > 0
-                    and incremental_refresh_s < (_REFRESH_RATIO_THRESHOLD * full_rebuild_s)
-                ),
-                "refresh_type": "incremental",
-                "full_refresh_type": "full",
-            }
-        )
+        rows.append({
+            "fixture": str(fixture.get("name", Path(str(fixture["root"])).name)),
+            "file_count": int(fixture.get("file_count", 0)),
+            "comparison_file_count": actual_file_count,
+            "modified_file_count": modified_file_count,
+            "modified_paths": modified_paths,
+            "incremental_refresh_s": incremental_refresh_s,
+            "full_rebuild_s": full_rebuild_s,
+            "ratio": ratio,
+            "passed_ratio_gate": bool(
+                full_rebuild_s > 0
+                and incremental_refresh_s < (_REFRESH_RATIO_THRESHOLD * full_rebuild_s)
+            ),
+            "refresh_type": "incremental",
+            "full_refresh_type": "full",
+        })
     return rows
 
 
@@ -250,10 +243,7 @@ def main() -> int:
     output_path = Path(args.output).expanduser().resolve()
     fixtures = ensure_editor_plane_fixture_set(resolve_editor_plane_bench_dir())
     ordered_fixtures = sorted(
-        (
-            {**fixture, "name": name}
-            for name, fixture in fixtures.items()
-        ),
+        ({**fixture, "name": name} for name, fixture in fixtures.items()),
         key=lambda fixture: (int(fixture.get("file_count", 0)), str(fixture.get("name", ""))),
     )
     modified_file_counts = _resolve_modified_counts(args.modified_file_counts)

@@ -50,6 +50,10 @@ cudarc = { version = "0.19.3", optional = true, features = ["cuda-13010"] }
 name = "tg"
 path = "src/main.rs"
 
+[[bin]]
+name = "tg-search-fast"
+path = "src/bin/tg_search_fast.rs"
+
 [dev-dependencies]
 tempfile = "3.26.0"
 

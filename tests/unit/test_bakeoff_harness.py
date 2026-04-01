@@ -34,8 +34,7 @@ def _build_project(tmp_path: Path) -> dict[str, Path]:
 
     _write(
         payments,
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         service,
@@ -98,7 +97,9 @@ def _actual(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def test_load_scenarios_validates_missing_required_fields_with_structured_errors(tmp_path: Path) -> None:
+def test_load_scenarios_validates_missing_required_fields_with_structured_errors(
+    tmp_path: Path,
+) -> None:
     module = _load_script_module("run_bakeoff_missing_fields")
     scenarios_path = tmp_path / "scenarios.json"
     _write_scenarios(scenarios_path, [{"mode": "context-render"}])
@@ -111,7 +112,11 @@ def test_load_scenarios_validates_missing_required_fields_with_structured_errors
         {"scenario_index": 0, "field": "query_or_symbol", "code": "missing_required_field"},
         {"scenario_index": 0, "field": "expected_primary_file", "code": "missing_required_field"},
         {"scenario_index": 0, "field": "expected_primary_span", "code": "missing_required_field"},
-        {"scenario_index": 0, "field": "expected_dependent_files", "code": "missing_required_field"},
+        {
+            "scenario_index": 0,
+            "field": "expected_dependent_files",
+            "code": "missing_required_field",
+        },
         {
             "scenario_index": 0,
             "field": "expected_suggested_edit_files",
@@ -340,6 +345,22 @@ def test_false_positive_files_lists_unexpected_actual_files(tmp_path: Path) -> N
     assert scored["false_positive_files"] == [str(project_paths["service"].resolve())]
 
 
+def test_score_scenario_preserves_provider_metadata(tmp_path: Path) -> None:
+    module = _load_script_module("run_bakeoff_provider_metadata")
+    project_paths = _build_project(tmp_path)
+
+    scored = module.score_scenario(
+        _scenario(project_paths["project"]),
+        _actual(
+            provider_agreement={"mode": "hybrid", "agreement_status": "fallback-native"},
+            provider_status={"mode": "hybrid", "fallback_used": True},
+        ),
+    )
+
+    assert scored["provider_agreement"] == {"mode": "hybrid", "agreement_status": "fallback-native"}
+    assert scored["provider_status"] == {"mode": "hybrid", "fallback_used": True}
+
+
 def test_run_scenario_calls_context_render_and_collects_actuals(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -349,7 +370,9 @@ def test_run_scenario_calls_context_render_and_collects_actuals(
 
     seen: dict[str, object] = {}
 
-    def _fake_build_context_render(query: str, path: str | Path, *, profile: bool = False) -> dict[str, object]:
+    def _fake_build_context_render(
+        query: str, path: str | Path, *, profile: bool = False
+    ) -> dict[str, object]:
         seen["query"] = query
         seen["path"] = str(path)
         seen["profile"] = profile
@@ -411,6 +434,11 @@ def test_run_scenario_calls_blast_radius_and_forwards_profile(
         return {
             "token_estimate": 45,
             "_profiling": {"phases": [{"name": "caller_scan", "elapsed_s": 0.01, "calls": 1}]},
+            "provider_agreement": {
+                "mode": semantic_provider,
+                "agreement_status": "fallback-native",
+            },
+            "provider_status": {"mode": semantic_provider, "fallback_used": True},
             "edit_plan_seed": {
                 "primary_file": None,
                 "primary_span": None,
@@ -438,7 +466,11 @@ def test_run_scenario_calls_blast_radius_and_forwards_profile(
         "profile": True,
         "semantic_provider": "native",
     }
-    assert result["_profiling"] == {"phases": [{"name": "caller_scan", "elapsed_s": 0.01, "calls": 1}]}
+    assert result["_profiling"] == {
+        "phases": [{"name": "caller_scan", "elapsed_s": 0.01, "calls": 1}]
+    }
+    assert result["provider_agreement"] == {"mode": "native", "agreement_status": "fallback-native"}
+    assert result["provider_status"] == {"mode": "native", "fallback_used": True}
 
 
 def test_evaluate_scenario_runs_edit_planning_against_fixture_repo(tmp_path: Path) -> None:
@@ -579,6 +611,40 @@ def test_main_writes_standard_benchmark_json_with_summary(
     assert payload["summary"]["mean_file_hit_rate"] == 0.5
 
 
+def test_determinism_snapshot_ignores_provider_cooldown_drift(tmp_path: Path) -> None:
+    module = _load_script_module("run_bakeoff_provider_determinism_snapshot")
+    row = module.score_scenario(
+        _scenario(_build_project(tmp_path)["project"]),
+        _actual(
+            provider_status={
+                "mode": "hybrid",
+                "fallback_used": True,
+                "providers": [
+                    {
+                        "language": "python",
+                        "last_error": "timeout waiting for LSP response: initialize",
+                        "cooldown_remaining_s": 29.9,
+                    }
+                ],
+            }
+        ),
+    )
+    comparison = dict(row)
+    comparison["provider_status"] = {
+        "mode": "hybrid",
+        "fallback_used": True,
+        "providers": [
+            {
+                "language": "python",
+                "last_error": "timeout waiting for LSP response: initialize",
+                "cooldown_remaining_s": 11.2,
+            }
+        ],
+    }
+
+    assert module._determinism_snapshot(row) == module._determinism_snapshot(comparison)
+
+
 def test_main_profile_keeps_per_scenario_profiling(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -643,16 +709,14 @@ def test_main_returns_nonzero_and_writes_structured_validation_error(
         module,
         "load_scenarios",
         lambda path: (_ for _ in ()).throw(
-            module.ScenarioValidationError(
-                [
-                    {
-                        "scenario_index": 0,
-                        "field": "mode",
-                        "code": "invalid_choice",
-                        "expected": ["context-render", "blast-radius"],
-                    }
-                ]
-            )
+            module.ScenarioValidationError([
+                {
+                    "scenario_index": 0,
+                    "field": "mode",
+                    "code": "invalid_choice",
+                    "expected": ["context-render", "blast-radius"],
+                }
+            ])
         ),
     )
     monkeypatch.setattr(

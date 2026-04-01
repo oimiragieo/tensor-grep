@@ -21,15 +21,20 @@ for candidate in (SRC_DIR, BENCHMARKS_DIR):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+import attempt_ledger_helpers  # noqa: E402
 from patch_runner_common import derive_patch_from_repo_changes  # noqa: E402
 
 from tensor_grep.perf_guard import write_json  # noqa: E402
 
 DEFAULT_SKILL_DIR = ROOT_DIR / ".claude" / "skills" / "tensor-grep"
 DEFAULT_WORK_ROOT = Path(tempfile.gettempdir()) / "tensor_grep_claude_ab"
-CONTRACT_PROFILES: dict[str, tuple[str, str]] = {
-    "current": ("standard", "standard"),
-    "probe-standard-engage": ("standard", "engage"),
+EFFORT_CHOICES = ("low", "medium", "high", "max")
+EXPECTED_SYSTEMS = frozenset({"claude-baseline", "claude-enhanced"})
+CONTRACT_PROFILES: dict[str, tuple[str, str, str]] = {
+    "current": ("standard", "standard", ""),
+    "probe-standard-engage": ("standard", "engage", ""),
+    "probe-standard-act": ("standard", "act", ""),
+    "probe-standard-act-low": ("standard", "act", "low"),
 }
 
 
@@ -54,9 +59,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skill-dir", default=str(DEFAULT_SKILL_DIR))
     parser.add_argument("--work-root", default=str(DEFAULT_WORK_ROOT))
     parser.add_argument("--trace-output", default="")
-    parser.add_argument("--enhanced-output-contract", choices=("standard", "terse"), default="standard")
-    parser.add_argument("--enhanced-task-contract", choices=("standard", "engage"), default="standard")
-    parser.add_argument("--resume", action="store_true", help="Resume from an existing A/B output artifact.")
+    parser.add_argument(
+        "--attempt-ledger-dir",
+        default="",
+        help="Optional directory to write one inferred attempt ledger per instance_id.",
+    )
+    parser.add_argument(
+        "--enhanced-output-contract", choices=("standard", "terse", "done"), default="standard"
+    )
+    parser.add_argument(
+        "--enhanced-task-contract", choices=("standard", "engage", "act"), default="standard"
+    )
+    parser.add_argument("--enhanced-effort", choices=EFFORT_CHOICES, default="")
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume from an existing A/B output artifact."
+    )
     parser.add_argument(
         "--enhanced-contract-profile",
         choices=tuple(CONTRACT_PROFILES.keys()),
@@ -64,13 +81,15 @@ def parse_args() -> argparse.Namespace:
         help="Named enhanced contract probe profile. Overrides explicit contract flags when not 'current'.",
     )
     args = parser.parse_args()
-    output_contract, task_contract = resolve_contract_profile(
+    output_contract, task_contract, enhanced_effort = resolve_contract_profile(
         args.enhanced_contract_profile,
         enhanced_output_contract=args.enhanced_output_contract,
         enhanced_task_contract=args.enhanced_task_contract,
+        enhanced_effort=args.enhanced_effort,
     )
     args.enhanced_output_contract = output_contract
     args.enhanced_task_contract = task_contract
+    args.enhanced_effort = enhanced_effort
     return args
 
 
@@ -79,9 +98,10 @@ def resolve_contract_profile(
     *,
     enhanced_output_contract: str,
     enhanced_task_contract: str,
-) -> tuple[str, str]:
+    enhanced_effort: str,
+) -> tuple[str, str, str]:
     if profile == "current":
-        return enhanced_output_contract, enhanced_task_contract
+        return enhanced_output_contract, enhanced_task_contract, enhanced_effort
     return CONTRACT_PROFILES[profile]
 
 
@@ -130,17 +150,15 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
             yield
             return
         instructions_path.write_text(
-            "\n".join(
-                [
-                    "# Evaluation Instructions",
-                    "",
-                    "You are running inside an automated patch evaluation harness.",
-                    "Analyze this repository directly.",
-                    "Return only a unified diff patch that can be applied with git apply.",
-                    "Do not include markdown fences or explanations.",
-                    "Do not ask clarifying questions or ask for confirmation in print mode.",
-                ]
-            )
+            "\n".join([
+                "# Evaluation Instructions",
+                "",
+                "You are running inside an automated patch evaluation harness.",
+                "Analyze this repository directly.",
+                "Return only a unified diff patch that can be applied with git apply.",
+                "Do not include markdown fences or explanations.",
+                "Do not ask clarifying questions or ask for confirmation in print mode.",
+            ])
             + "\n",
             encoding="utf-8",
         )
@@ -152,11 +170,18 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
     return _manager()
 
 
-def _build_claude_prompt(prompt: str, *, terse_output: bool = False) -> str:
+def _build_claude_prompt(
+    prompt: str, *, terse_output: bool = False, done_output: bool = False
+) -> str:
     if terse_output:
         prefix = (
             "If file-editing tools are available, edit the repository files directly instead of printing a patch. "
             "After the change is complete, stop immediately. Do not print any explanation, summary, or status text."
+        )
+    elif done_output:
+        prefix = (
+            "If file-editing tools are available, edit the repository files directly instead of printing a patch. "
+            "If you edit files directly, respond with exactly DONE."
         )
     else:
         prefix = (
@@ -173,15 +198,33 @@ def build_system_prompt(
     enhanced_output_contract: str = "standard",
     enhanced_task_contract: str = "standard",
 ) -> str:
-    rendered = _build_claude_prompt(prompt, terse_output=(use_skill and enhanced_output_contract == "terse"))
+    rendered = _build_claude_prompt(
+        prompt,
+        terse_output=(use_skill and enhanced_output_contract == "terse"),
+        done_output=(use_skill and enhanced_output_contract == "done"),
+    )
     if not use_skill:
         return rendered
+    if enhanced_task_contract == "act":
+        return (
+            "<system>\n"
+            "Use the tensor-grep project skill and follow its workflow for this task.\n"
+            "The task is fully specified below.\n"
+            "Do not ask the user what task to perform.\n"
+            "Do not ask clarifying questions unless the repository is missing required files.\n"
+            "Make the smallest correct repository change immediately.\n"
+            "Use tg before editing when it helps identify the right file or span.\n"
+            "</system>\n\n"
+            f"<task>\n{rendered}\n</task>"
+        ).strip()
     parts = ["Use the tensor-grep project skill and follow its workflow for this task."]
     if enhanced_task_contract == "engage":
         parts.append(
             "The task is already specified below. Start working on it immediately and do not ask the user what task to perform."
         )
-    parts.append("Use tg against the current repository before editing when it helps target the right file or span.")
+    parts.append(
+        "Use tg against the current repository before editing when it helps target the right file or span."
+    )
     skill_prefix = " ".join(parts)
     return f"{skill_prefix}\n\n{rendered}".strip()
 
@@ -190,7 +233,9 @@ def rewrite_prompt_repo_paths(prompt: str, source_repo: Path, repo_root: Path) -
     source_repo_str = str(source_repo.resolve())
     repo_root_str = str(repo_root.resolve())
     rewritten = prompt.replace(source_repo_str, repo_root_str)
-    rewritten = rewritten.replace(source_repo_str.replace("\\", "/"), repo_root_str.replace("\\", "/"))
+    rewritten = rewritten.replace(
+        source_repo_str.replace("\\", "/"), repo_root_str.replace("\\", "/")
+    )
     return rewritten
 
 
@@ -205,16 +250,14 @@ def install_skill_package(repo_root: Path, skill_dir: Path) -> Path:
 def write_claude_md(repo_root: Path) -> Path:
     guidance_path = repo_root / "CLAUDE.md"
     guidance_path.write_text(
-        "\n".join(
-            [
-                "# Claude Instructions",
-                "",
-                "Use the tensor-grep project skill for repository search, symbol lookup, blast-radius planning, and edit targeting.",
-                "The task is already specified in the prompt. Do not ask what task to perform; start working on it immediately.",
-                "When the tensor-grep skill is available, use it before editing if it will help identify the right file or span.",
-                "In non-interactive mode, do not ask for confirmation; make the change directly.",
-            ]
-        )
+        "\n".join([
+            "# Claude Instructions",
+            "",
+            "Use the tensor-grep project skill for repository search, symbol lookup, blast-radius planning, and edit targeting.",
+            "The task is already specified in the prompt. Do not ask what task to perform; start working on it immediately.",
+            "When the tensor-grep skill is available, use it before editing if it will help identify the right file or span.",
+            "In non-interactive mode, do not ask for confirmation; make the change directly.",
+        ])
         + "\n",
         encoding="utf-8",
     )
@@ -227,34 +270,32 @@ def install_tg_trace_wrapper(run_root: Path) -> tuple[Path, Path]:
     log_path = run_root / "tg_trace.jsonl"
     wrapper_script = wrapper_dir / "tg.ps1"
     wrapper_script.write_text(
-        "\n".join(
-            [
-                "param(",
-                "  [Parameter(ValueFromRemainingArguments = $true)]",
-                "  [string[]] $Args",
-                ")",
-                "$ErrorActionPreference = 'Stop'",
-                "$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()",
-                "& $env:TENSOR_GREP_REAL @Args",
-                "$exitCode = $LASTEXITCODE",
-                "$stopwatch.Stop()",
-                "$record = @{",
-                "  argv = $Args",
-                "  exit_code = $exitCode",
-                "  duration_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 6)",
-                "  timestamp_epoch_s = [Math]::Round(([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0), 6)",
-                "} | ConvertTo-Json -Compress",
-                "Add-Content -Path $env:TENSOR_GREP_TRACE_LOG -Value $record",
-                "exit $exitCode",
-            ]
-        )
+        "\n".join([
+            "param(",
+            "  [Parameter(ValueFromRemainingArguments = $true)]",
+            "  [string[]] $Args",
+            ")",
+            "$ErrorActionPreference = 'Stop'",
+            "$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()",
+            "& $env:TENSOR_GREP_REAL @Args",
+            "$exitCode = $LASTEXITCODE",
+            "$stopwatch.Stop()",
+            "$record = @{",
+            "  argv = $Args",
+            "  exit_code = $exitCode",
+            "  duration_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 6)",
+            "  timestamp_epoch_s = [Math]::Round(([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0), 6)",
+            "} | ConvertTo-Json -Compress",
+            "Add-Content -Path $env:TENSOR_GREP_TRACE_LOG -Value $record",
+            "exit $exitCode",
+        ])
         + "\n",
         encoding="utf-8",
     )
     wrapper_cmd = wrapper_dir / "tg.cmd"
     wrapper_cmd.write_text(
         "@echo off\r\n"
-        "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0tg.ps1\" %*\r\n"
+        'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tg.ps1" %*\r\n'
         "exit /b %ERRORLEVEL%\r\n",
         encoding="utf-8",
     )
@@ -302,7 +343,9 @@ def classify_response_shape(notes: str, patch_text: str) -> str:
     return "empty"
 
 
-def first_tg_seconds(run_started_epoch_s: float, tg_trace_records: list[dict[str, Any]]) -> float | None:
+def first_tg_seconds(
+    run_started_epoch_s: float, tg_trace_records: list[dict[str, Any]]
+) -> float | None:
     if not tg_trace_records:
         return None
     first_timestamp = tg_trace_records[0].get("timestamp_epoch_s")
@@ -349,12 +392,14 @@ def prepare_persistent_repo_copy(
     instance_id: str,
     system_name: str,
 ) -> tuple[Path, Path]:
-    run_root = work_root / instance_id / system_name
+    instance_root = work_root / instance_id
+    legacy_run_root = instance_root / system_name
+    if legacy_run_root.exists():
+        shutil.rmtree(legacy_run_root, ignore_errors=True)
+    instance_root.mkdir(parents=True, exist_ok=True)
+    run_root = Path(tempfile.mkdtemp(prefix=f"{system_name}-", dir=instance_root))
     before_root = run_root / "a"
     repo_root = run_root / "b"
-    if run_root.exists():
-        shutil.rmtree(run_root, ignore_errors=True)
-    run_root.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_repo, before_root)
     shutil.copytree(source_repo, repo_root)
     return before_root, repo_root
@@ -367,6 +412,7 @@ def _run_claude_command(
     model: str,
     permission_mode: str,
     timeout_seconds: int,
+    effort: str = "",
     extra_env: dict[str, str] | None = None,
 ) -> str:
     command = [
@@ -375,6 +421,8 @@ def _run_claude_command(
     ]
     if model:
         command.extend(["--model", model])
+    if effort:
+        command.extend(["--effort", effort])
     if permission_mode == "bypassPermissions":
         command.append("--dangerously-skip-permissions")
     else:
@@ -401,7 +449,9 @@ def _run_claude_command(
         stdout, stderr = proc.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         _terminate_process_tree(proc)
-        raise subprocess.TimeoutExpired(command, timeout_seconds, output=exc.output, stderr=exc.stderr) from None
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds, output=exc.output, stderr=exc.stderr
+        ) from None
     if proc.returncode:
         raise subprocess.CalledProcessError(proc.returncode, command, output=stdout, stderr=stderr)
     return stdout
@@ -417,6 +467,7 @@ def run_ab_record(
     work_root: Path,
     enhanced_output_contract: str,
     enhanced_task_contract: str,
+    enhanced_effort: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     source_repo = Path(str(record["repo_fixture"])).resolve()
     systems: list[tuple[str, bool]] = [("claude-baseline", False), ("claude-enhanced", True)]
@@ -440,8 +491,7 @@ def run_ab_record(
         timing["repo_copy_seconds"] = round(time.perf_counter() - phase_started, 6)
         phase_started = time.perf_counter()
         prompt = build_system_prompt(
-            rewrite_prompt_repo_paths(str(record["prompt"]), source_repo, repo_root)
-            ,
+            rewrite_prompt_repo_paths(str(record["prompt"]), source_repo, repo_root),
             use_skill=use_skill,
             enhanced_output_contract=enhanced_output_contract,
             enhanced_task_contract=enhanced_task_contract,
@@ -469,12 +519,14 @@ def run_ab_record(
         phase_started = time.perf_counter()
         try:
             with _ephemeral_repo_instructions(repo_root):
+                effort = enhanced_effort if use_skill else ""
                 stdout = _run_claude_command(
                     repo_root,
                     prompt,
                     model=model,
                     permission_mode=permission_mode,
                     timeout_seconds=timeout_seconds,
+                    effort=effort,
                     extra_env=extra_env,
                 )
             notes = stdout.strip()
@@ -498,56 +550,53 @@ def run_ab_record(
             and (before_root / path.relative_to(repo_root)).exists()
             and path.read_bytes() != (before_root / path.relative_to(repo_root)).read_bytes()
         )
-        rows.append(
-            {
-                "instance_id": str(record["instance_id"]),
-                "system": system_name,
-                "model_patch": patch_text,
-                "actual_test_files": list(record.get("actual_test_files", [])),
-                "actual_validation_commands": list(record.get("actual_validation_commands", [])),
-                "wall_clock_seconds": wall_clock_seconds,
-                "notes": notes,
-            }
-        )
+        rows.append({
+            "instance_id": str(record["instance_id"]),
+            "system": system_name,
+            "model_patch": patch_text,
+            "actual_test_files": list(record.get("actual_test_files", [])),
+            "actual_validation_commands": list(record.get("actual_validation_commands", [])),
+            "wall_clock_seconds": wall_clock_seconds,
+            "notes": notes,
+        })
         response_shape = classify_response_shape(notes, patch_text)
         if not changed_files:
             first_action["first_file_change_seconds"] = None
         if first_action["first_file_change_seconds"] is None and changed_files:
             first_action["first_file_change_seconds"] = timing["claude_seconds"]
-        trace_rows.append(
-            {
-                "instance_id": str(record["instance_id"]),
-                "system": system_name,
-                "use_skill": use_skill,
-                "enhanced_output_contract": enhanced_output_contract if use_skill else "baseline",
-                "enhanced_task_contract": enhanced_task_contract if use_skill else "baseline",
-                "response_shape": response_shape,
-                "asked_meta_question": response_shape == "meta_question",
-                "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
-                "first_patch_seconds": timing["claude_seconds"] if patch_text.strip() else None,
-                "first_file_change_seconds": first_action["first_file_change_seconds"],
-                "post_edit_deliberation_seconds": post_edit_deliberation_seconds(
-                    first_action["first_file_change_seconds"],
-                    timing["claude_seconds"] if patch_text.strip() else None,
-                ),
-                "prompt_chars": len(prompt),
-                "prompt_lines": len(prompt.splitlines()),
-                "notes_chars": len(notes),
-                "patch_chars": len(patch_text),
-                "emitted_patch": bool(patch_text.strip()),
-                "changed_file_count": len(changed_files),
-                "changed_files": changed_files,
-                "tg_invocation_count": len(tg_trace_records),
-                "tg_seconds_total": round(
-                    sum(float(record.get("duration_seconds", 0.0)) for record in tg_trace_records),
-                    6,
-                ),
-                "tg_trace_records": tg_trace_records,
-                "actual_validation_command_count": len(record.get("actual_validation_commands", [])),
-                "actual_test_file_count": len(record.get("actual_test_files", [])),
-                "timing": {**timing, "total_seconds": wall_clock_seconds},
-            }
-        )
+        trace_rows.append({
+            "instance_id": str(record["instance_id"]),
+            "system": system_name,
+            "use_skill": use_skill,
+            "enhanced_output_contract": enhanced_output_contract if use_skill else "baseline",
+            "enhanced_task_contract": enhanced_task_contract if use_skill else "baseline",
+            "effort": effort or "default",
+            "response_shape": response_shape,
+            "asked_meta_question": response_shape == "meta_question",
+            "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
+            "first_patch_seconds": timing["claude_seconds"] if patch_text.strip() else None,
+            "first_file_change_seconds": first_action["first_file_change_seconds"],
+            "post_edit_deliberation_seconds": post_edit_deliberation_seconds(
+                first_action["first_file_change_seconds"],
+                timing["claude_seconds"] if patch_text.strip() else None,
+            ),
+            "prompt_chars": len(prompt),
+            "prompt_lines": len(prompt.splitlines()),
+            "notes_chars": len(notes),
+            "patch_chars": len(patch_text),
+            "emitted_patch": bool(patch_text.strip()),
+            "changed_file_count": len(changed_files),
+            "changed_files": changed_files,
+            "tg_invocation_count": len(tg_trace_records),
+            "tg_seconds_total": round(
+                sum(float(record.get("duration_seconds", 0.0)) for record in tg_trace_records),
+                6,
+            ),
+            "tg_trace_records": tg_trace_records,
+            "actual_validation_command_count": len(record.get("actual_validation_commands", [])),
+            "actual_test_file_count": len(record.get("actual_test_files", [])),
+            "timing": {**timing, "total_seconds": wall_clock_seconds},
+        })
     return rows, trace_rows
 
 
@@ -557,6 +606,7 @@ def build_partial_payload(
     *,
     enhanced_output_contract: str,
     enhanced_task_contract: str,
+    enhanced_effort: str = "",
 ) -> dict[str, Any]:
     return {
         "artifact": "claude_skill_ab",
@@ -564,6 +614,7 @@ def build_partial_payload(
         "suite": "run_claude_skill_ab",
         "enhanced_output_contract": enhanced_output_contract,
         "enhanced_task_contract": enhanced_task_contract,
+        "enhanced_effort": enhanced_effort,
         "generated_at_epoch_s": time.time(),
         "environment": {
             "platform": platform.system().lower(),
@@ -575,12 +626,46 @@ def build_partial_payload(
     }
 
 
+def build_attempt_ledger_payloads(
+    driver_payload: dict[str, Any],
+    prediction_records: list[dict[str, Any]],
+    trace_records: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    traces_by_key = {
+        (str(record.get("instance_id", "")).strip(), str(record.get("system", "")).strip()): dict(
+            record
+        )
+        for record in trace_records
+        if isinstance(record, dict)
+    }
+    return attempt_ledger_helpers.build_prediction_attempt_ledgers(
+        driver_payload,
+        prediction_records,
+        reason_getter=lambda instance_id, row: str(
+            row.get("notes")
+            or traces_by_key.get((instance_id, str(row["system"])), {}).get("response_shape")
+            or attempt_ledger_helpers.prediction_attempt_status(row)
+        ),
+        outputs_getter=lambda instance_id, row: [
+            str(
+                traces_by_key.get((instance_id, str(row["system"])), {}).get("response_shape") or ""
+            )
+        ],
+    )
+
+
 def load_existing_payload(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if not path.exists():
         return [], []
     payload = json.loads(path.read_text(encoding="utf-8"))
-    records = [dict(record) for record in list(payload.get("records", [])) if isinstance(record, dict)]
-    trace_records = [dict(record) for record in list(payload.get("trace_records", [])) if isinstance(record, dict)]
+    records = [
+        dict(record) for record in list(payload.get("records", [])) if isinstance(record, dict)
+    ]
+    trace_records = [
+        dict(record)
+        for record in list(payload.get("trace_records", []))
+        if isinstance(record, dict)
+    ]
     return records, trace_records
 
 
@@ -591,6 +676,7 @@ def write_checkpoint(
     *,
     enhanced_output_contract: str,
     enhanced_task_contract: str,
+    enhanced_effort: str = "",
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(
@@ -600,8 +686,54 @@ def write_checkpoint(
             trace_records,
             enhanced_output_contract=enhanced_output_contract,
             enhanced_task_contract=enhanced_task_contract,
+            enhanced_effort=enhanced_effort,
         ),
     )
+
+
+def completed_instance_ids(
+    prediction_records: list[dict[str, Any]],
+    trace_records: list[dict[str, Any]],
+) -> set[str]:
+    prediction_systems: dict[str, set[str]] = {}
+    for record in prediction_records:
+        instance_id = str(record.get("instance_id", "")).strip()
+        system = str(record.get("system", "")).strip()
+        if not instance_id or not system:
+            continue
+        prediction_systems.setdefault(instance_id, set()).add(system)
+    trace_systems: dict[str, set[str]] = {}
+    for record in trace_records:
+        instance_id = str(record.get("instance_id", "")).strip()
+        system = str(record.get("system", "")).strip()
+        if not instance_id or not system:
+            continue
+        trace_systems.setdefault(instance_id, set()).add(system)
+    completed: set[str] = set()
+    for instance_id, systems in prediction_systems.items():
+        if EXPECTED_SYSTEMS.issubset(systems) and EXPECTED_SYSTEMS.issubset(
+            trace_systems.get(instance_id, set())
+        ):
+            completed.add(instance_id)
+    return completed
+
+
+def prune_incomplete_records(
+    prediction_records: list[dict[str, Any]],
+    trace_records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    completed_ids = completed_instance_ids(prediction_records, trace_records)
+    filtered_predictions = [
+        dict(record)
+        for record in prediction_records
+        if str(record.get("instance_id", "")).strip() in completed_ids
+    ]
+    filtered_traces = [
+        dict(record)
+        for record in trace_records
+        if str(record.get("instance_id", "")).strip() in completed_ids
+    ]
+    return filtered_predictions, filtered_traces
 
 
 def build_payload(
@@ -614,6 +746,7 @@ def build_payload(
     work_root: Path,
     enhanced_output_contract: str = "standard",
     enhanced_task_contract: str = "standard",
+    enhanced_effort: str = "",
     limit: int = 0,
     output_path: Path | None = None,
     resume: bool = False,
@@ -625,11 +758,14 @@ def build_payload(
     trace_records: list[dict[str, Any]] = []
     if resume and output_path is not None:
         prediction_records, trace_records = load_existing_payload(output_path)
-    completed_instance_ids = {str(record.get("instance_id", "")) for record in prediction_records if record.get("instance_id")}
+        prediction_records, trace_records = prune_incomplete_records(
+            prediction_records, trace_records
+        )
+    completed_ids = completed_instance_ids(prediction_records, trace_records)
     work_root.mkdir(parents=True, exist_ok=True)
     for record in records:
         instance_id = str(record["instance_id"])
-        if instance_id in completed_instance_ids:
+        if instance_id in completed_ids:
             continue
         rows, trace_rows = run_ab_record(
             dict(record),
@@ -640,10 +776,11 @@ def build_payload(
             work_root=work_root,
             enhanced_output_contract=enhanced_output_contract,
             enhanced_task_contract=enhanced_task_contract,
+            enhanced_effort=enhanced_effort,
         )
         prediction_records.extend(rows)
         trace_records.extend(trace_rows)
-        completed_instance_ids.add(instance_id)
+        completed_ids = completed_instance_ids(prediction_records, trace_records)
         if output_path is not None:
             write_checkpoint(
                 output_path,
@@ -651,12 +788,14 @@ def build_payload(
                 trace_records,
                 enhanced_output_contract=enhanced_output_contract,
                 enhanced_task_contract=enhanced_task_contract,
+                enhanced_effort=enhanced_effort,
             )
     return build_partial_payload(
         prediction_records,
         trace_records,
         enhanced_output_contract=enhanced_output_contract,
         enhanced_task_contract=enhanced_task_contract,
+        enhanced_effort=enhanced_effort,
     )
 
 
@@ -673,6 +812,7 @@ def main() -> int:
         work_root=Path(args.work_root).expanduser().resolve(),
         enhanced_output_contract=args.enhanced_output_contract,
         enhanced_task_contract=args.enhanced_task_contract,
+        enhanced_effort=args.enhanced_effort,
         limit=args.limit,
         output_path=output_path,
         resume=args.resume,
@@ -694,6 +834,15 @@ def main() -> int:
             "records": payload["trace_records"],
         },
     )
+    if args.attempt_ledger_dir:
+        ledger_dir = Path(args.attempt_ledger_dir).expanduser().resolve()
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        for instance_id, ledger in build_attempt_ledger_payloads(
+            driver_payload,
+            list(payload["records"]),
+            list(payload["trace_records"]),
+        ).items():
+            write_json(ledger_dir / f"{instance_id}.json", ledger)
     print(f"Results written to {output_path}")
     return 0
 

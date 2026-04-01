@@ -27,7 +27,9 @@ def default_output_path() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Claude Code headlessly against bakeoff scenarios.")
+    parser = argparse.ArgumentParser(
+        description="Run Claude Code headlessly against bakeoff scenarios."
+    )
     parser.add_argument("--scenarios", required=True)
     parser.add_argument("--output", default=str(default_output_path()))
     parser.add_argument("--model", default="sonnet")

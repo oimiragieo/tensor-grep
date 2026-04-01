@@ -199,7 +199,10 @@ def _extra_module_source(index: int, snippets: list[str]) -> str:
         f"    return helper_{index:03d}_double(value) + helper_{index:03d}(value)\n"
     )
 
-def _materialize_editor_plane_fixture(root: Path, *, file_count: int, snippets: list[str]) -> dict[str, Any]:
+
+def _materialize_editor_plane_fixture(
+    root: Path, *, file_count: int, snippets: list[str]
+) -> dict[str, Any]:
     if root.exists():
         shutil.rmtree(root)
     src_dir = root / "src"
@@ -225,7 +228,12 @@ def _materialize_editor_plane_fixture(root: Path, *, file_count: int, snippets: 
             mutable_files.append(str((src_dir / relative_path).resolve()))
         if group_index % 4 == 0:
             created_files.append(
-                str(_write(tests_dir / f"test_view_{group_index:03d}.py", _test_module_source(group_index)).resolve())
+                str(
+                    _write(
+                        tests_dir / f"test_view_{group_index:03d}.py",
+                        _test_module_source(group_index),
+                    ).resolve()
+                )
             )
         group_index += 1
 

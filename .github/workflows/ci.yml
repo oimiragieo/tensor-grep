@@ -31,6 +31,11 @@ jobs:
       - name: Setup Python
         run: uv python install 3.12
 
+      - name: Build docs site (strict)
+        run: |
+          pip install mkdocs-material
+          mkdocs build --strict
+
       - name: Validate release/package asset consistency
         run: uv run python scripts/validate_release_assets.py
 

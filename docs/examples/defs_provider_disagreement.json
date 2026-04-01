@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "symbol-defs",
+  "sidecar_used": false,
+  "semantic_provider": "hybrid",
+  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite",
+  "symbol": "create_invoice",
+  "files": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+  ],
+  "symbols": [
+    {
+      "name": "create_invoice",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    }
+  ],
+  "imports": [],
+  "tests": [],
+  "related_paths": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+  ],
+  "definitions": [
+    {
+      "name": "create_invoice",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "provenance": "native-python"
+    }
+  ],
+  "coverage": {
+    "language_scope": "python-js-ts-rust",
+    "symbol_navigation": "python-ast+parser-js-ts-rust",
+    "test_matching": "filename+import+graph-heuristic"
+  },
+  "provider_agreement": {
+    "mode": "hybrid",
+    "agreement_status": "diverged",
+    "native_count": 1,
+    "provider_count": 2,
+    "merged_count": 2,
+    "fallback_used": false
+  },
+  "provider_status": {
+    "mode": "hybrid",
+    "available": true,
+    "running": true,
+    "language": "python",
+    "capabilities": {
+      "definitionProvider": true
+    },
+    "last_error": "",
+    "fallback_used": false
+  }
+}

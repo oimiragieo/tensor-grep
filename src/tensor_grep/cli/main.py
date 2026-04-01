@@ -193,12 +193,10 @@ def _resolve_native_tg_binary() -> Path | None:
     candidates = []
     if env_override:
         candidates.append(Path(env_override).expanduser())
-    candidates.extend(
-        [
-            repo_root / "rust_core" / "target" / "release" / binary_name,
-            repo_root / "rust_core" / "target" / "debug" / binary_name,
-        ]
-    )
+    candidates.extend([
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "rust_core" / "target" / "debug" / binary_name,
+    ])
 
     existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
     if not existing:
@@ -487,27 +485,23 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+        })
 
     return specs
 
@@ -679,11 +673,18 @@ def _ruleset_files_match(entry_file: str, occurrence_file: str, root_dir: Path) 
 
 
 def _inline_suppression_targets(line_text: str, language: str) -> set[str]:
-    comment_prefix = "#" if language == "python" else "//" if language in {
-        "javascript",
-        "typescript",
-        "rust",
-    } else None
+    comment_prefix = (
+        "#"
+        if language == "python"
+        else "//"
+        if language
+        in {
+            "javascript",
+            "typescript",
+            "rust",
+        }
+        else None
+    )
     if comment_prefix is None:
         return set()
     match = re.search(
@@ -755,13 +756,11 @@ def _apply_ruleset_baseline(
     suppression_justification: str | None = None,
 ) -> None:
     findings = cast(list[dict[str, object]], payload["findings"])
-    matched_fingerprints = sorted(
-        {
-            cast(str, finding["fingerprint"])
-            for finding in findings
-            if cast(int, finding["matches"]) > 0
-        }
-    )
+    matched_fingerprints = sorted({
+        cast(str, finding["fingerprint"])
+        for finding in findings
+        if cast(int, finding["matches"]) > 0
+    })
     if baseline_path is not None:
         baseline = _load_ruleset_baseline(baseline_path)
         baseline_fingerprints = set(cast(list[str], baseline["fingerprints"]))
@@ -771,9 +770,7 @@ def _apply_ruleset_baseline(
                 finding["status"] = "clear"
                 continue
             finding["status"] = (
-                "existing"
-                if cast(str, finding["fingerprint"]) in baseline_fingerprints
-                else "new"
+                "existing" if cast(str, finding["fingerprint"]) in baseline_fingerprints else "new"
             )
         payload["baseline"] = {
             "path": baseline["path"],
@@ -860,13 +857,11 @@ def _apply_ruleset_baseline(
                 finding_inline_occurrences += 1
             else:
                 active_occurrences += 1
-            occurrence_rows.append(
-                {
-                    "file": occurrence_file,
-                    "line": occurrence_line,
-                    "status": occurrence_status,
-                }
-            )
+            occurrence_rows.append({
+                "file": occurrence_file,
+                "line": occurrence_line,
+                "status": occurrence_status,
+            })
         if not raw_occurrences and any(
             _suppression_entry_matches(
                 entry=entry,
@@ -1017,9 +1012,10 @@ def _run_ast_scan_payload(
                         match_counts_by_file.get(current_file, 0) + result.total_matches
                     )
                     for match in result.matches:
-                        rule_occurrences.append(
-                            {"file": match.file or current_file, "line": match.line_number}
-                        )
+                        rule_occurrences.append({
+                            "file": match.file or current_file,
+                            "line": match.line_number,
+                        })
                     if include_evidence_snippets:
                         file_snippets = snippets_by_file.setdefault(current_file, [])
                         for match in result.matches:
@@ -1032,39 +1028,35 @@ def _run_ast_scan_payload(
         if rule_matches > 0:
             matched_rules += 1
         sorted_files = sorted(matched_files)
-        findings.append(
-            {
-                "rule_id": rule["id"],
-                "language": rule["language"],
-                "severity": rule.get("severity"),
-                "message": rule.get("message"),
-                "fingerprint": _ruleset_finding_fingerprint(
-                    rule_id=rule["id"],
-                    language=rule["language"],
-                    matched_files=sorted_files,
-                ),
-                "matches": rule_matches,
-                "files": sorted_files,
-                "evidence": [
-                    {
-                        "file": file_path,
-                        "match_count": match_counts_by_file.get(file_path, 0),
-                        **(
-                            {"snippets": snippets_by_file.get(file_path, [])}
-                            if include_evidence_snippets
-                            else {}
-                        ),
-                    }
-                    for file_path in sorted_files
-                ],
-                "_raw_occurrences": sorted(
-                    {
-                        (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
-                        for occurrence in rule_occurrences
-                    }
-                ),
-            }
-        )
+        findings.append({
+            "rule_id": rule["id"],
+            "language": rule["language"],
+            "severity": rule.get("severity"),
+            "message": rule.get("message"),
+            "fingerprint": _ruleset_finding_fingerprint(
+                rule_id=rule["id"],
+                language=rule["language"],
+                matched_files=sorted_files,
+            ),
+            "matches": rule_matches,
+            "files": sorted_files,
+            "evidence": [
+                {
+                    "file": file_path,
+                    "match_count": match_counts_by_file.get(file_path, 0),
+                    **(
+                        {"snippets": snippets_by_file.get(file_path, [])}
+                        if include_evidence_snippets
+                        else {}
+                    ),
+                }
+                for file_path in sorted_files
+            ],
+            "_raw_occurrences": sorted({
+                (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
+                for occurrence in rule_occurrences
+            }),
+        })
         if findings[-1]["_raw_occurrences"]:
             findings[-1]["_raw_occurrences"] = [
                 {"file": file_path, "line": line_number}
@@ -2155,8 +2147,12 @@ def context_render(
     query: str = typer.Option(
         ..., "--query", help="Query text used to rank and render repo context."
     ),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
-    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
     max_symbols_per_file: int = typer.Option(
         6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
     ),
@@ -2179,7 +2175,9 @@ def context_render(
         "--render-profile",
         help="Render profile: full, compact, or llm.",
     ),
-    profile: bool = typer.Option(False, "--profile", help="Include per-phase profiling in JSON output."),
+    profile: bool = typer.Option(
+        False, "--profile", help="Include per-phase profiling in JSON output."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
@@ -2228,11 +2226,15 @@ def context_render(
 def edit_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
-    profile: bool = typer.Option(False, "--profile", help="Include per-phase profiling in JSON output."),
+    profile: bool = typer.Option(
+        False, "--profile", help="Include per-phase profiling in JSON output."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a machine-readable edit-planning bundle without rendered source text."""
@@ -2273,7 +2275,9 @@ def edit_plan(
 def defs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
@@ -2297,7 +2301,9 @@ def defs(
 def source(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact source blocks for a symbol definition."""
@@ -2321,7 +2327,9 @@ def source(
 def impact(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to evaluate."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return likely impacted files and tests for a symbol change."""
@@ -2345,7 +2353,9 @@ def impact(
 def refs(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first symbol references across the inventory root."""
@@ -2369,7 +2379,9 @@ def refs(
 def callers(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first call sites and likely impacted tests for a symbol."""
@@ -2393,7 +2405,9 @@ def callers(
 def blast_radius(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
@@ -2410,10 +2424,16 @@ def blast_radius(
 
     try:
         if json_output:
-            typer.echo(build_symbol_blast_radius_json(symbol, path, max_depth=max_depth, semantic_provider=provider))
+            typer.echo(
+                build_symbol_blast_radius_json(
+                    symbol, path, max_depth=max_depth, semantic_provider=provider
+                )
+            )
             return
 
-        payload = build_symbol_blast_radius(symbol, path, max_depth=max_depth, semantic_provider=provider)
+        payload = build_symbol_blast_radius(
+            symbol, path, max_depth=max_depth, semantic_provider=provider
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2429,15 +2449,21 @@ def blast_radius(
 def blast_radius_render(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
     ),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
-    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
     max_symbols_per_file: int = typer.Option(
         6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
     ),
@@ -2454,7 +2480,9 @@ def blast_radius_render(
         "--render-profile",
         help="Render profile: full, compact, or llm.",
     ),
-    profile: bool = typer.Option(False, "--profile", help="Include per-phase profiling in JSON output."),
+    profile: bool = typer.Option(
+        False, "--profile", help="Include per-phase profiling in JSON output."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready blast-radius bundle for a symbol."""
@@ -2506,14 +2534,18 @@ def blast_radius_render(
 def blast_radius_plan(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
-    provider: str = typer.Option("native", "--provider", help="Semantic provider: native, lsp, or hybrid."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
     max_depth: int = typer.Option(
         3,
         "--max-depth",
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
     ),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
@@ -2599,7 +2631,9 @@ def session_daemon_start(
         typer.echo(json.dumps(payload, indent=2))
         return
 
-    typer.echo(f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}")
+    typer.echo(
+        f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}"
+    )
 
 
 @session_daemon_app.command("status")
@@ -2621,7 +2655,9 @@ def session_daemon_status(
         return
 
     if payload.get("running"):
-        typer.echo(f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}")
+        typer.echo(
+            f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}"
+        )
     else:
         typer.echo("Session daemon not running")
 
@@ -2783,8 +2819,12 @@ def session_context_render_cmd(
     query: str = typer.Option(
         ..., "--query", help="Query text used to rank and render repo context."
     ),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
-    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
     max_symbols_per_file: int = typer.Option(
         6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
     ),
@@ -2882,7 +2922,9 @@ def session_edit_plan_cmd(
     session_id: str = typer.Argument(..., help="Session ID to query."),
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
     query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
@@ -3010,8 +3052,12 @@ def session_blast_radius_render_cmd(
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
     ),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the render bundle."),
-    max_sources: int = typer.Option(5, "--max-sources", min=1, help="Maximum exact source blocks to include."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
     max_symbols_per_file: int = typer.Option(
         6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
     ),
@@ -3099,7 +3145,9 @@ def session_blast_radius_plan_cmd(
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
     ),
-    max_files: int = typer.Option(3, "--max-files", min=1, help="Maximum files to include in the plan."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
     max_symbols: int = typer.Option(
         5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
     ),
@@ -3528,8 +3576,7 @@ def scan(
     if payload.get("baseline_written"):
         baseline_written = cast(dict[str, object], payload["baseline_written"])
         typer.echo(
-            f"Baseline written to {baseline_written['path']} "
-            f"(count={baseline_written['count']})."
+            f"Baseline written to {baseline_written['path']} (count={baseline_written['count']})."
         )
     if payload.get("suppressions"):
         suppressions_summary = cast(dict[str, object], payload["suppressions"])
@@ -3658,18 +3705,16 @@ def test(
                         temp_name.write_text(snippet, encoding="utf-8")
                         try:
                             result = backend.search(str(temp_name), pattern, config=case_cfg)
-                            evaluated_snippets.append(
-                                (
-                                    f"{test_file}:{case_id}",
-                                    snippet,
-                                    expected_match,
-                                    bool(
-                                        result.total_files > 0
-                                        or result.total_matches > 0
-                                        or result.matched_file_paths
-                                    ),
-                                )
-                            )
+                            evaluated_snippets.append((
+                                f"{test_file}:{case_id}",
+                                snippet,
+                                expected_match,
+                                bool(
+                                    result.total_files > 0
+                                    or result.total_matches > 0
+                                    or result.matched_file_paths
+                                ),
+                            ))
                         finally:
                             temp_name.unlink(missing_ok=True)
             except Exception as exc:
@@ -3945,7 +3990,9 @@ def audit_history(
         payload = list_audit_history(path)
     except FileNotFoundError as exc:
         if json_output:
-            typer.echo(json.dumps(_audit_history_error_payload(str(exc), code="not_found"), indent=2))
+            typer.echo(
+                json.dumps(_audit_history_error_payload(str(exc), code="not_found"), indent=2)
+            )
         else:
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -3976,15 +4023,17 @@ def audit_history(
             annotations.append(f"signature={entry['signature_kind']}")
         created_at = entry["created_at"] or "<missing>"
         suffix = f" [{' '.join(annotations)}]" if annotations else ""
-        typer.echo(
-            f"{created_at}  {entry['manifest_sha256']}  {entry['file_path']}{suffix}"
-        )
+        typer.echo(f"{created_at}  {entry['manifest_sha256']}  {entry['file_path']}{suffix}")
 
 
 @app.command(name="audit-diff")
 def audit_diff(
-    previous_manifest: str = typer.Argument(..., help="Path to the previous audit manifest JSON file."),
-    current_manifest: str = typer.Argument(..., help="Path to the current audit manifest JSON file."),
+    previous_manifest: str = typer.Argument(
+        ..., help="Path to the previous audit manifest JSON file."
+    ),
+    current_manifest: str = typer.Argument(
+        ..., help="Path to the current audit manifest JSON file."
+    ),
     json_output: bool = typer.Option(
         False,
         "--json",
@@ -3996,7 +4045,11 @@ def audit_diff(
 
     try:
         if json_output:
-            typer.echo(json.dumps(diff_audit_manifests_payload(previous_manifest, current_manifest), indent=2))
+            typer.echo(
+                json.dumps(
+                    diff_audit_manifests_payload(previous_manifest, current_manifest), indent=2
+                )
+            )
             return
         payload = diff_audit_manifests(previous_manifest, current_manifest)
     except FileNotFoundError as exc:
@@ -4007,7 +4060,9 @@ def audit_diff(
         raise typer.Exit(code=1) from exc
     except (json.JSONDecodeError, ValueError) as exc:
         if json_output:
-            typer.echo(json.dumps(_audit_diff_error_payload(str(exc), code="invalid_json"), indent=2))
+            typer.echo(
+                json.dumps(_audit_diff_error_payload(str(exc), code="invalid_json"), indent=2)
+            )
         else:
             typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc

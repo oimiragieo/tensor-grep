@@ -88,17 +88,15 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
             yield
             return
         instructions_path.write_text(
-            "\n".join(
-                [
-                    "# Evaluation Instructions",
-                    "",
-                    "You are running inside an automated competitor evaluation harness.",
-                    "Analyze this repository directly.",
-                    "Do not stop or complain because other AGENTS.md files are missing.",
-                    "Do not mention AGENTS.md in the answer.",
-                    "Return only the structured output requested by the prompt.",
-                ]
-            )
+            "\n".join([
+                "# Evaluation Instructions",
+                "",
+                "You are running inside an automated competitor evaluation harness.",
+                "Analyze this repository directly.",
+                "Do not stop or complain because other AGENTS.md files are missing.",
+                "Do not mention AGENTS.md in the answer.",
+                "Return only the structured output requested by the prompt.",
+            ])
             + "\n",
             encoding="utf-8",
         )
@@ -135,19 +133,17 @@ def _fallback_prompt(scenario: dict[str, Any]) -> str:
         "mode": scenario["mode"],
         "repo_root": str(repo_root),
     }
-    return " ".join(
-        [
-            "Task: produce a code-edit plan for this repository scenario.",
-            "Return exactly one JSON object.",
-            'Required keys: "actual_primary_file", "actual_primary_span", "actual_dependent_files", '
-            '"actual_suggested_edit_files", "actual_test_files", "actual_validation_commands", '
-            '"context_token_count", "notes".',
-            "Use repository-relative paths.",
-            "Do not mention AGENTS.md.",
-            "Do not ask for more input.",
-            f"Scenario: {json.dumps(scenario_payload, separators=(',', ':'))}",
-        ]
-    )
+    return " ".join([
+        "Task: produce a code-edit plan for this repository scenario.",
+        "Return exactly one JSON object.",
+        'Required keys: "actual_primary_file", "actual_primary_span", "actual_dependent_files", '
+        '"actual_suggested_edit_files", "actual_test_files", "actual_validation_commands", '
+        '"context_token_count", "notes".',
+        "Use repository-relative paths.",
+        "Do not mention AGENTS.md.",
+        "Do not ask for more input.",
+        f"Scenario: {json.dumps(scenario_payload, separators=(',', ':'))}",
+    ])
 
 
 def _extract_text_from_codex_output(stdout: str) -> str:
@@ -158,7 +154,11 @@ def _extract_text_from_codex_output(stdout: str) -> str:
         if payload.get("type") != "item.completed":
             continue
         item = payload.get("item")
-        if isinstance(item, dict) and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+        if (
+            isinstance(item, dict)
+            and item.get("type") == "agent_message"
+            and isinstance(item.get("text"), str)
+        ):
             return str(item["text"])
     raise ValueError("Unable to extract Codex agent_message from JSONL output")
 
@@ -237,7 +237,9 @@ def run_codex_scenario(
     repo_root = Path(str(scenario["repo_fixture"])).resolve()
     prompt = _scenario_prompt(scenario)
     started = time.perf_counter()
-    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as schema_file:
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".json", encoding="utf-8", delete=False
+    ) as schema_file:
         schema_path = Path(schema_file.name)
         json.dump(_expected_schema(), schema_file)
     try:

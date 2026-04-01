@@ -17,8 +17,6 @@ def format_filename(
     if isinstance(filename, bytes):
         filename = filename.decode(sys.getfilesystemencoding(), "replace")
     else:
-        filename = filename.encode("utf-8", "surrogateescape").decode(
-            "utf-8", "replace"
-        )
+        filename = filename.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
 
     return filename

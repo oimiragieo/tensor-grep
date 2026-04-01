@@ -46,10 +46,14 @@ def _open_document(server: TensorGrepLSPServer, path: Path, language_id: str) ->
 
 
 def test_lsp_definition_and_references_for_python_symbol(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
-    service_path.write_text("def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8")
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
     consumer_path.write_text(
         "from service import create_invoice\n\nresult = create_invoice(3)\n",
         encoding="utf-8",
@@ -81,7 +85,9 @@ def test_lsp_definition_and_references_for_python_symbol(tmp_path: Path) -> None
 
 
 def test_lsp_document_and_workspace_symbols_for_python_repo(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
     module_path = tmp_path / "module.py"
     extra_path = tmp_path / "extra.py"
     module_path.write_text(
@@ -149,10 +155,14 @@ def test_lsp_definition_and_references_for_rust_symbol(tmp_path: Path) -> None:
 
 
 def test_lsp_prepare_rename_and_rename_for_python_symbol(tmp_path: Path) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
-    service_path.write_text("def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8")
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
     consumer_path.write_text(
         "from service import create_invoice\n\nresult = create_invoice(3)\n",
         encoding="utf-8",
@@ -186,12 +196,19 @@ def test_lsp_prepare_rename_and_rename_for_python_symbol(tmp_path: Path) -> None
     edit_map = {change.text_document.uri: change.edits for change in edit.document_changes}
     assert service_path.resolve().as_uri() in edit_map
     assert consumer_path.resolve().as_uri() in edit_map
-    assert any(current.new_text == "issue_invoice" for current in edit_map[service_path.resolve().as_uri()])
-    assert any(current.new_text == "issue_invoice" for current in edit_map[consumer_path.resolve().as_uri()])
+    assert any(
+        current.new_text == "issue_invoice" for current in edit_map[service_path.resolve().as_uri()]
+    )
+    assert any(
+        current.new_text == "issue_invoice"
+        for current in edit_map[consumer_path.resolve().as_uri()]
+    )
 
 
 def test_lsp_external_definition_mode_prefers_external_result(tmp_path: Path, monkeypatch) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
     module_path = tmp_path / "module.py"
     module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
 
@@ -227,10 +244,14 @@ def test_lsp_external_definition_mode_prefers_external_result(tmp_path: Path, mo
 
 
 def test_lsp_hybrid_references_merge_external_and_native(tmp_path: Path, monkeypatch) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
     service_path = tmp_path / "service.py"
     consumer_path = tmp_path / "consumer.py"
-    service_path.write_text("def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8")
+    service_path.write_text(
+        "def create_invoice(total: int) -> int:\n    return total + 1\n", encoding="utf-8"
+    )
     consumer_path.write_text(
         "from service import create_invoice\n\nresult = create_invoice(3)\n",
         encoding="utf-8",
@@ -273,7 +294,9 @@ def test_lsp_hybrid_references_merge_external_and_native(tmp_path: Path, monkeyp
 
 
 def test_lsp_external_rename_uses_provider_workspace_edit(tmp_path: Path, monkeypatch) -> None:
-    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='demo'\nversion='0.1.0'\n", encoding="utf-8"
+    )
     module_path = tmp_path / "module.py"
     module_path.write_text("def create_invoice() -> None:\n    return None\n", encoding="utf-8")
 

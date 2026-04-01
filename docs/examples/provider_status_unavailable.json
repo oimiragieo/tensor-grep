@@ -1,0 +1,13 @@
+{
+  "provider_status": {
+    "mode": "lsp",
+    "available": false,
+    "running": false,
+    "language": "python",
+    "capabilities": {},
+    "last_error": "pyright-langserver executable was not found on PATH",
+    "fallback_used": true,
+    "request_timeout_seconds": 5.0,
+    "initialize_timeout_seconds": 15.0
+  }
+}

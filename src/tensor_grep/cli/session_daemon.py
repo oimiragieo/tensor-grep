@@ -235,8 +235,12 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
         with server._request_lock:
             server.request_count += 1
         session_id = str(request.get("session_id", "")).strip()
-        request_path = str(request.get("path", request.get("root", str(server.root)))).strip() or str(server.root)
-        request_session_id, request_path = _resolve_request_session_target(request, session_id, request_path)
+        request_path = str(
+            request.get("path", request.get("root", str(server.root)))
+        ).strip() or str(server.root)
+        request_session_id, request_path = _resolve_request_session_target(
+            request, session_id, request_path
+        )
         command = str(request.get("command", "")).strip().lower()
 
         if command == "stop":

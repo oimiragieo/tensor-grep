@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import shutil
 import subprocess
@@ -12,6 +13,22 @@ from typing import Any, cast
 
 class LSPTransportError(RuntimeError):
     pass
+
+
+_DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS = 3.0
+_DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS = 15.0
+_LSP_REQUEST_TIMEOUT_ENV_VAR = "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS"
+_LSP_INITIALIZE_TIMEOUT_ENV_VAR = "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS"
+
+
+def _configured_timeout_seconds(env_var: str, default: float) -> float:
+    raw_value = os.environ.get(env_var)
+    if raw_value is None:
+        return default
+    try:
+        return max(float(raw_value), 0.0)
+    except (TypeError, ValueError):
+        return default
 
 
 def _read_message(stream: Any) -> dict[str, Any] | None:
@@ -75,7 +92,8 @@ class ExternalLSPClient:
         *,
         language: str,
         workspace_root: Path,
-        request_timeout_seconds: float = 3.0,
+        request_timeout_seconds: float | None = None,
+        initialize_timeout_seconds: float | None = None,
         retry_cooldown_seconds: float = 30.0,
     ) -> None:
         self.language = language
@@ -87,7 +105,20 @@ class ExternalLSPClient:
         self._opened_documents: set[str] = set()
         self._message_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
         self._reader_thread: threading.Thread | None = None
-        self.request_timeout_seconds = request_timeout_seconds
+        self.request_timeout_seconds = (
+            _configured_timeout_seconds(
+                _LSP_REQUEST_TIMEOUT_ENV_VAR, _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS
+            )
+            if request_timeout_seconds is None
+            else max(float(request_timeout_seconds), 0.0)
+        )
+        self.initialize_timeout_seconds = (
+            _configured_timeout_seconds(
+                _LSP_INITIALIZE_TIMEOUT_ENV_VAR, _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS
+            )
+            if initialize_timeout_seconds is None
+            else max(float(initialize_timeout_seconds), 0.0)
+        )
         self.retry_cooldown_seconds = retry_cooldown_seconds
         self.capabilities: dict[str, Any] = {}
         self.last_error: str | None = None
@@ -159,13 +190,18 @@ class ExternalLSPClient:
         self.start()
         if self.process is None or self.process.stdin is None or self.process.stdout is None:
             raise LSPTransportError("LSP process is not available")
+        timeout_seconds = (
+            self.initialize_timeout_seconds
+            if method == "initialize"
+            else self.request_timeout_seconds
+        )
         with self._lock:
             self._request_id += 1
             request_id = self._request_id
             self._write_request(request_id, method, params)
             while True:
                 try:
-                    message = self._message_queue.get(timeout=self.request_timeout_seconds)
+                    message = self._message_queue.get(timeout=timeout_seconds)
                 except queue.Empty as exc:
                     self.last_error = f"timeout waiting for LSP response: {method}"
                     raise LSPTransportError(self.last_error) from exc
@@ -230,6 +266,8 @@ class ExternalLSPClient:
             "capabilities": dict(self.capabilities),
             "last_error": self.last_error,
             "opened_documents": len(self._opened_documents),
+            "request_timeout_seconds": self.request_timeout_seconds,
+            "initialize_timeout_seconds": self.initialize_timeout_seconds,
             "cooldown_remaining_s": max(0.0, self.disabled_until_monotonic - time.monotonic()),
         }
 
@@ -297,6 +335,14 @@ class ExternalLSPProviderManager:
                 "capabilities": {},
                 "last_error": str(exc),
                 "opened_documents": 0,
+                "request_timeout_seconds": _configured_timeout_seconds(
+                    _LSP_REQUEST_TIMEOUT_ENV_VAR,
+                    _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS,
+                ),
+                "initialize_timeout_seconds": _configured_timeout_seconds(
+                    _LSP_INITIALIZE_TIMEOUT_ENV_VAR,
+                    _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS,
+                ),
             }
         return {
             "language": language.lower(),
@@ -307,6 +353,14 @@ class ExternalLSPProviderManager:
             "capabilities": {},
             "last_error": None,
             "opened_documents": 0,
+            "request_timeout_seconds": _configured_timeout_seconds(
+                _LSP_REQUEST_TIMEOUT_ENV_VAR,
+                _DEFAULT_LSP_REQUEST_TIMEOUT_SECONDS,
+            ),
+            "initialize_timeout_seconds": _configured_timeout_seconds(
+                _LSP_INITIALIZE_TIMEOUT_ENV_VAR,
+                _DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS,
+            ),
             "cooldown_remaining_s": 0.0,
         }
 

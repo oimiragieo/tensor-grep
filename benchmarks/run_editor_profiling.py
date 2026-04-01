@@ -60,7 +60,9 @@ def _time_profiled_samples(
     return samples, profiling_samples, payload or {}
 
 
-def _profiling_fields(payload: dict[str, Any]) -> tuple[float, dict[str, float], list[dict[str, Any]]]:
+def _profiling_fields(
+    payload: dict[str, Any],
+) -> tuple[float, dict[str, float], list[dict[str, Any]]]:
     profiling = dict(payload.get("_profiling", {}))
     return (
         float(profiling.get("total_elapsed_s", 0.0)),
@@ -175,7 +177,9 @@ def main() -> int:
         fixture = dict(fixtures[name])
         fixture["name"] = name
         rows.append(benchmark_context_render_fixture(fixture, repeats=args.repeats))
-        rows.append(benchmark_blast_radius_fixture(fixture, repeats=args.repeats, provider=args.provider))
+        rows.append(
+            benchmark_blast_radius_fixture(fixture, repeats=args.repeats, provider=args.provider)
+        )
 
     payload = {
         "artifact": "bench_editor_profiling",

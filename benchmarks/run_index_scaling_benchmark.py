@@ -273,18 +273,16 @@ def benchmark_scale(
         indexed_matches = run_count_command(command)
         plain_matches = run_count_command(plain_command)
         counts_match = indexed_matches == plain_matches
-        queries.append(
-            {
-                "pattern": pattern,
-                "median_s": median_s,
-                "matches": indexed_matches,
-                "indexed_matches": indexed_matches,
-                "plain_matches": plain_matches,
-                "counts_match": counts_match,
-                "command": build_command_string(command),
-                "plain_command": build_command_string(plain_command),
-            }
-        )
+        queries.append({
+            "pattern": pattern,
+            "median_s": median_s,
+            "matches": indexed_matches,
+            "indexed_matches": indexed_matches,
+            "plain_matches": plain_matches,
+            "counts_match": counts_match,
+            "command": build_command_string(command),
+            "plain_command": build_command_string(plain_command),
+        })
 
     query_median_s = round(statistics.median(query["median_s"] for query in queries), 6)
     build_within_threshold = build_time_s <= BUILD_TIME_THRESHOLD_S
@@ -464,13 +462,11 @@ def main() -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
-    payload.update(
-        {
-            "tg_binary": str(tg_binary),
-            "hyperfine_binary": str(hyperfine_binary),
-            **results,
-        }
-    )
+    payload.update({
+        "tg_binary": str(tg_binary),
+        "hyperfine_binary": str(hyperfine_binary),
+        **results,
+    })
     write_json(output_path, payload)
 
     for row in payload["rows"]:

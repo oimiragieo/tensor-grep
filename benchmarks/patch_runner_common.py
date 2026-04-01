@@ -23,7 +23,9 @@ _IGNORED_DIFF_NAMES = {
 
 @contextlib.contextmanager
 def isolated_repo_pair(repo_root: Path) -> Iterator[tuple[Path, Path]]:
-    with tempfile.TemporaryDirectory(prefix="tg_patch_runner_", ignore_cleanup_errors=True) as tmp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix="tg_patch_runner_", ignore_cleanup_errors=True
+    ) as tmp_dir:
         root = Path(tmp_dir)
         before_root = root / "a"
         work_root = root / "b"
@@ -38,11 +40,7 @@ def derive_patch_from_repo_changes(before_root: Path, work_root: Path) -> str:
         path.relative_to(before_root).as_posix()
         for path in before_root.rglob("*")
         if path.is_file()
-    } | {
-        path.relative_to(work_root).as_posix()
-        for path in work_root.rglob("*")
-        if path.is_file()
-    }
+    } | {path.relative_to(work_root).as_posix() for path in work_root.rglob("*") if path.is_file()}
     patch_chunks: list[str] = []
     for relative_path in sorted(relative_paths):
         relative = Path(relative_path)
@@ -57,7 +55,15 @@ def derive_patch_from_repo_changes(before_root: Path, work_root: Path) -> str:
         if before_bytes == work_bytes:
             continue
         completed = subprocess.run(
-            ["git", "diff", "--no-index", "--binary", "--", f"a/{relative_path}", f"b/{relative_path}"],
+            [
+                "git",
+                "diff",
+                "--no-index",
+                "--binary",
+                "--",
+                f"a/{relative_path}",
+                f"b/{relative_path}",
+            ],
             cwd=root,
             capture_output=True,
             text=True,

@@ -246,13 +246,11 @@ def _resolve_native_tg_binary() -> Path:
     candidates = []
     if env_override:
         candidates.append(Path(env_override).expanduser())
-    candidates.extend(
-        [
-            repo_root / "rust_core" / "target" / "release" / binary_name,
-            repo_root / "benchmarks" / binary_name,
-            repo_root / "benchmarks" / "tg_rust.exe",
-        ]
-    )
+    candidates.extend([
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "benchmarks" / binary_name,
+        repo_root / "benchmarks" / "tg_rust.exe",
+    ])
 
     for candidate in candidates:
         if candidate.is_file():
@@ -1160,7 +1158,11 @@ def tg_session_blast_radius_render(
             path=path,
             code="invalid_input",
             message=str(exc),
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "render_profile": render_profile},
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "render_profile": render_profile,
+            },
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
@@ -1170,7 +1172,11 @@ def tg_session_blast_radius_render(
             path=path,
             code="invalid_input",
             message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "render_profile": render_profile},
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "render_profile": render_profile,
+            },
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
@@ -1220,7 +1226,12 @@ def tg_session_blast_radius_plan(
             path=path,
             code="invalid_input",
             message=str(exc),
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "max_files": max_files, "max_symbols": max_symbols},
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+            },
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
@@ -1230,7 +1241,12 @@ def tg_session_blast_radius_plan(
             path=path,
             code="invalid_input",
             message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth)), "max_files": max_files, "max_symbols": max_symbols},
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+            },
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
@@ -1388,7 +1404,9 @@ def tg_symbol_blast_radius(
     """
     try:
         return json.dumps(
-            build_symbol_blast_radius(symbol, path, max_depth=max_depth, semantic_provider=provider),
+            build_symbol_blast_radius(
+                symbol, path, max_depth=max_depth, semantic_provider=provider
+            ),
             indent=2,
         )
     except FileNotFoundError:

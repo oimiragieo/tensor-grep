@@ -21,8 +21,7 @@ def _build_project(tmp_path: Path) -> dict[str, Path]:
 
     core_path = _write(
         src_dir / "core.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     service_path = _write(
         src_dir / "service.py",
@@ -32,8 +31,7 @@ def _build_project(tmp_path: Path) -> dict[str, Path]:
     )
     helper_path = _write(
         src_dir / "helpers.py",
-        "def format_invoice_label(invoice_id):\n"
-        "    return f'invoice-{invoice_id}'\n",
+        "def format_invoice_label(invoice_id):\n    return f'invoice-{invoice_id}'\n",
     )
     test_path = _write(
         tests_dir / "test_service.py",
@@ -80,9 +78,7 @@ def test_stale_changeset_detects_modified_file(tmp_path: Path) -> None:
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
     paths["core"].write_text(
-        "def create_invoice(total):\n"
-        "    subtotal = total + 1\n"
-        "    return subtotal\n",
+        "def create_invoice(total):\n    subtotal = total + 1\n    return subtotal\n",
         encoding="utf-8",
     )
 
@@ -175,7 +171,9 @@ def test_build_repo_map_incremental_matches_full_build_for_mixed_changes(tmp_pat
     assert incremental_map == full_map
 
 
-def test_build_repo_map_incremental_only_reparses_changed_files(tmp_path: Path, monkeypatch) -> None:
+def test_build_repo_map_incremental_only_reparses_changed_files(
+    tmp_path: Path, monkeypatch
+) -> None:
     paths = _build_project(tmp_path)
     previous_map = repo_map.build_repo_map(paths["project"])
 
@@ -213,10 +211,14 @@ def test_build_repo_map_incremental_only_reparses_changed_files(tmp_path: Path, 
         str(paths["service"].resolve()),
     }
     helper_symbols_before = [
-        symbol for symbol in previous_map["symbols"] if symbol["file"] == str(paths["helper"].resolve())
+        symbol
+        for symbol in previous_map["symbols"]
+        if symbol["file"] == str(paths["helper"].resolve())
     ]
     helper_symbols_after = [
-        symbol for symbol in incremental_map["symbols"] if symbol["file"] == str(paths["helper"].resolve())
+        symbol
+        for symbol in incremental_map["symbols"]
+        if symbol["file"] == str(paths["helper"].resolve())
     ]
     assert helper_symbols_after == helper_symbols_before
 
@@ -242,11 +244,17 @@ def test_build_repo_map_incremental_removes_deleted_entries_from_payload(tmp_pat
     assert str(paths["helper"].resolve()) not in incremental_map["files"]
     assert str(paths["test"].resolve()) not in incremental_map["tests"]
     assert str(paths["helper"].resolve()) not in incremental_map["related_paths"]
-    assert all(entry["file"] != str(paths["helper"].resolve()) for entry in incremental_map["imports"])
-    assert all(symbol["file"] != str(paths["helper"].resolve()) for symbol in incremental_map["symbols"])
+    assert all(
+        entry["file"] != str(paths["helper"].resolve()) for entry in incremental_map["imports"]
+    )
+    assert all(
+        symbol["file"] != str(paths["helper"].resolve()) for symbol in incremental_map["symbols"]
+    )
 
 
-def test_incremental_repo_map_matches_full_graph_outputs_after_import_change(tmp_path: Path) -> None:
+def test_incremental_repo_map_matches_full_graph_outputs_after_import_change(
+    tmp_path: Path,
+) -> None:
     paths = _build_project(tmp_path)
     previous_map = repo_map.build_repo_map(paths["project"])
     api_path = _write(
@@ -260,7 +268,9 @@ def test_incremental_repo_map_matches_full_graph_outputs_after_import_change(tmp
     incremental_map = repo_map.build_repo_map_incremental(previous_map, changeset)
     full_map = repo_map.build_repo_map(paths["project"])
 
-    assert repo_map.build_context_pack_from_map(incremental_map, "invoice") == repo_map.build_context_pack_from_map(
+    assert repo_map.build_context_pack_from_map(
+        incremental_map, "invoice"
+    ) == repo_map.build_context_pack_from_map(
         full_map,
         "invoice",
     )
@@ -272,8 +282,7 @@ def test_refresh_session_uses_incremental_builder_when_changeset_available(
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
     paths["core"].write_text(
-        "def create_invoice(total):\n"
-        "    return total + 2\n",
+        "def create_invoice(total):\n    return total + 2\n",
         encoding="utf-8",
     )
 
@@ -281,7 +290,9 @@ def test_refresh_session_uses_incremental_builder_when_changeset_available(
     full_calls = {"count": 0}
     original_incremental = session_store.build_repo_map_incremental
 
-    def tracking_incremental(previous_map: dict[str, object], changeset: dict[str, list[str]]) -> dict[str, object]:
+    def tracking_incremental(
+        previous_map: dict[str, object], changeset: dict[str, list[str]]
+    ) -> dict[str, object]:
         incremental_calls["count"] += 1
         return original_incremental(previous_map, changeset)
 
@@ -305,14 +316,15 @@ def test_refresh_session_falls_back_to_full_rebuild_when_incremental_fails(
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
     paths["core"].write_text(
-        "def create_invoice(total):\n"
-        "    return total + 3\n",
+        "def create_invoice(total):\n    return total + 3\n",
         encoding="utf-8",
     )
 
     full_calls = {"count": 0}
 
-    def failing_incremental(previous_map: dict[str, object], changeset: dict[str, list[str]]) -> dict[str, object]:
+    def failing_incremental(
+        previous_map: dict[str, object], changeset: dict[str, list[str]]
+    ) -> dict[str, object]:
         raise RuntimeError("boom")
 
     def tracking_full_build(path: str | Path = ".") -> dict[str, object]:
@@ -337,7 +349,9 @@ def test_refresh_session_persists_changeset_and_refresh_type_in_payload(tmp_path
         "    return create_invoice(total) + 4\n",
         encoding="utf-8",
     )
-    added_path = _write(paths["project"] / "src" / "billing.py", "def issue_invoice(total):\n    return total\n")
+    added_path = _write(
+        paths["project"] / "src" / "billing.py", "def issue_invoice(total):\n    return total\n"
+    )
     paths["helper"].unlink()
 
     refreshed = session_store.refresh_session(session_id, str(paths["project"]))
@@ -357,9 +371,7 @@ def test_refresh_session_incremental_repo_map_matches_full_rebuild(tmp_path: Pat
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
     paths["core"].write_text(
-        "def create_invoice(total):\n"
-        "    base = total + 1\n"
-        "    return base * 2\n",
+        "def create_invoice(total):\n    base = total + 1\n    return base * 2\n",
         encoding="utf-8",
     )
     _write(
@@ -380,8 +392,7 @@ def test_session_context_raises_stale_error_with_changeset_summary(tmp_path: Pat
     paths = _build_project(tmp_path)
     session_id = _open_session(paths["project"])
     paths["core"].write_text(
-        "def create_invoice(total):\n"
-        "    return total + 10\n",
+        "def create_invoice(total):\n    return total + 10\n",
         encoding="utf-8",
     )
 
@@ -431,8 +442,7 @@ def test_incremental_repo_map_is_faster_than_full_rebuild_for_small_changes(
     for index in range(80):
         _write(
             src_dir / f"module_{index}.py",
-            f"def value_{index}():\n"
-            f"    return {index}\n",
+            f"def value_{index}():\n    return {index}\n",
         )
 
     previous_map = repo_map.build_repo_map(project)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -47,6 +48,11 @@ _TG_ONLY_SEARCH_FLAG_PREFIXES = (
     "--lang=",
     "--replace=",
 )
+
+
+def _prefer_rust_first_search() -> bool:
+    value = os.environ.get("TG_RUST_FIRST_SEARCH", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _read_project_version_fallback() -> str:
@@ -116,6 +122,11 @@ def _resolve_rg_binary() -> str | None:
 
 
 def _resolve_native_tg_binary() -> str | None:
+    override = os.environ.get("TG_NATIVE_TG_BINARY", "").strip()
+    if override:
+        override_path = Path(override).expanduser().resolve()
+        if override_path.is_file():
+            return str(override_path)
     repo_root = Path(__file__).resolve().parents[3]
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
     candidates = [
@@ -196,7 +207,10 @@ def main_entry() -> None:
     search_args = _normalize_search_invocation(argv)
     if search_args is not None:
         native_binary = _resolve_native_tg_binary()
-        if native_binary is not None and _can_delegate_to_native_tg_search(search_args):
+        if native_binary is not None and (
+            _can_delegate_to_native_tg_search(search_args)
+            or (_prefer_rust_first_search() and not _requires_full_cli(search_args))
+        ):
             raise SystemExit(_run_native_tg_search(native_binary, search_args))
 
         if not _requires_full_cli(search_args):

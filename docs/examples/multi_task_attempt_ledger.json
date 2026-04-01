@@ -1,0 +1,111 @@
+{
+  "artifact": "agent_attempt_ledger",
+  "suite": "agent_loop",
+  "generated_at_epoch_s": 1761941102.0,
+  "root": "C:\\dev\\projects\\tensor-grep",
+  "task_id": "tg-task-1720",
+  "tasks": [
+    {
+      "task_id": "tg-task-1720",
+      "status": "accepted",
+      "accepted_attempt_id": "attempt-1720-b"
+    },
+    {
+      "task_id": "tg-task-1721",
+      "status": "accepted",
+      "accepted_attempt_id": "attempt-1721-a"
+    }
+  ],
+  "attempts": [
+    {
+      "attempt_id": "attempt-1720-a",
+      "parent_attempt_id": null,
+      "kind": "rewrite_apply_verify",
+      "status": "validation_failed",
+      "retryable": true,
+      "retry_stage": "validation",
+      "retry_reason": "lint-failed",
+      "checkpoint_id": "chk-1720-a",
+      "audit_manifest_path": "artifacts\\audit\\attempt-1720-a.manifest.json",
+      "validation_success": false,
+      "score_artifact": null,
+      "session_id": "session-1720",
+      "inputs": [
+        "artifacts\\plans\\edit_plan_1720.json"
+      ],
+      "outputs": [
+        "artifacts\\rewrites\\attempt-1720-a.diff"
+      ]
+    },
+    {
+      "attempt_id": "attempt-1720-b",
+      "parent_attempt_id": "attempt-1720-a",
+      "kind": "rewrite_apply_verify",
+      "status": "accepted",
+      "retryable": false,
+      "retry_stage": "none",
+      "retry_reason": "accepted",
+      "checkpoint_id": "chk-1720-b",
+      "audit_manifest_path": "artifacts\\audit\\attempt-1720-b.manifest.json",
+      "validation_success": true,
+      "score_artifact": "artifacts\\scores\\attempt-1720-b.json",
+      "session_id": "session-1720",
+      "inputs": [
+        "artifacts\\rewrites\\attempt-1720-b.diff"
+      ],
+      "outputs": [
+        "artifacts\\scores\\attempt-1720-b.json"
+      ]
+    },
+    {
+      "attempt_id": "attempt-1721-a",
+      "parent_attempt_id": "attempt-1720-b",
+      "kind": "rewrite_apply_verify",
+      "status": "accepted",
+      "retryable": false,
+      "retry_stage": "none",
+      "retry_reason": "accepted",
+      "checkpoint_id": "chk-1721-a",
+      "audit_manifest_path": "artifacts\\audit\\attempt-1721-a.manifest.json",
+      "validation_success": true,
+      "score_artifact": "artifacts\\scores\\attempt-1721-a.json",
+      "session_id": "session-1721",
+      "inputs": [
+        "artifacts\\plans\\edit_plan_1721.json"
+      ],
+      "outputs": [
+        "artifacts\\scores\\attempt-1721-a.json"
+      ]
+    }
+  ],
+  "final_outcome": {
+    "status": "accepted",
+    "accepted_attempt_id": "attempt-1721-a",
+    "score_artifact": "artifacts\\scores\\attempt-1721-a.json",
+    "summary": "Task chain accepted across two linked tasks after one validation retry."
+  },
+  "replay": {
+    "preserve_attempt_ids": true,
+    "multi_session": false,
+    "multi_task": true,
+    "handoff": null,
+    "task_chain": [
+      "tg-task-1720",
+      "tg-task-1721"
+    ],
+    "partial_retry_ledger": [
+      {
+        "attempt_id": "attempt-1720-a",
+        "resumed_from": "validation",
+        "resumed_as": "attempt-1720-b",
+        "reason": "lint-failed"
+      }
+    ],
+    "audit_chain": [
+      "artifacts\\audit\\attempt-1720-a.manifest.json",
+      "artifacts\\audit\\attempt-1720-b.manifest.json",
+      "artifacts\\audit\\attempt-1721-a.manifest.json"
+    ],
+    "next_action": "score accepted task chain"
+  }
+}

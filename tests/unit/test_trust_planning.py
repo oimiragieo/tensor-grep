@@ -16,8 +16,7 @@ def _write_planning_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     service_path = src_dir / "service.py"

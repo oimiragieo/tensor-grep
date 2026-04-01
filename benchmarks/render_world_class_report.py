@@ -11,6 +11,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Render a final world-class evaluation report.")
     parser.add_argument("--external-eval", required=True)
     parser.add_argument("--profiling", required=True)
+    parser.add_argument(
+        "--provider-navigation", help="Optional provider navigation benchmark JSON."
+    )
     parser.add_argument("--competitor", help="Optional normalized competitor evaluation JSON.")
     parser.add_argument("--output", required=True)
     return parser.parse_args()
@@ -33,6 +36,7 @@ def render_world_class_report(
     *,
     external_eval: dict[str, Any],
     profiling: dict[str, Any],
+    provider_navigation: dict[str, Any] | None = None,
     competitor: dict[str, Any] | None = None,
 ) -> str:
     lines = [
@@ -56,15 +60,38 @@ def render_world_class_report(
             f"avg=`{current.get('avg_elapsed_s', 0.0)}` pct=`{current.get('percent_total_elapsed', 0.0)}`"
         )
 
+    if provider_navigation is None:
+        lines.extend([
+            "",
+            "## Provider Hard Cases",
+            "- provider-navigation input not provided",
+        ])
+    else:
+        lines.extend(["", "## Provider Hard Cases"])
+        for provider, metrics in sorted(
+            dict(provider_navigation.get("by_provider", {})).items(),
+            key=lambda item: (
+                -float(dict(item[1]).get("mean_caller_hit_rate", 0.0)),
+                -float(dict(item[1]).get("mean_caller_precision", 0.0)),
+                -float(dict(item[1]).get("mean_test_hit_rate", 0.0)),
+                str(item[0]),
+            ),
+        ):
+            current = dict(metrics)
+            lines.append(
+                f"- `{provider}`: caller_hit_rate=`{current.get('mean_caller_hit_rate', 0.0)}` "
+                f"caller_precision=`{current.get('mean_caller_precision', 0.0)}` "
+                f"test_hit_rate=`{current.get('mean_test_hit_rate', 0.0)}` "
+                f"scenarios=`{current.get('scenario_count', 0)}`"
+            )
+
     if competitor is None:
-        lines.extend(
-            [
-                "",
-                "## Competitor Status",
-                "- competitor-normalized input not provided",
-                "- manual Claude Code / Aider / OpenHands runs are still required",
-            ]
-        )
+        lines.extend([
+            "",
+            "## Competitor Status",
+            "- competitor-normalized input not provided",
+            "- manual Claude Code / Aider / OpenHands runs are still required",
+        ])
     else:
         lines.extend(["", "## Competitor Summary"])
         for system, metrics in sorted(
@@ -79,26 +106,33 @@ def render_world_class_report(
                 f"wall_clock=`{current.get('mean_wall_clock_seconds', 0.0)}`"
             )
 
-    lines.extend(
-        [
-            "",
-            "## Decision",
-            "- keep pursuing Python precision; that remains the weakest engineering area",
-            "- runtime work should stay benchmark-led because caller_scan/repo_map_build/file_parse still dominate",
-            "- competitor comparison is operationally ready but still needs manual external runs",
-            "",
-        ]
-    )
+    lines.extend([
+        "",
+        "## Decision",
+        "- keep pursuing Python precision; that remains the weakest engineering area",
+        "- runtime work should stay benchmark-led because caller_scan/repo_map_build/file_parse still dominate",
+        "- competitor comparison is operationally ready but still needs manual external runs",
+        "",
+    ])
     return "\n".join(lines)
 
 
 def main() -> int:
     args = parse_args()
-    external_eval = json.loads(Path(args.external_eval).expanduser().resolve().read_text(encoding="utf-8"))
+    external_eval = json.loads(
+        Path(args.external_eval).expanduser().resolve().read_text(encoding="utf-8")
+    )
     profiling = json.loads(Path(args.profiling).expanduser().resolve().read_text(encoding="utf-8"))
+    provider_navigation = None
+    if args.provider_navigation:
+        provider_navigation = json.loads(
+            Path(args.provider_navigation).expanduser().resolve().read_text(encoding="utf-8")
+        )
     competitor = None
     if args.competitor:
-        competitor = json.loads(Path(args.competitor).expanduser().resolve().read_text(encoding="utf-8"))
+        competitor = json.loads(
+            Path(args.competitor).expanduser().resolve().read_text(encoding="utf-8")
+        )
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -106,6 +140,9 @@ def main() -> int:
         "generated_at_epoch_s": time.time(),
         "external_eval": external_eval.get("artifact", ""),
         "profiling": profiling.get("artifact", ""),
+        "provider_navigation": provider_navigation.get("artifact", "")
+        if isinstance(provider_navigation, dict)
+        else "",
         "competitor": competitor.get("artifact", "") if isinstance(competitor, dict) else "",
     }
     metadata = "<!-- " + json.dumps(payload, sort_keys=True) + " -->\n"
@@ -114,6 +151,7 @@ def main() -> int:
         + render_world_class_report(
             external_eval=external_eval,
             profiling=profiling,
+            provider_navigation=provider_navigation,
             competitor=competitor,
         ),
         encoding="utf-8",

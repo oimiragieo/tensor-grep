@@ -59,7 +59,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run edit-planning bakeoff scenarios.")
     parser.add_argument("--scenarios", required=True, help="Path to the scenarios JSON file.")
     parser.add_argument("--output", default=str(default_output_path()))
-    parser.add_argument("--profile", action="store_true", help="Include per-scenario profiling output.")
+    parser.add_argument(
+        "--profile", action="store_true", help="Include per-scenario profiling output."
+    )
     parser.add_argument(
         "--provider",
         default="native",
@@ -74,34 +76,30 @@ def load_scenarios(path: str | Path) -> list[Scenario]:
     payload = json.loads(scenarios_path.read_text(encoding="utf-8"))
     scenarios = payload.get("scenarios")
     if not isinstance(scenarios, list):
-        raise ScenarioValidationError(
-            [{"field": "scenarios", "code": "invalid_type", "expected": "list"}]
-        )
+        raise ScenarioValidationError([
+            {"field": "scenarios", "code": "invalid_type", "expected": "list"}
+        ])
 
     errors: list[dict[str, Any]] = []
     validated: list[Scenario] = []
     for index, scenario in enumerate(scenarios):
         if not isinstance(scenario, dict):
-            errors.append(
-                {
-                    "scenario_index": index,
-                    "field": "scenario",
-                    "code": "invalid_type",
-                    "expected": "object",
-                }
-            )
+            errors.append({
+                "scenario_index": index,
+                "field": "scenario",
+                "code": "invalid_type",
+                "expected": "object",
+            })
             continue
 
         current = dict(scenario)
         missing = [field for field in _REQUIRED_FIELDS if field not in current]
         for field in missing:
-            errors.append(
-                {
-                    "scenario_index": index,
-                    "field": field,
-                    "code": "missing_required_field",
-                }
-            )
+            errors.append({
+                "scenario_index": index,
+                "field": field,
+                "code": "missing_required_field",
+            })
         if missing:
             continue
 
@@ -112,63 +110,51 @@ def load_scenarios(path: str | Path) -> list[Scenario]:
         expected_primary_span = current["expected_primary_span"]
 
         if not isinstance(repo_fixture, str):
-            errors.append(
-                {
-                    "scenario_index": index,
-                    "field": "repo_fixture",
-                    "code": "invalid_type",
-                    "expected": "str",
-                }
-            )
+            errors.append({
+                "scenario_index": index,
+                "field": "repo_fixture",
+                "code": "invalid_type",
+                "expected": "str",
+            })
         elif not Path(repo_fixture).is_absolute():
             current["repo_fixture"] = str((scenarios_path.parent / repo_fixture).resolve())
         if not isinstance(query_or_symbol, str):
-            errors.append(
-                {
-                    "scenario_index": index,
-                    "field": "query_or_symbol",
-                    "code": "invalid_type",
-                    "expected": "str",
-                }
-            )
+            errors.append({
+                "scenario_index": index,
+                "field": "query_or_symbol",
+                "code": "invalid_type",
+                "expected": "str",
+            })
         if mode not in _ALLOWED_MODES:
-            errors.append(
-                {
-                    "scenario_index": index,
-                    "field": "mode",
-                    "code": "invalid_choice",
-                    "expected": list(_ALLOWED_MODES),
-                }
-            )
+            errors.append({
+                "scenario_index": index,
+                "field": "mode",
+                "code": "invalid_choice",
+                "expected": list(_ALLOWED_MODES),
+            })
         if expected_primary_file is not None and not isinstance(expected_primary_file, str):
-            errors.append(
-                {
-                    "scenario_index": index,
-                    "field": "expected_primary_file",
-                    "code": "invalid_type",
-                    "expected": "str | null",
-                }
-            )
+            errors.append({
+                "scenario_index": index,
+                "field": "expected_primary_file",
+                "code": "invalid_type",
+                "expected": "str | null",
+            })
         if expected_primary_span is not None and not _valid_span(expected_primary_span):
-            errors.append(
-                {
-                    "scenario_index": index,
-                    "field": "expected_primary_span",
-                    "code": "invalid_shape",
-                }
-            )
+            errors.append({
+                "scenario_index": index,
+                "field": "expected_primary_span",
+                "code": "invalid_shape",
+            })
 
         for field in _LIST_FIELDS:
             value = current[field]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-                errors.append(
-                    {
-                        "scenario_index": index,
-                        "field": field,
-                        "code": "invalid_type",
-                        "expected": "list[str]",
-                    }
-                )
+                errors.append({
+                    "scenario_index": index,
+                    "field": field,
+                    "code": "invalid_type",
+                    "expected": "list[str]",
+                })
 
         validated.append(current)
 
@@ -206,20 +192,24 @@ def run_scenario(
         "actual_primary_file": edit_plan_seed.get("primary_file"),
         "actual_primary_span": edit_plan_seed.get("primary_span"),
         "actual_dependent_files": _ordered_unique_strings(edit_plan_seed.get("dependent_files")),
-        "actual_suggested_edit_files": _ordered_unique_strings(
-            [
-                current.get("file")
-                for current in list(edit_plan_seed.get("suggested_edits", []))
-                if isinstance(current, dict)
-            ]
-        ),
+        "actual_suggested_edit_files": _ordered_unique_strings([
+            current.get("file")
+            for current in list(edit_plan_seed.get("suggested_edits", []))
+            if isinstance(current, dict)
+        ]),
         "actual_test_files": _ordered_unique_strings(
             edit_plan_seed.get("validation_tests", payload.get("tests", []))
         ),
-        "actual_validation_commands": _ordered_unique_strings(edit_plan_seed.get("validation_commands")),
+        "actual_validation_commands": _ordered_unique_strings(
+            edit_plan_seed.get("validation_commands")
+        ),
         "context_token_count": int(payload.get("token_estimate", 0)),
         "semantic_provider": str(payload.get("semantic_provider", provider)),
     }
+    if "provider_agreement" in payload:
+        result["provider_agreement"] = payload["provider_agreement"]
+    if "provider_status" in payload:
+        result["provider_status"] = payload["provider_status"]
     if profile and "_profiling" in payload:
         result["_profiling"] = payload["_profiling"]
     return result
@@ -227,20 +217,16 @@ def run_scenario(
 
 def score_scenario(scenario: Scenario, actual: ResultRow) -> ResultRow:
     repo_root = Path(str(scenario["repo_fixture"]))
-    expected_files = _ordered_unique_strings(
-        [
-            scenario.get("expected_primary_file"),
-            *list(scenario.get("expected_dependent_files", [])),
-            *list(scenario.get("expected_suggested_edit_files", [])),
-        ]
-    )
-    actual_files = _ordered_unique_strings(
-        [
-            actual.get("actual_primary_file"),
-            *list(actual.get("actual_dependent_files", [])),
-            *list(actual.get("actual_suggested_edit_files", [])),
-        ]
-    )
+    expected_files = _ordered_unique_strings([
+        scenario.get("expected_primary_file"),
+        *list(scenario.get("expected_dependent_files", [])),
+        *list(scenario.get("expected_suggested_edit_files", [])),
+    ])
+    actual_files = _ordered_unique_strings([
+        actual.get("actual_primary_file"),
+        *list(actual.get("actual_dependent_files", [])),
+        *list(actual.get("actual_suggested_edit_files", [])),
+    ])
 
     normalized_expected_files = {_normalize_path(path, repo_root) for path in expected_files}
     normalized_actual_files = {_normalize_path(path, repo_root) for path in actual_files}
@@ -255,7 +241,9 @@ def score_scenario(scenario: Scenario, actual: ResultRow) -> ResultRow:
     file_hits = normalized_expected_files & normalized_actual_files
     test_hits = normalized_expected_tests & normalized_actual_tests
 
-    actual_commands = [str(command) for command in list(actual.get("actual_validation_commands", []))]
+    actual_commands = [
+        str(command) for command in list(actual.get("actual_validation_commands", []))
+    ]
     expected_command_substrings = [
         str(command) for command in list(scenario.get("expected_validation_commands_contain", []))
     ]
@@ -315,6 +303,10 @@ def score_scenario(scenario: Scenario, actual: ResultRow) -> ResultRow:
     }
     if "_profiling" in actual:
         row["_profiling"] = actual["_profiling"]
+    if "provider_agreement" in actual:
+        row["provider_agreement"] = actual["provider_agreement"]
+    if "provider_status" in actual:
+        row["provider_status"] = actual["provider_status"]
     return row
 
 
@@ -353,9 +345,13 @@ def build_summary(rows: list[ResultRow]) -> dict[str, float | int]:
         "mean_file_precision": _mean(float(row["file_precision"]) for row in rows),
         "mean_span_hit_rate": _mean(float(row["span_hit_rate"]) for row in rows),
         "mean_test_hit_rate": _mean(float(row["test_hit_rate"]) for row in rows),
-        "mean_validation_cmd_hit_rate": _mean(float(row["validation_cmd_hit_rate"]) for row in rows),
+        "mean_validation_cmd_hit_rate": _mean(
+            float(row["validation_cmd_hit_rate"]) for row in rows
+        ),
         "mean_context_token_count": _mean(float(row["context_token_count"]) for row in rows),
-        "mean_false_positive_file_count": _mean(float(len(row["false_positive_files"])) for row in rows),
+        "mean_false_positive_file_count": _mean(
+            float(len(row["false_positive_files"])) for row in rows
+        ),
     }
 
 
@@ -367,7 +363,10 @@ def main() -> int:
         print(json.dumps({"errors": exc.errors}, indent=2), file=sys.stderr)
         return 2
 
-    rows = [evaluate_scenario(scenario, profile=args.profile, provider=args.provider) for scenario in scenarios]
+    rows = [
+        evaluate_scenario(scenario, profile=args.profile, provider=args.provider)
+        for scenario in scenarios
+    ]
     payload = {
         "artifact": "bench_bakeoff",
         "suite": "run_bakeoff",
@@ -454,6 +453,19 @@ def _span_hit_rate(expected_span: Any, actual_span: Any) -> float:
 def _determinism_snapshot(row: ResultRow) -> ResultRow:
     snapshot = dict(row)
     snapshot.pop("_profiling", None)
+    provider_status = snapshot.get("provider_status")
+    if isinstance(provider_status, dict):
+        normalized_status = dict(provider_status)
+        providers = normalized_status.get("providers")
+        if isinstance(providers, list):
+            normalized_providers: list[dict[str, Any]] = []
+            for current in providers:
+                if isinstance(current, dict):
+                    normalized_provider = dict(current)
+                    normalized_provider.pop("cooldown_remaining_s", None)
+                    normalized_providers.append(normalized_provider)
+            normalized_status["providers"] = normalized_providers
+        snapshot["provider_status"] = normalized_status
     return snapshot
 
 

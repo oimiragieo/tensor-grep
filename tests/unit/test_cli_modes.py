@@ -10,6 +10,7 @@ from typing import ClassVar
 import pytest
 from typer.testing import CliRunner
 
+from tensor_grep.cli import repo_map
 from tensor_grep.cli.main import _select_ast_backend_for_pattern, app
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceInfo
@@ -118,9 +119,7 @@ def _write_scan_results(path: Path) -> dict[str, object]:
     return payload
 
 
-def _assert_audit_manifest_envelope(
-    payload: dict[str, object], *, routing_reason: str
-) -> None:
+def _assert_audit_manifest_envelope(payload: dict[str, object], *, routing_reason: str) -> None:
     assert payload["version"] == 1
     assert payload["routing_backend"] == "AuditManifest"
     assert payload["routing_reason"] == routing_reason
@@ -143,7 +142,9 @@ def _assert_enriched_edit_plan_seed(
         assert isinstance(edit_plan_seed["primary_symbol"]["name"], str)
     assert {"start_line", "end_line"} <= set(edit_plan_seed["primary_span"])
     assert edit_plan_seed["primary_span"]["start_line"] >= 1
-    assert edit_plan_seed["primary_span"]["end_line"] >= edit_plan_seed["primary_span"]["start_line"]
+    assert (
+        edit_plan_seed["primary_span"]["end_line"] >= edit_plan_seed["primary_span"]["start_line"]
+    )
     assert isinstance(edit_plan_seed["related_spans"], list)
     for related_span in edit_plan_seed["related_spans"]:
         assert {"file", "symbol", "start_line", "end_line", "depth", "score", "reasons"} <= set(
@@ -165,6 +166,72 @@ def _assert_enriched_edit_plan_seed(
         assert step["scope"] in {"symbol", "file", "repo"}
         assert isinstance(step["runner"], str)
         assert 0.0 <= step["confidence"] <= 1.0
+
+
+def _assert_navigation_pack(
+    navigation_pack: dict[str, object],
+    *,
+    primary_file: Path | None = None,
+    primary_symbol_name: str | None = None,
+) -> None:
+    assert {
+        "primary_target",
+        "follow_up_reads",
+        "parallel_read_groups",
+        "related_tests",
+        "validation_commands",
+        "edit_ordering",
+        "rollback_risk",
+    } <= set(navigation_pack)
+    primary_target = navigation_pack["primary_target"]
+    assert {"file", "symbol", "start_line", "end_line", "mention_ref", "reasons"} <= set(
+        primary_target
+    )
+    if primary_file is not None:
+        assert primary_target["file"] == str(primary_file.resolve())
+    else:
+        assert isinstance(primary_target["file"], str)
+    if primary_symbol_name is not None:
+        assert primary_target["symbol"] == primary_symbol_name
+    else:
+        assert isinstance(primary_target["symbol"], str)
+    assert primary_target["mention_ref"].startswith(primary_target["file"])
+    assert "#L" in primary_target["mention_ref"]
+    assert isinstance(navigation_pack["follow_up_reads"], list)
+    assert navigation_pack["follow_up_reads"]
+    for item in navigation_pack["follow_up_reads"]:
+        assert {
+            "file",
+            "symbol",
+            "start_line",
+            "end_line",
+            "mention_ref",
+            "role",
+            "rationale",
+        } <= set(item)
+        assert item["mention_ref"].startswith(item["file"])
+        assert "#L" in item["mention_ref"]
+        assert item["role"] in {"primary", "related", "test"}
+    assert isinstance(navigation_pack["related_tests"], list)
+    assert isinstance(navigation_pack["validation_commands"], list)
+    assert navigation_pack["validation_commands"]
+    assert isinstance(navigation_pack["parallel_read_groups"], list)
+    assert navigation_pack["parallel_read_groups"]
+    expected_phase = 0
+    for group in navigation_pack["parallel_read_groups"]:
+        assert {"phase", "label", "can_parallelize", "mentions", "files", "roles"} <= set(group)
+        assert group["phase"] == expected_phase
+        expected_phase += 1
+        assert group["label"] in {"primary", "related", "test"}
+        assert isinstance(group["can_parallelize"], bool)
+        assert isinstance(group["mentions"], list)
+        assert group["mentions"]
+        assert isinstance(group["files"], list)
+        assert group["files"]
+        assert isinstance(group["roles"], list)
+        assert group["roles"]
+    assert isinstance(navigation_pack["edit_ordering"], list)
+    assert 0.0 <= navigation_pack["rollback_risk"] <= 1.0
 
 
 class _FakeScanner:
@@ -559,9 +626,7 @@ def test_source_json_returns_exact_symbol_source_blocks(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    subtotal = total + tax\n"
-        "    return subtotal\n",
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
         encoding="utf-8",
     )
 
@@ -740,6 +805,76 @@ def test_context_render_json_includes_enriched_edit_plan_seed_fields(tmp_path):
     )
 
 
+def test_build_context_render_can_skip_edit_plan_seed_for_bounded_roots(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    module_path = project / "hybrid-search.cjs"
+    module_path.write_text(
+        "function HybridSearch() {\n  return 'ok';\n}\n",
+        encoding="utf-8",
+    )
+    seen: dict[str, bool] = {"called": False}
+
+    def _unexpected_attach(*args, **kwargs):
+        seen["called"] = True
+        raise AssertionError("_attach_edit_plan_metadata should be skipped for bounded roots")
+
+    monkeypatch.setattr(repo_map, "_attach_edit_plan_metadata", _unexpected_attach)
+
+    payload = repo_map.build_context_render(
+        "hybrid search",
+        project,
+        max_repo_files=25,
+        include_edit_plan_seed=False,
+    )
+
+    assert payload["routing_reason"] == "context-render"
+    assert payload["edit_plan_seed"] == {}
+    assert payload["edit_plan_seed_skipped"] is True
+    assert payload["navigation_pack"]["primary_target"]["file"] == str(module_path.resolve())
+    assert payload["navigation_pack"]["validation_commands"] == ["npm test"]
+    assert seen["called"] is False
+
+
+def test_iter_repo_files_does_not_resolve_every_child_file(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("print('ok')\n", encoding="utf-8")
+    original_resolve = repo_map.Path.resolve
+
+    def _guarded_resolve(self, *args, **kwargs):
+        if self.name == "a.py":
+            raise AssertionError("child file resolve should not be called")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(repo_map.Path, "resolve", _guarded_resolve)
+
+    files = repo_map._iter_repo_files(project)
+
+    assert files == [project.resolve() / "a.py"]
+
+
+def test_detect_validation_runners_caps_repo_scan(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    seen: dict[str, object] = {}
+    original_iter_repo_files = repo_map._iter_repo_files
+
+    def _wrapped_iter(root, **kwargs):
+        seen["max_files"] = kwargs.get("max_files")
+        return original_iter_repo_files(root, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_iter_repo_files", _wrapped_iter)
+
+    repo_map._detect_validation_runners.cache_clear()
+    try:
+        repo_map._detect_validation_runners(str(project))
+    finally:
+        repo_map._detect_validation_runners.cache_clear()
+
+    assert seen["max_files"] == repo_map._VALIDATION_RUNNER_SCAN_LIMIT
+
+
 def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
@@ -750,8 +885,7 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    return total + tax\n",
+        "def create_invoice(total, tax):\n    return total + tax\n",
         encoding="utf-8",
     )
     test_path = tests_dir / "test_payments.py"
@@ -778,6 +912,11 @@ def test_edit_plan_json_returns_machine_readable_plan_bundle(tmp_path):
     assert payload["candidate_edit_targets"]["spans"][0]["depth"] == 0
     _assert_enriched_edit_plan_seed(
         payload["edit_plan_seed"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
+    _assert_navigation_pack(
+        payload["navigation_pack"],
         primary_file=module_path,
         primary_symbol_name="create_invoice",
     )
@@ -902,12 +1041,10 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "vitest-project",
-                "devDependencies": {"vitest": "^1.0.0"},
-            }
-        ),
+        json.dumps({
+            "name": "vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+        }),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"
@@ -951,6 +1088,229 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     assert payload["edit_plan_seed"]["validation_commands"][0] == (
         'npx vitest run tests/payments.test.ts -t "createInvoice adds tax"'
     )
+
+
+def test_edit_plan_json_discovers_ancestor_package_json_for_nested_ts_subdir(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    package_root = project / "packages" / "core"
+    nested_src_dir = package_root / "src" / "tools"
+    tests_dir = package_root / "tests"
+    nested_src_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+
+    (package_root / "package.json").write_text(
+        json.dumps({
+            "name": "nested-vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+            "scripts": {"test": "vitest run"},
+        }),
+        encoding="utf-8",
+    )
+    module_path = nested_src_dir / "glob.ts"
+    module_path.write_text(
+        "export function createGlobMatcher(pattern: string): string {\n  return pattern;\n}\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "glob.test.ts").write_text(
+        'import { describe, expect, test } from "vitest";\n'
+        'import { createGlobMatcher } from "../src/tools/glob";\n\n'
+        'describe("glob", () => {\n'
+        '  test("createGlobMatcher returns the input pattern", () => {\n'
+        '    expect(createGlobMatcher("*.ts")).toBe("*.ts");\n'
+        "  });\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "create glob matcher",
+            "--json",
+            str(nested_src_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["edit_plan_seed"]["validation_plan"][0]["runner"] == "vitest"
+    assert payload["edit_plan_seed"]["validation_plan"][0]["scope"] == "repo"
+    assert payload["edit_plan_seed"]["validation_commands"][0] == "npx vitest run"
+
+
+def test_edit_plan_json_uses_js_fallback_for_manifest_free_tsx_subdir(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src" / "components" / "permissions"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "FileWriteToolDiff.tsx"
+    module_path.write_text(
+        'export function FileWriteToolDiff(): string {\n  return "diff";\n}\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "file write diff",
+            "--json",
+            str(src_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["edit_plan_seed"]["validation_commands"][0] == "npm test"
+
+
+def test_edit_plan_json_does_not_escape_manifest_free_repo_boundary(tmp_path):
+    runner = CliRunner()
+    outer_root = tmp_path / "outer"
+    external_root = outer_root / "copied-agent"
+    src_dir = external_root / "src" / "components" / "permissions"
+    src_dir.mkdir(parents=True)
+    (outer_root / "pyproject.toml").write_text(
+        "[project]\nname = 'outer'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    (external_root / "README.md").write_text("# copied agent\n", encoding="utf-8")
+    (external_root / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    module_path = src_dir / "FileWriteToolDiff.tsx"
+    module_path.write_text(
+        "export function FileWriteToolDiff(): string {\n"
+        '  return "file write diff read before write token budget";\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    sibling_path = src_dir / "FileWritePermissionRequest.tsx"
+    sibling_path.write_text(
+        "export function FileWritePermissionRequest(): string {\n"
+        '  return "file write permission request read before write token budget";\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "file write diff read before write token budget",
+            "--json",
+            str(src_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["edit_plan_seed"]["validation_commands"][0] == "npm test"
+
+
+def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_without_tests(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    cli_dir = project / ".claude" / "tools" / "cli"
+    cli_dir.mkdir(parents=True)
+    (project / "package.json").write_text(
+        json.dumps({
+            "name": "agent-studio-like",
+            "packageManager": "pnpm@10.0.0",
+            "scripts": {"test": "pnpm test"},
+        }),
+        encoding="utf-8",
+    )
+    (project / "scripts").mkdir()
+    (project / "scripts" / "helper.py").write_text(
+        "def helper():\n    return True\n", encoding="utf-8"
+    )
+    module_path = cli_dir / "hybrid-search.cjs"
+    module_path.write_text(
+        "function supportsDaemonCommand(command) {\n"
+        "  return command !== '--help' && command !== '-h';\n"
+        "}\n"
+        "function shouldUseDaemon(command) {\n"
+        "  if (!supportsDaemonCommand(command)) return false;\n"
+        "  return true;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "edit-plan",
+            "--query",
+            "hybrid search daemon command",
+            "--json",
+            str(cli_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["edit_plan_seed"]["validation_commands"][0] == "pnpm test"
+    assert "uv run pytest -q" not in payload["edit_plan_seed"]["validation_commands"]
+
+
+def test_navigation_pack_prefetches_single_same_directory_related_read_into_primary_phase(tmp_path):
+    from tensor_grep.cli import repo_map
+
+    src_dir = tmp_path / "src" / "components" / "permissions"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "FileWriteToolDiff.tsx"
+    sibling_path = src_dir / "FileWritePermissionRequest.tsx"
+    module_path.write_text(
+        "export function FileWriteToolDiff(): string { return 'diff'; }\n", encoding="utf-8"
+    )
+    sibling_path.write_text(
+        "export function FileWritePermissionRequest(): string { return 'request'; }\n",
+        encoding="utf-8",
+    )
+
+    payload = {
+        "edit_plan_seed": {
+            "primary_file": str(module_path.resolve()),
+            "primary_symbol": {"name": "FileWriteToolDiff"},
+            "primary_span": {"start_line": 1, "end_line": 1},
+            "reasons": ["primary-symbol"],
+            "confidence": {"overall": 0.9},
+            "validation_tests": [],
+            "validation_commands": ["npm test"],
+            "edit_ordering": [str(module_path.resolve()), str(sibling_path.resolve())],
+            "rollback_risk": 0.2,
+        },
+        "candidate_edit_targets": {
+            "spans": [
+                {
+                    "file": str(module_path.resolve()),
+                    "symbol": "FileWriteToolDiff",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "rationale": "primary",
+                },
+                {
+                    "file": str(sibling_path.resolve()),
+                    "symbol": "FileWritePermissionRequest",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "rationale": "related",
+                },
+            ]
+        },
+    }
+
+    navigation_pack = repo_map._navigation_pack({}, payload, max_reads=4)
+
+    groups = navigation_pack["parallel_read_groups"]
+    assert len(groups) == 1
+    assert groups[0]["label"] == "primary"
+    assert sorted(groups[0]["roles"]) == ["primary", "related"]
+    assert str(module_path.resolve()) in groups[0]["files"]
+    assert str(sibling_path.resolve()) in groups[0]["files"]
 
 
 def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):
@@ -2040,16 +2400,19 @@ def test_scan_builtin_ruleset_can_emit_json(monkeypatch):
     assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
     assert payload["findings"][0]["severity"] == "high"
     assert "hashlib.md5" in payload["findings"][0]["message"]
-    assert payload["findings"][0]["fingerprint"] == hashlib.sha256(
-        json.dumps(
-            {
-                "rule_id": "python-hashlib-md5",
-                "language": "python",
-                "files": ["a.py"],
-            },
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    assert (
+        payload["findings"][0]["fingerprint"]
+        == hashlib.sha256(
+            json.dumps(
+                {
+                    "rule_id": "python-hashlib-md5",
+                    "language": "python",
+                    "files": ["a.py"],
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     assert payload["findings"][0]["files"] == ["a.py"]
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
@@ -2344,11 +2707,13 @@ def test_scan_executes_tls_ruleset(monkeypatch):
     assert result.exit_code == 0
     assert "Scanning project using built-in ruleset tls-safe (python)" in result.output
     assert (
-        "[scan] rule=python-unverified-ssl-context lang=python matches=1 files=1"
-        in result.output
+        "[scan] rule=python-unverified-ssl-context lang=python matches=1 files=1" in result.output
     )
     assert "[scan] rule=python-requests-verify-false lang=python matches=0 files=0" in result.output
-    assert "[scan] rule=python-requests-post-verify-false lang=python matches=0 files=0" in result.output
+    assert (
+        "[scan] rule=python-requests-post-verify-false lang=python matches=0 files=0"
+        in result.output
+    )
     assert "Scan completed. rules=3 matched_rules=1 total_matches=1" in result.output
 
 
@@ -2369,7 +2734,10 @@ def test_scan_executes_tls_ruleset_requests_post_pattern(monkeypatch):
         )
 
     assert result.exit_code == 0
-    assert "[scan] rule=python-requests-post-verify-false lang=python matches=1 files=1" in result.output
+    assert (
+        "[scan] rule=python-requests-post-verify-false lang=python matches=1 files=1"
+        in result.output
+    )
 
 
 def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatch):
@@ -3340,7 +3708,3 @@ def test_main_entry_should_fallback_to_pyproject_version_when_metadata_missing(m
 
     assert excinfo.value.code == 0
     assert "tensor-grep 0.31.4" in capsys.readouterr().out
-
-
-
-

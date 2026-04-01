@@ -1,0 +1,83 @@
+{
+  "artifact": "agent_attempt_ledger",
+  "suite": "agent_loop",
+  "generated_at_epoch_s": 1774921104.772884,
+  "task_id": "invoice-payment-rewrite-followup",
+  "root": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack",
+  "attempts": [
+    {
+      "attempt_id": "att-101",
+      "parent_attempt_id": null,
+      "session_id": "session-20260331090100-context-pack",
+      "kind": "rewrite_apply_verify",
+      "status": "validation_failed",
+      "retryable": true,
+      "retry_stage": "validation",
+      "retry_reason": "session-local validation failed after apply; hand off to a fresh session after refresh",
+      "checkpoint_id": "ckpt-1743402060-deadbeef",
+      "audit_manifest_path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+      "validation_success": false,
+      "score_artifact": null,
+      "inputs": [
+        "docs/examples/session_context.json",
+        "docs/examples/edit_plan.json"
+      ],
+      "outputs": [
+        "docs/examples/rewrite_apply_verify_validation_failed.json"
+      ]
+    },
+    {
+      "attempt_id": "att-102",
+      "parent_attempt_id": "att-101",
+      "session_id": "session-20260331090730-context-pack-refresh",
+      "kind": "rewrite_apply_verify",
+      "status": "accepted",
+      "retryable": false,
+      "retry_stage": "full_attempt",
+      "retry_reason": "fresh-session replay after stale session refresh and repaired validation",
+      "checkpoint_id": "ckpt-1743402450-feedface",
+      "audit_manifest_path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+      "validation_success": true,
+      "score_artifact": "docs/examples/patch_bakeoff.json",
+      "inputs": [
+        "docs/examples/session_context.json",
+        "docs/examples/attempt_ledger.json",
+        "docs/examples/rewrite_apply_verify_validation_failed.json"
+      ],
+      "outputs": [
+        "docs/examples/rewrite_apply_verify.json",
+        "docs/examples/audit_manifest_verify.json",
+        "docs/examples/patch_bakeoff.json"
+      ]
+    }
+  ],
+  "final_outcome": {
+    "status": "accepted",
+    "accepted_attempt_id": "att-102",
+    "score_artifact": "docs/examples/patch_bakeoff.json",
+    "summary": "Accepted after a session handoff to a fresh replay context."
+  },
+  "replay": {
+    "preserve_attempt_ids": true,
+    "multi_session": true,
+    "handoff": {
+      "from_session_id": "session-20260331090100-context-pack",
+      "to_session_id": "session-20260331090730-context-pack-refresh",
+      "reason": "stale session and failed validation required a fresh replay context"
+    },
+    "partial_retry_ledger": [
+      {
+        "from_attempt_id": "att-101",
+        "to_attempt_id": "att-102",
+        "resume_stage": "validation",
+        "reason": "preserve the attempt chain while resuming in a refreshed session"
+      }
+    ],
+    "audit_chain": [
+      "docs/examples/rewrite_apply_verify_validation_failed.json",
+      "docs/examples/rewrite_apply_verify.json",
+      "docs/examples/audit_manifest_verify.json"
+    ],
+    "next_action": "score accepted attempt and preserve the multi-session replay chain for audit"
+  }
+}

@@ -65,9 +65,7 @@ def _coerce_optional_string(
 
 def _coerce_positive_int(value: object, *, field: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        raise _policy_validation_error(
-            {"field": field, "message": "must be a positive integer"}
-        )
+        raise _policy_validation_error({"field": field, "message": "must be a positive integer"})
     return value
 
 
@@ -75,9 +73,10 @@ def _load_json_object(path: Path) -> dict[str, object]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise _policy_validation_error(
-            {"field": "$", "message": f"must be valid JSON: {exc.msg}"}
-        ) from exc
+        raise _policy_validation_error({
+            "field": "$",
+            "message": f"must be valid JSON: {exc.msg}",
+        }) from exc
     if not isinstance(payload, dict):
         raise _policy_validation_error({"field": "$", "message": "must be a JSON object"})
     return payload
@@ -93,15 +92,17 @@ def _validate_ruleset_scan(
     if value is None:
         return None
     if not isinstance(value, dict):
-        raise _policy_validation_error(
-            {"field": "ruleset_scan", "message": "must be an object or null"}
-        )
+        raise _policy_validation_error({
+            "field": "ruleset_scan",
+            "message": "must be an object or null",
+        })
 
     enabled = value.get("enabled")
     if not isinstance(enabled, bool):
-        raise _policy_validation_error(
-            {"field": "ruleset_scan.enabled", "message": "must be a boolean"}
-        )
+        raise _policy_validation_error({
+            "field": "ruleset_scan.enabled",
+            "message": "must be a boolean",
+        })
 
     pack_value = value.get("pack")
     language_value = value.get("language")
@@ -124,33 +125,31 @@ def _validate_ruleset_scan(
         if not baseline_path.is_absolute():
             baseline_path = (policy_dir / baseline_path).resolve()
         if not baseline_path.exists():
-            raise _policy_validation_error(
-                {
-                    "field": "ruleset_scan.baseline",
-                    "message": f"baseline path does not exist: {baseline_path}",
-                }
-            )
+            raise _policy_validation_error({
+                "field": "ruleset_scan.baseline",
+                "message": f"baseline path does not exist: {baseline_path}",
+            })
         _load_json_object(baseline_path)
         baseline = str(baseline_path)
 
     if enabled:
         if pack is None:
-            raise _policy_validation_error(
-                {"field": "ruleset_scan.pack", "message": "must be provided when enabled"}
-            )
+            raise _policy_validation_error({
+                "field": "ruleset_scan.pack",
+                "message": "must be provided when enabled",
+            })
         if language is None:
-            raise _policy_validation_error(
-                {
-                    "field": "ruleset_scan.language",
-                    "message": "must be provided when enabled",
-                }
-            )
+            raise _policy_validation_error({
+                "field": "ruleset_scan.language",
+                "message": "must be provided when enabled",
+            })
         try:
             resolve_rule_pack(pack, language)
         except ValueError as exc:
-            raise _policy_validation_error(
-                {"field": "ruleset_scan.pack", "message": str(exc)}
-            ) from exc
+            raise _policy_validation_error({
+                "field": "ruleset_scan.pack",
+                "message": str(exc),
+            }) from exc
 
     return RulesetScanPolicy(
         enabled=enabled,
@@ -173,7 +172,9 @@ def load_apply_policy(
     payload = _load_json_object(path)
     required_fields = ["version", "lint_cmd", "test_cmd", "ruleset_scan", "on_failure"]
     missing_fields = [
-        {"field": field, "message": "is required"} for field in required_fields if field not in payload
+        {"field": field, "message": "is required"}
+        for field in required_fields
+        if field not in payload
     ]
     if missing_fields:
         raise PolicyValidationError("Invalid apply policy.", details=missing_fields)
@@ -187,15 +188,15 @@ def load_apply_policy(
 
     on_failure = payload.get("on_failure")
     if not isinstance(on_failure, str) or on_failure not in _FAILURE_ACTIONS:
-        raise _policy_validation_error(
-            {
-                "field": "on_failure",
-                "message": "must be one of rollback, warn, or fail",
-            }
-        )
+        raise _policy_validation_error({
+            "field": "on_failure",
+            "message": "must be one of rollback, warn, or fail",
+        })
 
-    timeout = 120 if "timeout" not in payload else _coerce_positive_int(
-        payload.get("timeout"), field="timeout"
+    timeout = (
+        120
+        if "timeout" not in payload
+        else _coerce_positive_int(payload.get("timeout"), field="timeout")
     )
     ruleset_scan = _validate_ruleset_scan(payload.get("ruleset_scan"), policy_dir=path.parent)
 

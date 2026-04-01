@@ -119,6 +119,31 @@ def _component_checksum(value: Any) -> str:
     return _sha256_hex(_canonical_json_bytes(value))
 
 
+def _format_timestamp(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _review_bundle_created_at(
+    manifest: dict[str, Any],
+    scan_results: Any,
+    checkpoint_metadata: Any,
+    diff_payload: Any,
+) -> str:
+    candidate_values: list[Any] = [manifest.get("created_at")]
+    for value in (scan_results, checkpoint_metadata, diff_payload):
+        if isinstance(value, dict):
+            candidate_values.append(value.get("created_at"))
+
+    candidate_timestamps = [
+        parsed
+        for parsed in (_parse_timestamp(value) for value in candidate_values)
+        if parsed is not None
+    ]
+    if candidate_timestamps:
+        return _format_timestamp(max(candidate_timestamps))
+    return _utc_now_iso()
+
+
 def create_review_bundle(
     manifest_path: str | Path,
     *,
@@ -134,14 +159,10 @@ def create_review_bundle(
     root = _resolve_manifest_root(resolved_manifest, manifest)
 
     scan_results = (
-        _read_json_value(scan_path, description="Scan results")
-        if scan_path is not None
-        else None
+        _read_json_value(scan_path, description="Scan results") if scan_path is not None else None
     )
     checkpoint_metadata = (
-        load_checkpoint_metadata(checkpoint_id, str(root))
-        if checkpoint_id is not None
-        else None
+        load_checkpoint_metadata(checkpoint_id, str(root)) if checkpoint_id is not None else None
     )
     diff_payload = (
         diff_audit_manifests(previous_manifest, resolved_manifest)
@@ -150,7 +171,12 @@ def create_review_bundle(
     )
 
     payload = _envelope(routing_reason="review-bundle-create")
-    payload["created_at"] = _utc_now_iso()
+    payload["created_at"] = _review_bundle_created_at(
+        manifest,
+        scan_results,
+        checkpoint_metadata,
+        diff_payload,
+    )
     payload["audit_manifest"] = manifest
     payload["scan_results"] = scan_results
     payload["checkpoint_metadata"] = checkpoint_metadata
@@ -204,9 +230,7 @@ def verify_review_bundle(bundle_path: str | Path) -> dict[str, Any]:
         value = bundle.get(component)
         if value is None:
             actual = None
-            valid = (
-                component not in _REVIEW_BUNDLE_REQUIRED_COMPONENTS and expected is None
-            )
+            valid = component not in _REVIEW_BUNDLE_REQUIRED_COMPONENTS and expected is None
         else:
             actual = _component_checksum(value)
             valid = expected is not None and expected == actual
@@ -458,17 +482,15 @@ def _load_history_index(root: Path) -> list[dict[str, Any]] | None:
         file_path = _normalize_optional_str(raw.get("file_path"))
         if manifest_sha256 is None or file_path is None:
             continue
-        entries.append(
-            {
-                "manifest_sha256": manifest_sha256,
-                "kind": _normalize_optional_str(raw.get("kind")),
-                "created_at": _normalize_optional_str(raw.get("created_at")),
-                "file_path": file_path,
-                "previous_manifest_sha256": _normalize_optional_str(
-                    raw.get("previous_manifest_sha256")
-                ),
-            }
-        )
+        entries.append({
+            "manifest_sha256": manifest_sha256,
+            "kind": _normalize_optional_str(raw.get("kind")),
+            "created_at": _normalize_optional_str(raw.get("created_at")),
+            "file_path": file_path,
+            "previous_manifest_sha256": _normalize_optional_str(
+                raw.get("previous_manifest_sha256")
+            ),
+        })
     return entries
 
 
@@ -482,7 +504,9 @@ def _ensure_history_index(root: Path) -> list[dict[str, Any]]:
     return scanned_entries
 
 
-def _history_entry_identity(entry: dict[str, Any]) -> tuple[str, str, str | None, str | None, str | None]:
+def _history_entry_identity(
+    entry: dict[str, Any],
+) -> tuple[str, str, str | None, str | None, str | None]:
     return (
         str(entry["manifest_sha256"]),
         str(entry["file_path"]),
@@ -524,7 +548,9 @@ def record_audit_manifest(
     manifest: dict[str, Any] | None = None,
 ) -> None:
     resolved_manifest = Path(manifest_path).expanduser().resolve()
-    manifest_payload = manifest if manifest is not None else _read_manifest_object(resolved_manifest)
+    manifest_payload = (
+        manifest if manifest is not None else _read_manifest_object(resolved_manifest)
+    )
     root = _resolve_manifest_root(resolved_manifest, manifest_payload)
     entries = _sync_history_index(root)
     _write_history_index(
@@ -556,11 +582,7 @@ def _order_history_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]
         for previous_sha in [_normalize_optional_str(entry.get("previous_manifest_sha256"))]
         if previous_sha is not None and previous_sha in by_sha
     }
-    heads = [
-        entry
-        for entry in entries
-        if str(entry.get("manifest_sha256")) not in referenced
-    ]
+    heads = [entry for entry in entries if str(entry.get("manifest_sha256")) not in referenced]
 
     ordered: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -599,19 +621,17 @@ def list_audit_history(path: str | Path = ".") -> list[dict[str, Any]]:
         previous_manifest_sha256 = _normalize_optional_str(entry.get("previous_manifest_sha256"))
         created_at = _normalize_optional_str(entry.get("created_at"))
         file_path = str(entry["file_path"])
-        history.append(
-            {
-                "manifest_sha256": str(entry["manifest_sha256"]),
-                "kind": _normalize_optional_str(entry.get("kind")),
-                "created_at": created_at,
-                "file_path": file_path,
-                "previous_manifest_sha256": previous_manifest_sha256,
-                "missing_timestamp": created_at is None,
-                "chain_gap": previous_manifest_sha256 is not None
-                and previous_manifest_sha256 not in known_manifests,
-                "signature_kind": _load_signature_kind(file_path),
-            }
-        )
+        history.append({
+            "manifest_sha256": str(entry["manifest_sha256"]),
+            "kind": _normalize_optional_str(entry.get("kind")),
+            "created_at": created_at,
+            "file_path": file_path,
+            "previous_manifest_sha256": previous_manifest_sha256,
+            "missing_timestamp": created_at is None,
+            "chain_gap": previous_manifest_sha256 is not None
+            and previous_manifest_sha256 not in known_manifests,
+            "signature_kind": _load_signature_kind(file_path),
+        })
     return history
 
 
@@ -659,14 +679,18 @@ def verify_audit_manifest(
 
     previous_manifest_sha256 = manifest.get("previous_manifest_sha256")
     previous_manifest_path = (
-        str(Path(previous_manifest).expanduser().resolve()) if previous_manifest is not None else None
+        str(Path(previous_manifest).expanduser().resolve())
+        if previous_manifest is not None
+        else None
     )
     chain_valid = True
     chain_error: str | None = None
     if previous_manifest_sha256 is not None:
         if not isinstance(previous_manifest_sha256, str) or not previous_manifest_sha256:
             chain_valid = False
-            chain_error = "Manifest previous_manifest_sha256 must be a non-empty string when present."
+            chain_error = (
+                "Manifest previous_manifest_sha256 must be a non-empty string when present."
+            )
         elif previous_manifest is None:
             chain_valid = False
             chain_error = "Manifest chain digest is present but no previous manifest was provided."
@@ -678,7 +702,9 @@ def verify_audit_manifest(
             else:
                 chain_valid = previous_manifest_sha256 == _previous_manifest_digest(previous_path)
                 if not chain_valid:
-                    chain_error = "Previous manifest digest does not match previous_manifest_sha256."
+                    chain_error = (
+                        "Previous manifest digest does not match previous_manifest_sha256."
+                    )
 
     signature = manifest.get("signature")
     signature_valid = True
@@ -716,7 +742,9 @@ def verify_audit_manifest(
                     ).hexdigest()
                     signature_valid = hmac.compare_digest(signature_value, actual_signature)
                     if not signature_valid:
-                        signature_error = "Manifest signature does not match the supplied signing key."
+                        signature_error = (
+                            "Manifest signature does not match the supplied signing key."
+                        )
     elif signing_key is not None:
         signature_valid = False
         signature_error = "Signing key was provided but the manifest is unsigned."

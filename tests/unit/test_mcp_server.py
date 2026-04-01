@@ -85,9 +85,7 @@ def _write_scan_results(path: Path) -> dict[str, object]:
     return payload
 
 
-def _assert_audit_manifest_envelope(
-    payload: dict[str, object], *, routing_reason: str
-) -> None:
+def _assert_audit_manifest_envelope(payload: dict[str, object], *, routing_reason: str) -> None:
     assert payload["version"] == 1
     assert payload["routing_backend"] == "AuditManifest"
     assert payload["routing_reason"] == routing_reason
@@ -110,7 +108,9 @@ def _assert_enriched_edit_plan_seed(
         assert isinstance(edit_plan_seed["primary_symbol"]["name"], str)
     assert {"start_line", "end_line"} <= set(edit_plan_seed["primary_span"])
     assert edit_plan_seed["primary_span"]["start_line"] >= 1
-    assert edit_plan_seed["primary_span"]["end_line"] >= edit_plan_seed["primary_span"]["start_line"]
+    assert (
+        edit_plan_seed["primary_span"]["end_line"] >= edit_plan_seed["primary_span"]["start_line"]
+    )
     assert isinstance(edit_plan_seed["related_spans"], list)
     for related_span in edit_plan_seed["related_spans"]:
         assert {"file", "symbol", "start_line", "end_line", "depth", "score", "reasons"} <= set(
@@ -144,6 +144,72 @@ def _assert_enriched_edit_plan_seed(
         assert {"command", "scope", "runner", "confidence"} <= set(step)
         assert step["scope"] in {"symbol", "file", "repo"}
         assert 0.0 <= step["confidence"] <= 1.0
+
+
+def _assert_navigation_pack(
+    navigation_pack: dict[str, object],
+    *,
+    primary_file: Path | None = None,
+    primary_symbol_name: str | None = None,
+) -> None:
+    assert {
+        "primary_target",
+        "follow_up_reads",
+        "parallel_read_groups",
+        "related_tests",
+        "validation_commands",
+        "edit_ordering",
+        "rollback_risk",
+    } <= set(navigation_pack)
+    primary_target = navigation_pack["primary_target"]
+    assert {"file", "symbol", "start_line", "end_line", "mention_ref", "reasons"} <= set(
+        primary_target
+    )
+    if primary_file is not None:
+        assert primary_target["file"] == str(primary_file.resolve())
+    else:
+        assert isinstance(primary_target["file"], str)
+    if primary_symbol_name is not None:
+        assert primary_target["symbol"] == primary_symbol_name
+    else:
+        assert isinstance(primary_target["symbol"], str)
+    assert primary_target["mention_ref"].startswith(primary_target["file"])
+    assert "#L" in primary_target["mention_ref"]
+    assert isinstance(navigation_pack["follow_up_reads"], list)
+    assert navigation_pack["follow_up_reads"]
+    for item in navigation_pack["follow_up_reads"]:
+        assert {
+            "file",
+            "symbol",
+            "start_line",
+            "end_line",
+            "mention_ref",
+            "role",
+            "rationale",
+        } <= set(item)
+        assert item["mention_ref"].startswith(item["file"])
+        assert "#L" in item["mention_ref"]
+        assert item["role"] in {"primary", "related", "test"}
+    assert isinstance(navigation_pack["related_tests"], list)
+    assert isinstance(navigation_pack["validation_commands"], list)
+    assert navigation_pack["validation_commands"]
+    assert isinstance(navigation_pack["parallel_read_groups"], list)
+    assert navigation_pack["parallel_read_groups"]
+    expected_phase = 0
+    for group in navigation_pack["parallel_read_groups"]:
+        assert {"phase", "label", "can_parallelize", "mentions", "files", "roles"} <= set(group)
+        assert group["phase"] == expected_phase
+        expected_phase += 1
+        assert group["label"] in {"primary", "related", "test"}
+        assert isinstance(group["can_parallelize"], bool)
+        assert isinstance(group["mentions"], list)
+        assert group["mentions"]
+        assert isinstance(group["files"], list)
+        assert group["files"]
+        assert isinstance(group["roles"], list)
+        assert group["roles"]
+    assert isinstance(navigation_pack["edit_ordering"], list)
+    assert 0.0 <= navigation_pack["rollback_risk"] <= 1.0
 
 
 def _without_profiling(payload: dict[str, object]) -> dict[str, object]:
@@ -447,8 +513,7 @@ def test_tg_edit_plan_exposes_ranking_quality_and_coverage_summary(tmp_path: Pat
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     (src_dir / "payments.py").write_text(
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
         encoding="utf-8",
     )
 
@@ -505,7 +570,9 @@ def test_tg_session_context_returns_uniform_error_detail(tmp_path: Path):
     from tensor_grep.cli import mcp_server
 
     missing_root = tmp_path / "missing"
-    payload = json.loads(mcp_server.tg_session_context("session-missing", "invoice", str(missing_root)))
+    payload = json.loads(
+        mcp_server.tg_session_context("session-missing", "invoice", str(missing_root))
+    )
 
     assert payload["error"]["code"] == "invalid_input"
     assert "detail" in payload["error"]
@@ -515,10 +582,17 @@ def test_tg_session_lifecycle_errors_return_uniform_error_detail(tmp_path: Path)
     from tensor_grep.cli import mcp_server
 
     with (
-        patch("tensor_grep.cli.session_store.open_session", side_effect=RuntimeError("open failed")),
-        patch("tensor_grep.cli.session_store.list_sessions", side_effect=RuntimeError("list failed")),
+        patch(
+            "tensor_grep.cli.session_store.open_session", side_effect=RuntimeError("open failed")
+        ),
+        patch(
+            "tensor_grep.cli.session_store.list_sessions", side_effect=RuntimeError("list failed")
+        ),
         patch("tensor_grep.cli.session_store.get_session", side_effect=RuntimeError("show failed")),
-        patch("tensor_grep.cli.session_store.refresh_session", side_effect=RuntimeError("refresh failed")),
+        patch(
+            "tensor_grep.cli.session_store.refresh_session",
+            side_effect=RuntimeError("refresh failed"),
+        ),
     ):
         opened = json.loads(mcp_server.tg_session_open(str(tmp_path)))
         listed = json.loads(mcp_server.tg_session_list(str(tmp_path)))
@@ -569,16 +643,19 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
     assert payload["findings"][0]["rule_id"] == "python-hashlib-md5"
     assert payload["findings"][0]["severity"] == "high"
     assert "hashlib.md5" in payload["findings"][0]["message"]
-    assert payload["findings"][0]["fingerprint"] == hashlib.sha256(
-        json.dumps(
-            {
-                "rule_id": "python-hashlib-md5",
-                "language": "python",
-                "files": ["a.py"],
-            },
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    assert (
+        payload["findings"][0]["fingerprint"]
+        == hashlib.sha256(
+            json.dumps(
+                {
+                    "rule_id": "python-hashlib-md5",
+                    "language": "python",
+                    "files": ["a.py"],
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     assert payload["findings"][0]["files"] == ["a.py"]
     assert payload["findings"][0]["evidence"] == [{"file": "a.py", "match_count": 1}]
 
@@ -942,15 +1019,13 @@ def test_tg_rewrite_apply_supports_optional_policy_parameter(tmp_path):
 
     policy_path = tmp_path / "apply-policy.json"
     policy_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "lint_cmd": None,
-                "test_cmd": None,
-                "ruleset_scan": None,
-                "on_failure": "warn",
-            }
-        ),
+        json.dumps({
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "warn",
+        }),
         encoding="utf-8",
     )
 
@@ -991,14 +1066,12 @@ def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path):
 
     policy_path = tmp_path / "apply-policy.json"
     policy_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "lint_cmd": None,
-                "test_cmd": None,
-                "ruleset_scan": None,
-            }
-        ),
+        json.dumps({
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": None,
+        }),
         encoding="utf-8",
     )
 
@@ -1327,7 +1400,9 @@ def test_tg_audit_diff_matches_cli_json_schema(tmp_path):
     _assert_audit_manifest_envelope(payload, routing_reason="audit-manifest-diff")
     assert payload["added"] == {"reviewer": "alice"}
     assert payload["removed"] == {}
-    assert payload["changed"] == audit_manifest.diff_audit_manifests(left_path, right_path)["changed"]
+    assert (
+        payload["changed"] == audit_manifest.diff_audit_manifests(left_path, right_path)["changed"]
+    )
 
 
 def test_tg_audit_diff_reports_not_found(tmp_path):
@@ -1841,18 +1916,14 @@ def test_session_serve_render_commands_include_enriched_edit_plan_seed(tmp_path)
 
     session_id = session_store.open_session(str(project)).session_id
     stdin = StringIO(
-        "\n".join(
-            [
-                json.dumps({"command": "context_render", "query": "create invoice"}),
-                json.dumps(
-                    {
-                        "command": "blast_radius_render",
-                        "symbol": "create_invoice",
-                        "max_depth": 1,
-                    }
-                ),
-            ]
-        )
+        "\n".join([
+            json.dumps({"command": "context_render", "query": "create invoice"}),
+            json.dumps({
+                "command": "blast_radius_render",
+                "symbol": "create_invoice",
+                "max_depth": 1,
+            }),
+        ])
         + "\n"
     )
     stdout = StringIO()
@@ -1941,8 +2012,7 @@ def test_tg_session_context_can_auto_refresh_stale_session(tmp_path):
     session_id = opened["session_id"]
 
     sample_path.write_text(
-        "def add(x):\n    return x\n\n"
-        "def settle_invoice():\n    return add(1)\n",
+        "def add(x):\n    return x\n\ndef settle_invoice():\n    return add(1)\n",
         encoding="utf-8",
     )
 
@@ -2260,7 +2330,9 @@ def test_tg_context_render_returns_prompt_ready_context(tmp_path):
     assert payload["sources"][0]["name"] == "create_invoice"
     assert any(section["kind"] == "tests" for section in payload["sections"])
     assert any(section["kind"] == "source" for section in payload["sections"])
-    summary_section = next(section for section in payload["sections"] if section["kind"] == "summary")
+    summary_section = next(
+        section for section in payload["sections"] if section["kind"] == "summary"
+    )
     source_section = next(section for section in payload["sections"] if section["kind"] == "source")
     assert summary_section["provenance"]["path"] == str(module_path.resolve())
     assert "symbol" in summary_section["provenance"]["reasons"]
@@ -2338,8 +2410,7 @@ def test_tg_context_render_includes_exact_caller_update_lines(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
         encoding="utf-8",
     )
     service_path = src_dir / "service.py"
@@ -2357,9 +2428,12 @@ def test_tg_context_render_includes_exact_caller_update_lines(tmp_path):
     caller_updates = [
         dict(current)
         for current in payload["edit_plan_seed"]["suggested_edits"]
-        if current["file"] == str(service_path.resolve()) and current["edit_kind"] == "caller-update"
+        if current["file"] == str(service_path.resolve())
+        and current["edit_kind"] == "caller-update"
     ]
-    assert [(entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates] == [
+    assert [
+        (entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates
+    ] == [
         ("build_receipt", 4, 4),
         ("build_receipt", 5, 5),
     ]
@@ -2410,6 +2484,11 @@ def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
         primary_file=module_path,
         primary_symbol_name="create_invoice",
     )
+    _assert_navigation_pack(
+        payload["navigation_pack"],
+        primary_file=module_path,
+        primary_symbol_name="create_invoice",
+    )
 
 
 def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path):
@@ -2422,12 +2501,10 @@ def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "vitest-project",
-                "devDependencies": {"vitest": "^1.0.0"},
-            }
-        ),
+        json.dumps({
+            "name": "vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+        }),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"
@@ -2629,9 +2706,7 @@ def test_tg_session_context_render_accepts_max_tokens_and_model(tmp_path):
     src_dir.mkdir(parents=True)
     sample_path = src_dir / "sample.py"
     sample_path.write_text(
-        "def add(x):\n"
-        "    baseline = x + 1\n"
-        "    return baseline\n",
+        "def add(x):\n    baseline = x + 1\n    return baseline\n",
         encoding="utf-8",
     )
 
@@ -2723,9 +2798,7 @@ def test_tg_symbol_source_returns_exact_python_function_body(tmp_path):
 
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    subtotal = total + tax\n"
-        "    return subtotal\n",
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
         encoding="utf-8",
     )
 
@@ -2757,10 +2830,7 @@ def test_tg_symbol_source_can_extract_typescript_and_rust_blocks(tmp_path):
     )
     rust_path = src_dir / "billing.rs"
     rust_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    let subtotal = 1;\n"
-        "    subtotal\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    let subtotal = 1;\n    subtotal\n}\n",
         encoding="utf-8",
     )
 
@@ -2824,16 +2894,12 @@ def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_pa
 
     ts_path = src_dir / "payments.ts"
     ts_path.write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total;\n}\n",
         encoding="utf-8",
     )
     rust_path = src_dir / "billing.rs"
     rust_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
     ts_test_path = tests_dir / "invoice_flow.spec.ts"
@@ -2876,9 +2942,7 @@ def test_tg_symbol_impact_prefers_import_linked_source_files_over_name_only_matc
     )
     importer_path = src_dir / "billing.py"
     importer_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "def bill():\n"
-        "    return create_invoice(1, 2)\n",
+        "from src.payments import create_invoice\n\ndef bill():\n    return create_invoice(1, 2)\n",
         encoding="utf-8",
     )
     noisy_path = notes_dir / "invoice_notes.py"
@@ -2907,9 +2971,7 @@ def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(t
     )
     importer_path = src_dir / "billing.py"
     importer_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "def bill():\n"
-        "    return create_invoice(1, 2)\n",
+        "from src.payments import create_invoice\n\ndef bill():\n    return create_invoice(1, 2)\n",
         encoding="utf-8",
     )
     noisy_path = notes_dir / "invoice_notes.py"
@@ -2930,9 +2992,7 @@ def test_tg_context_pack_prefers_import_linked_files_for_ranked_symbol_queries(t
         for entry in payload["imports"]
     )
     assert payload["file_summaries"][0]["path"] == str(module_path.resolve())
-    assert {item["name"] for item in payload["file_summaries"][0]["symbols"]} == {
-        "create_invoice"
-    }
+    assert {item["name"] for item in payload["file_summaries"][0]["symbols"]} == {"create_invoice"}
 
 
 def test_tg_symbol_refs_returns_python_reference_sites(tmp_path):
@@ -2998,10 +3058,14 @@ def test_tg_symbol_refs_and_callers_include_typescript_and_rust_heuristics(tmp_p
 
     assert ts_refs["coverage"]["symbol_navigation"] == "python-ast+parser-js-ts-rust"
     assert any(ref["file"] == str(ts_path.resolve()) for ref in ts_refs["references"])
-    assert any(ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in ts_refs["references"])
+    assert any(
+        ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in ts_refs["references"]
+    )
     assert any(caller["file"] == str(ts_path.resolve()) for caller in ts_callers["callers"])
     assert any(ref["file"] == str(rust_path.resolve()) for ref in rust_refs["references"])
-    assert any(ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in rust_refs["references"])
+    assert any(
+        ref["provenance"] in {"tree-sitter", "regex-heuristic"} for ref in rust_refs["references"]
+    )
     assert any(caller["file"] == str(rust_path.resolve()) for caller in rust_callers["callers"])
 
 
@@ -3135,7 +3199,9 @@ def test_tg_symbol_blast_radius_returns_transitive_call_tree(tmp_path):
     assert any(level["depth"] == 1 for level in payload["caller_tree"])
     assert all("graph-derived" in level["provenance"] for level in payload["caller_tree"])
     assert all(level["graph_completeness"] == "moderate" for level in payload["caller_tree"])
-    assert all(level["edge_summary"]["edge_kind"] == "reverse-import" for level in payload["caller_tree"])
+    assert all(
+        level["edge_summary"]["edge_kind"] == "reverse-import" for level in payload["caller_tree"]
+    )
     assert all("confidence" in level["edge_summary"] for level in payload["caller_tree"])
     assert payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
     assert payload["graph_trust_summary"]["depth_count"] >= 1
@@ -3154,9 +3220,7 @@ def test_tg_symbol_impact_can_rank_tests_through_transitive_import_chain(tmp_pat
 
     payments_path = src_dir / "payments.ts"
     payments_path.write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total;\n}\n",
         encoding="utf-8",
     )
     workflow_path = src_dir / "workflow.ts"
@@ -3212,23 +3276,17 @@ def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers
     )
     leaf_path = src_dir / "a_cli.py"
     leaf_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "def run():\n"
-        "    return create_invoice(2, 3)\n",
+        "from src.payments import create_invoice\n\ndef run():\n    return create_invoice(2, 3)\n",
         encoding="utf-8",
     )
     ui_path = src_dir / "ui.py"
     ui_path.write_text(
-        "from src.z_billing import invoice_total\n\n"
-        "def render():\n"
-        "    return invoice_total()\n",
+        "from src.z_billing import invoice_total\n\ndef render():\n    return invoice_total()\n",
         encoding="utf-8",
     )
     api_path = src_dir / "api.py"
     api_path.write_text(
-        "from src.z_billing import invoice_total\n\n"
-        "def serve():\n"
-        "    return invoice_total()\n",
+        "from src.z_billing import invoice_total\n\ndef serve():\n    return invoice_total()\n",
         encoding="utf-8",
     )
 
@@ -3240,7 +3298,9 @@ def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers
     central_match = next(
         item for item in payload["file_matches"] if item["path"] == str(central_path.resolve())
     )
-    leaf_match = next(item for item in payload["file_matches"] if item["path"] == str(leaf_path.resolve()))
+    leaf_match = next(
+        item for item in payload["file_matches"] if item["path"] == str(leaf_path.resolve())
+    )
     assert "graph-centrality" in central_match["reasons"]
     assert central_match["graph_score"] > leaf_match["graph_score"]
 
@@ -3265,29 +3325,21 @@ def test_tg_symbol_impact_prefers_tests_covering_more_central_files(tmp_path):
         encoding="utf-8",
     )
     (src_dir / "a_cli.py").write_text(
-        "from src.payments import create_invoice\n\n"
-        "def run():\n"
-        "    return create_invoice(2, 3)\n",
+        "from src.payments import create_invoice\n\ndef run():\n    return create_invoice(2, 3)\n",
         encoding="utf-8",
     )
     (src_dir / "ui.py").write_text(
-        "from src.z_billing import invoice_total\n\n"
-        "def render():\n"
-        "    return invoice_total()\n",
+        "from src.z_billing import invoice_total\n\ndef render():\n    return invoice_total()\n",
         encoding="utf-8",
     )
     ui_test = tests_dir / "test_ui_flow.py"
     ui_test.write_text(
-        "from src.ui import render\n\n"
-        "def test_render():\n"
-        "    assert render() == 3\n",
+        "from src.ui import render\n\ndef test_render():\n    assert render() == 3\n",
         encoding="utf-8",
     )
     cli_test = tests_dir / "test_cli_flow.py"
     cli_test.write_text(
-        "from src.a_cli import run\n\n"
-        "def test_run():\n"
-        "    assert run() == 5\n",
+        "from src.a_cli import run\n\ndef test_run():\n    assert run() == 5\n",
         encoding="utf-8",
     )
 
@@ -3296,8 +3348,12 @@ def test_tg_symbol_impact_prefers_tests_covering_more_central_files(tmp_path):
     assert payload["tests"].index(str(ui_test.resolve())) < payload["tests"].index(
         str(cli_test.resolve())
     )
-    ui_match = next(item for item in payload["test_matches"] if item["path"] == str(ui_test.resolve()))
-    cli_match = next(item for item in payload["test_matches"] if item["path"] == str(cli_test.resolve()))
+    ui_match = next(
+        item for item in payload["test_matches"] if item["path"] == str(ui_test.resolve())
+    )
+    cli_match = next(
+        item for item in payload["test_matches"] if item["path"] == str(cli_test.resolve())
+    )
     assert ui_match["graph_score"] > cli_match["graph_score"]
     assert "graph-derived" in ui_match["association"]["provenance"]
     assert ui_match["association"]["confidence"] in {"strong", "moderate"}
@@ -3312,9 +3368,7 @@ def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(
 
     api_path = src_dir / "payments.js"
     api_path.write_text(
-        "export function createInvoice(total) {\n"
-        "  return total;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total;\n}\n",
         encoding="utf-8",
     )
     consumer_path = src_dir / "consumer.js"
@@ -3331,9 +3385,7 @@ def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(
     payload = json.loads(mcp_server.tg_symbol_callers("createInvoice", str(project)))
 
     consumer_calls = [
-        caller
-        for caller in payload["callers"]
-        if caller["file"] == str(consumer_path.resolve())
+        caller for caller in payload["callers"] if caller["file"] == str(consumer_path.resolve())
     ]
     assert len(consumer_calls) == 1
     assert consumer_calls[0]["line"] == 5
@@ -3348,9 +3400,7 @@ def test_tg_symbol_callers_uses_parser_backed_typescript_calls_not_string_noise(
 
     api_path = src_dir / "payments.ts"
     api_path.write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total;\n}\n",
         encoding="utf-8",
     )
     consumer_path = src_dir / "consumer.ts"
@@ -3367,9 +3417,7 @@ def test_tg_symbol_callers_uses_parser_backed_typescript_calls_not_string_noise(
     payload = json.loads(mcp_server.tg_symbol_callers("createInvoice", str(project)))
 
     consumer_calls = [
-        caller
-        for caller in payload["callers"]
-        if caller["file"] == str(consumer_path.resolve())
+        caller for caller in payload["callers"] if caller["file"] == str(consumer_path.resolve())
     ]
     assert len(consumer_calls) == 1
     assert consumer_calls[0]["line"] == 5
@@ -3384,9 +3432,7 @@ def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_pa
 
     api_path = src_dir / "billing.rs"
     api_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
     consumer_path = src_dir / "consumer.rs"
@@ -3402,9 +3448,7 @@ def test_tg_symbol_callers_uses_parser_backed_rust_calls_not_string_noise(tmp_pa
     payload = json.loads(mcp_server.tg_symbol_callers("issue_invoice", str(project)))
 
     consumer_calls = [
-        caller
-        for caller in payload["callers"]
-        if caller["file"] == str(consumer_path.resolve())
+        caller for caller in payload["callers"] if caller["file"] == str(consumer_path.resolve())
     ]
     assert len(consumer_calls) == 1
     assert consumer_calls[0]["line"] == 4
@@ -3419,9 +3463,7 @@ def test_tg_symbol_callers_resolves_javascript_namespace_import_aliases(tmp_path
 
     api_path = src_dir / "payments.js"
     api_path.write_text(
-        "export function createInvoice(total) {\n"
-        "  return total;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total;\n}\n",
         encoding="utf-8",
     )
     consumer_path = src_dir / "consumer.js"
@@ -3451,9 +3493,7 @@ def test_tg_symbol_callers_resolves_rust_module_alias_use_chains(tmp_path):
 
     api_path = src_dir / "billing.rs"
     api_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
     consumer_path = src_dir / "consumer.rs"
@@ -3485,16 +3525,12 @@ def test_tg_symbol_callers_prefers_typescript_definition_selected_by_namespace_i
 
     preferred_path = src_dir / "payments.ts"
     preferred_path.write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total;\n}\n",
         encoding="utf-8",
     )
     other_path = admin_dir / "payments.ts"
     other_path.write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total * 2;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total * 2;\n}\n",
         encoding="utf-8",
     )
     consumer_path = src_dir / "consumer.ts"
@@ -3514,7 +3550,9 @@ def test_tg_symbol_callers_prefers_typescript_definition_selected_by_namespace_i
     assert payload["definitions"][0]["file"] == str(preferred_path.resolve())
     assert payload["definitions"][0]["line"] == 1
     assert any(caller["file"] == str(consumer_path.resolve()) for caller in payload["callers"])
-    assert all(definition["file"] != str(other_path.resolve()) for definition in payload["definitions"])
+    assert all(
+        definition["file"] != str(other_path.resolve()) for definition in payload["definitions"]
+    )
 
 
 def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_chain(tmp_path):
@@ -3528,16 +3566,12 @@ def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_
 
     preferred_path = src_dir / "billing.rs"
     preferred_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
     other_path = other_dir / "billing.rs"
     other_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    2\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    2\n}\n",
         encoding="utf-8",
     )
     consumer_path = src_dir / "consumer.rs"
@@ -3557,7 +3591,9 @@ def test_tg_symbol_callers_prefers_rust_definition_selected_by_module_alias_use_
     assert payload["definitions"][0]["file"] == str(preferred_path.resolve())
     assert payload["definitions"][0]["line"] == 1
     assert any(caller["file"] == str(consumer_path.resolve()) for caller in payload["callers"])
-    assert all(definition["file"] != str(other_path.resolve()) for definition in payload["definitions"])
+    assert all(
+        definition["file"] != str(other_path.resolve()) for definition in payload["definitions"]
+    )
 
 
 def test_tg_symbol_callers_prefers_typescript_tests_importing_direct_callers(tmp_path):
@@ -3571,9 +3607,7 @@ def test_tg_symbol_callers_prefers_typescript_tests_importing_direct_callers(tmp
 
     module_path = src_dir / "payments.ts"
     module_path.write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total;\n}\n",
         encoding="utf-8",
     )
     ui_path = src_dir / "ui.ts"
@@ -3623,9 +3657,7 @@ def test_tg_symbol_callers_prefers_rust_tests_importing_direct_callers(tmp_path)
 
     module_path = src_dir / "billing.rs"
     module_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
     ui_path = src_dir / "ui.rs"
@@ -3638,10 +3670,7 @@ def test_tg_symbol_callers_prefers_rust_tests_importing_direct_callers(tmp_path)
     )
     cli_path = src_dir / "cli.rs"
     cli_path.write_text(
-        "use crate::ui::render_invoice;\n\n"
-        "pub fn run_cli() -> usize {\n"
-        "    render_invoice()\n"
-        "}\n",
+        "use crate::ui::render_invoice;\n\npub fn run_cli() -> usize {\n    render_invoice()\n}\n",
         encoding="utf-8",
     )
     ui_test = tests_dir / "ui_flow.rs"
@@ -3687,10 +3716,7 @@ def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path
     )
     rust_path = src_dir / "billing.rs"
     rust_path.write_text(
-        "// pub fn issue_invoice() -> usize { 0 }\n"
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "// pub fn issue_invoice() -> usize { 0 }\npub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
 
@@ -3704,8 +3730,3 @@ def test_tg_symbol_source_ignores_comment_noise_for_typescript_and_rust(tmp_path
     assert rust_payload["sources"][0]["file"] == str(rust_path.resolve())
     assert rust_payload["sources"][0]["start_line"] == 2
     assert "1" in rust_payload["sources"][0]["source"]
-
-
-
-
-

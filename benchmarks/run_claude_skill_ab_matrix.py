@@ -21,6 +21,8 @@ import run_patch_bakeoff as patch_bakeoff  # noqa: E402
 
 from tensor_grep.perf_guard import write_json  # noqa: E402
 
+EXPECTED_SYSTEMS = frozenset({"claude-baseline", "claude-enhanced"})
+
 
 def default_output_path() -> Path:
     return ROOT_DIR / "artifacts" / "claude_skill_ab_matrix.json"
@@ -41,7 +43,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--work-root", default=str(ab_runner.DEFAULT_WORK_ROOT))
     parser.add_argument("--output-contracts", default="standard,terse")
     parser.add_argument("--task-contracts", default="standard,engage")
-    parser.add_argument("--resume", action="store_true", help="Resume from an existing matrix output artifact.")
+    parser.add_argument("--enhanced-efforts", default="default")
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume from an existing matrix output artifact."
+    )
     return parser.parse_args()
 
 
@@ -52,17 +57,37 @@ def _parse_contract_values(raw: str) -> list[str]:
     return values
 
 
-def build_experiment_configs(output_contracts: list[str], task_contracts: list[str]) -> list[dict[str, str]]:
+def _parse_effort_values(raw: str) -> list[str]:
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    if not values:
+        raise ValueError("expected at least one effort value")
+    normalized: list[str] = []
+    for value in values:
+        if value == "default":
+            normalized.append("")
+            continue
+        if value not in ab_runner.EFFORT_CHOICES:
+            raise ValueError(f"unsupported effort value: {value}")
+        normalized.append(value)
+    return normalized
+
+
+def build_experiment_configs(
+    output_contracts: list[str],
+    task_contracts: list[str],
+    enhanced_efforts: list[str],
+) -> list[dict[str, str]]:
     configs: list[dict[str, str]] = []
     for output_contract in output_contracts:
         for task_contract in task_contracts:
-            configs.append(
-                {
-                    "name": f"output-{output_contract}__task-{task_contract}",
+            for enhanced_effort in enhanced_efforts:
+                effort_name = enhanced_effort or "default"
+                configs.append({
+                    "name": f"output-{output_contract}__task-{task_contract}__effort-{effort_name}",
                     "enhanced_output_contract": output_contract,
                     "enhanced_task_contract": task_contract,
-                }
-            )
+                    "enhanced_effort": enhanced_effort,
+                })
     return configs
 
 
@@ -83,30 +108,39 @@ def summarize_trace_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
             "record_count": len(system_rows),
             "response_shape_counts": dict(response_counts),
             "meta_question_rate": round(
-                sum(1.0 for row in system_rows if bool(row.get("asked_meta_question", False))) / float(len(system_rows)),
+                sum(1.0 for row in system_rows if bool(row.get("asked_meta_question", False)))
+                / float(len(system_rows)),
                 6,
             ),
-            "mean_first_tg_seconds": _mean_numeric(
-                [float(value) for row in system_rows if (value := row.get("first_tg_seconds")) is not None]
-            ),
-            "mean_first_patch_seconds": _mean_numeric(
-                [float(value) for row in system_rows if (value := row.get("first_patch_seconds")) is not None]
-            ),
-            "mean_first_file_change_seconds": _mean_numeric(
-                [float(value) for row in system_rows if (value := row.get("first_file_change_seconds")) is not None]
-            ),
-            "mean_post_edit_deliberation_seconds": _mean_numeric(
-                [float(value) for row in system_rows if (value := row.get("post_edit_deliberation_seconds")) is not None]
-            ),
-            "mean_tg_invocation_count": _mean_numeric(
-                [float(row.get("tg_invocation_count", 0.0)) for row in system_rows]
-            ),
-            "mean_tg_seconds_total": _mean_numeric(
-                [float(row.get("tg_seconds_total", 0.0)) for row in system_rows]
-            ),
-            "mean_changed_file_count": _mean_numeric(
-                [float(row.get("changed_file_count", 0.0)) for row in system_rows]
-            ),
+            "mean_first_tg_seconds": _mean_numeric([
+                float(value)
+                for row in system_rows
+                if (value := row.get("first_tg_seconds")) is not None
+            ]),
+            "mean_first_patch_seconds": _mean_numeric([
+                float(value)
+                for row in system_rows
+                if (value := row.get("first_patch_seconds")) is not None
+            ]),
+            "mean_first_file_change_seconds": _mean_numeric([
+                float(value)
+                for row in system_rows
+                if (value := row.get("first_file_change_seconds")) is not None
+            ]),
+            "mean_post_edit_deliberation_seconds": _mean_numeric([
+                float(value)
+                for row in system_rows
+                if (value := row.get("post_edit_deliberation_seconds")) is not None
+            ]),
+            "mean_tg_invocation_count": _mean_numeric([
+                float(row.get("tg_invocation_count", 0.0)) for row in system_rows
+            ]),
+            "mean_tg_seconds_total": _mean_numeric([
+                float(row.get("tg_seconds_total", 0.0)) for row in system_rows
+            ]),
+            "mean_changed_file_count": _mean_numeric([
+                float(row.get("changed_file_count", 0.0)) for row in system_rows
+            ]),
         }
     return summary
 
@@ -119,18 +153,18 @@ def summarize_score_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     for system, system_rows in sorted(by_system.items()):
         summary[system] = {
             "record_count": len(system_rows),
-            "mean_patch_applied_rate": _mean_numeric(
-                [float(row.get("patch_applied", 0.0)) for row in system_rows]
-            ),
-            "mean_validation_pass_rate": _mean_numeric(
-                [float(row.get("validation_passed", 0.0)) for row in system_rows]
-            ),
-            "mean_primary_file_hit_rate": _mean_numeric(
-                [float(row.get("primary_file_hit", 0.0)) for row in system_rows]
-            ),
-            "mean_primary_span_hit_rate": _mean_numeric(
-                [float(row.get("primary_span_hit", 0.0)) for row in system_rows]
-            ),
+            "mean_patch_applied_rate": _mean_numeric([
+                float(row.get("patch_applied", 0.0)) for row in system_rows
+            ]),
+            "mean_validation_pass_rate": _mean_numeric([
+                float(row.get("validation_passed", 0.0)) for row in system_rows
+            ]),
+            "mean_primary_file_hit_rate": _mean_numeric([
+                float(row.get("primary_file_hit", 0.0)) for row in system_rows
+            ]),
+            "mean_primary_span_hit_rate": _mean_numeric([
+                float(row.get("primary_span_hit", 0.0)) for row in system_rows
+            ]),
         }
     return summary
 
@@ -148,10 +182,22 @@ def summarize_bakeoff_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "scenario_count": len(rows),
         "missing_predictions": [],
-        "mean_patch_applied_rate": _mean_numeric([float(row.get("patch_applied", 0.0)) for row in rows]) or 0.0,
-        "mean_validation_pass_rate": _mean_numeric([float(row.get("validation_passed", 0.0)) for row in rows]) or 0.0,
-        "mean_primary_file_hit_rate": _mean_numeric([float(row.get("primary_file_hit", 0.0)) for row in rows]) or 0.0,
-        "mean_primary_span_hit_rate": _mean_numeric([float(row.get("primary_span_hit", 0.0)) for row in rows]) or 0.0,
+        "mean_patch_applied_rate": _mean_numeric([
+            float(row.get("patch_applied", 0.0)) for row in rows
+        ])
+        or 0.0,
+        "mean_validation_pass_rate": _mean_numeric([
+            float(row.get("validation_passed", 0.0)) for row in rows
+        ])
+        or 0.0,
+        "mean_primary_file_hit_rate": _mean_numeric([
+            float(row.get("primary_file_hit", 0.0)) for row in rows
+        ])
+        or 0.0,
+        "mean_primary_span_hit_rate": _mean_numeric([
+            float(row.get("primary_span_hit", 0.0)) for row in rows
+        ])
+        or 0.0,
     }
 
 
@@ -185,8 +231,87 @@ def write_checkpoint(output_path: Path, experiments: list[dict[str, Any]]) -> No
     write_json(output_path, build_partial_payload(experiments))
 
 
+def _normalize_experiment_name(experiment: dict[str, Any]) -> str:
+    raw_name = str(experiment.get("name", ""))
+    if "__effort-" in raw_name:
+        return raw_name
+    output_contract = str(experiment.get("enhanced_output_contract", ""))
+    task_contract = str(experiment.get("enhanced_task_contract", ""))
+    enhanced_effort = str(experiment.get("enhanced_effort", ""))
+    if output_contract and task_contract:
+        effort_name = enhanced_effort or "default"
+        return f"output-{output_contract}__task-{task_contract}__effort-{effort_name}"
+    return raw_name
+
+
 def _scenario_map(scenarios: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    return {str(scenario["instance_id"]): dict(scenario) for scenario in scenarios if isinstance(scenario, dict)}
+    return {
+        str(scenario["instance_id"]): dict(scenario)
+        for scenario in scenarios
+        if isinstance(scenario, dict)
+    }
+
+
+def completed_experiment_instance_ids(experiment: dict[str, Any]) -> set[str]:
+    prediction_systems: dict[str, set[str]] = {}
+    for row in list(experiment.get("prediction_records", [])):
+        instance_id = str(row.get("instance_id", "")).strip()
+        system = str(row.get("system", "")).strip()
+        if not instance_id or not system:
+            continue
+        prediction_systems.setdefault(instance_id, set()).add(system)
+    trace_systems: dict[str, set[str]] = {}
+    for row in list(experiment.get("trace_records", [])):
+        instance_id = str(row.get("instance_id", "")).strip()
+        system = str(row.get("system", "")).strip()
+        if not instance_id or not system:
+            continue
+        trace_systems.setdefault(instance_id, set()).add(system)
+    bakeoff_systems: dict[str, set[str]] = {}
+    for row in list(experiment.get("bakeoff_rows", [])):
+        instance_id = str(row.get("instance_id", "")).strip()
+        system = str(row.get("system", "")).strip()
+        if not instance_id or not system:
+            continue
+        bakeoff_systems.setdefault(instance_id, set()).add(system)
+    completed: set[str] = set()
+    for instance_id, systems in prediction_systems.items():
+        if (
+            EXPECTED_SYSTEMS.issubset(systems)
+            and EXPECTED_SYSTEMS.issubset(trace_systems.get(instance_id, set()))
+            and EXPECTED_SYSTEMS.issubset(bakeoff_systems.get(instance_id, set()))
+        ):
+            completed.add(instance_id)
+    return completed
+
+
+def prune_incomplete_experiment(experiment: dict[str, Any]) -> dict[str, Any]:
+    completed_ids = completed_experiment_instance_ids(experiment)
+    prediction_records = [
+        dict(row)
+        for row in list(experiment.get("prediction_records", []))
+        if str(row.get("instance_id", "")).strip() in completed_ids
+    ]
+    trace_records = [
+        dict(row)
+        for row in list(experiment.get("trace_records", []))
+        if str(row.get("instance_id", "")).strip() in completed_ids
+    ]
+    bakeoff_rows = [
+        dict(row)
+        for row in list(experiment.get("bakeoff_rows", []))
+        if str(row.get("instance_id", "")).strip() in completed_ids
+    ]
+    pruned = dict(experiment)
+    pruned["prediction_records"] = prediction_records
+    pruned["trace_records"] = trace_records
+    pruned["bakeoff_rows"] = bakeoff_rows
+    pruned["prediction_record_count"] = len(prediction_records)
+    pruned["trace_record_count"] = len(trace_records)
+    pruned["trace_summary"] = summarize_trace_rows(trace_records)
+    pruned["bakeoff_summary"] = summarize_bakeoff_rows(bakeoff_rows)
+    pruned["system_score_summary"] = summarize_score_rows(bakeoff_rows)
+    return pruned
 
 
 def build_experiment_payload(
@@ -199,18 +324,19 @@ def build_experiment_payload(
     timeout_seconds: int,
     skill_dir: Path,
     work_root: Path,
+    enhanced_effort: str,
     existing_experiment: dict[str, Any] | None = None,
     checkpoint_callback: Any = None,
 ) -> dict[str, Any]:
-    experiment = dict(existing_experiment or {})
+    experiment = prune_incomplete_experiment(dict(existing_experiment or {}))
     prediction_records = list(experiment.get("prediction_records", []))
     trace_records = list(experiment.get("trace_records", []))
     bakeoff_rows = list(experiment.get("bakeoff_rows", []))
-    completed_instance_ids = {str(row.get("instance_id", "")) for row in prediction_records if row.get("instance_id")}
+    completed_ids = completed_experiment_instance_ids(experiment)
 
     for record in driver_records:
         instance_id = str(record["instance_id"])
-        if instance_id in completed_instance_ids:
+        if instance_id in completed_ids:
             continue
         rows, trace_rows = ab_runner.run_ab_record(
             dict(record),
@@ -221,6 +347,7 @@ def build_experiment_payload(
             work_root=work_root,
             enhanced_output_contract=config["enhanced_output_contract"],
             enhanced_task_contract=config["enhanced_task_contract"],
+            enhanced_effort=enhanced_effort,
         )
         prediction_records.extend(rows)
         trace_records.extend(trace_rows)
@@ -228,7 +355,6 @@ def build_experiment_payload(
         if scenario is not None:
             for prediction in rows:
                 bakeoff_rows.append(patch_bakeoff.evaluate_prediction(scenario, prediction))
-        completed_instance_ids.add(instance_id)
         experiment = {
             **config,
             "prediction_records": prediction_records,
@@ -240,6 +366,7 @@ def build_experiment_payload(
             "bakeoff_summary": summarize_bakeoff_rows(bakeoff_rows),
             "system_score_summary": summarize_score_rows(bakeoff_rows),
         }
+        completed_ids = completed_experiment_instance_ids(experiment)
         if checkpoint_callback is not None:
             checkpoint_callback(experiment)
     if not experiment:
@@ -269,6 +396,7 @@ def build_matrix_payload(
     limit: int,
     output_contracts: list[str],
     task_contracts: list[str],
+    enhanced_efforts: list[str] | None = None,
     output_path: Path | None = None,
     resume: bool = False,
 ) -> dict[str, Any]:
@@ -282,15 +410,24 @@ def build_matrix_payload(
     experiments_by_name: dict[str, dict[str, Any]] = {}
     if resume and output_path is not None:
         experiments = load_existing_experiments(output_path)
-        experiments_by_name = {str(experiment.get("name", "")): experiment for experiment in experiments}
+        experiments_by_name = {}
+        for experiment in experiments:
+            experiments_by_name[str(experiment.get("name", ""))] = experiment
+            experiments_by_name[_normalize_experiment_name(experiment)] = experiment
     ordered_experiments = list(experiments)
-    for config in build_experiment_configs(output_contracts, task_contracts):
+    effort_values = enhanced_efforts or [""]
+    for config in build_experiment_configs(output_contracts, task_contracts, effort_values):
         experiment_name = config["name"]
 
-        def _checkpoint(current_experiment: dict[str, Any], *, _experiment_name: str = experiment_name) -> None:
+        def _checkpoint(
+            current_experiment: dict[str, Any], *, _experiment_name: str = experiment_name
+        ) -> None:
             replaced = False
             for index, existing in enumerate(ordered_experiments):
-                if str(existing.get("name", "")) == _experiment_name:
+                if (
+                    str(existing.get("name", "")) == _experiment_name
+                    or _normalize_experiment_name(existing) == _experiment_name
+                ):
                     ordered_experiments[index] = current_experiment
                     replaced = True
                     break
@@ -308,6 +445,7 @@ def build_matrix_payload(
             timeout_seconds=timeout_seconds,
             skill_dir=skill_dir,
             work_root=work_root,
+            enhanced_effort=config["enhanced_effort"],
             existing_experiment=experiments_by_name.get(config["name"]),
             checkpoint_callback=_checkpoint if output_path is not None else None,
         )
@@ -330,6 +468,7 @@ def main() -> int:
         limit=args.limit,
         output_contracts=_parse_contract_values(args.output_contracts),
         task_contracts=_parse_contract_values(args.task_contracts),
+        enhanced_efforts=_parse_effort_values(args.enhanced_efforts),
         output_path=output_path,
         resume=args.resume,
     )

@@ -44,6 +44,8 @@ use tensor_grep_rs::routing::{
 
 const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON  Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH         Path to the ripgrep executable used for text-search passthrough.";
 const JSON_OUTPUT_VERSION: u32 = 1;
+const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
+const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -427,6 +429,27 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if let Some(exit_code) = try_early_ripgrep_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
+    if let Some(exit_code) = try_default_search_frontdoor_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
+    if let Some(exit_code) = try_early_positional_ripgrep_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
     if should_use_positional_cli(&raw_args) {
         return run_positional_cli(PositionalCli::parse_from(raw_args));
     }
@@ -434,6 +457,253 @@ fn main() -> anyhow::Result<()> {
     let cli = CommandCli::parse_from(raw_args);
 
     run_command_cli(cli)
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    if !env_flag_enabled(TG_RUST_EARLY_RG_ENV) {
+        return Ok(None);
+    }
+
+    if raw_args
+        .get(1)
+        .map(|arg| arg.to_string_lossy() != "search")
+        .unwrap_or(true)
+    {
+        return Ok(None);
+    }
+
+    let rg_args = match parse_early_ripgrep_args(raw_args) {
+        Some(args) => args,
+        None => return Ok(None),
+    };
+    if !should_use_early_ripgrep_fast_path(&rg_args) {
+        return Ok(None);
+    }
+
+    let exit_code = execute_ripgrep_search(&rg_args)?;
+    Ok(Some(exit_code))
+}
+
+fn try_default_search_frontdoor_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    let rg_args = match parse_default_search_frontdoor_args(raw_args) {
+        Some(args) => args,
+        None => return Ok(None),
+    };
+
+    let exit_code = execute_ripgrep_search(&rg_args)?;
+    Ok(Some(exit_code))
+}
+
+fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    if !env_flag_enabled(TG_RUST_EARLY_POSITIONAL_RG_ENV) {
+        return Ok(None);
+    }
+
+    if !should_use_positional_cli(raw_args) {
+        return Ok(None);
+    }
+
+    let rg_args = match parse_early_positional_ripgrep_args(raw_args) {
+        Some(args) => args,
+        None => return Ok(None),
+    };
+
+    let exit_code = execute_ripgrep_search(&rg_args)?;
+    Ok(Some(exit_code))
+}
+
+fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
+    args.globs.is_empty() && !args.word_regexp && !args.fixed_strings
+}
+
+fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    let mut args = RipgrepSearchArgs {
+        ignore_case: false,
+        fixed_strings: false,
+        invert_match: false,
+        count: false,
+        line_number: true,
+        context: None,
+        max_count: None,
+        word_regexp: false,
+        globs: Vec::new(),
+        no_ignore: false,
+        patterns: Vec::new(),
+        path: String::new(),
+    };
+
+    let mut positionals: Vec<String> = Vec::new();
+    let tokens = raw_args
+        .iter()
+        .skip(2)
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        match token.as_str() {
+            "-i" | "--ignore-case" => args.ignore_case = true,
+            "-F" | "--fixed-strings" => args.fixed_strings = true,
+            "-v" | "--invert-match" => args.invert_match = true,
+            "-c" | "--count" => args.count = true,
+            "-w" | "--word-regexp" => args.word_regexp = true,
+            "--no-ignore" => args.no_ignore = true,
+            "-C" | "--context" => {
+                index += 1;
+                let value = tokens.get(index)?.parse::<usize>().ok()?;
+                args.context = Some(value);
+            }
+            "-m" | "--max-count" => {
+                index += 1;
+                let value = tokens.get(index)?.parse::<usize>().ok()?;
+                args.max_count = Some(value);
+            }
+            "-g" | "--glob" => {
+                index += 1;
+                args.globs.push(tokens.get(index)?.clone());
+            }
+            _ if token.starts_with("--glob=") => {
+                args.globs
+                    .push(token.split_once('=').map(|(_, value)| value.to_string())?);
+            }
+            _ if token.starts_with('-') => return None,
+            _ => positionals.push(token.clone()),
+        }
+        index += 1;
+    }
+
+    if positionals.len() != 2 {
+        return None;
+    }
+    args.patterns.push(positionals[0].clone());
+    args.path = positionals[1].clone();
+    args.line_number = !args.count;
+    Some(args)
+}
+
+fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    let args = parse_early_ripgrep_args(raw_args)?;
+    should_use_early_ripgrep_fast_path(&args).then_some(args)
+}
+
+fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    let cli = PositionalCli::try_parse_from(raw_args).ok()?;
+    let pattern = cli.pattern.clone()?;
+    let path = cli.path.clone()?;
+
+    if cli.replace.is_some() || cli.force_cpu || !cli.gpu_device_ids.is_empty() {
+        return None;
+    }
+    if cli.json || cli.ndjson || cli.verbose {
+        return None;
+    }
+
+    Some(positional_ripgrep_args(&cli, &pattern, &path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_args(tokens: &[&str]) -> RipgrepSearchArgs {
+        let raw_args = tokens
+            .iter()
+            .map(|token| OsString::from(token))
+            .collect::<Vec<_>>();
+        parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
+    }
+
+    #[test]
+    fn early_ripgrep_fast_path_rejects_glob_fixed_and_word_cases() {
+        let glob = parse_args(&["tg", "search", "--glob=*.log", "ERROR", "bench_data"]);
+        let fixed = parse_args(&["tg", "search", "-F", "[ERROR]", "bench_data"]);
+        let word = parse_args(&["tg", "search", "-w", "timeout", "bench_data"]);
+
+        assert!(!should_use_early_ripgrep_fast_path(&glob));
+        assert!(!should_use_early_ripgrep_fast_path(&fixed));
+        assert!(!should_use_early_ripgrep_fast_path(&word));
+    }
+
+    #[test]
+    fn early_ripgrep_fast_path_keeps_plain_benchmark_shapes() {
+        let simple = parse_args(&["tg", "search", "ERROR", "bench_data"]);
+        let regex = parse_args(&["tg", "search", "ERROR.*timeout", "bench_data"]);
+        let count = parse_args(&["tg", "search", "-c", "ERROR", "bench_data"]);
+
+        assert!(should_use_early_ripgrep_fast_path(&simple));
+        assert!(should_use_early_ripgrep_fast_path(&regex));
+        assert!(should_use_early_ripgrep_fast_path(&count));
+    }
+
+    #[test]
+    fn early_positional_ripgrep_args_parse_plain_shapes() {
+        let raw_args = ["tg", "-i", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let parsed = parse_early_positional_ripgrep_args(&raw_args)
+            .expect("expected early positional rg args to parse");
+
+        assert!(parsed.ignore_case);
+        assert_eq!(parsed.patterns, vec!["warning".to_string()]);
+        assert_eq!(parsed.path, "bench_data".to_string());
+    }
+
+    #[test]
+    fn early_positional_ripgrep_args_reject_structured_and_force_cpu_shapes() {
+        let structured = ["tg", "--json", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let force_cpu = ["tg", "--cpu", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(parse_early_positional_ripgrep_args(&structured).is_none());
+        assert!(parse_early_positional_ripgrep_args(&force_cpu).is_none());
+    }
+
+    #[test]
+    fn default_search_frontdoor_accepts_plain_benchmark_shapes() {
+        let raw_args = ["tg", "search", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let parsed = parse_default_search_frontdoor_args(&raw_args)
+            .expect("expected default search frontdoor args to parse");
+
+        assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(parsed.path, "bench_data".to_string());
+    }
+
+    #[test]
+    fn default_search_frontdoor_rejects_structured_and_advanced_shapes() {
+        let structured = ["tg", "search", "--json", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let glob = ["tg", "search", "--glob=*.log", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(parse_default_search_frontdoor_args(&structured).is_none());
+        assert!(parse_default_search_frontdoor_args(&glob).is_none());
+    }
 }
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
@@ -2225,17 +2495,32 @@ fn collect_pre_apply_hashes(
     Ok(hashes)
 }
 
-fn write_audit_manifest_for_plan(
-    path: &Path,
-    lang: &str,
-    root_path: &str,
-    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+struct AuditManifestWriteInput<'a> {
+    path: &'a Path,
+    lang: &'a str,
+    root_path: &'a str,
+    edits: &'a [tensor_grep_rs::backend_ast::RewriteEdit],
     plan_total_edits: usize,
-    checkpoint: Option<&CheckpointCreateSummary>,
-    validation: Option<&ValidationSummary>,
-    before_hashes: &BTreeMap<String, String>,
-    signing_key_path: Option<&Path>,
+    checkpoint: Option<&'a CheckpointCreateSummary>,
+    validation: Option<&'a ValidationSummary>,
+    before_hashes: &'a BTreeMap<String, String>,
+    signing_key_path: Option<&'a Path>,
+}
+
+fn write_audit_manifest_for_plan(
+    input: AuditManifestWriteInput<'_>,
 ) -> anyhow::Result<AuditManifestSummary> {
+    let AuditManifestWriteInput {
+        path,
+        lang,
+        root_path,
+        edits,
+        plan_total_edits,
+        checkpoint,
+        validation,
+        before_hashes,
+        signing_key_path,
+    } = input;
     let previous_manifest_sha256 = if path.exists() {
         Some(previous_manifest_digest(path)?)
     } else {
@@ -2406,8 +2691,7 @@ fn verify_audit_manifest_payload(
             errors.push(format!("Unsupported signature kind: {}", signature.kind));
         } else {
             let key_path = signing_key_path
-                .as_ref()
-                .map(PathBuf::as_path)
+                .as_deref()
                 .unwrap_or_else(|| Path::new(&signature.key_path));
             let key_bytes = std::fs::read(key_path).with_context(|| {
                 format!("failed to read audit signing key {}", key_path.display())
@@ -2672,19 +2956,19 @@ fn handle_ast_rewrite_apply(
     }
 
     let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
-        Some(write_audit_manifest_for_plan(
-            audit_manifest_path,
-            &args.lang,
-            path,
-            &plan.edits,
-            plan.total_edits,
-            checkpoint.as_ref(),
-            validation.as_ref(),
-            before_hashes
+        Some(write_audit_manifest_for_plan(AuditManifestWriteInput {
+            path: audit_manifest_path,
+            lang: &args.lang,
+            root_path: path,
+            edits: &plan.edits,
+            plan_total_edits: plan.total_edits,
+            checkpoint: checkpoint.as_ref(),
+            validation: validation.as_ref(),
+            before_hashes: before_hashes
                 .as_ref()
                 .expect("pre-apply hashes should exist when audit manifest requested"),
-            args.audit_signing_key.as_deref(),
-        )?)
+            signing_key_path: args.audit_signing_key.as_deref(),
+        })?)
     } else {
         None
     };
@@ -2842,19 +3126,19 @@ fn handle_ast_batch_rewrite_apply(
     }
 
     let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
-        Some(write_audit_manifest_for_plan(
-            audit_manifest_path,
-            &args.lang,
-            path,
-            &plan.edits,
-            plan.total_edits,
-            checkpoint.as_ref(),
-            validation.as_ref(),
-            before_hashes
+        Some(write_audit_manifest_for_plan(AuditManifestWriteInput {
+            path: audit_manifest_path,
+            lang: &args.lang,
+            root_path: path,
+            edits: &plan.edits,
+            plan_total_edits: plan.total_edits,
+            checkpoint: checkpoint.as_ref(),
+            validation: validation.as_ref(),
+            before_hashes: before_hashes
                 .as_ref()
                 .expect("pre-apply hashes should exist when audit manifest requested"),
-            args.audit_signing_key.as_deref(),
-        )?)
+            signing_key_path: args.audit_signing_key.as_deref(),
+        })?)
     } else {
         None
     };

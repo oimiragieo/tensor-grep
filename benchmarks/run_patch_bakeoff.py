@@ -18,6 +18,7 @@ for candidate in (SRC_DIR, BENCHMARKS_DIR):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+import attempt_ledger_helpers  # noqa: E402
 from patch_runner_common import normalize_model_patch_text  # noqa: E402
 
 from tensor_grep.perf_guard import write_json  # noqa: E402
@@ -57,8 +58,15 @@ def default_output_path() -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run patch-correctness bakeoff scenarios.")
     parser.add_argument("--scenarios", required=True, help="Path to the patch scenario JSON file.")
-    parser.add_argument("--predictions", required=True, help="Path to JSON or JSONL patch predictions.")
+    parser.add_argument(
+        "--predictions", required=True, help="Path to JSON or JSONL patch predictions."
+    )
     parser.add_argument("--output", default=str(default_output_path()))
+    parser.add_argument(
+        "--attempt-ledger-dir",
+        default="",
+        help="Optional directory to write one inferred attempt ledger per instance_id.",
+    )
     return parser.parse_args()
 
 
@@ -67,38 +75,78 @@ def load_patch_scenarios(path: str | Path) -> list[Scenario]:
     payload = json.loads(scenarios_path.read_text(encoding="utf-8"))
     scenarios = payload.get("scenarios")
     if not isinstance(scenarios, list):
-        raise ScenarioValidationError(
-            [{"field": "scenarios", "code": "invalid_type", "expected": "list"}]
-        )
+        raise ScenarioValidationError([
+            {"field": "scenarios", "code": "invalid_type", "expected": "list"}
+        ])
     errors: list[dict[str, Any]] = []
     validated: list[Scenario] = []
     for index, scenario in enumerate(scenarios):
         if not isinstance(scenario, dict):
-            errors.append({"scenario_index": index, "field": "scenario", "code": "invalid_type", "expected": "object"})
+            errors.append({
+                "scenario_index": index,
+                "field": "scenario",
+                "code": "invalid_type",
+                "expected": "object",
+            })
             continue
         current = dict(scenario)
         missing = [field for field in _REQUIRED_SCENARIO_FIELDS if field not in current]
         for field in missing:
-            errors.append({"scenario_index": index, "field": field, "code": "missing_required_field"})
+            errors.append({
+                "scenario_index": index,
+                "field": field,
+                "code": "missing_required_field",
+            })
         if missing:
             continue
         if not isinstance(current["instance_id"], str):
-            errors.append({"scenario_index": index, "field": "instance_id", "code": "invalid_type", "expected": "str"})
+            errors.append({
+                "scenario_index": index,
+                "field": "instance_id",
+                "code": "invalid_type",
+                "expected": "str",
+            })
         repo_fixture = current["repo_fixture"]
         if not isinstance(repo_fixture, str):
-            errors.append({"scenario_index": index, "field": "repo_fixture", "code": "invalid_type", "expected": "str"})
+            errors.append({
+                "scenario_index": index,
+                "field": "repo_fixture",
+                "code": "invalid_type",
+                "expected": "str",
+            })
         elif not Path(repo_fixture).is_absolute():
             current["repo_fixture"] = str((scenarios_path.parent / repo_fixture).resolve())
-        if current["expected_primary_file"] is not None and not isinstance(current["expected_primary_file"], str):
-            errors.append(
-                {"scenario_index": index, "field": "expected_primary_file", "code": "invalid_type", "expected": "str | null"}
-            )
-        if current["expected_primary_span"] is not None and not _valid_span(current["expected_primary_span"]):
-            errors.append({"scenario_index": index, "field": "expected_primary_span", "code": "invalid_shape"})
-        for field in ("expected_changed_files", "expected_test_files", "validation_commands", "expected_validation_commands_contain"):
+        if current["expected_primary_file"] is not None and not isinstance(
+            current["expected_primary_file"], str
+        ):
+            errors.append({
+                "scenario_index": index,
+                "field": "expected_primary_file",
+                "code": "invalid_type",
+                "expected": "str | null",
+            })
+        if current["expected_primary_span"] is not None and not _valid_span(
+            current["expected_primary_span"]
+        ):
+            errors.append({
+                "scenario_index": index,
+                "field": "expected_primary_span",
+                "code": "invalid_shape",
+            })
+        for field in (
+            "expected_changed_files",
+            "expected_test_files",
+            "validation_commands",
+            "expected_validation_commands_contain",
+        ):
             value = current[field]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-                errors.append({"scenario_index": index, "field": field, "code": "invalid_type", "expected": "list[str]"})
+                errors.append({
+                    "scenario_index": index,
+                    "field": field,
+                    "code": "invalid_type",
+                    "expected": "list[str]",
+                })
         validated.append(current)
     if errors:
         raise ScenarioValidationError(errors)
@@ -119,29 +167,46 @@ def load_patch_predictions(path: str | Path) -> list[Prediction]:
         else:
             records = payload
     if not isinstance(records, list):
-        raise PredictionValidationError([{"field": "records", "code": "invalid_type", "expected": "list"}])
+        raise PredictionValidationError([
+            {"field": "records", "code": "invalid_type", "expected": "list"}
+        ])
     validated: list[Prediction] = []
     for index, record in enumerate(records):
         if not isinstance(record, dict):
-            errors.append({"prediction_index": index, "field": "record", "code": "invalid_type", "expected": "object"})
+            errors.append({
+                "prediction_index": index,
+                "field": "record",
+                "code": "invalid_type",
+                "expected": "object",
+            })
             continue
         current = dict(record)
         for field in ("instance_id", "system"):
             if not isinstance(current.get(field), str):
-                errors.append({"prediction_index": index, "field": field, "code": "invalid_type", "expected": "str"})
-        if current.get("model_patch") is not None and not isinstance(current.get("model_patch"), str):
-            errors.append({"prediction_index": index, "field": "model_patch", "code": "invalid_type", "expected": "str | null"})
+                errors.append({
+                    "prediction_index": index,
+                    "field": field,
+                    "code": "invalid_type",
+                    "expected": "str",
+                })
+        if current.get("model_patch") is not None and not isinstance(
+            current.get("model_patch"), str
+        ):
+            errors.append({
+                "prediction_index": index,
+                "field": "model_patch",
+                "code": "invalid_type",
+                "expected": "str | null",
+            })
         if not isinstance(current.get("actual_validation_commands", []), list) or not all(
             isinstance(item, str) for item in current.get("actual_validation_commands", [])
         ):
-            errors.append(
-                {
-                    "prediction_index": index,
-                    "field": "actual_validation_commands",
-                    "code": "invalid_type",
-                    "expected": "list[str]",
-                }
-            )
+            errors.append({
+                "prediction_index": index,
+                "field": "actual_validation_commands",
+                "code": "invalid_type",
+                "expected": "list[str]",
+            })
         validated.append(current)
     if errors:
         raise PredictionValidationError(errors)
@@ -153,15 +218,21 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
     patch_text = normalize_model_patch_text(str(prediction.get("model_patch") or ""))
     touched_files = _files_in_patch(patch_text)
     changed_lines = {
-        _normalize_path(path, repo_root): lines for path, lines in _changed_lines_by_file(patch_text).items()
+        _normalize_path(path, repo_root): lines
+        for path, lines in _changed_lines_by_file(patch_text).items()
     }
-    validation_commands = [str(command) for command in list(scenario.get("validation_commands", []))]
-    predicted_validation_commands = [str(command) for command in list(prediction.get("actual_validation_commands", []))]
+    validation_commands = [
+        str(command) for command in list(scenario.get("validation_commands", []))
+    ]
+    predicted_validation_commands = [
+        str(command) for command in list(prediction.get("actual_validation_commands", []))
+    ]
 
     patch_applied = False
     validation_passed = False
     validation_results: list[dict[str, Any]] = []
     apply_error = ""
+    reason = "no patch emitted"
     if patch_text.strip():
         with tempfile.TemporaryDirectory(prefix="tg_patch_bakeoff_") as tmp_dir:
             worktree = Path(tmp_dir) / "repo"
@@ -186,7 +257,9 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
             patch_applied = applied.returncode == 0
             if not patch_applied:
                 apply_error = (applied.stderr or applied.stdout or "").strip()
+                reason = "patch apply failed"
             if patch_applied:
+                reason = "ok"
                 validation_passed = True
                 for command in validation_commands:
                     completed = subprocess.run(
@@ -199,25 +272,41 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
                     )
                     passed = completed.returncode == 0
                     validation_passed = validation_passed and passed
-                    validation_results.append(
-                        {
-                            "command": command,
-                            "passed": passed,
-                            "returncode": completed.returncode,
-                        }
-                    )
+                    validation_results.append({
+                        "command": command,
+                        "passed": passed,
+                        "returncode": completed.returncode,
+                    })
+                if not validation_passed:
+                    reason = "validation failed"
+    else:
+        notes = str(prediction.get("notes") or "").strip()
+        if notes:
+            reason = notes
 
-    expected_files = {_normalize_path(path, repo_root) for path in list(scenario.get("expected_changed_files", []))}
+    expected_files = {
+        _normalize_path(path, repo_root)
+        for path in list(scenario.get("expected_changed_files", []))
+    }
     actual_files = {_normalize_path(path, repo_root) for path in touched_files}
     file_hits = expected_files & actual_files
-    expected_tests = {_normalize_path(path, repo_root) for path in list(scenario.get("expected_test_files", []))}
-    predicted_tests = {_normalize_path(path, repo_root) for path in list(prediction.get("actual_test_files", []))}
+    expected_tests = {
+        _normalize_path(path, repo_root) for path in list(scenario.get("expected_test_files", []))
+    }
+    predicted_tests = {
+        _normalize_path(path, repo_root) for path in list(prediction.get("actual_test_files", []))
+    }
     expected_primary_file = scenario.get("expected_primary_file")
     primary_file_hit = float(
-        expected_primary_file is not None and _normalize_path(str(expected_primary_file), repo_root) in actual_files
+        expected_primary_file is not None
+        and _normalize_path(str(expected_primary_file), repo_root) in actual_files
     )
     primary_span_hit = 0.0
-    if primary_file_hit and scenario.get("expected_primary_span") is not None and expected_primary_file is not None:
+    if (
+        primary_file_hit
+        and scenario.get("expected_primary_span") is not None
+        and expected_primary_file is not None
+    ):
         primary_span_hit = float(
             _span_overlaps_changed_lines(
                 dict(scenario["expected_primary_span"]),
@@ -233,20 +322,27 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
         "system": str(prediction["system"]),
         "patch_applied": patch_applied,
         "validation_passed": validation_passed,
+        "reason": reason,
         "apply_error": apply_error,
         "actual_changed_files": sorted(actual_files),
         "primary_file_hit": primary_file_hit,
         "primary_span_hit": primary_span_hit,
         "changed_file_recall": _safe_ratio(len(file_hits), len(expected_files)),
-        "changed_file_precision": 1.0 if not actual_files else _safe_ratio(len(file_hits), len(actual_files)),
+        "changed_file_precision": 1.0
+        if not actual_files
+        else _safe_ratio(len(file_hits), len(actual_files)),
         "unexpected_files_touched": sorted(actual_files - expected_files),
-        "predicted_test_hit_rate": _safe_ratio(len(expected_tests & predicted_tests), len(expected_tests)),
+        "predicted_test_hit_rate": _safe_ratio(
+            len(expected_tests & predicted_tests), len(expected_tests)
+        ),
         "predicted_validation_cmd_hit_rate": validation_cmd_hit_rate,
         "validation_results": validation_results,
     }
 
 
-def build_patch_bakeoff_payload(scenarios: list[Scenario], predictions: list[Prediction]) -> dict[str, Any]:
+def build_patch_bakeoff_payload(
+    scenarios: list[Scenario], predictions: list[Prediction]
+) -> dict[str, Any]:
     predictions_by_id: dict[str, list[Prediction]] = {}
     for record in predictions:
         predictions_by_id.setdefault(str(record["instance_id"]), []).append(record)
@@ -284,6 +380,12 @@ def build_patch_bakeoff_payload(scenarios: list[Scenario], predictions: list[Pre
         "summary": summary,
         "rows": rows,
     }
+
+
+def build_attempt_ledger_payloads(
+    payload: dict[str, Any], scenarios: list[Scenario]
+) -> dict[str, dict[str, Any]]:
+    return attempt_ledger_helpers.build_scored_attempt_ledgers(payload, scenarios)
 
 
 def _valid_span(value: object) -> bool:
@@ -383,6 +485,11 @@ def main() -> int:
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_json(output_path, payload)
+    if args.attempt_ledger_dir:
+        ledger_dir = Path(args.attempt_ledger_dir).expanduser().resolve()
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        for instance_id, ledger in build_attempt_ledger_payloads(payload, scenarios).items():
+            write_json(ledger_dir / f"{instance_id}.json", ledger)
     print(f"Results written to {output_path}")
     return 0
 

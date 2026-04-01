@@ -7,7 +7,9 @@ from typing import Any
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render a markdown scorecard from normalized competitor evaluation output.")
+    parser = argparse.ArgumentParser(
+        description="Render a markdown scorecard from normalized competitor evaluation output."
+    )
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     return parser.parse_args()

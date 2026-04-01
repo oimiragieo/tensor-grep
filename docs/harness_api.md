@@ -31,6 +31,9 @@ These top-level fields are shared across every JSON shape documented here.
 | Context render JSON | `tg.exe context-render --query ... --json ...` | [`examples/context_render.json`](examples/context_render.json) |
 | Rewrite plan JSON | `tg.exe run --rewrite ...` | [`examples/rewrite_plan.json`](examples/rewrite_plan.json) |
 | Apply + verify JSON | `tg.exe run --rewrite ... --apply --verify --json ...` | [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json) |
+| Attempt ledger JSON | multi-attempt harness/replay ledger | [`examples/attempt_ledger.json`](examples/attempt_ledger.json) |
+| Multi-session attempt ledger JSON | multi-session replay and handoff ledger | [`examples/multi_session_attempt_ledger.json`](examples/multi_session_attempt_ledger.json) |
+| Multi-task attempt ledger JSON | multi-task replay chain ledger | [`examples/multi_task_attempt_ledger.json`](examples/multi_task_attempt_ledger.json) |
 | Audit manifest verify JSON | `tg.exe audit-verify <manifest> --json` | [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.json) |
 | GPU sidecar JSON | `tg.exe search --gpu-device-ids ... --json ...` | [`examples/gpu_sidecar_search.json`](examples/gpu_sidecar_search.json) |
 | Calibrate JSON | `tg.exe calibrate` | [`examples/calibrate.json`](examples/calibrate.json) |
@@ -301,6 +304,9 @@ It reuses the Context Pack JSON shape and adds:
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, suggested edits, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
+| `navigation_pack` | `object` | Compact AI-facing navigation bundle with the primary target, mention-ready follow-up reads, related tests, and validation commands. |
+
+When this payload is carried into `python benchmarks/run_tensor_grep_patch_driver.py`, the emitted patch-driver records preserve both `edit_plan_seed` and `navigation_pack` so executor loops can keep the richer plan and the smaller planner-to-reader handoff together.
 
 Each ranked `candidate_edit_targets.spans[]` or `edit_plan_seed.related_spans[]` object may additionally include:
 
@@ -320,6 +326,47 @@ Each `edit_plan_seed.suggested_edits[]` object uses:
 | `edit_kind` | `string` | Stable label such as `caller-update` or `dependency-update`. |
 | `rationale` | `string` | Deterministic one-line explanation for the recommendation. |
 | `confidence` | `number` | Confidence score in the recommended edit target. |
+
+`navigation_pack` currently includes:
+
+- `primary_target`
+- `follow_up_reads`
+- `parallel_read_groups`
+- `related_tests`
+- `validation_commands`
+- `edit_ordering`
+- `rollback_risk`
+
+`parallel_read_groups` is the deterministic fan-out plan for downstream agent loops. The current contract uses three ordered phases:
+
+- phase `0`: `primary`
+- phase `1`: `related`
+- phase `2`: `test`
+
+Each group uses:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `phase` | `integer` | Ordered read phase; lower phases should run first. |
+| `label` | `string` | Stable group name: `primary`, `related`, or `test`. |
+| `can_parallelize` | `boolean` | Whether the reads in the group are safe to fan out in parallel. |
+| `mentions` | `array<string>` | Mention-ready refs for the ranges in this phase. |
+| `files` | `array<string>` | Absolute file paths represented in this phase. |
+| `roles` | `array<string>` | Stable role labels for the phase contents. |
+
+Each `navigation_pack.primary_target` or `navigation_pack.follow_up_reads[]` object uses:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `file` | `string` | Absolute path for the target file. |
+| `symbol` | `string` | Symbol or enclosing region to inspect next. |
+| `start_line` | `integer` | Suggested start line for the next read. |
+| `end_line` | `integer` | Suggested end line for the next read. |
+| `mention_ref` | `string` | Mention-ready source ref such as `path#L10-L18`. |
+| `role` | `string` | Present on `follow_up_reads[]`; one of `primary`, `related`, or `test`. |
+| `rationale` | `string` | Deterministic one-line explanation for why the range is worth reading next. |
+| `reasons` | `array<string>` | Stable ranking reasons carried through from the planning path. |
+| `provenance` | `array<string>` | Normalized trust labels when available. |
 
 ## Context Render JSON
 
@@ -357,6 +404,7 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `sections` | `array<object>` | Machine-readable section metadata for the rendered bundle, including byte offsets, section type, and provenance for why each section was included. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Default primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
+| `navigation_pack` | `object` | Compact AI-facing navigation bundle mirroring Edit Plan JSON so planner/executor loops can reuse one shape. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
 
 `edit_plan_seed` currently includes:
@@ -527,6 +575,138 @@ The on-disk audit manifest itself is a deterministic JSON document that includes
 - `manifest_sha256`: self-digest over the canonical manifest JSON without the digest field
 - `previous_manifest_sha256`: digest of the previous manifest written to the same path, when present
 - `signature`: optional keyed signature block when `--audit-signing-key <path>` is used
+
+## Attempt Ledger JSON
+
+Emitted by `python benchmarks/build_attempt_ledger.py --input <path> --output <path>`.
+
+Examples: [`examples/attempt_ledger.json`](examples/attempt_ledger.json), [`examples/multi_session_attempt_ledger.json`](examples/multi_session_attempt_ledger.json), [`examples/multi_task_attempt_ledger.json`](examples/multi_task_attempt_ledger.json)
+
+Emitted by `python benchmarks/build_attempt_ledger.py --input <spec.json> --output <artifact.json>`.
+
+Use this shape when an external agent needs machine-readable provenance across more than one edit attempt for the same task. The goal is to make retries, replay, and final acceptance auditable without scraping prose from logs. In practice this is the stable attempt ledger / replay chain contract for partial retry, audit-safe resumption, multi-session replay handoff, and multi-task replay across a bounded task chain. The contract can be materialized either by `python benchmarks/build_attempt_ledger.py --input <path> --output <path>`, directly from the patch-driver flow via `python benchmarks/run_tensor_grep_patch_driver.py --attempt-ledger-output <path>`, from scored patch-eval output via `python benchmarks/run_patch_bakeoff.py --scenarios <path> --predictions <path> --attempt-ledger-dir <dir>`, from the Claude A/B producer via `python benchmarks/run_claude_skill_ab.py --input <path> --attempt-ledger-dir <dir>`, from the Gemini A/B producer via `python benchmarks/run_gemini_skill_ab.py --input <path> --attempt-ledger-dir <dir>`, or from the competitor prediction producers via `python benchmarks/run_claude_patch_predictions.py --input <path> --attempt-ledger-dir <dir>`, `python benchmarks/run_copilot_patch_predictions.py --input <path> --attempt-ledger-dir <dir>`, and `python benchmarks/run_gemini_patch_predictions.py --input <path> --attempt-ledger-dir <dir>`.
+
+When you need a single comparison surface across multiple external validation runs, `python benchmarks/build_external_agent_patch_driver_comparison.py --summary <system>=<summary.json> ... --output <path>` normalizes those per-system patch-driver summaries into one `external_agent_patch_driver_comparison` artifact while preserving each system's chosen primary file, follow-up count, validation commands, and phased `parallel_read_groups` when the underlying patch-driver output carries the current `navigation_pack` contract.
+
+To quantify whether that handoff stays small, stack-aware, and materially more parallel than a flat follow-up list, `python benchmarks/build_external_agent_patch_driver_scorecard.py --input <comparison.json> --output <scorecard.json>` scores each system on compactness (`follow_up_count <= 5`), validation-fit (whether the suggested validation command matches the local stack inferred from the primary file), and phased-read reduction (how many serial follow-up read steps are eliminated by `parallel_read_groups`).
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `artifact` | `string` | Stable artifact label. The committed example uses `agent_attempt_ledger`. |
+| `suite` | `string` | Ledger producer name. The committed example uses `agent_loop`. |
+| `generated_at_epoch_s` | `number` | Unix timestamp written when the ledger was materialized. |
+| `task_id` | `string` | Stable task or issue identifier shared by all attempts. |
+| `root` | `string` | Repository root associated with the attempt chain. |
+| `attempts` | `array<object>` | Ordered attempt ledger. One row per materialized attempt. |
+| `final_outcome` | `object` | Accepted or terminal rejected outcome for the chain. |
+| `replay` | `object` | Replay/audit instructions for consumers that need to resume or re-audit the chain. |
+
+Each `attempts[]` object includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `attempt_id` | `string` | Stable attempt identifier. |
+| `parent_attempt_id` | `string \| null` | Previous attempt in the retry chain when present. |
+| `kind` | `string` | Current example uses `rewrite_apply_verify`. |
+| `status` | `string` | Attempt lifecycle such as `validation_failed` or `accepted`. |
+| `retryable` | `boolean` | Whether the next controller step may retry this attempt. |
+| `retry_stage` | `string` | Narrowest safe replay boundary such as `validation`, `plan`, or `full_attempt`. |
+| `retry_reason` | `string` | Stable replay rationale. |
+| `checkpoint_id` | `string \| null` | Checkpoint available for rollback or replay. |
+| `audit_manifest_path` | `string \| null` | Audit manifest associated with the attempt when present. |
+| `validation_success` | `boolean` | Whether repo validation passed for this attempt. |
+| `score_artifact` | `string \| null` | Final-score artifact emitted for the attempt when present. |
+| `inputs` | `array<string>` | Machine-readable input artifacts consumed by this attempt. |
+| `outputs` | `array<string>` | Machine-readable output artifacts emitted by this attempt. |
+
+`final_outcome` includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `status` | `string` | Terminal outcome such as `accepted` or `rejected`. |
+| `accepted_attempt_id` | `string \| null` | Accepted attempt when one exists. |
+| `score_artifact` | `string \| null` | Final machine-readable score artifact associated with the accepted or terminal attempt. |
+| `summary` | `string` | Short human-readable outcome summary for audit reports. |
+
+`replay` includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `preserve_attempt_ids` | `boolean` | Consumers should preserve existing IDs rather than rewriting history. |
+| `partial_retry_ledger` | `array<object>` | Ordered replay decisions describing which stage was retried and why. |
+| `audit_chain` | `array<string>` | Ordered manifest or trust artifacts for replay/audit validation. |
+| `next_action` | `string` | Recommended next controller step when the chain is resumed. |
+
+Multi-session replay adds:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `attempts[].session_id` | `string \| null` | Session that produced the attempt when session reuse is active. |
+| `replay.multi_session` | `boolean` | `true` when the ledger crosses more than one cached session. |
+| `replay.handoff` | `object \| null` | Ordered handoff metadata with `from_session_id`, `to_session_id`, and `reason`. |
+
+Multi-task replay adds:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `tasks` | `array<object>` | Ordered task inventory when the ledger spans more than one task. |
+| `tasks[].task_id` | `string` | Stable task identifier for each task in the chain. |
+| `tasks[].status` | `string` | Terminal or in-progress task state such as `accepted` or `rolled_forward`. |
+| `tasks[].accepted_attempt_id` | `string \| null` | Accepted attempt associated with that task when present. |
+| `replay.multi_task` | `boolean` | `true` when the ledger preserves a multi-task replay chain instead of a single-task retry chain. |
+| `replay.task_chain` | `array<string>` | Ordered task IDs that define the replay chain across tasks. |
+
+## Patch Bakeoff JSON
+
+Emitted by `python benchmarks/run_patch_bakeoff.py --scenarios <path> --predictions <path> --output <path>`.
+
+Example: [`examples/patch_bakeoff.json`](examples/patch_bakeoff.json)
+
+Use this shape when an agent needs a machine-readable final score for one or more patch attempts against a fixed scenario pack.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `artifact` | `string` | Always `bench_patch_bakeoff`. |
+| `suite` | `string` | Always `run_patch_bakeoff`. |
+| `generated_at_epoch_s` | `number` | Unix timestamp for the scoring run. |
+| `environment` | `object` | Host metadata for auditability. |
+| `summary` | `object` | Aggregate score surface across all scored rows. |
+| `rows` | `array<object>` | One scored row per `(instance_id, system)` prediction pair. |
+
+`summary` includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `scenario_count` | `integer` | Number of scored rows, not the source scenario count. |
+| `missing_predictions` | `array<string>` | Scenario IDs with no prediction rows; retry the producer, not the scorer. |
+| `mean_patch_applied_rate` | `number` | Fraction of rows whose patch applied cleanly. |
+| `mean_validation_pass_rate` | `number` | Fraction of rows whose validation commands passed after apply. |
+| `mean_primary_file_hit_rate` | `number` | Fraction of rows that touched the expected primary file. |
+| `mean_primary_span_hit_rate` | `number` | Fraction of rows that touched the expected primary span. |
+| `mean_changed_file_recall` | `number` | Average changed-file recall versus expected files. |
+| `mean_changed_file_precision` | `number` | Average changed-file precision versus expected files. |
+| `mean_predicted_test_hit_rate` | `number` | Average predicted-test hit rate. |
+| `mean_predicted_validation_cmd_hit_rate` | `number` | Average predicted validation-command hit rate. |
+
+Each `rows[]` object includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `instance_id` | `string` | Scenario identifier. |
+| `system` | `string` | Comparator label such as `claude-enhanced`, `copilot`, or `gemini-baseline`. |
+| `patch_applied` | `boolean` | Whether `git apply` succeeded. |
+| `validation_passed` | `boolean` | Whether all validation commands passed after apply. |
+| `reason` | `string` | Stable row-level result classification such as `ok`, `no patch emitted`, `timeout after 60s`, `patch apply failed`, or `validation failed`. |
+| `apply_error` | `string` | Apply failure text, or empty string when apply succeeded or no patch was emitted. |
+| `actual_changed_files` | `array<string>` | Files changed by the predicted patch. |
+| `primary_file_hit` | `number` | `1.0` when the expected primary file was touched, otherwise `0.0`. |
+| `primary_span_hit` | `number` | `1.0` when the expected primary span was touched, otherwise `0.0`. |
+| `changed_file_recall` | `number` | Recall against expected changed files. |
+| `changed_file_precision` | `number` | Precision against expected changed files. |
+| `unexpected_files_touched` | `array<string>` | Files touched outside the expected set. |
+| `predicted_test_hit_rate` | `number` | Predicted-test hit rate against expected test files. |
+| `predicted_validation_cmd_hit_rate` | `number` | Predicted validation-command hit rate. |
+| `validation_results` | `array<object>` | Per-command post-apply validation results when apply succeeded. |
 
 ## Audit Manifest Verify JSON
 
@@ -870,6 +1050,7 @@ The shape matches Symbol Blast Radius JSON and additionally includes:
 | `max_symbols` | `integer` | Maximum ranked symbols retained in the plan payload. |
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
 | `edit_plan_seed` | `object` | Primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, validation commands, and rollback risk. |
+| `navigation_pack` | `object` | Compact AI-facing navigation bundle carrying mention-ready follow-up reads and validation targets for the blast-radius plan. |
 | `graph_trust_summary` | `object` | Same aggregated dependency-edge trust summary exposed by Symbol Blast Radius JSON. |
 
 ## Symbol Blast Radius Render JSON
@@ -894,6 +1075,7 @@ The shape matches Context Render JSON and additionally includes:
 | `callers` | `array<object>` | Exact caller rows. |
 | `caller_tree` | `array<object>` | Depth-indexed radius tree. |
 | `rendered_caller_tree` | `string` | Deterministic text rendering of the same tree. |
+| `navigation_pack` | `object` | Compact AI-facing navigation bundle mirroring Edit Plan JSON so review or patch loops can consume the blast radius with minimal follow-up reads. |
 | `graph_trust_summary` | `object` | Same aggregated dependency-edge trust summary exposed by Symbol Blast Radius JSON. |
 
 ## Session Open JSON
@@ -1025,6 +1207,20 @@ Invalid requests return:
 ```json
 {"version":1,"session_id":"session-...","error":{"code":"invalid_request","message":"..."}}
 ```
+
+## Failure Mode Examples
+
+Failure-mode companion examples:
+
+- [`examples/session_invalid_request_stale.json`](examples/session_invalid_request_stale.json): stale session request that should trigger `tg session refresh` or `--refresh-on-stale`
+- [`examples/patch_bakeoff_incomplete.json`](examples/patch_bakeoff_incomplete.json): scored patch artifact with non-empty `summary.missing_predictions`; treat this as missing predictions and resume the producer before trusting aggregate scores
+- [`examples/patch_bakeoff_no_patch.json`](examples/patch_bakeoff_no_patch.json): final scored failure after the producer emitted no usable patch or hit a timeout
+- [`examples/defs_provider_disagreement.json`](examples/defs_provider_disagreement.json): symbol-navigation payload showing provider disagreement metadata
+- [`examples/provider_status_unavailable.json`](examples/provider_status_unavailable.json): provider unavailable snapshot; treat provider disagreement or provider unavailable state as diagnostic context rather than a separate schema
+- [`examples/provider_status_unavailable.json`](examples/provider_status_unavailable.json): standalone provider health snapshot showing `provider_status.last_error`; keep routing native until provider transport health is restored
+- [`examples/rewrite_apply_verify_validation_failed.json`](examples/rewrite_apply_verify_validation_failed.json): apply/verify payload where edits verified byte-for-byte but post-apply validation failed
+
+These examples reuse the existing public contracts above; they are not separate schema families.
 
 ## MCP Tool Responses
 

@@ -159,6 +159,36 @@ def test_create_review_bundle_json_matches_python_payload(tmp_path: Path):
     assert json.loads(bundle_json) == bundle
 
 
+def test_create_review_bundle_is_deterministic_for_same_inputs(monkeypatch, tmp_path: Path):
+    project, audit_dir = _make_project(tmp_path)
+    previous_path = audit_dir / "previous.json"
+    previous_payload = _write_audit_manifest(previous_path, project_root=project)
+    manifest_path = audit_dir / "current.json"
+    _write_audit_manifest(
+        manifest_path,
+        project_root=project,
+        previous_manifest_sha256=str(previous_payload["manifest_sha256"]),
+        created_at="2026-03-24T12:00:00Z",
+    )
+    checkpoint = create_checkpoint(str(project))
+
+    created_at_values = iter(("2026-03-29T10:00:00Z", "2026-03-29T10:00:01Z"))
+    monkeypatch.setattr(audit_manifest, "_utc_now_iso", lambda: next(created_at_values))
+
+    first = audit_manifest.create_review_bundle(
+        manifest_path,
+        checkpoint_id=checkpoint.checkpoint_id,
+        previous_manifest=previous_path,
+    )
+    second = audit_manifest.create_review_bundle(
+        manifest_path,
+        checkpoint_id=checkpoint.checkpoint_id,
+        previous_manifest=previous_path,
+    )
+
+    assert second == first
+
+
 def test_create_review_bundle_raises_for_missing_checkpoint(tmp_path: Path):
     project, audit_dir = _make_project(tmp_path)
     manifest_path = audit_dir / "current.json"

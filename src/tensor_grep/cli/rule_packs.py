@@ -379,7 +379,7 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "javascript",
                     "severity": "medium",
                     "message": "Avoid hardcoding access token literals in source files.",
-                }
+                },
             ],
             "typescript": [
                 {
@@ -402,7 +402,7 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "typescript",
                     "severity": "medium",
                     "message": "Avoid hardcoding access token literals in source files.",
-                }
+                },
             ],
             "rust": [
                 {
@@ -425,7 +425,7 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "language": "rust",
                     "severity": "medium",
                     "message": "Avoid hardcoding access token literals in source files.",
-                }
+                },
             ],
         },
     },
@@ -732,28 +732,28 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "pattern": 'require("child_process").exec($CMD)',
                     "language": "javascript",
                     "severity": "high",
-                    "message": "Avoid require(\"child_process\").exec() with untrusted commands.",
+                    "message": 'Avoid require("child_process").exec() with untrusted commands.',
                 },
                 {
                     "id": "javascript-require-child-process-exec-sync",
                     "pattern": 'require("child_process").execSync($CMD)',
                     "language": "javascript",
                     "severity": "high",
-                    "message": "Avoid require(\"child_process\").execSync() with untrusted commands.",
+                    "message": 'Avoid require("child_process").execSync() with untrusted commands.',
                 },
                 {
                     "id": "javascript-spawn-sh",
                     "pattern": 'spawn("sh", $$$ARGS)',
                     "language": "javascript",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with spawn(\"sh\", ...).",
+                    "message": 'Avoid spawning a shell directly with spawn("sh", ...).',
                 },
                 {
                     "id": "javascript-spawn-bash",
                     "pattern": 'spawn("bash", $$$ARGS)',
                     "language": "javascript",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with spawn(\"bash\", ...).",
+                    "message": 'Avoid spawning a shell directly with spawn("bash", ...).',
                 },
             ],
             "typescript": [
@@ -790,28 +790,28 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "pattern": 'require("child_process").exec($CMD)',
                     "language": "typescript",
                     "severity": "high",
-                    "message": "Avoid require(\"child_process\").exec() with untrusted commands.",
+                    "message": 'Avoid require("child_process").exec() with untrusted commands.',
                 },
                 {
                     "id": "typescript-require-child-process-exec-sync",
                     "pattern": 'require("child_process").execSync($CMD)',
                     "language": "typescript",
                     "severity": "high",
-                    "message": "Avoid require(\"child_process\").execSync() with untrusted commands.",
+                    "message": 'Avoid require("child_process").execSync() with untrusted commands.',
                 },
                 {
                     "id": "typescript-spawn-sh",
                     "pattern": 'spawn("sh", $$$ARGS)',
                     "language": "typescript",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with spawn(\"sh\", ...).",
+                    "message": 'Avoid spawning a shell directly with spawn("sh", ...).',
                 },
                 {
                     "id": "typescript-spawn-bash",
                     "pattern": 'spawn("bash", $$$ARGS)',
                     "language": "typescript",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with spawn(\"bash\", ...).",
+                    "message": 'Avoid spawning a shell directly with spawn("bash", ...).',
                 },
             ],
             "rust": [
@@ -820,56 +820,56 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "pattern": 'Command::new("sh")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with Command::new(\"sh\").",
+                    "message": 'Avoid spawning a shell directly with Command::new("sh").',
                 },
                 {
                     "id": "rust-command-new-bash",
                     "pattern": 'Command::new("bash")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with Command::new(\"bash\").",
+                    "message": 'Avoid spawning a shell directly with Command::new("bash").',
                 },
                 {
                     "id": "rust-command-new-cmd",
                     "pattern": 'Command::new("cmd")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with Command::new(\"cmd\").",
+                    "message": 'Avoid spawning a shell directly with Command::new("cmd").',
                 },
                 {
                     "id": "rust-command-new-powershell",
                     "pattern": 'Command::new("powershell")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with Command::new(\"powershell\").",
+                    "message": 'Avoid spawning a shell directly with Command::new("powershell").',
                 },
                 {
                     "id": "rust-std-command-new-sh",
                     "pattern": 'std::process::Command::new("sh")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with std::process::Command::new(\"sh\").",
+                    "message": 'Avoid spawning a shell directly with std::process::Command::new("sh").',
                 },
                 {
                     "id": "rust-std-command-new-bash",
                     "pattern": 'std::process::Command::new("bash")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with std::process::Command::new(\"bash\").",
+                    "message": 'Avoid spawning a shell directly with std::process::Command::new("bash").',
                 },
                 {
                     "id": "rust-std-command-new-cmd",
                     "pattern": 'std::process::Command::new("cmd")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with std::process::Command::new(\"cmd\").",
+                    "message": 'Avoid spawning a shell directly with std::process::Command::new("cmd").',
                 },
                 {
                     "id": "rust-std-command-new-powershell",
                     "pattern": 'std::process::Command::new("powershell")',
                     "language": "rust",
                     "severity": "high",
-                    "message": "Avoid spawning a shell directly with std::process::Command::new(\"powershell\").",
+                    "message": 'Avoid spawning a shell directly with std::process::Command::new("powershell").',
                 },
             ],
         },
@@ -940,17 +940,15 @@ def list_rule_packs() -> list[dict[str, Any]]:
     for name, spec in sorted(_RULE_PACKS.items()):
         languages = sorted(spec["languages"].keys())
         rules = sum(len(entries) for entries in spec["languages"].values())
-        packs.append(
-            {
-                "name": name,
-                "description": spec["description"],
-                "category": spec["category"],
-                "status": spec["status"],
-                "default_language": spec["default_language"],
-                "languages": languages,
-                "rule_count": rules,
-            }
-        )
+        packs.append({
+            "name": name,
+            "description": spec["description"],
+            "category": spec["category"],
+            "status": spec["status"],
+            "default_language": spec["default_language"],
+            "languages": languages,
+            "rule_count": rules,
+        })
     return packs
 
 

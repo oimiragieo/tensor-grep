@@ -16,6 +16,122 @@ def test_should_validate_release_and_package_assets_consistency():
     assert errors == []
 
 
+def test_should_require_readme_canonical_doc_links_and_release_markers():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    readme = """
+    # tensor-grep
+
+    ## Canonical Docs
+
+    - [docs/benchmarks.md](docs/benchmarks.md)
+    - [docs/gpu_crossover.md](docs/gpu_crossover.md)
+    """
+    errors = module.validate_readme_contract(readme_content=readme)
+    assert any("README missing canonical docs reference" in err for err in errors)
+    assert any("README must link installation docs" in err for err in errors)
+    assert any("README must link release checklist" in err for err in errors)
+
+
+def test_should_accept_readme_when_public_contract_markers_exist():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    readme = """
+    # tensor-grep
+
+    `tensor-grep` has first class support on Windows, macOS and Linux.
+
+    Harness consumers should use the documented public contracts in [docs/harness_api.md](docs/harness_api.md)
+    and the workflow guide in [docs/harness_cookbook.md](docs/harness_cookbook.md).
+
+    ## Canonical Docs
+
+    - [docs/benchmarks.md](docs/benchmarks.md)
+    - [docs/gpu_crossover.md](docs/gpu_crossover.md)
+    - [docs/routing_policy.md](docs/routing_policy.md)
+    - [docs/harness_api.md](docs/harness_api.md)
+    - [docs/harness_cookbook.md](docs/harness_cookbook.md)
+    - [docs/installation.md](docs/installation.md)
+    - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+    """
+    errors = module.validate_readme_contract(readme_content=readme)
+    assert errors == []
+
+
+def test_should_require_benchmarks_doc_canonical_matrix_and_rules():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    benchmarks_doc = """
+    # Benchmarks
+
+    ## Benchmark Matrix
+
+    | Surface | Script | Default artifact |
+    | --- | --- | --- |
+    | End-to-end CLI text search | `benchmarks/run_benchmarks.py` | `artifacts/bench_run_benchmarks.json` |
+    """
+    errors = module.validate_benchmarks_docs(benchmarks_content=benchmarks_doc)
+    joined_errors = "\n".join(errors)
+    assert "Benchmark docs missing required matrix contract" in joined_errors
+    assert "Benchmark docs missing required artifact convention" in joined_errors
+    assert "Benchmark docs missing required acceptance rule" in joined_errors
+
+
+def test_should_accept_benchmarks_doc_when_public_benchmark_contract_exists():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    benchmarks_doc = """
+    # Benchmarks
+
+    ## Benchmark Matrix
+
+    | Surface | Script | Default artifact |
+    | --- | --- | --- |
+    | End-to-end CLI text search | `benchmarks/run_benchmarks.py` | `artifacts/bench_run_benchmarks.json` |
+    | AST rewrite plan/diff/apply | `benchmarks/run_ast_rewrite_benchmarks.py` | `artifacts/bench_ast_rewrite.json` |
+    | Repeated-query / hot-cache search | `benchmarks/run_hot_query_benchmarks.py` | `artifacts/bench_hot_query_benchmarks.json` |
+
+    ## Artifact Conventions
+
+    - `suite`
+    - `artifact`
+    - `environment`
+    - `generated_at_epoch_s`
+
+    ## Acceptance Rules
+
+    - Do not update benchmark docs or claims until the relevant artifact has been rerun on the accepted line.
+    - Compare against the current accepted baseline, not memory.
+    - Keep backend labels explicit in artifacts so routing claims are auditable.
+    """
+    errors = module.validate_benchmarks_docs(benchmarks_content=benchmarks_doc)
+    assert errors == []
+
+
 def test_should_validate_winget_manifest_structure():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
@@ -794,13 +910,65 @@ def test_should_require_installation_docs_to_include_package_manager_commands():
     assert any("winget-pkgs" in err for err in errors)
     assert any("winget install oimiragieo.tensor-grep" in err for err in errors)
     assert any("tg --version" in err for err in errors)
-    assert any(
-        "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z"
-        in err
-        for err in errors
+
+
+def test_should_validate_readme_canonical_docs_and_installation_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_readme_contract(
+        readme_content=(
+            "# tensor-grep\n"
+            "`tensor-grep` has first class support on Windows, macOS and Linux.\n"
+            "Harness consumers should use the documented public contracts in [docs/harness_api.md](docs/harness_api.md)\n"
+            "and the workflow guide in [docs/harness_cookbook.md](docs/harness_cookbook.md).\n"
+            "## Canonical Docs\n"
+            "- [docs/benchmarks.md](docs/benchmarks.md)\n"
+            "- [docs/gpu_crossover.md](docs/gpu_crossover.md)\n"
+            "- [docs/routing_policy.md](docs/routing_policy.md)\n"
+            "- [docs/harness_api.md](docs/harness_api.md)\n"
+            "- [docs/harness_cookbook.md](docs/harness_cookbook.md)\n"
+            "- [docs/installation.md](docs/installation.md)\n"
+            "- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)\n"
+            "## Installation\n"
+            "pip install tensor-grep\n"
+            'uv pip install "tensor-grep[ast,nlp]"\n'
+            'npx tensor-grep search "ERROR" .\n'
+            "GitHub Releases page\n"
+        )
     )
-    assert any("git revert <tap-formula-commit>" in err for err in errors)
-    assert any("winget uninstall oimiragieo.tensor-grep" in err for err in errors)
+    assert errors == []
+
+
+def test_should_require_readme_canonical_docs_and_installation_surfaces():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_readme_contract(
+        readme_content=(
+            "# tensor-grep\n"
+            "## Canonical Docs\n"
+            "- [docs/benchmarks.md](docs/benchmarks.md)\n"
+            "## Installation\n"
+            "pip install tensor-grep\n"
+        )
+    )
+    joined_errors = "\n".join(errors)
+    assert "README missing canonical docs reference" in joined_errors
+    assert "README must link installation docs" in joined_errors
+    assert "README must link release checklist" in joined_errors
+    assert "README must state current first-class platform support explicitly" in joined_errors
+    assert "README must direct harness consumers to docs/harness_api.md" in joined_errors
 
 
 def test_should_require_smoke_test_package_manager_bundle_command_in_runbook():
@@ -2683,6 +2851,42 @@ def test_should_require_publish_docs_force_flag():
     assert "publish-docs `Deploy Docs` step must invoke `mkdocs gh-deploy --force`" in joined_errors
 
 
+def test_should_require_publish_docs_build_step_with_strict_mode():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
+    docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
+    docs_section = docs_section.replace(
+        "      - name: Build Docs\n", "      - name: Build Site\n", 1
+    )
+    release_workflow = (
+        docs_prefix + "  publish-docs:" + docs_section + "  release-success-gate:" + remainder
+    )
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "publish-docs job must include step `Build Docs`" in joined_errors
+
+    docs_section = docs_rest.split("  release-success-gate:", 1)[0]
+    docs_section = docs_section.replace("mkdocs build --strict", "mkdocs build", 1)
+    release_workflow = (
+        docs_prefix + "  publish-docs:" + docs_section + "  release-success-gate:" + remainder
+    )
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "publish-docs `Build Docs` step must invoke `mkdocs build --strict`" in joined_errors
+
+
 def test_should_require_publish_docs_install_entrypoint_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
@@ -2707,6 +2911,29 @@ def test_should_require_publish_docs_install_entrypoint_contract():
     joined_errors = "\n".join(errors)
     assert (
         "publish-docs `Install mkdocs` step must invoke `pip install mkdocs-material`"
+        in joined_errors
+    )
+
+
+def test_should_require_ci_release_readiness_docs_build_step():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    ci_workflow = ci_workflow.replace(
+        "      - name: Build docs site (strict)\n",
+        "      - name: Build docs site\n",
+        1,
+    )
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    joined_errors = "\n".join(errors)
+    assert (
+        "CI workflow missing expected package-manager validation block: Build docs site (strict)"
         in joined_errors
     )
 

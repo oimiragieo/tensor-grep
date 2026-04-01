@@ -159,8 +159,7 @@ class _SessionServeCache:
     @property
     def sessions(self) -> list[dict[str, str]]:
         return [
-            {"root": root, "session_id": session_id}
-            for root, session_id in self._entries.keys()
+            {"root": root, "session_id": session_id} for root, session_id in self._entries.keys()
         ]
 
 
@@ -203,13 +202,11 @@ def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
             stat = path.stat()
         except OSError:
             continue
-        snapshot.append(
-            {
-                "path": str(path),
-                "size": int(stat.st_size),
-                "mtime_ns": int(stat.st_mtime_ns),
-            }
-        )
+        snapshot.append({
+            "path": str(path),
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        })
     snapshot.sort(key=lambda item: str(item["path"]))
     return snapshot
 
@@ -651,9 +648,7 @@ def _serve_session_request_from_payload(
             max_tokens=(
                 None if request.get("max_tokens") in (None, "") else int(request["max_tokens"])
             ),
-            model=(
-                None if request.get("model") in (None, "") else str(request["model"])
-            ),
+            model=(None if request.get("model") in (None, "") else str(request["model"])),
             optimize_context=bool(request.get("optimize_context", False)),
             render_profile=str(request.get("render_profile", "full")),
             profile=bool(request.get("profile", False)),
@@ -775,7 +770,9 @@ def serve_session_request(
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_session_id, resolved_path = _resolve_request_session_target(request, session_id, path)
-    session_payload = payload if payload is not None else get_session(resolved_session_id, resolved_path)
+    session_payload = (
+        payload if payload is not None else get_session(resolved_session_id, resolved_path)
+    )
     return _serve_session_request_from_payload(resolved_session_id, request, session_payload)
 
 
@@ -803,7 +800,9 @@ def serve_session_stream(
         response: dict[str, Any]
         try:
             request = cast(dict[str, Any], json.loads(line))
-            request_session_id, request_path = _resolve_request_session_target(request, session_id, path)
+            request_session_id, request_path = _resolve_request_session_target(
+                request, session_id, path
+            )
             command = str(request.get("command", "")).strip().lower()
             if command == "stats":
                 response = {
@@ -820,7 +819,9 @@ def serve_session_stream(
                     "request_count": request_count,
                 }
             elif command == "health":
-                payload, cache_status = payload_cache.load_with_status(request_session_id, request_path)
+                payload, cache_status = payload_cache.load_with_status(
+                    request_session_id, request_path
+                )
                 response = _session_health_payload(request_session_id, payload)
                 response["serve_cache"] = {
                     "status": cache_status,
@@ -828,7 +829,9 @@ def serve_session_stream(
                     "root_count": payload_cache.root_count,
                 }
             else:
-                payload, cache_status = payload_cache.load_with_status(request_session_id, request_path)
+                payload, cache_status = payload_cache.load_with_status(
+                    request_session_id, request_path
+                )
                 response = serve_session_request(
                     request_session_id,
                     request,
@@ -844,7 +847,9 @@ def serve_session_stream(
             if refresh_on_stale:
                 refresh_session(request_session_id, request_path, payload_cache=payload_cache)
                 payload_cache.record_refresh()
-                payload, cache_status = payload_cache.load_with_status(request_session_id, request_path)
+                payload, cache_status = payload_cache.load_with_status(
+                    request_session_id, request_path
+                )
                 response = serve_session_request(
                     request_session_id,
                     request,

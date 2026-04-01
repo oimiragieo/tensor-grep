@@ -24,7 +24,9 @@ def default_output_path() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Normalize manual competitor evaluation records into a common score schema.")
+    parser = argparse.ArgumentParser(
+        description="Normalize manual competitor evaluation records into a common score schema."
+    )
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", default=str(default_output_path()))
     return parser.parse_args()
@@ -37,7 +39,9 @@ def _resolve_against_base(path: str, *, base_dir: Path | None) -> str:
     return str(candidate.resolve())
 
 
-def _load_scenario_lookup(packs: list[str], *, base_dir: Path | None) -> dict[tuple[str, str], dict[str, Any]]:
+def _load_scenario_lookup(
+    packs: list[str], *, base_dir: Path | None
+) -> dict[tuple[str, str], dict[str, Any]]:
     lookup: dict[tuple[str, str], dict[str, Any]] = {}
     for pack in packs:
         pack_path = Path(_resolve_against_base(pack, base_dir=base_dir))
@@ -71,7 +75,8 @@ def _score_row(record: dict[str, Any], scenario: dict[str, Any]) -> dict[str, An
         "actual_dependent_files": [
             item
             for item in (
-                _normalize_repo_relative_path(entry) for entry in list(record.get("actual_dependent_files", []))
+                _normalize_repo_relative_path(entry)
+                for entry in list(record.get("actual_dependent_files", []))
             )
             if item is not None
         ],
@@ -85,14 +90,19 @@ def _score_row(record: dict[str, Any], scenario: dict[str, Any]) -> dict[str, An
         ],
         "actual_test_files": [
             item
-            for item in (_normalize_repo_relative_path(entry) for entry in list(record.get("actual_test_files", [])))
+            for item in (
+                _normalize_repo_relative_path(entry)
+                for entry in list(record.get("actual_test_files", []))
+            )
             if item is not None
         ],
         "actual_validation_commands": list(record.get("actual_validation_commands", [])),
         "context_token_count": int(record.get("context_token_count", 0)),
     }
     scored = run_bakeoff.score_scenario(scenario, actual)
-    primary_file_hit = 1.0 if scored.get("expected_primary_file") == scored.get("actual_primary_file") else 0.0
+    primary_file_hit = (
+        1.0 if scored.get("expected_primary_file") == scored.get("actual_primary_file") else 0.0
+    )
     primary_span_hit = float(scored.get("span_hit_rate", 0.0))
     dependent_expected = set(scored.get("expected_dependent_files", []))
     dependent_actual = set(scored.get("actual_dependent_files", []))
@@ -109,9 +119,7 @@ def _score_row(record: dict[str, Any], scenario: dict[str, Any]) -> dict[str, An
     ) / 4.0
     context_efficiency_score = min(1000.0 / max(int(record.get("context_token_count", 0)), 1), 1.0)
     overall_score = (
-        edit_accuracy_score * 0.6
-        + validation_quality_score * 0.3
-        + context_efficiency_score * 0.1
+        edit_accuracy_score * 0.6 + validation_quality_score * 0.3 + context_efficiency_score * 0.1
     )
     return {
         "system": str(record.get("system", "")),
@@ -144,13 +152,17 @@ def normalize_competitor_eval(
 ) -> dict[str, Any]:
     scenario_packs = [str(item) for item in list(payload.get("scenario_packs", []))]
     records = list(payload.get("records", []))
-    resolved_scenario_packs = [_resolve_against_base(pack, base_dir=base_dir) for pack in scenario_packs]
+    resolved_scenario_packs = [
+        _resolve_against_base(pack, base_dir=base_dir) for pack in scenario_packs
+    ]
     lookup = _load_scenario_lookup(resolved_scenario_packs, base_dir=base_dir)
     rows: list[dict[str, Any]] = []
     for record in records:
         if not isinstance(record, dict):
             continue
-        scenario_pack = _resolve_against_base(str(record.get("scenario_pack", "")), base_dir=base_dir)
+        scenario_pack = _resolve_against_base(
+            str(record.get("scenario_pack", "")), base_dir=base_dir
+        )
         scenario_id = str(record.get("scenario_id", ""))
         scenario = lookup.get((scenario_pack, scenario_id))
         if scenario is None:
@@ -165,7 +177,9 @@ def normalize_competitor_eval(
             "mean_primary_file_hit": _mean(float(row["primary_file_hit"]) for row in current_rows),
             "mean_primary_span_hit": _mean(float(row["primary_span_hit"]) for row in current_rows),
             "mean_overall_score": _mean(float(row["overall_score"]) for row in current_rows),
-            "mean_wall_clock_seconds": _mean(float(row["wall_clock_seconds"]) for row in current_rows),
+            "mean_wall_clock_seconds": _mean(
+                float(row["wall_clock_seconds"]) for row in current_rows
+            ),
         }
     return {
         "artifact": "competitor_eval_normalized",

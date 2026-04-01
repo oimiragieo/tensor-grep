@@ -7,8 +7,12 @@ from typing import Any
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render a markdown scorecard from Claude A/B matrix artifacts.")
-    parser.add_argument("--inputs", nargs="+", required=True, help="One or more matrix JSON artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Render a markdown scorecard from Claude A/B matrix artifacts."
+    )
+    parser.add_argument(
+        "--inputs", nargs="+", required=True, help="One or more matrix JSON artifacts."
+    )
     parser.add_argument("--output", required=True, help="Markdown output path.")
     return parser.parse_args()
 
@@ -63,14 +67,12 @@ def render_markdown(paths: list[Path]) -> str:
         )
     if ordered:
         winner = ordered[0]
-        lines.extend(
-            [
-                "",
-                "## Recommended Next Default Probe",
-                "",
-                f"- `{winner.get('name', 'unknown')}` from `{winner.get('_source', 'unknown')}`",
-            ]
-        )
+        lines.extend([
+            "",
+            "## Recommended Next Default Probe",
+            "",
+            f"- `{winner.get('name', 'unknown')}` from `{winner.get('_source', 'unknown')}`",
+        ])
     return "\n".join(lines) + "\n"
 
 

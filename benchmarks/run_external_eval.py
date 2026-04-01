@@ -30,10 +30,14 @@ def default_output_path() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run all external evaluation packs from a manifest.")
+    parser = argparse.ArgumentParser(
+        description="Run all external evaluation packs from a manifest."
+    )
     parser.add_argument("--manifest", default=str(default_manifest_path()))
     parser.add_argument("--output", default=str(default_output_path()))
-    parser.add_argument("--profile", action="store_true", help="Include per-scenario profiling output.")
+    parser.add_argument(
+        "--profile", action="store_true", help="Include per-scenario profiling output."
+    )
     parser.add_argument(
         "--provider",
         default="native",
@@ -121,7 +125,10 @@ def _language_summary(rows: list[dict[str, Any]]) -> dict[str, dict[str, float |
     for row in rows:
         language = str(row.get("language", "unknown"))
         grouped.setdefault(language, []).append(row)
-    return {language: run_bakeoff.build_summary(group_rows) for language, group_rows in sorted(grouped.items())}
+    return {
+        language: run_bakeoff.build_summary(group_rows)
+        for language, group_rows in sorted(grouped.items())
+    }
 
 
 def build_external_eval_payload(
@@ -135,25 +142,25 @@ def build_external_eval_payload(
     aggregate_bucket_counts: dict[str, int] = {}
     for entry in manifest["packs"]:
         pack_result = run_pack(entry, profile=profile, provider=provider)
-        packs.append(
-            {
-                "name": pack_result["name"],
-                "language": pack_result["language"],
-                "scenario_pack": pack_result["scenario_pack"],
-                "scenario_count": pack_result["scenario_count"],
-                "summary": pack_result["summary"],
-                "analysis": {
-                    "bucket_counts": pack_result["analysis"].get("bucket_counts", {}),
-                    "mean_file_precision": pack_result["analysis"].get("mean_file_precision", 0.0),
-                    "scenarios_with_false_positives": pack_result["analysis"].get(
-                        "scenarios_with_false_positives", 0
-                    ),
-                },
-                "rows": pack_result["rows"],
-            }
-        )
+        packs.append({
+            "name": pack_result["name"],
+            "language": pack_result["language"],
+            "scenario_pack": pack_result["scenario_pack"],
+            "scenario_count": pack_result["scenario_count"],
+            "summary": pack_result["summary"],
+            "analysis": {
+                "bucket_counts": pack_result["analysis"].get("bucket_counts", {}),
+                "mean_file_precision": pack_result["analysis"].get("mean_file_precision", 0.0),
+                "scenarios_with_false_positives": pack_result["analysis"].get(
+                    "scenarios_with_false_positives", 0
+                ),
+            },
+            "rows": pack_result["rows"],
+        })
         for bucket, count in dict(pack_result["analysis"].get("bucket_counts", {})).items():
-            aggregate_bucket_counts[str(bucket)] = aggregate_bucket_counts.get(str(bucket), 0) + int(count)
+            aggregate_bucket_counts[str(bucket)] = aggregate_bucket_counts.get(
+                str(bucket), 0
+            ) + int(count)
         all_rows.extend(pack_result["rows"])
 
     return {
@@ -192,7 +199,9 @@ def write_pack_artifacts(entry: dict[str, Any], pack_result: dict[str, Any]) -> 
 def main() -> int:
     args = parse_args()
     manifest = load_manifest(args.manifest)
-    pack_results = [run_pack(entry, profile=args.profile, provider=args.provider) for entry in manifest["packs"]]
+    pack_results = [
+        run_pack(entry, profile=args.profile, provider=args.provider) for entry in manifest["packs"]
+    ]
     if args.write_pack_artifacts:
         for entry, pack_result in zip(manifest["packs"], pack_results, strict=True):
             write_pack_artifacts(entry, pack_result)
@@ -227,7 +236,9 @@ def main() -> int:
     aggregate_bucket_counts: dict[str, int] = {}
     for result in pack_results:
         for bucket, count in dict(result["analysis"].get("bucket_counts", {})).items():
-            aggregate_bucket_counts[str(bucket)] = aggregate_bucket_counts.get(str(bucket), 0) + int(count)
+            aggregate_bucket_counts[str(bucket)] = aggregate_bucket_counts.get(
+                str(bucket), 0
+            ) + int(count)
     payload["summary"] = run_bakeoff.build_summary(all_rows)
     payload["by_language"] = _language_summary(all_rows)
     payload["aggregate_bucket_counts"] = dict(sorted(aggregate_bucket_counts.items()))

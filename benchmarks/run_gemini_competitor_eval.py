@@ -28,7 +28,9 @@ def default_output_path() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Gemini CLI headlessly against bakeoff scenarios.")
+    parser = argparse.ArgumentParser(
+        description="Run Gemini CLI headlessly against bakeoff scenarios."
+    )
     parser.add_argument("--scenarios", required=True)
     parser.add_argument("--output", default=str(default_output_path()))
     parser.add_argument("--model", default="gemini-2.5-flash")
@@ -52,17 +54,15 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
             yield
             return
         instructions_path.write_text(
-            "\n".join(
-                [
-                    "# Evaluation Instructions",
-                    "",
-                    "You are running inside an automated competitor evaluation harness.",
-                    "Analyze this repository directly.",
-                    "Do not stop or complain because other AGENTS.md files are missing.",
-                    "Do not mention AGENTS.md in the answer.",
-                    "Return only the structured output requested by the prompt.",
-                ]
-            )
+            "\n".join([
+                "# Evaluation Instructions",
+                "",
+                "You are running inside an automated competitor evaluation harness.",
+                "Analyze this repository directly.",
+                "Do not stop or complain because other AGENTS.md files are missing.",
+                "Do not mention AGENTS.md in the answer.",
+                "Return only the structured output requested by the prompt.",
+            ])
             + "\n",
             encoding="utf-8",
         )
@@ -81,20 +81,18 @@ def _scenario_prompt(scenario: dict[str, Any]) -> str:
         "mode": scenario["mode"],
         "repo_root": str(repo_root),
     }
-    return " ".join(
-        [
-            "You are evaluating code-edit planning quality.",
-            "Analyze the repository and return exactly one JSON object.",
-            'Required keys: "actual_primary_file", "actual_primary_span", "actual_dependent_files", '
-            '"actual_suggested_edit_files", "actual_test_files", "actual_validation_commands", '
-            '"context_token_count", "notes".',
-            'The "actual_primary_span" value must be an object with integer "start_line" and "end_line" fields.',
-            "Use repository-relative paths.",
-            "Do not include markdown, code fences, or explanations.",
-            "If you are unsure, return your best high-precision guess rather than broad file lists.",
-            f"Scenario: {json.dumps(scenario_payload, separators=(',', ':'))}",
-        ]
-    )
+    return " ".join([
+        "You are evaluating code-edit planning quality.",
+        "Analyze the repository and return exactly one JSON object.",
+        'Required keys: "actual_primary_file", "actual_primary_span", "actual_dependent_files", '
+        '"actual_suggested_edit_files", "actual_test_files", "actual_validation_commands", '
+        '"context_token_count", "notes".',
+        'The "actual_primary_span" value must be an object with integer "start_line" and "end_line" fields.',
+        "Use repository-relative paths.",
+        "Do not include markdown, code fences, or explanations.",
+        "If you are unsure, return your best high-precision guess rather than broad file lists.",
+        f"Scenario: {json.dumps(scenario_payload, separators=(',', ':'))}",
+    ])
 
 
 def _extract_text_from_gemini_output(stdout: str) -> str:

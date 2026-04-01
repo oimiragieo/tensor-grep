@@ -33,9 +33,7 @@ def _build_project(tmp_path: Path) -> dict[str, Path]:
     )
     _write(
         billing,
-        "def invoice_total(total):\n"
-        "    running_total = total + 1\n"
-        "    return running_total\n",
+        "def invoice_total(total):\n    running_total = total + 1\n    return running_total\n",
     )
     _write(
         reporting,
@@ -78,23 +76,65 @@ def _build_scored_payload(
         "query": "invoice primary",
         "files": [str(primary), str(secondary), str(tertiary)],
         "file_matches": [
-            {"path": str(primary), "score": primary_score, "graph_score": None, "reasons": ["symbol"]},
-            {"path": str(secondary), "score": secondary_score, "graph_score": None, "reasons": ["symbol"]},
-            {"path": str(tertiary), "score": tertiary_score, "graph_score": None, "reasons": ["symbol"]},
+            {
+                "path": str(primary),
+                "score": primary_score,
+                "graph_score": None,
+                "reasons": ["symbol"],
+            },
+            {
+                "path": str(secondary),
+                "score": secondary_score,
+                "graph_score": None,
+                "reasons": ["symbol"],
+            },
+            {
+                "path": str(tertiary),
+                "score": tertiary_score,
+                "graph_score": None,
+                "reasons": ["symbol"],
+            },
         ],
         "test_matches": [
             {"path": str(test_path), "score": 12, "graph_score": None, "reasons": ["test-import"]}
         ],
         "tests": [str(test_path)],
         "symbols": [
-            {"file": str(primary), "name": "create_invoice", "kind": "function", "line": 1, "score": primary_score},
-            {"file": str(secondary), "name": "helper_invoice", "kind": "function", "line": 1, "score": secondary_score},
-            {"file": str(tertiary), "name": "archive_invoice", "kind": "function", "line": 1, "score": tertiary_score},
+            {
+                "file": str(primary),
+                "name": "create_invoice",
+                "kind": "function",
+                "line": 1,
+                "score": primary_score,
+            },
+            {
+                "file": str(secondary),
+                "name": "helper_invoice",
+                "kind": "function",
+                "line": 1,
+                "score": secondary_score,
+            },
+            {
+                "file": str(tertiary),
+                "name": "archive_invoice",
+                "kind": "function",
+                "line": 1,
+                "score": tertiary_score,
+            },
         ],
         "file_summaries": [
-            {"path": str(primary), "symbols": [{"kind": "function", "name": "create_invoice", "line": 1}]},
-            {"path": str(secondary), "symbols": [{"kind": "function", "name": "helper_invoice", "line": 1}]},
-            {"path": str(tertiary), "symbols": [{"kind": "function", "name": "archive_invoice", "line": 1}]},
+            {
+                "path": str(primary),
+                "symbols": [{"kind": "function", "name": "create_invoice", "line": 1}],
+            },
+            {
+                "path": str(secondary),
+                "symbols": [{"kind": "function", "name": "helper_invoice", "line": 1}],
+            },
+            {
+                "path": str(tertiary),
+                "symbols": [{"kind": "function", "name": "archive_invoice", "line": 1}],
+            },
         ],
         "sources": [
             {
@@ -131,7 +171,9 @@ def _section_score(section: dict[str, object]) -> int:
     matches = provenance.get("matches", [])
     if not isinstance(matches, list):
         return 0
-    return max((int(match.get("score", 0)) for match in matches if isinstance(match, dict)), default=0)
+    return max(
+        (int(match.get("score", 0)) for match in matches if isinstance(match, dict)), default=0
+    )
 
 
 def _max_section_tokens(payload: dict[str, object]) -> int:
@@ -179,7 +221,9 @@ def test_render_sections_include_token_estimates_and_total(tmp_path: Path) -> No
 
 
 def test_sections_are_ordered_by_salience_when_primary_is_highest_score(tmp_path: Path) -> None:
-    _, sections, _, _, _ = repo_map._render_context_string_and_sections(_build_scored_payload(tmp_path))
+    _, sections, _, _, _ = repo_map._render_context_string_and_sections(
+        _build_scored_payload(tmp_path)
+    )
 
     ranked_sections = [section for section in sections if section["kind"] != "query"]
     ranked_scores = [_section_score(section) for section in ranked_sections]
@@ -193,7 +237,9 @@ def test_budget_aware_selection_prefers_higher_score_sections(tmp_path: Path) ->
     )
 
     assert truncated is True
-    included_scores = [_section_score(section) for section in sections if section["kind"] != "query"]
+    included_scores = [
+        _section_score(section) for section in sections if section["kind"] != "query"
+    ]
     omitted_scores = [int(section["score"]) for section in omitted_sections]
     assert included_scores
     assert omitted_scores
@@ -208,9 +254,11 @@ def test_primary_file_sections_are_prioritized_when_budget_is_tight(tmp_path: Pa
         tertiary_score=25,
     )
     primary_file = payload["edit_plan_seed"]["primary_file"]
-    rendered, sections, truncated, _, omitted_sections = repo_map._render_context_string_and_sections(
-        payload,
-        max_tokens=32,
+    rendered, sections, truncated, _, omitted_sections = (
+        repo_map._render_context_string_and_sections(
+            payload,
+            max_tokens=32,
+        )
     )
 
     assert rendered
@@ -293,7 +341,10 @@ def test_omitted_sections_report_metadata_for_token_truncation(tmp_path: Path) -
 
     assert truncated is True
     assert omitted_sections
-    assert all({"file", "symbol", "score", "token_estimate"} <= set(section) for section in omitted_sections)
+    assert all(
+        {"file", "symbol", "score", "token_estimate"} <= set(section)
+        for section in omitted_sections
+    )
 
 
 def test_omitted_sections_report_metadata_for_char_truncation(tmp_path: Path) -> None:

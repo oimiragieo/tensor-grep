@@ -276,7 +276,9 @@ def test_new_rule_packs_support_baselines(
         extra_args=["--baseline", str(baseline_path)],
     )
 
-    finding = next(finding for finding in payload["findings"] if finding["rule_id"] == expected_rule_id)
+    finding = next(
+        finding for finding in payload["findings"] if finding["rule_id"] == expected_rule_id
+    )
     assert finding["status"] == "existing"
     assert payload["baseline"]["existing_findings"] == 1
     assert payload["baseline"]["new_findings"] == 0
@@ -342,7 +344,9 @@ def test_new_rule_packs_support_suppressions(
         extra_args=["--suppressions", str(suppressions_path)],
     )
 
-    finding = next(finding for finding in payload["findings"] if finding["rule_id"] == expected_rule_id)
+    finding = next(
+        finding for finding in payload["findings"] if finding["rule_id"] == expected_rule_id
+    )
     assert finding["status"] == "suppressed"
     assert payload["suppressions"]["suppressed_findings"] == 1
 
@@ -391,7 +395,9 @@ def test_new_rule_packs_emit_evidence_snippets(
         ],
     )
 
-    finding = next(finding for finding in payload["findings"] if finding["rule_id"] == expected_rule_id)
+    finding = next(
+        finding for finding in payload["findings"] if finding["rule_id"] == expected_rule_id
+    )
     assert finding["evidence"] == [
         {
             "file": "a.py",

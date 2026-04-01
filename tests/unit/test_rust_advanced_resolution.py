@@ -15,7 +15,9 @@ def _edit_plan_seed(project: Path, symbol: str) -> dict[str, object]:
     return dict(payload["edit_plan_seed"])
 
 
-def _suggested_edit(seed: dict[str, object], *, file_path: Path, edit_kind: str) -> dict[str, object]:
+def _suggested_edit(
+    seed: dict[str, object], *, file_path: Path, edit_kind: str
+) -> dict[str, object]:
     resolved = str(file_path.resolve())
     for current in seed["suggested_edits"]:
         if current["file"] == resolved and current["edit_kind"] == edit_kind:
@@ -37,15 +39,11 @@ def _workspace_fixture(tmp_path: Path) -> dict[str, Path]:
     project = tmp_path / "workspace"
     _write(
         project / "Cargo.toml",
-        "[workspace]\n"
-        'members = ["app", "shared"]\n',
+        '[workspace]\nmembers = ["app", "shared"]\n',
     )
     _write(
         project / "shared" / "Cargo.toml",
-        "[package]\n"
-        'name = "shared"\n'
-        'version = "0.1.0"\n'
-        'edition = "2021"\n',
+        '[package]\nname = "shared"\nversion = "0.1.0"\nedition = "2021"\n',
     )
     _write(
         project / "shared" / "src" / "lib.rs",
@@ -54,18 +52,11 @@ def _workspace_fixture(tmp_path: Path) -> dict[str, Path]:
     shared_billing = project / "shared" / "src" / "billing.rs"
     _write(
         shared_billing,
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n"
-        "\n"
-        "pub struct Invoice;\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n\npub struct Invoice;\n",
     )
     _write(
         project / "app" / "Cargo.toml",
-        "[package]\n"
-        'name = "app"\n'
-        'version = "0.1.0"\n'
-        'edition = "2021"\n',
+        '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n',
     )
     app_lib = project / "app" / "src" / "lib.rs"
     _write(
@@ -77,7 +68,10 @@ def _workspace_fixture(tmp_path: Path) -> dict[str, Path]:
         "}\n",
     )
     local_invoice = project / "app" / "src" / "local_invoice.rs"
-    _write(local_invoice, "pub struct Invoice;\n",)
+    _write(
+        local_invoice,
+        "pub struct Invoice;\n",
+    )
     return {
         "project": project,
         "shared_billing": shared_billing,
@@ -142,7 +136,9 @@ def test_rust_module_match_details_prefer_mod_declaration_path(tmp_path: Path) -
     assert unrelated["matched"] is False
 
 
-def test_workspace_cross_crate_resolution_prefers_workspace_member_definition(tmp_path: Path) -> None:
+def test_workspace_cross_crate_resolution_prefers_workspace_member_definition(
+    tmp_path: Path,
+) -> None:
     fixture = _workspace_fixture(tmp_path)
 
     payload = repo_map.build_symbol_impact("Invoice", fixture["project"])
@@ -207,7 +203,7 @@ def test_missing_workspace_cargo_uses_partial_resolution_metadata(tmp_path: Path
 
 def test_malformed_workspace_cargo_degrades_gracefully(tmp_path: Path) -> None:
     project = tmp_path / "project"
-    _write(project / "Cargo.toml", "[workspace\nmembers = [\"app\"]\n")
+    _write(project / "Cargo.toml", '[workspace\nmembers = ["app"]\n')
 
     workspace = repo_map._parse_rust_workspace_members(project)
 
@@ -242,9 +238,7 @@ def test_existing_same_crate_rust_use_alias_resolution_still_works(tmp_path: Pat
     consumer_path = src_dir / "consumer.rs"
     _write(
         module_path,
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
     )
     _write(
         consumer_path,

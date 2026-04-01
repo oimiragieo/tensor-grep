@@ -9,7 +9,9 @@ from typing import Any
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render a markdown scorecard from patch bakeoff artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Render a markdown scorecard from patch bakeoff artifacts."
+    )
     parser.add_argument("--inputs", nargs="+", required=True)
     parser.add_argument("--output", required=True)
     return parser.parse_args()
@@ -88,7 +90,10 @@ def main() -> int:
         "inputs": [str(Path(current).expanduser().resolve()) for current in args.inputs],
     }
     output_path.write_text(
-        "<!-- " + json.dumps(metadata, sort_keys=True) + " -->\n" + render_patch_scorecard(payloads),
+        "<!-- "
+        + json.dumps(metadata, sort_keys=True)
+        + " -->\n"
+        + render_patch_scorecard(payloads),
         encoding="utf-8",
     )
     return 0

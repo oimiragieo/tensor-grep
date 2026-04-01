@@ -22,7 +22,9 @@ def default_output_path() -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Aggregate profiling phases from bakeoff or external-eval artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Aggregate profiling phases from bakeoff or external-eval artifacts."
+    )
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", default=str(default_output_path()))
     return parser.parse_args()
@@ -67,15 +69,15 @@ def analyze_external_profiling(payload: dict[str, Any]) -> dict[str, Any]:
     for name in sorted(phase_elapsed):
         elapsed = phase_elapsed[name]
         calls = phase_calls.get(name, 0)
-        phases.append(
-            {
-                "name": name,
-                "elapsed_s": round(elapsed, 6),
-                "calls": calls,
-                "avg_elapsed_s": round(elapsed / max(calls, 1), 6),
-                "percent_total_elapsed": round((elapsed / total_elapsed) * 100.0, 4) if total_elapsed else 0.0,
-            }
-        )
+        phases.append({
+            "name": name,
+            "elapsed_s": round(elapsed, 6),
+            "calls": calls,
+            "avg_elapsed_s": round(elapsed / max(calls, 1), 6),
+            "percent_total_elapsed": round((elapsed / total_elapsed) * 100.0, 4)
+            if total_elapsed
+            else 0.0,
+        })
     phases.sort(key=lambda phase: (-float(phase["elapsed_s"]), str(phase["name"])))
     return {
         "artifact": "bench_external_profile_analysis",

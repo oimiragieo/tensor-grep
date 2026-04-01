@@ -32,9 +32,7 @@ def test_build_repo_map_includes_python_function_spans(tmp_path: Path) -> None:
     src_dir.mkdir(parents=True)
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    subtotal = total + tax\n"
-        "    return subtotal\n",
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
         encoding="utf-8",
     )
 
@@ -52,9 +50,7 @@ def test_build_repo_map_includes_python_class_spans(tmp_path: Path) -> None:
     src_dir.mkdir(parents=True)
     module_path = src_dir / "service.py"
     module_path.write_text(
-        "class PaymentService:\n"
-        "    def create(self):\n"
-        "        return 1\n",
+        "class PaymentService:\n    def create(self):\n        return 1\n",
         encoding="utf-8",
     )
 
@@ -82,7 +78,9 @@ def test_python_function_end_line_matches_ast_end_lineno(tmp_path: Path) -> None
 
     parsed = ast.parse(source)
     function_node = next(
-        node for node in ast.walk(parsed) if isinstance(node, ast.FunctionDef) and node.name == "create_invoice"
+        node
+        for node in ast.walk(parsed)
+        if isinstance(node, ast.FunctionDef) and node.name == "create_invoice"
     )
 
     payload = repo_map.build_repo_map(project)
@@ -123,11 +121,7 @@ def test_build_repo_map_includes_nested_python_function_spans(tmp_path: Path) ->
     src_dir.mkdir(parents=True)
     module_path = src_dir / "nested.py"
     module_path.write_text(
-        "def outer():\n"
-        "    def inner():\n"
-        "        return 1\n"
-        "\n"
-        "    return inner()\n",
+        "def outer():\n    def inner():\n        return 1\n\n    return inner()\n",
         encoding="utf-8",
     )
 
@@ -191,9 +185,7 @@ def test_context_render_exposes_python_primary_span(tmp_path: Path) -> None:
     src_dir.mkdir(parents=True)
     module_path = src_dir / "payments.py"
     module_path.write_text(
-        "def create_invoice(total, tax):\n"
-        "    subtotal = total + tax\n"
-        "    return subtotal\n",
+        "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
         encoding="utf-8",
     )
 
@@ -227,10 +219,7 @@ def test_context_render_primary_span_isolated_for_nested_python_function(tmp_pat
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     (src_dir / "nested.py").write_text(
-        "def outer():\n"
-        "    def inner():\n"
-        "        return 1\n"
-        "    return inner()\n",
+        "def outer():\n    def inner():\n        return 1\n    return inner()\n",
         encoding="utf-8",
     )
 
@@ -282,11 +271,7 @@ def test_build_repo_map_includes_javascript_class_spans(tmp_path: Path) -> None:
     src_dir.mkdir(parents=True)
     module_path = src_dir / "service.js"
     module_path.write_text(
-        "export class PaymentService {\n"
-        "  create() {\n"
-        "    return 1;\n"
-        "  }\n"
-        "}\n",
+        "export class PaymentService {\n  create() {\n    return 1;\n  }\n}\n",
         encoding="utf-8",
     )
 
@@ -322,10 +307,7 @@ def test_context_render_exposes_rust_primary_span(tmp_path: Path) -> None:
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     (src_dir / "billing.rs").write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    let value = 1;\n"
-        "    value\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    let value = 1;\n    value\n}\n",
         encoding="utf-8",
     )
 
@@ -340,10 +322,7 @@ def test_build_repo_map_includes_rust_function_spans(tmp_path: Path) -> None:
     src_dir.mkdir(parents=True)
     module_path = src_dir / "billing.rs"
     module_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    let value = 1;\n"
-        "    value\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    let value = 1;\n    value\n}\n",
         encoding="utf-8",
     )
 
@@ -377,15 +356,15 @@ def test_build_repo_map_includes_rust_impl_method_spans(tmp_path: Path) -> None:
     assert symbol["end_line"] == 6
 
 
-def test_javascript_regex_fallback_sets_end_line(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_javascript_regex_fallback_sets_end_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     module_path = src_dir / "payments.js"
     module_path.write_text(
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
         encoding="utf-8",
     )
 
@@ -398,15 +377,15 @@ def test_javascript_regex_fallback_sets_end_line(monkeypatch: pytest.MonkeyPatch
     assert symbol["end_line"] == 3
 
 
-def test_typescript_regex_fallback_sets_end_line(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_typescript_regex_fallback_sets_end_line(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     module_path = src_dir / "payments.ts"
     module_path.write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total: number) {\n  return total + 1;\n}\n",
         encoding="utf-8",
     )
 
@@ -425,9 +404,7 @@ def test_rust_regex_fallback_sets_end_line(monkeypatch: pytest.MonkeyPatch, tmp_
     src_dir.mkdir(parents=True)
     module_path = src_dir / "billing.rs"
     module_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
         encoding="utf-8",
     )
 
@@ -445,8 +422,7 @@ def test_malformed_javascript_file_does_not_crash_repo_map(tmp_path: Path) -> No
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     (src_dir / "broken.js").write_text(
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n",
+        "export function createInvoice(total) {\n  return total + 1;\n",
         encoding="utf-8",
     )
 
@@ -460,8 +436,7 @@ def test_malformed_typescript_file_does_not_crash_repo_map(tmp_path: Path) -> No
     src_dir = project / "src"
     src_dir.mkdir(parents=True)
     (src_dir / "broken.ts").write_text(
-        "export function createInvoice(total: number) {\n"
-        "  return total + 1;\n",
+        "export function createInvoice(total: number) {\n  return total + 1;\n",
         encoding="utf-8",
     )
 
@@ -476,8 +451,7 @@ def test_malformed_rust_file_does_not_crash_repo_map(tmp_path: Path) -> None:
     src_dir.mkdir(parents=True)
     broken_path = src_dir / "broken.rs"
     broken_path.write_text(
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n",
+        "pub fn issue_invoice() -> usize {\n    1\n",
         encoding="utf-8",
     )
 

@@ -49,16 +49,9 @@ def _build_linear_project(
     src_dir = project / "src"
     tests_dir = project / "tests"
 
-    payments_source = (
-        "def create_invoice(total):\n"
-        "    return total + 1\n"
-    )
+    payments_source = "def create_invoice(total):\n    return total + 1\n"
     if include_same_file_caller:
-        payments_source += (
-            "\n"
-            "def local_wrapper(total):\n"
-            "    return create_invoice(total)\n"
-        )
+        payments_source += "\ndef local_wrapper(total):\n    return create_invoice(total)\n"
 
     _write(src_dir / "payments.py", payments_source)
     _write(
@@ -78,8 +71,7 @@ def _build_linear_project(
     )
     _write(
         src_dir / "unrelated.py",
-        "def helper():\n"
-        "    return 0\n",
+        "def helper():\n    return 0\n",
     )
     if include_tests:
         _write(
@@ -107,8 +99,7 @@ def _build_depth_chain_project(tmp_path: Path, *, include_tests: bool = True) ->
 
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         src_dir / "b.py",
@@ -119,24 +110,15 @@ def _build_depth_chain_project(tmp_path: Path, *, include_tests: bool = True) ->
     )
     _write(
         src_dir / "c.py",
-        "from src.b import call_b\n"
-        "\n"
-        "def call_c(total):\n"
-        "    return call_b(total)\n",
+        "from src.b import call_b\n\ndef call_c(total):\n    return call_b(total)\n",
     )
     _write(
         src_dir / "d.py",
-        "from src.c import call_c\n"
-        "\n"
-        "def call_d(total):\n"
-        "    return call_c(total)\n",
+        "from src.c import call_c\n\ndef call_d(total):\n    return call_c(total)\n",
     )
     _write(
         src_dir / "e.py",
-        "from src.d import call_d\n"
-        "\n"
-        "def call_e(total):\n"
-        "    return call_d(total)\n",
+        "from src.d import call_d\n\ndef call_e(total):\n    return call_d(total)\n",
     )
     if include_tests:
         _write(
@@ -164,8 +146,7 @@ def _build_caller_count_project(tmp_path: Path, *, caller_count: int) -> dict[st
 
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     caller_paths: dict[str, Path] = {}
     for index in range(caller_count):
@@ -193,8 +174,7 @@ def _build_circular_project(tmp_path: Path) -> dict[str, Path]:
 
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         src_dir / "a.py",
@@ -238,15 +218,11 @@ def _build_python_depth_rank_project(tmp_path: Path) -> dict[str, Path]:
 
     _write(
         src_dir / "utils.py",
-        "def open_file(path: str) -> str:\n"
-        "    return path\n",
+        "def open_file(path: str) -> str:\n    return path\n",
     )
     _write(
         src_dir / "core.py",
-        "from src.utils import open_file\n"
-        "\n"
-        "def use_core() -> str:\n"
-        "    return open_file('core')\n",
+        "from src.utils import open_file\n\ndef use_core() -> str:\n    return open_file('core')\n",
     )
     _write(
         src_dir / "termui.py",
@@ -257,17 +233,11 @@ def _build_python_depth_rank_project(tmp_path: Path) -> dict[str, Path]:
     )
     _write(
         src_dir / "decorators.py",
-        "from src.core import use_core\n"
-        "\n"
-        "def use_decorators() -> str:\n"
-        "    return use_core()\n",
+        "from src.core import use_core\n\ndef use_decorators() -> str:\n    return use_core()\n",
     )
     _write(
         examples_dir / "demo.py",
-        "from src.termui import use_termui\n"
-        "\n"
-        "def run_demo() -> str:\n"
-        "    return use_termui()\n",
+        "from src.termui import use_termui\n\ndef run_demo() -> str:\n    return use_termui()\n",
     )
     return {
         "project": project,
@@ -279,21 +249,171 @@ def _build_python_depth_rank_project(tmp_path: Path) -> dict[str, Path]:
     }
 
 
+def _build_python_core_radius_project(tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    examples_dir = project / "examples"
+
+    _write(
+        src_dir / "core.py",
+        "class Abort(Exception):\n    pass\n",
+    )
+    _write(
+        src_dir / "termui.py",
+        "from src.core import Abort\n\ndef use_termui() -> type[Exception]:\n    return Abort\n",
+    )
+    _write(
+        src_dir / "parser.py",
+        "from src.core import Abort\n\ndef use_parser() -> type[Exception]:\n    return Abort\n",
+    )
+    _write(
+        src_dir / "decorators.py",
+        "from src.termui import use_termui\n"
+        "\n"
+        "def use_decorators() -> type[Exception]:\n"
+        "    return use_termui()\n",
+    )
+    _write(
+        examples_dir / "demo.py",
+        "from src.parser import use_parser\n"
+        "\n"
+        "def run_demo() -> type[Exception]:\n"
+        "    return use_parser()\n",
+    )
+    _write(
+        tests_dir / "test_abort.py",
+        "from src.termui import use_termui\n"
+        "\n"
+        "def test_abort_usage() -> None:\n"
+        "    assert use_termui().__name__ == 'Abort'\n",
+    )
+    return {
+        "project": project,
+        "core": src_dir / "core.py",
+        "termui": src_dir / "termui.py",
+        "parser": src_dir / "parser.py",
+        "decorators": src_dir / "decorators.py",
+        "example": examples_dir / "demo.py",
+        "test": tests_dir / "test_abort.py",
+    }
+
+
+def _build_python_termui_radius_project(tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    examples_dir = project / "examples"
+
+    _write(
+        src_dir / "termui.py",
+        "def unstyle(text: str) -> str:\n    return text\n",
+    )
+    _write(
+        src_dir / "__init__.py",
+        "from src.termui import unstyle\n",
+    )
+    _write(
+        src_dir / "core.py",
+        "from src.termui import unstyle\n\n__all__ = ['unstyle']\n",
+    )
+    _write(
+        src_dir / "decorators.py",
+        "from src.core import __all__\n\ndef expose_decorator() -> str:\n    return __all__[0]\n",
+    )
+    _write(
+        examples_dir / "demo.py",
+        "from src.decorators import expose_decorator\n"
+        "\n"
+        "def run_demo() -> str:\n"
+        "    return expose_decorator()\n",
+    )
+    return {
+        "project": project,
+        "termui": src_dir / "termui.py",
+        "init": src_dir / "__init__.py",
+        "core": src_dir / "core.py",
+        "decorators": src_dir / "decorators.py",
+        "example": examples_dir / "demo.py",
+    }
+
+
 def _build_missing_symbol_project(tmp_path: Path) -> Path:
     project = tmp_path / "project"
     _write(
         project / "src" / "helpers.py",
-        "def helper():\n"
-        "    return 1\n",
+        "def helper():\n    return 1\n",
     )
     _write(
         project / "tests" / "test_helpers.py",
-        "from src.helpers import helper\n"
-        "\n"
-        "def test_helper():\n"
-        "    assert helper() == 1\n",
+        "from src.helpers import helper\n\ndef test_helper():\n    assert helper() == 1\n",
     )
     return project
+
+
+def _build_rust_nested_qualified_project(tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests" / "testsuite"
+
+    _write(
+        project / "Cargo.toml",
+        '[package]\nname = "sample"\nversion = "0.1.0"\n',
+    )
+    _write(
+        src_dir / "lib.rs",
+        "pub struct RawArgs;\n"
+        "\n"
+        "impl RawArgs {\n"
+        "    pub fn new() -> Self {\n"
+        "        Self\n"
+        "    }\n"
+        "\n"
+        "    pub fn remaining(&self) -> bool {\n"
+        "        true\n"
+        "    }\n"
+        "\n"
+        "    pub fn peek_os(&self) -> bool {\n"
+        "        true\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "pub struct ParsedArg;\n"
+        "\n"
+        "impl ParsedArg {\n"
+        "    pub fn to_long(&self) -> bool {\n"
+        "        true\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "pub fn parse() -> ParsedArg {\n"
+        "    ParsedArg\n"
+        "}\n",
+    )
+    _write(
+        tests_dir / "main.rs",
+        'automod::dir!("tests/testsuite");\n',
+    )
+    _write(
+        tests_dir / "lexer.rs",
+        "#[test]\n"
+        "fn raw_args_remaining() {\n"
+        "    let raw = sample::RawArgs::new();\n"
+        "    assert!(raw.remaining());\n"
+        "}\n",
+    )
+    _write(
+        tests_dir / "parsed.rs",
+        "#[test]\n"
+        "fn parsed_to_long() {\n"
+        "    let parsed = sample::parse();\n"
+        "    assert!(parsed.to_long());\n"
+        "}\n",
+    )
+    return {
+        "project": project,
+        "lexer_test": tests_dir / "lexer.rs",
+        "parsed_test": tests_dir / "parsed.rs",
+    }
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -373,9 +493,9 @@ def test_related_spans_deduplicate_multiple_calls_in_same_symbol(
     related_spans = _related_span_lookup(seed)
 
     assert (str(paths["service"].resolve()), "build_receipt") in related_spans
-    assert len(
-        [entry for entry in seed["related_spans"] if entry["symbol"] == "build_receipt"]
-    ) == 1
+    assert (
+        len([entry for entry in seed["related_spans"] if entry["symbol"] == "build_receipt"]) == 1
+    )
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -389,7 +509,15 @@ def test_suggested_edits_include_dependent_file_spans_and_rationale(
 
     assert seed["suggested_edits"]
     first = seed["suggested_edits"][0]
-    assert {"file", "symbol", "start_line", "end_line", "edit_kind", "rationale", "confidence"} <= set(first)
+    assert {
+        "file",
+        "symbol",
+        "start_line",
+        "end_line",
+        "edit_kind",
+        "rationale",
+        "confidence",
+    } <= set(first)
     assert first["file"] == str(paths["service"].resolve())
     assert first["edit_kind"] in {"caller-update", "dependency-update"}
     assert isinstance(first["rationale"], str)
@@ -467,7 +595,9 @@ def test_dependent_files_include_callers_and_importers_but_not_unrelated(
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
-def test_python_utility_symbols_prefer_depth_one_dependents(tmp_path: Path, renderer: Renderer) -> None:
+def test_python_utility_symbols_prefer_depth_one_dependents(
+    tmp_path: Path, renderer: Renderer
+) -> None:
     paths = _build_python_depth_rank_project(tmp_path)
 
     payload = renderer(paths["project"])
@@ -483,6 +613,87 @@ def test_python_utility_symbols_prefer_depth_one_dependents(tmp_path: Path, rend
     ]
     assert str(paths["decorators"].resolve()) not in seed["dependent_files"]
     assert str(paths["example"].resolve()) not in seed["dependent_files"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_python_core_symbols_prefer_depth_one_dependents(
+    tmp_path: Path, renderer: Renderer
+) -> None:
+    paths = _build_python_core_radius_project(tmp_path)
+
+    payload = renderer(paths["project"])
+    if renderer is _render_context:
+        payload = repo_map.build_context_render("Abort", paths["project"])
+    else:
+        payload = repo_map.build_symbol_blast_radius_render("Abort", paths["project"])
+    seed = _edit_plan_seed(payload)
+
+    assert seed["dependent_files"] == [
+        str(paths["parser"].resolve()),
+        str(paths["termui"].resolve()),
+    ]
+    assert str(paths["decorators"].resolve()) not in seed["dependent_files"]
+    assert str(paths["example"].resolve()) not in seed["dependent_files"]
+
+
+@pytest.mark.parametrize("renderer", RENDERERS)
+def test_python_termui_symbols_prefer_depth_one_dependents(
+    tmp_path: Path, renderer: Renderer
+) -> None:
+    paths = _build_python_termui_radius_project(tmp_path)
+
+    payload = renderer(paths["project"])
+    if renderer is _render_context:
+        payload = repo_map.build_context_render("unstyle", paths["project"])
+    else:
+        payload = repo_map.build_symbol_blast_radius_render("unstyle", paths["project"])
+    seed = _edit_plan_seed(payload)
+
+    assert seed["dependent_files"] == [
+        str(paths["init"].resolve()),
+        str(paths["core"].resolve()),
+    ]
+    assert str(paths["decorators"].resolve()) not in seed["dependent_files"]
+    assert str(paths["example"].resolve()) not in seed["dependent_files"]
+
+
+def test_rust_blast_radius_finds_nested_tests_via_qualified_symbol_usage(tmp_path: Path) -> None:
+    paths = _build_rust_nested_qualified_project(tmp_path)
+
+    payload = repo_map.build_symbol_blast_radius_render("RawArgs", paths["project"])
+
+    assert payload["tests"] == [str(paths["lexer_test"].resolve())]
+    assert payload["edit_plan_seed"]["validation_commands"] == [
+        "cargo test --test testsuite raw_args_remaining",
+        "cargo test --test testsuite",
+        "cargo test",
+    ]
+
+
+def test_rust_blast_radius_finds_nested_tests_via_associated_methods(tmp_path: Path) -> None:
+    paths = _build_rust_nested_qualified_project(tmp_path)
+
+    payload = repo_map.build_symbol_blast_radius_render("ParsedArg", paths["project"])
+
+    assert payload["tests"] == [str(paths["parsed_test"].resolve())]
+    assert payload["edit_plan_seed"]["validation_commands"] == [
+        "cargo test --test testsuite parsed_to_long",
+        "cargo test --test testsuite",
+        "cargo test",
+    ]
+
+
+def test_rust_blast_radius_uses_impl_owner_type_for_method_test_association(tmp_path: Path) -> None:
+    paths = _build_rust_nested_qualified_project(tmp_path)
+
+    payload = repo_map.build_symbol_blast_radius_render("peek_os", paths["project"])
+
+    assert payload["tests"] == [str(paths["lexer_test"].resolve())]
+    assert payload["edit_plan_seed"]["validation_commands"] == [
+        "cargo test --test testsuite raw_args_remaining",
+        "cargo test --test testsuite",
+        "cargo test",
+    ]
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -572,7 +783,9 @@ def test_rollback_risk_increases_with_caller_count(tmp_path: Path) -> None:
     one_caller = _build_caller_count_project(tmp_path / "one", caller_count=1)
     many_callers = _build_caller_count_project(tmp_path / "many", caller_count=5)
 
-    one_seed = _edit_plan_seed(repo_map.build_symbol_blast_radius_render("create_invoice", one_caller["project"]))
+    one_seed = _edit_plan_seed(
+        repo_map.build_symbol_blast_radius_render("create_invoice", one_caller["project"])
+    )
     many_seed = _edit_plan_seed(
         repo_map.build_symbol_blast_radius_render("create_invoice", many_callers["project"])
     )
@@ -584,7 +797,11 @@ def test_rollback_risk_decreases_with_test_coverage(tmp_path: Path) -> None:
     untested = _build_linear_project(tmp_path / "untested", include_tests=False)
     tested = _build_linear_project(tmp_path / "tested", include_tests=True)
 
-    untested_seed = _edit_plan_seed(repo_map.build_symbol_blast_radius_render("create_invoice", untested["project"]))
-    tested_seed = _edit_plan_seed(repo_map.build_symbol_blast_radius_render("create_invoice", tested["project"]))
+    untested_seed = _edit_plan_seed(
+        repo_map.build_symbol_blast_radius_render("create_invoice", untested["project"])
+    )
+    tested_seed = _edit_plan_seed(
+        repo_map.build_symbol_blast_radius_render("create_invoice", tested["project"])
+    )
 
     assert tested_seed["rollback_risk"] < untested_seed["rollback_risk"]

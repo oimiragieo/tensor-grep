@@ -26,7 +26,11 @@ def _caller_updates(seed: dict[str, object], *, file_path: Path) -> list[dict[st
             for current in seed["suggested_edits"]
             if current["file"] == resolved and current["edit_kind"] == "caller-update"
         ],
-        key=lambda current: (int(current["start_line"]), int(current["end_line"]), str(current["symbol"])),
+        key=lambda current: (
+            int(current["start_line"]),
+            int(current["end_line"]),
+            str(current["symbol"]),
+        ),
     )
 
 
@@ -35,8 +39,7 @@ def test_python_caller_updates_target_exact_call_site_lines(tmp_path: Path) -> N
     src_dir = project / "src"
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         src_dir / "service.py",
@@ -50,7 +53,9 @@ def test_python_caller_updates_target_exact_call_site_lines(tmp_path: Path) -> N
     seed = _edit_plan_seed(project, "create_invoice")
 
     caller_updates = _caller_updates(seed, file_path=src_dir / "service.py")
-    assert [(entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates] == [
+    assert [
+        (entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates
+    ] == [
         ("build_receipt", 4, 4),
         ("build_receipt", 5, 5),
     ]
@@ -67,9 +72,7 @@ def test_js_ts_caller_updates_target_exact_call_site_line(tmp_path: Path, suffix
     src_dir = project / "src"
     _write(
         src_dir / f"payments{suffix}",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     _write(
         src_dir / f"service{suffix}",
@@ -83,7 +86,9 @@ def test_js_ts_caller_updates_target_exact_call_site_line(tmp_path: Path, suffix
     seed = _edit_plan_seed(project, "createInvoice")
 
     caller_updates = _caller_updates(seed, file_path=src_dir / f"service{suffix}")
-    assert [(entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates] == [
+    assert [
+        (entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates
+    ] == [
         ("buildReceipt", 4, 4),
     ]
     entry = caller_updates[0]
@@ -97,9 +102,7 @@ def test_rust_caller_updates_target_scoped_call_site_line(tmp_path: Path) -> Non
     src_dir = project / "src"
     _write(
         src_dir / "payments.rs",
-        "pub fn create_invoice(total: i32) -> i32 {\n"
-        "    total + 1\n"
-        "}\n",
+        "pub fn create_invoice(total: i32) -> i32 {\n    total + 1\n}\n",
     )
     _write(
         src_dir / "service.rs",
@@ -112,7 +115,9 @@ def test_rust_caller_updates_target_scoped_call_site_line(tmp_path: Path) -> Non
     seed = _edit_plan_seed(project, "create_invoice")
 
     caller_updates = _caller_updates(seed, file_path=src_dir / "service.rs")
-    assert [(entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates] == [
+    assert [
+        (entry["symbol"], entry["start_line"], entry["end_line"]) for entry in caller_updates
+    ] == [
         ("build_receipt", 2, 2),
         ("build_receipt", 3, 3),
     ]
@@ -127,18 +132,15 @@ def test_caller_updates_flag_ambiguous_same_named_symbols(tmp_path: Path) -> Non
     src_dir = project / "src"
     _write(
         src_dir / "alpha.py",
-        "def foo(value):\n"
-        "    return value + 1\n",
+        "def foo(value):\n    return value + 1\n",
     )
     _write(
         src_dir / "beta.py",
-        "def foo(value):\n"
-        "    return value + 2\n",
+        "def foo(value):\n    return value + 2\n",
     )
     _write(
         src_dir / "service.py",
-        "def run(value):\n"
-        "    return foo(value)\n",
+        "def run(value):\n    return foo(value)\n",
     )
 
     seed = _edit_plan_seed(project, "foo")
@@ -162,8 +164,7 @@ def test_caller_updates_deduplicate_same_file_and_line(tmp_path: Path) -> None:
     src_dir = project / "src"
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     _write(
         src_dir / "service.py",
@@ -187,8 +188,7 @@ def test_cli_context_render_includes_exact_caller_update_lines(tmp_path: Path) -
     src_dir = project / "src"
     _write(
         src_dir / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     service_path = src_dir / "service.py"
     _write(
@@ -209,7 +209,8 @@ def test_cli_context_render_includes_exact_caller_update_lines(tmp_path: Path) -
     caller_updates = [
         dict(current)
         for current in payload["edit_plan_seed"]["suggested_edits"]
-        if current["file"] == str(service_path.resolve()) and current["edit_kind"] == "caller-update"
+        if current["file"] == str(service_path.resolve())
+        and current["edit_kind"] == "caller-update"
     ]
     assert len(caller_updates) == 1
     entry = caller_updates[0]

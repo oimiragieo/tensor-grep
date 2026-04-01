@@ -17,6 +17,7 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_ast_multilang_benchmarks.py",
     "benchmarks/run_ast_rewrite_benchmarks.py",
     "benchmarks/run_ast_workflow_benchmarks.py",
+    "benchmarks/build_attempt_ledger.py",
     "benchmarks/run_gpu_benchmarks.py",
     "benchmarks/run_gpu_native_benchmarks.py",
     "benchmarks/run_harness_loop_benchmark.py",
@@ -25,13 +26,16 @@ BENCHMARK_JSON_SCRIPTS = [
     "benchmarks/run_index_scaling_benchmark.py",
     "benchmarks/run_context_render_benchmarks.py",
     "benchmarks/run_blast_radius_benchmarks.py",
+    "benchmarks/run_provider_navigation_bakeoff.py",
     "benchmarks/run_session_benchmarks.py",
     "benchmarks/run_external_eval.py",
     "benchmarks/analyze_external_profiling.py",
     "benchmarks/normalize_competitor_eval.py",
     "benchmarks/render_patch_scorecard.py",
+    "benchmarks/render_provider_navigation_scorecard.py",
     "benchmarks/render_world_class_report.py",
     "benchmarks/run_patch_bakeoff.py",
+    "benchmarks/build_attempt_ledger.py",
     "benchmarks/run_tensor_grep_patch_driver.py",
     "benchmarks/run_gemini_patch_predictions.py",
     "benchmarks/run_copilot_patch_predictions.py",
@@ -56,6 +60,120 @@ def _load_script_module(name: str, rel_path: str):
     return module
 
 
+def test_run_pytest_stable_should_build_windows_friendly_default_command():
+    module = _load_script_module("run_pytest_stable_script", "scripts/run_pytest_stable.py")
+
+    command = module.build_pytest_command(
+        timeout_s=180, extra_args=["tests/unit/test_cli_modes.py", "-x"]
+    )
+
+    assert command[:4] == ["uv", "run", "pytest", "-q"]
+    assert "--capture=tee-sys" in command
+    assert "console_output_style=classic" in command
+    assert "faulthandler_timeout=180" in command
+    assert "faulthandler_exit_on_timeout=true" in command
+    assert command[-2:] == ["tests/unit/test_cli_modes.py", "-x"]
+
+
+def test_run_pytest_stable_should_write_log_and_report(monkeypatch, tmp_path, capsys):
+    module = _load_script_module("run_pytest_stable_report_script", "scripts/run_pytest_stable.py")
+    command = ["uv", "run", "pytest", "-q"]
+    log_path = tmp_path / "pytest_full.log"
+    report_path = tmp_path / "pytest_full_report.json"
+
+    class _FakeProcess:
+        def __init__(self):
+            self.stdout = iter(["..s\n", "10 passed in 1.23s\n"])
+
+        def wait(self):
+            return 0
+
+    captured: dict[str, object] = {}
+
+    def _fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return _FakeProcess()
+
+    monkeypatch.setattr(module.subprocess, "Popen", _fake_popen)
+
+    exit_code = module.run_pytest_command(
+        command,
+        log_path=log_path,
+        report_path=report_path,
+        cwd=tmp_path,
+    )
+
+    assert exit_code == 0
+    assert captured["cmd"] == command
+    assert log_path.read_text(encoding="utf-8") == "..s\n10 passed in 1.23s\n"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["artifact"] == "pytest_full_report"
+    assert report["exit_code"] == 0
+    assert report["command"] == command
+    assert report["log_path"] == str(log_path.resolve())
+    assert report["line_count"] == 2
+    assert report["tail"] == ["..s\n", "10 passed in 1.23s\n"]
+    stdout = capsys.readouterr().out
+    assert "..s" in stdout
+    assert "10 passed in 1.23s" in stdout
+
+
+def test_run_pytest_stable_should_fallback_when_console_encoding_cannot_encode(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_pytest_stable_encoding_script", "scripts/run_pytest_stable.py"
+    )
+    command = ["uv", "run", "pytest", "-q"]
+    log_path = tmp_path / "pytest_full.log"
+    report_path = tmp_path / "pytest_full_report.json"
+
+    class _FakeProcess:
+        def __init__(self):
+            self.stdout = iter(["ok\n", "bad \ufffd char\n"])
+
+        def wait(self):
+            return 0
+
+    class _FakeBuffer:
+        def __init__(self):
+            self.writes: list[bytes] = []
+
+        def write(self, payload: bytes):
+            self.writes.append(payload)
+
+    class _FakeStdout:
+        def __init__(self):
+            self.buffer = _FakeBuffer()
+            self.encoding = "cp1252"
+            self.calls = 0
+
+        def write(self, text: str):
+            self.calls += 1
+            if "\ufffd" in text:
+                raise UnicodeEncodeError("charmap", text, 0, 1, "cannot encode")
+
+        def flush(self):
+            return None
+
+    fake_stdout = _FakeStdout()
+
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: _FakeProcess())
+    monkeypatch.setattr(module.sys, "stdout", fake_stdout)
+
+    exit_code = module.run_pytest_command(
+        command,
+        log_path=log_path,
+        report_path=report_path,
+        cwd=tmp_path,
+    )
+
+    assert exit_code == 0
+    assert log_path.read_text(encoding="utf-8") == "ok\nbad \ufffd char\n"
+    assert fake_stdout.buffer.writes
+
+
 def test_run_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     module = _load_script_module("run_benchmarks_script", "benchmarks/run_benchmarks.py")
     monkeypatch.delenv("TENSOR_GREP_BENCH_DATA_DIR", raising=False)
@@ -63,6 +181,135 @@ def test_run_benchmarks_should_default_data_dir_to_artifacts(monkeypatch):
     path = module.resolve_bench_data_dir()
 
     assert path.parts[-2:] == ("artifacts", "bench_data")
+
+
+def test_build_attempt_ledger_should_normalize_payload_shape(tmp_path):
+    module = _load_script_module(
+        "build_attempt_ledger_script", "benchmarks/build_attempt_ledger.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    payload = module.build_attempt_ledger_payload({
+        "task_id": "tg-task-1",
+        "root": str(repo_root),
+        "attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "parent_attempt_id": None,
+                "kind": "rewrite_apply_verify",
+                "status": "validation_failed",
+                "retryable": True,
+                "retry_stage": "validation",
+                "retry_reason": "lint-failed",
+                "checkpoint_id": "chk-1",
+                "audit_manifest_path": "artifacts/audit/attempt-1.json",
+                "validation_success": False,
+                "score_artifact": None,
+                "inputs": ["artifacts/plans/plan-1.json"],
+                "outputs": ["artifacts/diffs/attempt-1.diff"],
+            },
+            {
+                "attempt_id": "attempt-2",
+                "parent_attempt_id": "attempt-1",
+                "kind": "rewrite_apply_verify",
+                "status": "accepted",
+                "retryable": False,
+                "retry_stage": "none",
+                "retry_reason": "accepted",
+                "checkpoint_id": "chk-2",
+                "audit_manifest_path": "artifacts/audit/attempt-2.json",
+                "validation_success": True,
+                "score_artifact": "artifacts/scores/attempt-2.json",
+                "inputs": ["artifacts/diffs/attempt-2.diff"],
+                "outputs": ["artifacts/scores/attempt-2.json"],
+            },
+        ],
+        "final_outcome": {
+            "status": "accepted",
+            "accepted_attempt_id": "attempt-2",
+            "score_artifact": "artifacts/scores/attempt-2.json",
+            "summary": "accepted after one retry",
+        },
+        "replay": {
+            "preserve_attempt_ids": True,
+            "partial_retry_ledger": [
+                {
+                    "attempt_id": "attempt-1",
+                    "resumed_from": "validation",
+                    "resumed_as": "attempt-2",
+                    "reason": "lint-failed",
+                }
+            ],
+            "audit_chain": [
+                "artifacts/audit/attempt-1.json",
+                "artifacts/audit/attempt-2.json",
+            ],
+            "next_action": "score accepted attempt",
+        },
+    })
+
+    assert payload["artifact"] == "agent_attempt_ledger"
+    assert payload["suite"] == "agent_loop"
+    assert payload["task_id"] == "tg-task-1"
+    assert payload["root"] == str(repo_root)
+    assert len(payload["attempts"]) == 2
+    assert payload["final_outcome"]["accepted_attempt_id"] == "attempt-2"
+    assert payload["replay"]["preserve_attempt_ids"] is True
+    assert payload["generated_at_epoch_s"] > 0
+
+
+def test_build_attempt_ledger_cli_should_write_output_file(tmp_path):
+    module = _load_script_module(
+        "build_attempt_ledger_cli_script", "benchmarks/build_attempt_ledger.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    input_path = tmp_path / "attempt_ledger_input.json"
+    output_path = tmp_path / "attempt_ledger_output.json"
+    input_path.write_text(
+        json.dumps({
+            "task_id": "tg-task-2",
+            "root": str(repo_root),
+            "attempts": [
+                {
+                    "attempt_id": "attempt-a",
+                    "parent_attempt_id": None,
+                    "kind": "rewrite_apply_verify",
+                    "status": "accepted",
+                    "retryable": False,
+                    "retry_stage": "none",
+                    "retry_reason": "accepted",
+                    "checkpoint_id": "chk-a",
+                    "audit_manifest_path": "artifacts/audit/attempt-a.json",
+                    "validation_success": True,
+                    "score_artifact": "artifacts/scores/attempt-a.json",
+                    "inputs": [],
+                    "outputs": ["artifacts/scores/attempt-a.json"],
+                }
+            ],
+            "final_outcome": {
+                "status": "accepted",
+                "accepted_attempt_id": "attempt-a",
+                "score_artifact": "artifacts/scores/attempt-a.json",
+                "summary": "accepted",
+            },
+            "replay": {
+                "preserve_attempt_ids": True,
+                "partial_retry_ledger": [],
+                "audit_chain": ["artifacts/audit/attempt-a.json"],
+                "next_action": "none",
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    exit_code = module.main(["--input", str(input_path), "--output", str(output_path)])
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["artifact"] == "agent_attempt_ledger"
+    assert payload["suite"] == "agent_loop"
+    assert payload["task_id"] == "tg-task-2"
 
 
 def test_run_benchmarks_should_honor_data_dir_override(monkeypatch, tmp_path):
@@ -87,6 +334,34 @@ def test_run_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path):
     assert cmd[1:] == ["search", "--no-ignore", "ERROR", "bench_data"]
 
 
+def test_run_benchmarks_should_classify_explicit_binary_source(tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_binary_source_explicit", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    resolved, source = module.resolve_tg_binary_with_source(str(tg_binary))
+
+    assert resolved == tg_binary.resolve()
+    assert source == "explicit_arg"
+
+
+def test_run_benchmarks_should_classify_default_binary_source(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_binary_source_default", "benchmarks/run_benchmarks.py"
+    )
+    default_binary = tmp_path / "rust_core" / "target" / "release" / "tg.exe"
+    default_binary.parent.mkdir(parents=True, exist_ok=True)
+    default_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "default_binary_path", lambda: default_binary)
+
+    resolved, source = module.resolve_tg_binary_with_source()
+
+    assert resolved == default_binary.resolve()
+    assert source == "default_binary_path"
+
+
 def test_run_benchmarks_should_fallback_to_cli_launcher_when_native_binary_is_missing(monkeypatch):
     module = _load_script_module(
         "run_benchmarks_script_launcher_cmd", "benchmarks/run_benchmarks.py"
@@ -102,6 +377,252 @@ def test_run_benchmarks_should_fallback_to_cli_launcher_when_native_binary_is_mi
     cmd = module.build_tg_benchmark_cmd(["ERROR", "bench_data"])
 
     assert cmd == ["python", "-m", "tensor_grep", "search", "--no-ignore", "ERROR", "bench_data"]
+
+
+def test_run_benchmarks_should_classify_python_module_launcher(monkeypatch):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_module", "benchmarks/run_benchmarks.py"
+    )
+    missing_binary = Path("missing-tg.exe")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: missing_binary)
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_cli_launcher",
+        lambda *_args, **_kwargs: [sys.executable, "-m", "tensor_grep"],
+    )
+
+    cmd, mode = module.build_tg_benchmark_cmd(["ERROR", "bench_data"], return_mode=True)
+
+    assert cmd == [
+        sys.executable,
+        "-m",
+        "tensor_grep",
+        "search",
+        "--no-ignore",
+        "ERROR",
+        "bench_data",
+    ]
+    assert mode == "python_module_launcher"
+
+
+def test_run_benchmarks_should_classify_explicit_binary_launcher(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_binary", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode = module.build_tg_benchmark_cmd(["ERROR", "bench_data"], return_mode=True)
+
+    assert cmd == [str(tg_binary), "search", "--no-ignore", "ERROR", "bench_data"]
+    assert mode == "explicit_binary"
+
+
+def test_run_benchmarks_should_force_explicit_fast_binary_launcher(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_fast_binary", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg-search-fast.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+
+    cmd, mode = module.build_tg_benchmark_cmd(
+        ["ERROR", "bench_data"],
+        binary=tg_binary,
+        return_mode=True,
+        launcher_mode="explicit_fast_binary",
+    )
+
+    assert cmd == [str(tg_binary), "--no-ignore", "ERROR", "bench_data"]
+    assert mode == "explicit_fast_binary"
+
+
+def test_run_benchmarks_should_force_python_module_launcher(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_forced_python", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_cli_launcher",
+        lambda *_args, **_kwargs: [sys.executable, "-m", "tensor_grep"],
+    )
+
+    cmd, mode = module.build_tg_benchmark_cmd(
+        ["ERROR", "bench_data"],
+        return_mode=True,
+        launcher_mode="python_module_launcher",
+    )
+
+    assert cmd == [
+        sys.executable,
+        "-m",
+        "tensor_grep",
+        "search",
+        "--no-ignore",
+        "ERROR",
+        "bench_data",
+    ]
+    assert mode == "python_module_launcher"
+
+
+def test_run_benchmarks_should_force_python_module_rust_first_launcher(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_forced_rust_first", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode, env = module.build_tg_benchmark_cmd_with_mode(
+        ["ERROR", "bench_data"],
+        return_mode=True,
+        return_env=True,
+        launcher_mode="python_module_rust_first",
+    )
+
+    assert cmd == [
+        sys.executable,
+        "-m",
+        "tensor_grep",
+        "search",
+        "--no-ignore",
+        "ERROR",
+        "bench_data",
+    ]
+    assert mode == "python_module_rust_first"
+    assert env == {"TG_RUST_FIRST_SEARCH": "1"}
+
+
+def test_run_benchmarks_should_force_explicit_binary_early_rg_launcher(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_forced_early_rg", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode, env = module.build_tg_benchmark_cmd_with_mode(
+        ["ERROR", "bench_data"],
+        return_mode=True,
+        return_env=True,
+        launcher_mode="explicit_binary_early_rg",
+    )
+
+    assert cmd == [str(tg_binary), "search", "--no-ignore", "ERROR", "bench_data"]
+    assert mode == "explicit_binary_early_rg"
+    assert env == {"TG_RUST_EARLY_RG": "1"}
+
+
+def test_run_benchmarks_should_use_positional_launcher_for_supported_plain_search(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_forced_positional", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode = module.build_tg_benchmark_cmd(
+        ["ERROR", "bench_data"],
+        return_mode=True,
+        launcher_mode="explicit_binary_positional",
+    )
+
+    assert cmd == [str(tg_binary), "ERROR", "bench_data"]
+    assert mode == "explicit_binary_positional"
+
+
+def test_run_benchmarks_should_use_positional_early_rg_launcher_for_supported_plain_search(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_forced_positional_early_rg",
+        "benchmarks/run_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode, env = module.build_tg_benchmark_cmd_with_mode(
+        ["ERROR", "bench_data"],
+        return_mode=True,
+        return_env=True,
+        launcher_mode="explicit_binary_positional_early_rg",
+    )
+
+    assert cmd == [str(tg_binary), "ERROR", "bench_data"]
+    assert mode == "explicit_binary_positional_early_rg"
+    assert env == {"TG_RUST_EARLY_POSITIONAL_RG": "1"}
+
+
+def test_run_benchmarks_should_fallback_from_positional_launcher_for_unsupported_shapes(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_positional_fallback", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode = module.build_tg_benchmark_cmd(
+        ["-C", "2", "CRITICAL", "bench_data"],
+        return_mode=True,
+        launcher_mode="explicit_binary_positional",
+    )
+
+    assert cmd == [str(tg_binary), "search", "--no-ignore", "-C", "2", "CRITICAL", "bench_data"]
+    assert mode == "explicit_binary_positional"
+
+
+def test_run_benchmarks_should_fallback_from_positional_early_rg_launcher_for_unsupported_shapes(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_positional_early_rg_fallback",
+        "benchmarks/run_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode, env = module.build_tg_benchmark_cmd_with_mode(
+        ["-C", "2", "CRITICAL", "bench_data"],
+        return_mode=True,
+        return_env=True,
+        launcher_mode="explicit_binary_positional_early_rg",
+    )
+
+    assert cmd == [str(tg_binary), "search", "--no-ignore", "-C", "2", "CRITICAL", "bench_data"]
+    assert mode == "explicit_binary_positional_early_rg"
+    assert env == {"TG_RUST_EARLY_POSITIONAL_RG": "1"}
+
+
+def test_run_benchmarks_should_force_discovered_cli_binary_launcher(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_forced_cli", "benchmarks/run_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_cli_launcher",
+        lambda *_args, **_kwargs: ["tg.exe"],
+    )
+
+    cmd, mode = module.build_tg_benchmark_cmd(
+        ["ERROR", "bench_data"],
+        return_mode=True,
+        launcher_mode="discovered_cli_binary",
+    )
+
+    assert cmd == ["tg.exe", "search", "--no-ignore", "ERROR", "bench_data"]
+    assert mode == "discovered_cli_binary"
 
 
 def test_run_benchmarks_should_force_cpu_when_native_flag_is_enabled(monkeypatch, tmp_path):
@@ -183,18 +704,16 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
     monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
     monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
 
-    timing_samples = iter(
-        [
-            9.9,
-            8.8,
-            0.40,
-            0.20,
-            0.30,
-            0.80,
-            0.60,
-            0.70,
-        ]
-    )
+    timing_samples = iter([
+        9.9,
+        8.8,
+        0.40,
+        0.20,
+        0.30,
+        0.80,
+        0.60,
+        0.70,
+    ])
     timing_calls: list[list[str]] = []
     capture_calls: list[list[str]] = []
 
@@ -228,6 +747,8 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
     assert isinstance(payload, dict)
     assert payload["artifact"] == "bench_run_benchmarks"
     assert payload["timing_samples_per_scenario"] == 3
+    assert payload["environment"]["tg_launcher_mode"] == "explicit_binary"
+    assert payload["environment"]["tg_binary_source"] == "default_binary_path"
     rows = payload["rows"]
     assert rows == [
         {
@@ -239,6 +760,275 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
             "parity": "PASS",
         }
     ]
+
+
+def test_run_benchmarks_should_record_forced_launcher_mode_in_environment(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_forced_launcher_payload", "benchmarks/run_benchmarks.py"
+    )
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *_args, **_kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
+    monkeypatch.setattr(module, "run_cmd_capture", lambda cmd: (0.0, "ok"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_benchmarks.py", "--launcher-mode", "python_module_launcher"],
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr(
+        "tensor_grep.perf_guard.write_json",
+        lambda path, payload: captured.update({"path": path, "payload": payload}),
+    )
+
+    module.main()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["environment"]["tg_launcher_mode"] == "python_module_launcher"
+    assert payload["environment"]["tg_binary_source"] == "default_binary_path"
+
+
+def test_run_benchmarks_should_record_rust_first_launcher_mode_in_environment(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_rust_first_payload", "benchmarks/run_benchmarks.py"
+    )
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *_args, **_kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
+    monkeypatch.setattr(module, "run_cmd_capture", lambda cmd, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_benchmarks.py", "--launcher-mode", "python_module_rust_first"],
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr(
+        "tensor_grep.perf_guard.write_json",
+        lambda path, payload: captured.update({"path": path, "payload": payload}),
+    )
+
+    module.main()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["environment"]["tg_launcher_mode"] == "python_module_rust_first"
+
+
+def test_run_benchmarks_should_record_early_rg_launcher_mode_in_environment(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_early_rg_payload", "benchmarks/run_benchmarks.py"
+    )
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *_args, **_kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
+    monkeypatch.setattr(module, "run_cmd_capture", lambda cmd, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_benchmarks.py", "--launcher-mode", "explicit_binary_early_rg"],
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr(
+        "tensor_grep.perf_guard.write_json",
+        lambda path, payload: captured.update({"path": path, "payload": payload}),
+    )
+
+    module.main()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["environment"]["tg_launcher_mode"] == "explicit_binary_early_rg"
+
+
+def test_run_benchmarks_should_record_fast_binary_launcher_mode_in_environment(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_fast_binary_payload", "benchmarks/run_benchmarks.py"
+    )
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *_args, **_kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
+    monkeypatch.setattr(module, "run_cmd_capture", lambda cmd, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(module, "default_fast_binary_path", lambda: tmp_path / "tg-search-fast.exe")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_benchmarks.py", "--launcher-mode", "explicit_fast_binary"],
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr(
+        "tensor_grep.perf_guard.write_json",
+        lambda path, payload: captured.update({"path": path, "payload": payload}),
+    )
+
+    module.main()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["environment"]["tg_launcher_mode"] == "explicit_fast_binary"
+    assert payload["environment"]["tg_binary_source"] == "default_fast_binary_path"
+
+
+def test_run_benchmarks_should_record_positional_launcher_mode_in_environment(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_positional_payload", "benchmarks/run_benchmarks.py"
+    )
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *_args, **_kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
+    monkeypatch.setattr(module, "run_cmd_capture", lambda cmd, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_benchmarks.py", "--launcher-mode", "explicit_binary_positional"],
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr(
+        "tensor_grep.perf_guard.write_json",
+        lambda path, payload: captured.update({"path": path, "payload": payload}),
+    )
+
+    module.main()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["environment"]["tg_launcher_mode"] == "explicit_binary_positional"
+
+
+def test_run_benchmarks_should_record_positional_early_rg_launcher_mode_in_environment(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_positional_early_rg_payload", "benchmarks/run_benchmarks.py"
+    )
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *_args, **_kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
+    monkeypatch.setattr(module, "run_cmd_capture", lambda cmd, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_benchmarks.py", "--launcher-mode", "explicit_binary_positional_early_rg"],
+    )
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.perf_guard.ensure_artifacts_dir", lambda _root: tmp_path)
+    monkeypatch.setattr(
+        "tensor_grep.perf_guard.write_json",
+        lambda path, payload: captured.update({"path": path, "payload": payload}),
+    )
+
+    module.main()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    assert payload["environment"]["tg_launcher_mode"] == "explicit_binary_positional_early_rg"
 
 
 def test_run_benchmarks_should_honor_output_and_milestone_args(monkeypatch, tmp_path):
@@ -379,64 +1169,62 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
         lambda *_args, **_kwargs: {"path": tmp_path / "many_files", "file_count": 1200},
     )
 
-    benchmark_rows = iter(
-        [
-            {
-                "name": "cold_standard_corpus",
-                "target": str(tmp_path / "bench_data"),
-                "pattern": "ERROR",
-                "rg_time_s": 1.0,
-                "tg_time_s": 1.04,
-                "rg_samples_s": [1.0, 0.98, 1.04],
-                "tg_samples_s": [1.04, 1.01, 1.06],
-                "ratio_vs_rg": 1.04,
-                "threshold_ratio": 1.05,
-                "status": "PASS",
-                "counts_match": True,
-            },
-            {
-                "name": "large_file_200mb",
-                "target": str(tmp_path / "large_fixture.log"),
-                "pattern": "ERROR native cpu benchmark sentinel",
-                "rg_time_s": 1.0,
-                "tg_time_s": 1.12,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [1.12, 1.14, 1.11],
-                "ratio_vs_rg": 1.12,
-                "threshold_ratio": 1.15,
-                "require_tg_faster": False,
-                "status": "PASS",
-                "counts_match": True,
-            },
-            {
-                "name": "large_file_200mb_count",
-                "target": str(tmp_path / "large_fixture.log"),
-                "pattern": "ERROR native cpu benchmark sentinel",
-                "rg_time_s": 1.0,
-                "tg_time_s": 0.92,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [0.92, 0.94, 0.91],
-                "ratio_vs_rg": 0.92,
-                "threshold_ratio": 1.0,
-                "require_tg_faster": True,
-                "status": "PASS",
-                "counts_match": True,
-            },
-            {
-                "name": "many_file_directory",
-                "target": str(tmp_path / "many_files"),
-                "pattern": "ERROR native cpu benchmark sentinel",
-                "rg_time_s": 1.0,
-                "tg_time_s": 1.03,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [1.03, 1.02, 1.04],
-                "ratio_vs_rg": 1.03,
-                "threshold_ratio": 1.05,
-                "status": "PASS",
-                "counts_match": True,
-            },
-        ]
-    )
+    benchmark_rows = iter([
+        {
+            "name": "cold_standard_corpus",
+            "target": str(tmp_path / "bench_data"),
+            "pattern": "ERROR",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.04,
+            "rg_samples_s": [1.0, 0.98, 1.04],
+            "tg_samples_s": [1.04, 1.01, 1.06],
+            "ratio_vs_rg": 1.04,
+            "threshold_ratio": 1.05,
+            "status": "PASS",
+            "counts_match": True,
+        },
+        {
+            "name": "large_file_200mb",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "ERROR native cpu benchmark sentinel",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.12,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [1.12, 1.14, 1.11],
+            "ratio_vs_rg": 1.12,
+            "threshold_ratio": 1.15,
+            "require_tg_faster": False,
+            "status": "PASS",
+            "counts_match": True,
+        },
+        {
+            "name": "large_file_200mb_count",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "ERROR native cpu benchmark sentinel",
+            "rg_time_s": 1.0,
+            "tg_time_s": 0.92,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [0.92, 0.94, 0.91],
+            "ratio_vs_rg": 0.92,
+            "threshold_ratio": 1.0,
+            "require_tg_faster": True,
+            "status": "PASS",
+            "counts_match": True,
+        },
+        {
+            "name": "many_file_directory",
+            "target": str(tmp_path / "many_files"),
+            "pattern": "ERROR native cpu benchmark sentinel",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.03,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [1.03, 1.02, 1.04],
+            "ratio_vs_rg": 1.03,
+            "threshold_ratio": 1.05,
+            "status": "PASS",
+            "counts_match": True,
+        },
+    ])
     monkeypatch.setattr(
         module, "run_native_cpu_benchmark_case", lambda **_kwargs: next(benchmark_rows)
     )
@@ -776,17 +1564,15 @@ def test_run_harness_loop_iteration_should_require_zero_remaining_matches(monkey
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir()
 
-    responses = iter(
-        [
-            (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
-            (
-                0.22,
-                {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]},
-            ),
-            (0.33, {"plan": {"total_edits": 3}, "verification": None}),
-            (0.14, {"total_matches": 0, "matches": []}),
-        ]
-    )
+    responses = iter([
+        (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
+        (
+            0.22,
+            {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]},
+        ),
+        (0.33, {"plan": {"total_edits": 3}, "verification": None}),
+        (0.14, {"total_matches": 0, "matches": []}),
+    ])
     commands: list[list[str]] = []
 
     def _fake_run_json_command(command):
@@ -1080,40 +1866,38 @@ def test_run_index_scaling_benchmark_should_fail_when_10k_build_exceeds_threshol
         },
     )
 
-    rows = iter(
-        [
-            {
-                "name": "index_scale_1000_files",
-                "file_count": 1000,
-                "build_time_s": 1.0,
-                "index_size_bytes": 1024,
-                "query_median_s": 0.01,
-                "query_correct": True,
-                "build_within_threshold": True,
-                "queries": [{"pattern": "ERROR timeout"}] * 3,
-            },
-            {
-                "name": "index_scale_5000_files",
-                "file_count": 5000,
-                "build_time_s": 5.0,
-                "index_size_bytes": 4096,
-                "query_median_s": 0.03,
-                "query_correct": True,
-                "build_within_threshold": True,
-                "queries": [{"pattern": "ERROR timeout"}] * 3,
-            },
-            {
-                "name": "index_scale_10000_files",
-                "file_count": 10000,
-                "build_time_s": 61.0,
-                "index_size_bytes": 8192,
-                "query_median_s": 0.05,
-                "query_correct": True,
-                "build_within_threshold": False,
-                "queries": [{"pattern": "ERROR timeout"}] * 3,
-            },
-        ]
-    )
+    rows = iter([
+        {
+            "name": "index_scale_1000_files",
+            "file_count": 1000,
+            "build_time_s": 1.0,
+            "index_size_bytes": 1024,
+            "query_median_s": 0.01,
+            "query_correct": True,
+            "build_within_threshold": True,
+            "queries": [{"pattern": "ERROR timeout"}] * 3,
+        },
+        {
+            "name": "index_scale_5000_files",
+            "file_count": 5000,
+            "build_time_s": 5.0,
+            "index_size_bytes": 4096,
+            "query_median_s": 0.03,
+            "query_correct": True,
+            "build_within_threshold": True,
+            "queries": [{"pattern": "ERROR timeout"}] * 3,
+        },
+        {
+            "name": "index_scale_10000_files",
+            "file_count": 10000,
+            "build_time_s": 61.0,
+            "index_size_bytes": 8192,
+            "query_median_s": 0.05,
+            "query_correct": True,
+            "build_within_threshold": False,
+            "queries": [{"pattern": "ERROR timeout"}] * 3,
+        },
+    ])
     monkeypatch.setattr(module, "benchmark_scale", lambda **_kwargs: next(rows))
 
     result = module.run_index_scaling_benchmark(
@@ -1185,9 +1969,21 @@ def test_run_context_render_benchmarks_should_emit_fixture_rows(monkeypatch, tmp
         module,
         "ensure_editor_plane_fixture_set",
         lambda bench_dir: {
-            "small": {"root": tmp_path / "small", "file_count": 12, "target_symbol": "create_invoice"},
-            "medium": {"root": tmp_path / "medium", "file_count": 48, "target_symbol": "create_invoice"},
-            "large": {"root": tmp_path / "large", "file_count": 128, "target_symbol": "create_invoice"},
+            "small": {
+                "root": tmp_path / "small",
+                "file_count": 12,
+                "target_symbol": "create_invoice",
+            },
+            "medium": {
+                "root": tmp_path / "medium",
+                "file_count": 48,
+                "target_symbol": "create_invoice",
+            },
+            "large": {
+                "root": tmp_path / "large",
+                "file_count": 128,
+                "target_symbol": "create_invoice",
+            },
         },
     )
     monkeypatch.setattr(
@@ -1293,8 +2089,16 @@ def test_run_session_benchmarks_should_emit_refresh_comparison_rows(monkeypatch,
         module,
         "ensure_editor_plane_fixture_set",
         lambda bench_dir: {
-            "medium": {"root": tmp_path / "medium", "file_count": 48, "target_symbol": "create_invoice"},
-            "large": {"root": tmp_path / "large", "file_count": 128, "target_symbol": "create_invoice"},
+            "medium": {
+                "root": tmp_path / "medium",
+                "file_count": 48,
+                "target_symbol": "create_invoice",
+            },
+            "large": {
+                "root": tmp_path / "large",
+                "file_count": 128,
+                "target_symbol": "create_invoice",
+            },
         },
     )
     monkeypatch.setattr(
@@ -1362,8 +2166,16 @@ def test_run_session_benchmarks_should_fail_when_incremental_refresh_exceeds_thr
         module,
         "ensure_editor_plane_fixture_set",
         lambda bench_dir: {
-            "medium": {"root": tmp_path / "medium", "file_count": 48, "target_symbol": "create_invoice"},
-            "large": {"root": tmp_path / "large", "file_count": 128, "target_symbol": "create_invoice"},
+            "medium": {
+                "root": tmp_path / "medium",
+                "file_count": 48,
+                "target_symbol": "create_invoice",
+            },
+            "large": {
+                "root": tmp_path / "large",
+                "file_count": 128,
+                "target_symbol": "create_invoice",
+            },
         },
     )
     monkeypatch.setattr(
@@ -1409,43 +2221,41 @@ def test_analyze_bakeoff_misses_should_bucket_false_positive_paths(monkeypatch, 
     output_path = tmp_path / "bakeoff_analysis.json"
     markdown_path = tmp_path / "bakeoff_analysis.md"
     input_path.write_text(
-        json.dumps(
-            {
-                "artifact": "bench_bakeoff",
-                "summary": {
-                    "scenario_count": 2,
-                    "mean_file_hit_rate": 0.75,
-                    "mean_file_precision": 0.5,
+        json.dumps({
+            "artifact": "bench_bakeoff",
+            "summary": {
+                "scenario_count": 2,
+                "mean_file_hit_rate": 0.75,
+                "mean_file_precision": 0.5,
+            },
+            "rows": [
+                {
+                    "name": "click:blast-radius:open_file",
+                    "query_or_symbol": "open_file",
+                    "expected_primary_file": "src/click/utils.py",
+                    "actual_primary_file": "src/click/utils.py",
+                    "false_positive_files": [
+                        "repo/examples/demo.py",
+                        "repo/src/click/__init__.py",
+                        "repo/src/click/_compat.py",
+                    ],
+                    "file_hit_rate": 0.5,
+                    "file_precision": 0.25,
                 },
-                "rows": [
-                    {
-                        "name": "click:blast-radius:open_file",
-                        "query_or_symbol": "open_file",
-                        "expected_primary_file": "src/click/utils.py",
-                        "actual_primary_file": "src/click/utils.py",
-                        "false_positive_files": [
-                            "repo/examples/demo.py",
-                            "repo/src/click/__init__.py",
-                            "repo/src/click/_compat.py",
-                        ],
-                        "file_hit_rate": 0.5,
-                        "file_precision": 0.25,
-                    },
-                    {
-                        "name": "click:blast-radius:UsageError",
-                        "query_or_symbol": "UsageError",
-                        "expected_primary_file": "src/click/exceptions.py",
-                        "actual_primary_file": "src/click/exceptions.py",
-                        "false_positive_files": [
-                            "repo/src/click/formatting.py",
-                            "repo/src/click/shell_completion.py",
-                        ],
-                        "file_hit_rate": 1.0,
-                        "file_precision": 0.75,
-                    },
-                ],
-            }
-        ),
+                {
+                    "name": "click:blast-radius:UsageError",
+                    "query_or_symbol": "UsageError",
+                    "expected_primary_file": "src/click/exceptions.py",
+                    "actual_primary_file": "src/click/exceptions.py",
+                    "false_positive_files": [
+                        "repo/src/click/formatting.py",
+                        "repo/src/click/shell_completion.py",
+                    ],
+                    "file_hit_rate": 1.0,
+                    "file_precision": 0.75,
+                },
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -1497,15 +2307,13 @@ def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path
     tg_binary.write_text("binary", encoding="utf-8")
     monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
-    cmd = module.build_tg_ast_benchmark_cmd(
-        [
-            "run",
-            "--lang",
-            "python",
-            "pattern",
-            "bench_ast_data",
-        ]
-    )
+    cmd = module.build_tg_ast_benchmark_cmd([
+        "run",
+        "--lang",
+        "python",
+        "pattern",
+        "bench_ast_data",
+    ])
 
     assert cmd[0] == str(tg_binary)
     assert cmd[1:] == ["run", "--lang", "python", "pattern", "bench_ast_data"]
@@ -2152,23 +2960,19 @@ def test_check_regression_should_refuse_cross_environment_comparison_by_default(
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "linux", "machine": "x86_64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "linux", "machine": "x86_64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.2}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.2}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -2194,23 +2998,19 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "linux", "machine": "x86_64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "linux", "machine": "x86_64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -2239,23 +3039,19 @@ def test_check_regression_should_use_five_percent_default_threshold(monkeypatch,
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.06}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.06}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -2285,12 +3081,10 @@ def test_check_regression_should_compare_hot_query_benchmarks(monkeypatch, tmp_p
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
-        json.dumps(
-            {
-                **payload,
-                "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
-            }
-        ),
+        json.dumps({
+            **payload,
+            "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -2349,24 +3143,20 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
 
@@ -2397,26 +3187,22 @@ def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tm
     milestones_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = milestones_dir / "baseline_m1.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "milestone": "m1",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "milestone": "m1",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "milestone": "m2",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.04}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "milestone": "m2",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.04}],
+        }),
         encoding="utf-8",
     )
 
@@ -2448,13 +3234,11 @@ def test_check_regression_should_fail_when_auto_baseline_platform_is_unavailable
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "darwin", "machine": "arm64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
 
@@ -2485,24 +3269,20 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -2537,13 +3317,11 @@ def test_summarize_benchmarks_should_fail_when_auto_baseline_platform_is_unavail
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "darwin", "machine": "arm64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -2609,27 +3387,25 @@ def test_run_external_eval_should_aggregate_manifest_packs(tmp_path):
     module = _load_script_module("run_external_eval_script", "benchmarks/run_external_eval.py")
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     manifest = {
@@ -2695,27 +3471,25 @@ def test_normalize_competitor_eval_should_score_manual_records(tmp_path):
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": ["b.py"],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": ["tests/test_a.py"],
-                        "expected_validation_commands_contain": ["pytest tests/test_a.py"],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": ["b.py"],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": ["tests/test_a.py"],
+                    "expected_validation_commands_contain": ["pytest tests/test_a.py"],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     payload = {
@@ -2753,27 +3527,25 @@ def test_normalize_competitor_eval_should_normalize_windows_style_paths(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "src/pkg/mod.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": ["tests/test_mod.py"],
-                        "expected_suggested_edit_files": ["tests/test_mod.py"],
-                        "expected_test_files": ["tests/test_mod.py"],
-                        "expected_validation_commands_contain": ["pytest tests/test_mod.py -q"],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "src/pkg/mod.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": ["tests/test_mod.py"],
+                    "expected_suggested_edit_files": ["tests/test_mod.py"],
+                    "expected_test_files": ["tests/test_mod.py"],
+                    "expected_validation_commands_contain": ["pytest tests/test_mod.py -q"],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     payload = {
@@ -2836,39 +3608,39 @@ def test_render_comparison_scorecard_should_emit_ranked_markdown():
 
 
 def test_render_patch_scorecard_should_emit_summary_and_failures():
-    module = _load_script_module("render_patch_scorecard_script", "benchmarks/render_patch_scorecard.py")
-    markdown = module.render_patch_scorecard(
-        [
-            {
-                "rows": [
-                    {
-                        "instance_id": "demo-1",
-                        "system": "copilot",
-                        "patch_applied": 1.0,
-                        "validation_passed": 1.0,
-                        "primary_file_hit": 1.0,
-                        "primary_span_hit": 1.0,
-                        "changed_file_recall": 1.0,
-                        "predicted_test_hit_rate": 1.0,
-                        "predicted_validation_cmd_hit_rate": 1.0,
-                        "apply_error": "",
-                    },
-                    {
-                        "instance_id": "demo-2",
-                        "system": "gemini-cli",
-                        "patch_applied": 0.0,
-                        "validation_passed": 0.0,
-                        "primary_file_hit": 0.0,
-                        "primary_span_hit": 0.0,
-                        "changed_file_recall": 0.0,
-                        "predicted_test_hit_rate": 1.0,
-                        "predicted_validation_cmd_hit_rate": 1.0,
-                        "apply_error": "timeout after 10s",
-                    },
-                ]
-            }
-        ]
+    module = _load_script_module(
+        "render_patch_scorecard_script", "benchmarks/render_patch_scorecard.py"
     )
+    markdown = module.render_patch_scorecard([
+        {
+            "rows": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "copilot",
+                    "patch_applied": 1.0,
+                    "validation_passed": 1.0,
+                    "primary_file_hit": 1.0,
+                    "primary_span_hit": 1.0,
+                    "changed_file_recall": 1.0,
+                    "predicted_test_hit_rate": 1.0,
+                    "predicted_validation_cmd_hit_rate": 1.0,
+                    "apply_error": "",
+                },
+                {
+                    "instance_id": "demo-2",
+                    "system": "gemini-cli",
+                    "patch_applied": 0.0,
+                    "validation_passed": 0.0,
+                    "primary_file_hit": 0.0,
+                    "primary_span_hit": 0.0,
+                    "changed_file_recall": 0.0,
+                    "predicted_test_hit_rate": 1.0,
+                    "predicted_validation_cmd_hit_rate": 1.0,
+                    "apply_error": "timeout after 10s",
+                },
+            ]
+        }
+    ])
 
     assert markdown.startswith("# Patch Evaluation Scorecard")
     assert "`copilot`" in markdown
@@ -2912,7 +3684,10 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
                 check=False,
             )
             patch = completed.stdout
-            patch = patch.replace(f"diff --git a/a/{relative_path} b/b/{relative_path}", f"diff --git a/{relative_path} b/{relative_path}")
+            patch = patch.replace(
+                f"diff --git a/a/{relative_path} b/b/{relative_path}",
+                f"diff --git a/{relative_path} b/{relative_path}",
+            )
             patch = patch.replace(f"--- a/a/{relative_path}", f"--- a/{relative_path}")
             patch = patch.replace(f"+++ b/b/{relative_path}", f"+++ b/{relative_path}")
             return patch
@@ -2957,7 +3732,9 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         r're.compile(r"\x1b\[[0-9;?]*[A-Za-z]")',
         1,
     )
-    click_unstyle_patch = _build_git_patch(click_unstyle_repo, "src/click/_compat.py", click_unstyle_fixed)
+    click_unstyle_patch = _build_git_patch(
+        click_unstyle_repo, "src/click/_compat.py", click_unstyle_fixed
+    )
     click_unstyle_prediction = {
         "instance_id": "click-unstyle-other-ansi",
         "system": "oracle",
@@ -2973,7 +3750,9 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "    super(1, 'commander.invalidArgument', message);\n",
         1,
     )
-    commander_error_patch = _build_git_patch(commander_error_repo, "lib/error.js", commander_error_fixed)
+    commander_error_patch = _build_git_patch(
+        commander_error_repo, "lib/error.js", commander_error_fixed
+    )
     commander_error_prediction = {
         "instance_id": "commander-invalid-argument-error-code",
         "system": "oracle",
@@ -2989,9 +3768,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "    if message is not None and not isinstance(message, (bytes, bytearray)):\n",
         1,
     )
-    click_secho_patch = _build_git_patch(
-        click_secho_repo, "src/click/termui.py", click_secho_fixed
-    )
+    click_secho_patch = _build_git_patch(click_secho_repo, "src/click/termui.py", click_secho_fixed)
     click_secho_prediction = {
         "instance_id": "click-secho-bytes-pass-through",
         "system": "oracle",
@@ -3011,9 +3788,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "    if not isinstance(text, str):\n        text = str(text)\n\n    bits: list[str] = []\n",
         1,
     )
-    click_style_patch = _build_git_patch(
-        click_style_repo, "src/click/termui.py", click_style_fixed
-    )
+    click_style_patch = _build_git_patch(click_style_repo, "src/click/termui.py", click_style_fixed)
     click_style_prediction = {
         "instance_id": "click-style-non-text-coercion",
         "system": "oracle",
@@ -3095,12 +3870,12 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     click_choice_source = click_choice_repo / "src/click/types.py"
     click_choice_original = click_choice_source.read_text(encoding="utf-8")
     click_choice_fixed = click_choice_original.replace(
-        "        choices_str = \", \".join(map(repr, self.choices))\n"
-        "        raise ValueError(f\"{value!r} is not one of {choices_str}.\")\n",
+        '        choices_str = ", ".join(map(repr, self.choices))\n'
+        '        raise ValueError(f"{value!r} is not one of {choices_str}.")\n',
         "        raise ValueError(self.get_invalid_choice_message(value, ctx=ctx))\n\n"
         "    def get_invalid_choice_message(self, value: t.Any, ctx: t.Any) -> str:\n"
-        "        choices_str = \", \".join(map(repr, self.choices))\n"
-        "        return f\"{value!r} is not one of {choices_str}.\"\n",
+        '        choices_str = ", ".join(map(repr, self.choices))\n'
+        '        return f"{value!r} is not one of {choices_str}."\n',
         1,
     )
     click_choice_patch = _build_git_patch(
@@ -3165,7 +3940,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     assert payload["summary"]["mean_primary_file_hit_rate"] == 1.0
 
 
-def test_render_world_class_report_should_include_baseline_and_competitor_sections():
+def test_render_world_class_report_should_include_baseline_competitor_and_provider_sections():
     module = _load_script_module(
         "render_world_class_report_script", "benchmarks/render_world_class_report.py"
     )
@@ -3186,8 +3961,29 @@ def test_render_world_class_report_should_include_baseline_and_competitor_sectio
     }
     profiling = {
         "dominant_phases": [
-            {"name": "caller_scan", "elapsed_s": 5.0, "avg_elapsed_s": 0.2, "percent_total_elapsed": 25.0}
+            {
+                "name": "caller_scan",
+                "elapsed_s": 5.0,
+                "avg_elapsed_s": 0.2,
+                "percent_total_elapsed": 25.0,
+            }
         ]
+    }
+    provider_navigation = {
+        "by_provider": {
+            "native": {
+                "scenario_count": 2,
+                "mean_caller_hit_rate": 0.0,
+                "mean_caller_precision": 0.0,
+                "mean_test_hit_rate": 1.0,
+            },
+            "hybrid": {
+                "scenario_count": 2,
+                "mean_caller_hit_rate": 1.0,
+                "mean_caller_precision": 1.0,
+                "mean_test_hit_rate": 1.0,
+            },
+        }
     }
     competitor = {
         "by_system": {
@@ -3203,12 +3999,15 @@ def test_render_world_class_report_should_include_baseline_and_competitor_sectio
     report = module.render_world_class_report(
         external_eval=external_eval,
         profiling=profiling,
+        provider_navigation=provider_navigation,
         competitor=competitor,
     )
 
     assert report.startswith("# World-Class Evaluation Report")
     assert "## External Baseline" in report
     assert "## Dominant Profiling Phases" in report
+    assert "## Provider Hard Cases" in report
+    assert "`hybrid`: caller_hit_rate=`1.0`" in report
     assert "## Competitor Summary" in report
 
 
@@ -3218,27 +4017,25 @@ def test_run_claude_competitor_eval_should_build_records_from_scenarios(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -3250,27 +4047,25 @@ def test_run_claude_competitor_eval_should_build_records_from_scenarios(tmp_path
             "Proc",
             (),
             {
-                "stdout": json.dumps(
-                    {
-                        "result": json.dumps(
-                            {
-                                "actual_primary_file": "a.py",
-                                "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                "actual_dependent_files": [],
-                                "actual_suggested_edit_files": [],
-                                "actual_test_files": [],
-                                "actual_validation_commands": ["pytest -q"],
-                                "context_token_count": 123,
-                                "notes": "ok",
-                            }
-                        )
-                    }
-                )
+                "stdout": json.dumps({
+                    "result": json.dumps({
+                        "actual_primary_file": "a.py",
+                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                        "actual_dependent_files": [],
+                        "actual_suggested_edit_files": [],
+                        "actual_test_files": [],
+                        "actual_validation_commands": ["pytest -q"],
+                        "context_token_count": 123,
+                        "notes": "ok",
+                    })
+                })
             },
         )(),
     )
 
-    payload = module.build_payload(scenario_pack, model="sonnet", permission_mode="bypassPermissions")
+    payload = module.build_payload(
+        scenario_pack, model="sonnet", permission_mode="bypassPermissions"
+    )
 
     assert payload["artifact"] == "claude_competitor_eval"
     assert payload["suite"] == "run_claude_competitor_eval"
@@ -3284,27 +4079,25 @@ def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path,
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -3316,31 +4109,25 @@ def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path,
             "Proc",
             (),
             {
-                "stdout": "\n".join(
-                    [
-                        json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                        json.dumps(
-                            {
-                                "type": "item.completed",
-                                "item": {
-                                    "type": "agent_message",
-                                    "text": json.dumps(
-                                        {
-                                            "actual_primary_file": "a.py",
-                                            "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                            "actual_dependent_files": [],
-                                            "actual_suggested_edit_files": [],
-                                            "actual_test_files": [],
-                                            "actual_validation_commands": ["pytest -q"],
-                                            "context_token_count": 123,
-                                            "notes": "ok",
-                                        }
-                                    ),
-                                },
-                            }
-                        ),
-                    ]
-                )
+                "stdout": "\n".join([
+                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                    json.dumps({
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps({
+                                "actual_primary_file": "a.py",
+                                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                "actual_dependent_files": [],
+                                "actual_suggested_edit_files": [],
+                                "actual_test_files": [],
+                                "actual_validation_commands": ["pytest -q"],
+                                "context_token_count": 123,
+                                "notes": "ok",
+                            }),
+                        },
+                    }),
+                ])
             },
         )(),
     )
@@ -3374,22 +4161,22 @@ def test_run_bakeoff_should_pass_provider_to_blast_radius(monkeypatch, tmp_path)
     monkeypatch.setattr(
         module.repo_map,
         "build_symbol_blast_radius_render",
-        lambda symbol, path, profile=False, semantic_provider="native": captured.update(
-            {"symbol": symbol, "path": str(path), "provider": semantic_provider}
-        )
-        or {
-            "edit_plan_seed": {
-                "primary_file": "a.py",
-                "primary_span": {"start_line": 1, "end_line": 2},
-                "dependent_files": [],
-                "suggested_edits": [],
-                "validation_tests": [],
-                "validation_commands": [],
-            },
-            "tests": [],
-            "token_estimate": 12,
-            "semantic_provider": semantic_provider,
-        },
+        lambda symbol, path, profile=False, semantic_provider="native": (
+            captured.update({"symbol": symbol, "path": str(path), "provider": semantic_provider})
+            or {
+                "edit_plan_seed": {
+                    "primary_file": "a.py",
+                    "primary_span": {"start_line": 1, "end_line": 2},
+                    "dependent_files": [],
+                    "suggested_edits": [],
+                    "validation_tests": [],
+                    "validation_commands": [],
+                },
+                "tests": [],
+                "token_estimate": 12,
+                "semantic_provider": semantic_provider,
+            }
+        ),
     )
 
     result = module.run_scenario(
@@ -3411,9 +4198,60 @@ def test_run_bakeoff_should_pass_provider_to_blast_radius(monkeypatch, tmp_path)
     assert result["semantic_provider"] == "hybrid"
 
 
+def test_run_provider_navigation_bakeoff_should_score_callers_and_tests() -> None:
+    module = _load_script_module(
+        "run_provider_navigation_bakeoff_score_script",
+        "benchmarks/run_provider_navigation_bakeoff.py",
+    )
+
+    row = module.score_scenario(
+        {
+            "repo_fixture": "C:/repo",
+            "query_or_symbol": "getchar",
+            "expected_caller_files": ["termui.py"],
+            "expected_test_files": ["tests/test_termui.py"],
+        },
+        {
+            "actual_caller_files": ["C:/repo/termui.py"],
+            "actual_test_files": ["C:/repo/tests/test_termui.py"],
+            "semantic_provider": "hybrid",
+        },
+    )
+
+    assert row["caller_hit_rate"] == 1.0
+    assert row["caller_precision"] == 1.0
+    assert row["test_hit_rate"] == 1.0
+    assert row["semantic_provider"] == "hybrid"
+
+
+def test_run_provider_navigation_bakeoff_should_build_payload_for_multiple_providers(
+    tmp_path,
+) -> None:
+    module = _load_script_module(
+        "run_provider_navigation_bakeoff_payload_script",
+        "benchmarks/run_provider_navigation_bakeoff.py",
+    )
+
+    payload = module.build_payload(
+        {"native": [{"caller_hit_rate": 0.0, "caller_precision": 0.0, "test_hit_rate": 0.0}]},
+        providers=["native", "hybrid"],
+        scenarios_path=tmp_path / "provider_hardcases.json",
+    )
+
+    assert payload["artifact"] == "bench_provider_navigation"
+    assert payload["providers"] == ["native", "hybrid"]
+    assert payload["by_provider"]["native"]["mean_caller_hit_rate"] == 0.0
+    assert payload["by_provider"]["hybrid"]["scenario_count"] == 0
+
+
 def test_run_external_eval_should_include_provider_in_payload(monkeypatch, tmp_path):
-    module = _load_script_module("run_external_eval_provider_script", "benchmarks/run_external_eval.py")
-    manifest = {"manifest_path": "manifest.json", "packs": [{"name": "demo", "language": "python", "scenario_pack": "demo.json"}]}
+    module = _load_script_module(
+        "run_external_eval_provider_script", "benchmarks/run_external_eval.py"
+    )
+    manifest = {
+        "manifest_path": "manifest.json",
+        "packs": [{"name": "demo", "language": "python", "scenario_pack": "demo.json"}],
+    }
     monkeypatch.setattr(
         module,
         "run_pack",
@@ -3432,8 +4270,23 @@ def test_run_external_eval_should_include_provider_in_payload(monkeypatch, tmp_p
                 "mean_context_token_count": 1.0,
                 "mean_false_positive_file_count": 0.0,
             },
-            "analysis": {"bucket_counts": {}, "mean_file_precision": 1.0, "scenarios_with_false_positives": 0},
-            "rows": [{"language": entry["language"], "file_hit_rate": 1.0, "file_precision": 1.0, "span_hit_rate": 1.0, "test_hit_rate": 1.0, "validation_cmd_hit_rate": 1.0, "context_token_count": 1, "false_positive_files": []}],
+            "analysis": {
+                "bucket_counts": {},
+                "mean_file_precision": 1.0,
+                "scenarios_with_false_positives": 0,
+            },
+            "rows": [
+                {
+                    "language": entry["language"],
+                    "file_hit_rate": 1.0,
+                    "file_precision": 1.0,
+                    "span_hit_rate": 1.0,
+                    "test_hit_rate": 1.0,
+                    "validation_cmd_hit_rate": 1.0,
+                    "context_token_count": 1,
+                    "false_positive_files": [],
+                }
+            ],
             "payload": {},
         },
     )
@@ -3460,18 +4313,16 @@ def test_run_patch_bakeoff_should_score_applied_patch_and_validation(tmp_path):
         "    assert create_invoice(2) == 4\n",
         encoding="utf-8",
     )
-    patch_text = "\n".join(
-        [
-            "diff --git a/src/payments.py b/src/payments.py",
-            "--- a/src/payments.py",
-            "+++ b/src/payments.py",
-            "@@ -1,2 +1,2 @@",
-            " def create_invoice(total):",
-            "-    return total + 1",
-            "+    return total + 2",
-            "",
-        ]
-    )
+    patch_text = "\n".join([
+        "diff --git a/src/payments.py b/src/payments.py",
+        "--- a/src/payments.py",
+        "+++ b/src/payments.py",
+        "@@ -1,2 +1,2 @@",
+        " def create_invoice(total):",
+        "-    return total + 1",
+        "+    return total + 2",
+        "",
+    ])
     scenario = {
         "instance_id": "demo-1",
         "repo_fixture": str(repo_root),
@@ -3489,7 +4340,7 @@ def test_run_patch_bakeoff_should_score_applied_patch_and_validation(tmp_path):
         "system": "demo",
         "model_patch": patch_text,
         "actual_test_files": ["tests/test_payments.py"],
-        "actual_validation_commands": ["python -c \"...\""],
+        "actual_validation_commands": ['python -c "..."'],
     }
 
     row = module.evaluate_prediction(scenario, prediction)
@@ -3502,6 +4353,7 @@ def test_run_patch_bakeoff_should_score_applied_patch_and_validation(tmp_path):
     assert row["changed_file_precision"] == 1.0
     assert row["predicted_test_hit_rate"] == 1.0
     assert row["predicted_validation_cmd_hit_rate"] == 1.0
+    assert row["reason"] == "ok"
 
 
 def test_run_patch_bakeoff_should_normalize_truncated_patch_before_apply(tmp_path):
@@ -3528,17 +4380,15 @@ def test_run_patch_bakeoff_should_normalize_truncated_patch_before_apply(tmp_pat
     prediction = {
         "instance_id": "demo-truncated",
         "system": "demo",
-        "model_patch": "\n".join(
-            [
-                "diff --git a/src/demo.py b/src/demo.py",
-                "--- a/src/demo.py",
-                "+++ b/src/demo.py",
-                "@@ -1,2 +1,2 @@",
-                " def value():",
-                "-    return 'old'",
-                "+    return 'new'",
-            ]
-        ),
+        "model_patch": "\n".join([
+            "diff --git a/src/demo.py b/src/demo.py",
+            "--- a/src/demo.py",
+            "+++ b/src/demo.py",
+            "@@ -1,2 +1,2 @@",
+            " def value():",
+            "-    return 'old'",
+            "+    return 'new'",
+        ]),
         "actual_test_files": [],
         "actual_validation_commands": [],
     }
@@ -3548,10 +4398,57 @@ def test_run_patch_bakeoff_should_normalize_truncated_patch_before_apply(tmp_pat
     assert row["patch_applied"] is True
     assert row["primary_file_hit"] == 1.0
     assert row["primary_span_hit"] == 1.0
+    assert row["reason"] == "ok"
+
+
+def test_run_patch_bakeoff_should_classify_no_patch_and_timeout_reasons(tmp_path):
+    module = _load_script_module(
+        "run_patch_bakeoff_reason_script", "benchmarks/run_patch_bakeoff.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    scenario = {
+        "instance_id": "demo-timeout",
+        "repo_fixture": str(repo_root),
+        "expected_primary_file": "a.py",
+        "expected_primary_span": {"start_line": 1, "end_line": 1},
+        "expected_changed_files": ["a.py"],
+        "expected_test_files": [],
+        "validation_commands": [],
+        "expected_validation_commands_contain": [],
+    }
+
+    no_patch_row = module.evaluate_prediction(
+        scenario,
+        {
+            "instance_id": "demo-timeout",
+            "system": "demo",
+            "model_patch": "",
+            "notes": "",
+            "actual_validation_commands": [],
+        },
+    )
+    timeout_row = module.evaluate_prediction(
+        scenario,
+        {
+            "instance_id": "demo-timeout",
+            "system": "demo",
+            "model_patch": "",
+            "notes": "timeout after 60s",
+            "actual_validation_commands": [],
+        },
+    )
+
+    assert no_patch_row["patch_applied"] is False
+    assert no_patch_row["reason"] == "no patch emitted"
+    assert timeout_row["patch_applied"] is False
+    assert timeout_row["reason"] == "timeout after 60s"
 
 
 def test_run_patch_bakeoff_should_build_summary_payload(tmp_path):
-    module = _load_script_module("run_patch_bakeoff_payload_script", "benchmarks/run_patch_bakeoff.py")
+    module = _load_script_module(
+        "run_patch_bakeoff_payload_script", "benchmarks/run_patch_bakeoff.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     scenarios = [
@@ -3566,17 +4463,248 @@ def test_run_patch_bakeoff_should_build_summary_payload(tmp_path):
             "expected_validation_commands_contain": [],
         }
     ]
-    predictions = [{"instance_id": "demo-1", "system": "demo", "model_patch": "", "actual_validation_commands": []}]
+    predictions = [
+        {
+            "instance_id": "demo-1",
+            "system": "demo",
+            "model_patch": "",
+            "notes": "",
+            "actual_validation_commands": [],
+        }
+    ]
 
     payload = module.build_patch_bakeoff_payload(scenarios, predictions)
 
     assert payload["suite"] == "run_patch_bakeoff"
     assert payload["summary"]["scenario_count"] == 1
     assert payload["rows"][0]["system"] == "demo"
+    assert payload["rows"][0]["reason"] == "no patch emitted"
+
+
+def test_run_patch_bakeoff_should_build_attempt_ledger_payloads_by_instance(tmp_path):
+    module = _load_script_module(
+        "run_patch_bakeoff_ledger_script", "benchmarks/run_patch_bakeoff.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    payload = {
+        "generated_at_epoch_s": 123.0,
+        "rows": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "patch_applied": False,
+                "validation_passed": False,
+                "reason": "patch apply failed",
+                "apply_error": "bad patch",
+            },
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "patch_applied": True,
+                "validation_passed": True,
+                "reason": "ok",
+                "apply_error": "",
+            },
+            {
+                "instance_id": "demo-2",
+                "system": "gemini-enhanced",
+                "patch_applied": False,
+                "validation_passed": False,
+                "reason": "timeout after 60s",
+                "apply_error": "",
+            },
+        ],
+    }
+    scenarios = [
+        {
+            "instance_id": "demo-1",
+            "repo_fixture": str(repo_root),
+            "expected_primary_file": "a.py",
+            "expected_primary_span": {"start_line": 1, "end_line": 1},
+            "expected_changed_files": ["a.py"],
+            "expected_test_files": [],
+            "validation_commands": [],
+            "expected_validation_commands_contain": [],
+        },
+        {
+            "instance_id": "demo-2",
+            "repo_fixture": str(repo_root),
+            "expected_primary_file": "b.py",
+            "expected_primary_span": {"start_line": 1, "end_line": 1},
+            "expected_changed_files": ["b.py"],
+            "expected_test_files": [],
+            "validation_commands": [],
+            "expected_validation_commands_contain": [],
+        },
+    ]
+
+    ledgers = module.build_attempt_ledger_payloads(payload, scenarios)
+
+    assert set(ledgers) == {"demo-1", "demo-2"}
+    accepted = ledgers["demo-1"]
+    assert accepted["artifact"] == "agent_attempt_ledger"
+    assert accepted["task_id"] == "demo-1"
+    assert accepted["root"] == str(repo_root)
+    assert accepted["final_outcome"]["status"] == "accepted"
+    assert accepted["final_outcome"]["accepted_attempt_id"] == "demo-1:claude-enhanced"
+    assert accepted["attempts"][0]["status"] == "rejected"
+    assert accepted["attempts"][1]["status"] == "accepted"
+    assert accepted["attempts"][1]["validation_success"] is True
+    rejected = ledgers["demo-2"]
+    assert rejected["final_outcome"]["status"] == "rejected"
+    assert rejected["final_outcome"]["accepted_attempt_id"] is None
+    assert rejected["attempts"][0]["retry_reason"] == "timeout after 60s"
+
+
+def test_run_patch_bakeoff_should_write_attempt_ledgers_when_requested(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_patch_bakeoff_ledger_cli_script", "benchmarks/run_patch_bakeoff.py"
+    )
+    output_path = tmp_path / "patch_bakeoff.json"
+    ledger_dir = tmp_path / "attempt_ledgers"
+    captured: list[tuple[Path, dict[str, object]]] = []
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+
+    scenarios = [
+        {
+            "instance_id": "demo-1",
+            "repo_fixture": str(repo_root),
+            "expected_primary_file": "a.py",
+            "expected_primary_span": {"start_line": 1, "end_line": 1},
+            "expected_changed_files": ["a.py"],
+            "expected_test_files": [],
+            "validation_commands": [],
+            "expected_validation_commands_contain": [],
+        }
+    ]
+    predictions = [
+        {
+            "instance_id": "demo-1",
+            "system": "claude-enhanced",
+            "model_patch": "",
+            "notes": "",
+            "actual_validation_commands": [],
+        }
+    ]
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_patch_bakeoff.py",
+            "--scenarios",
+            str(tmp_path / "scenarios.json"),
+            "--predictions",
+            str(tmp_path / "predictions.json"),
+            "--output",
+            str(output_path),
+            "--attempt-ledger-dir",
+            str(ledger_dir),
+        ],
+    )
+    monkeypatch.setattr(module, "load_patch_scenarios", lambda path: scenarios)
+    monkeypatch.setattr(module, "load_patch_predictions", lambda path: predictions)
+
+    def _fake_write_json(path: Path, payload: dict[str, object]) -> None:
+        captured.append((Path(path), payload))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured[0][0] == output_path.resolve()
+    assert captured[0][1]["artifact"] == "bench_patch_bakeoff"
+    assert captured[1][0] == (ledger_dir / "demo-1.json").resolve()
+    assert captured[1][1]["artifact"] == "agent_attempt_ledger"
+    assert captured[1][1]["task_id"] == "demo-1"
+
+
+def test_build_attempt_ledger_should_infer_final_outcome_and_retry_chain(tmp_path):
+    module = _load_script_module(
+        "build_attempt_ledger_script", "benchmarks/build_attempt_ledger.py"
+    )
+    payload = module.build_attempt_ledger_payload({
+        "task_id": "tg-task-1",
+        "root": str(tmp_path),
+        "attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "status": "validation_failed",
+                "retry_stage": "validation",
+                "retry_reason": "lint-failed",
+                "audit_manifest_path": "artifacts/audit/attempt-1.json",
+            },
+            {
+                "attempt_id": "attempt-2",
+                "parent_attempt_id": "attempt-1",
+                "status": "accepted",
+                "validation_success": True,
+                "score_artifact": "artifacts/scores/attempt-2.json",
+                "audit_manifest_path": "artifacts/audit/attempt-2.json",
+            },
+        ],
+    })
+
+    assert payload["artifact"] == "agent_attempt_ledger"
+    assert payload["suite"] == "agent_loop"
+    assert payload["final_outcome"]["status"] == "accepted"
+    assert payload["final_outcome"]["accepted_attempt_id"] == "attempt-2"
+    assert payload["replay"]["preserve_attempt_ids"] is True
+    assert payload["replay"]["partial_retry_ledger"] == [
+        {
+            "attempt_id": "attempt-1",
+            "resumed_from": "validation",
+            "resumed_as": "attempt-2",
+            "reason": "lint-failed",
+        }
+    ]
+    assert payload["replay"]["audit_chain"] == [
+        "artifacts/audit/attempt-1.json",
+        "artifacts/audit/attempt-2.json",
+    ]
+
+
+def test_build_attempt_ledger_should_infer_multi_session_and_multi_task_replay(tmp_path):
+    module = _load_script_module(
+        "build_attempt_ledger_multitask_script", "benchmarks/build_attempt_ledger.py"
+    )
+    payload = module.build_attempt_ledger_payload({
+        "task_id": "tg-task-1",
+        "root": str(tmp_path),
+        "tasks": [
+            {"task_id": "tg-task-1", "status": "accepted", "accepted_attempt_id": "attempt-2"},
+            {"task_id": "tg-task-2", "status": "accepted", "accepted_attempt_id": "attempt-3"},
+        ],
+        "attempts": [
+            {"attempt_id": "attempt-1", "status": "validation_failed", "session_id": "session-a"},
+            {
+                "attempt_id": "attempt-2",
+                "parent_attempt_id": "attempt-1",
+                "status": "accepted",
+                "session_id": "session-a",
+            },
+            {
+                "attempt_id": "attempt-3",
+                "parent_attempt_id": "attempt-2",
+                "status": "accepted",
+                "session_id": "session-b",
+            },
+        ],
+    })
+
+    assert payload["replay"]["multi_session"] is True
+    assert payload["replay"]["handoff"]["from_session_id"] == "session-a"
+    assert payload["replay"]["handoff"]["to_session_id"] == "session-b"
+    assert payload["replay"]["multi_task"] is True
+    assert payload["replay"]["task_chain"] == ["tg-task-1", "tg-task-2"]
 
 
 def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypatch, tmp_path):
-    module = _load_script_module("run_tensor_grep_patch_driver_script", "benchmarks/run_tensor_grep_patch_driver.py")
+    module = _load_script_module(
+        "run_tensor_grep_patch_driver_script", "benchmarks/run_tensor_grep_patch_driver.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     monkeypatch.setattr(
@@ -3594,6 +4722,24 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
                 "suggested_edits": [{"file": "src/service.py"}],
                 "validation_tests": ["tests/test_payments.py"],
                 "validation_commands": ["pytest -q"],
+            },
+            "navigation_pack": {
+                "primary_target": {
+                    "file": "src/payments.py",
+                    "mention_ref": "src/payments.py#L1-L2",
+                    "role": "primary",
+                },
+                "follow_up_reads": [
+                    {
+                        "file": "src/service.py",
+                        "mention_ref": "src/service.py#L1-L5",
+                        "role": "related",
+                    }
+                ],
+                "related_tests": ["tests/test_payments.py"],
+                "validation_commands": ["pytest -q"],
+                "edit_ordering": ["src/payments.py", "src/service.py"],
+                "rollback_risk": "medium",
             },
         },
     )
@@ -3613,11 +4759,197 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
     assert payload["semantic_provider"] == "hybrid"
     assert payload["records"][0]["actual_primary_file"] == "src/payments.py"
     assert payload["records"][0]["semantic_provider"] == "hybrid"
+    assert payload["records"][0]["navigation_pack"]["primary_target"]["file"] == "src/payments.py"
+    assert (
+        payload["records"][0]["navigation_pack"]["follow_up_reads"][0]["file"] == "src/service.py"
+    )
+    assert payload["records"][0]["navigation_pack"]["related_tests"] == ["tests/test_payments.py"]
     prompt = payload["records"][0]["prompt"]
     assert "Prefer editing the repository files directly." in prompt
     assert "include diff --git headers" in prompt
     assert "Do not emit fragile one-line hunks." in prompt
+
+
+def test_run_tensor_grep_patch_driver_should_fall_back_to_navigation_pack_when_edit_plan_seed_is_empty(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_tensor_grep_patch_driver_navigation_fallback_script",
+        "benchmarks/run_tensor_grep_patch_driver.py",
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    monkeypatch.setattr(
+        module.repo_map,
+        "build_context_render",
+        lambda query, path, **kwargs: {
+            "semantic_provider": "native",
+            "rendered_context": "function HybridSearch() {}",
+            "token_estimate": 21,
+            "tests": [],
+            "edit_plan_seed": {},
+            "navigation_pack": {
+                "primary_target": {
+                    "file": "src/hybrid-search.cjs",
+                    "start_line": 33,
+                    "end_line": 171,
+                    "mention_ref": "src/hybrid-search.cjs#L33-L171",
+                },
+                "follow_up_reads": [
+                    {
+                        "file": "src/vector-store.cjs",
+                        "mention_ref": "src/vector-store.cjs#L21-L88",
+                        "role": "related",
+                    }
+                ],
+                "parallel_read_groups": [
+                    {
+                        "phase": 0,
+                        "label": "primary",
+                        "can_parallelize": False,
+                        "mentions": ["src/hybrid-search.cjs#L33-L171"],
+                        "files": ["src/hybrid-search.cjs"],
+                        "roles": ["primary"],
+                    }
+                ],
+                "related_tests": [],
+                "validation_commands": [],
+                "edit_ordering": ["src/hybrid-search.cjs"],
+                "rollback_risk": 0.0,
+            },
+        },
+    )
+    scenarios = [
+        {
+            "instance_id": "demo-nav-1",
+            "repo_fixture": str(repo_root),
+            "query_or_symbol": "hybrid search",
+            "mode": "context-render",
+            "problem_statement": "Fix the hybrid search CLI.",
+            "max_repo_files": 25,
+        }
+    ]
+
+    payload = module.build_payload(scenarios, provider="native")
+
+    assert payload["records"][0]["actual_primary_file"] == "src/hybrid-search.cjs"
+    assert payload["records"][0]["actual_primary_span"] == {"start_line": 33, "end_line": 171}
+    assert payload["records"][0]["actual_validation_commands"] == []
+    prompt = payload["records"][0]["prompt"]
     assert "Do not run the test suite or create caches like .pytest_cache." in prompt
+
+
+def test_run_tensor_grep_patch_driver_should_forward_max_repo_files_for_context_render(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_tensor_grep_patch_driver_max_repo_files_script",
+        "benchmarks/run_tensor_grep_patch_driver.py",
+    )
+    seen: dict[str, object] = {}
+
+    def _fake_build_context_render(query, path, **kwargs):
+        seen["query"] = query
+        seen["path"] = str(path)
+        seen["max_repo_files"] = kwargs.get("max_repo_files")
+        seen["include_edit_plan_seed"] = kwargs.get("include_edit_plan_seed")
+        return {
+            "semantic_provider": "hybrid",
+            "rendered_context": "function demo() {}",
+            "token_estimate": 12,
+            "tests": [],
+            "edit_plan_seed": {
+                "primary_file": "src/demo.cjs",
+                "primary_span": {"start_line": 1, "end_line": 1},
+                "dependent_files": [],
+                "suggested_edits": [{"file": "src/demo.cjs"}],
+                "validation_tests": [],
+                "validation_commands": ["npm test"],
+            },
+            "navigation_pack": {
+                "primary_target": {"file": "src/demo.cjs", "mention_ref": "src/demo.cjs#L1-L1"},
+                "follow_up_reads": [],
+                "parallel_read_groups": [],
+                "related_tests": [],
+                "validation_commands": ["npm test"],
+                "edit_ordering": ["src/demo.cjs"],
+                "rollback_risk": 0.0,
+            },
+        }
+
+    monkeypatch.setattr(module.repo_map, "build_context_render", _fake_build_context_render)
+    scenarios = [
+        {
+            "instance_id": "demo-ctx-1",
+            "repo_fixture": str(tmp_path),
+            "query_or_symbol": "hybrid search daemon",
+            "mode": "context-render",
+            "problem_statement": "Fix the CLI.",
+            "max_repo_files": 25,
+        }
+    ]
+
+    payload = module.build_payload(scenarios, provider="hybrid")
+
+    assert seen["query"] == "hybrid search daemon"
+    assert seen["path"] == str(tmp_path)
+    assert seen["max_repo_files"] == 25
+    assert seen["include_edit_plan_seed"] is False
+    assert payload["records"][0]["actual_validation_commands"] == ["npm test"]
+
+
+def test_run_tensor_grep_patch_driver_should_build_attempt_ledger_from_records(tmp_path):
+    module = _load_script_module(
+        "run_tensor_grep_patch_driver_ledger_script", "benchmarks/run_tensor_grep_patch_driver.py"
+    )
+    payload = {
+        "records": [
+            {
+                "instance_id": "demo-1",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Fix it.",
+            },
+            {
+                "instance_id": "demo-2",
+                "repo_fixture": str(tmp_path),
+                "prompt": "Fix it again.",
+            },
+        ]
+    }
+
+    ledger = module.build_attempt_ledger_for_payload(payload)
+
+    assert ledger["artifact"] == "agent_attempt_ledger"
+    assert ledger["suite"] == "agent_loop"
+    assert ledger["final_outcome"]["status"] == "accepted"
+    assert ledger["replay"]["multi_task"] is True
+    assert ledger["replay"]["task_chain"] == ["demo-1", "demo-2"]
+    assert ledger["attempts"][0]["attempt_id"] == "demo-1:tensor-grep"
+    assert ledger["attempts"][1]["attempt_id"] == "demo-2:tensor-grep"
+
+
+def test_run_tensor_grep_patch_driver_should_load_utf8_bom_scenarios(tmp_path):
+    module = _load_script_module(
+        "run_tensor_grep_patch_driver_bom_script", "benchmarks/run_tensor_grep_patch_driver.py"
+    )
+    scenarios_path = tmp_path / "driver_scenarios.json"
+    payload = {
+        "scenarios": [
+            {
+                "instance_id": "demo-1",
+                "repo_fixture": str(tmp_path),
+                "query_or_symbol": "create_invoice",
+                "mode": "context-render",
+                "problem_statement": "Fix create_invoice.",
+            }
+        ]
+    }
+    scenarios_path.write_text(json.dumps(payload), encoding="utf-8-sig")
+
+    scenarios = module.load_driver_scenarios(scenarios_path)
+
+    assert len(scenarios) == 1
+    assert scenarios[0]["instance_id"] == "demo-1"
 
 
 def test_patch_runner_common_should_ignore_ephemeral_files_when_diffing(tmp_path):
@@ -3641,20 +4973,20 @@ def test_patch_runner_common_should_ignore_ephemeral_files_when_diffing(tmp_path
 
 
 def test_patch_runner_common_should_normalize_truncated_model_patch():
-    module = _load_script_module("patch_runner_common_normalize_script", "benchmarks/patch_runner_common.py")
-    patch_text = "\n".join(
-        [
-            "diff --git a/src/demo.py b/src/demo.py",
-            "index 1111111..2222222 100644",
-            "--- a/src/demo.py",
-            "+++ b/src/demo.py",
-            "@@ -1,3 +1,3 @@",
-            " line1",
-            "-old",
-            "+new",
-            " line3",
-        ]
+    module = _load_script_module(
+        "patch_runner_common_normalize_script", "benchmarks/patch_runner_common.py"
     )
+    patch_text = "\n".join([
+        "diff --git a/src/demo.py b/src/demo.py",
+        "index 1111111..2222222 100644",
+        "--- a/src/demo.py",
+        "+++ b/src/demo.py",
+        "@@ -1,3 +1,3 @@",
+        " line1",
+        "-old",
+        "+new",
+        " line3",
+    ])
 
     normalized = module.normalize_model_patch_text(patch_text)
 
@@ -3662,7 +4994,9 @@ def test_patch_runner_common_should_normalize_truncated_model_patch():
 
 
 def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_script", "benchmarks/run_gemini_patch_predictions.py")
+    module = _load_script_module(
+        "run_gemini_patch_predictions_script", "benchmarks/run_gemini_patch_predictions.py"
+    )
     driver_payload = {
         "records": [
             {
@@ -3677,18 +5011,16 @@ def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tm
     monkeypatch.setattr(
         module,
         "_run_gemini_command",
-        lambda *args, **kwargs: json.dumps(
-            {
-                "response": "```diff\n"
-                "diff --git a/demo.py b/demo.py\n"
-                "--- a/demo.py\n"
-                "+++ b/demo.py\n"
-                "@@ -1 +1 @@\n"
-                "-old\n"
-                "+new\n"
-                "```"
-            }
-        ),
+        lambda *args, **kwargs: json.dumps({
+            "response": "```diff\n"
+            "diff --git a/demo.py b/demo.py\n"
+            "--- a/demo.py\n"
+            "+++ b/demo.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+            "```"
+        }),
     )
 
     payload = module.build_payload(driver_payload, model="gemini-2.5-flash")
@@ -3700,7 +5032,9 @@ def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tm
 
 
 def test_run_gemini_patch_predictions_should_capture_timeout_as_empty_patch(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_timeout_script", "benchmarks/run_gemini_patch_predictions.py")
+    module = _load_script_module(
+        "run_gemini_patch_predictions_timeout_script", "benchmarks/run_gemini_patch_predictions.py"
+    )
     driver_payload = {
         "records": [
             {
@@ -3725,7 +5059,9 @@ def test_run_gemini_patch_predictions_should_capture_timeout_as_empty_patch(monk
 
 
 def test_run_gemini_patch_predictions_should_fallback_to_repo_diff(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_diff_script", "benchmarks/run_gemini_patch_predictions.py")
+    module = _load_script_module(
+        "run_gemini_patch_predictions_diff_script", "benchmarks/run_gemini_patch_predictions.py"
+    )
     (tmp_path / "demo.py").write_text("old\n", encoding="utf-8")
     driver_payload = {
         "records": [
@@ -3752,8 +5088,110 @@ def test_run_gemini_patch_predictions_should_fallback_to_repo_diff(monkeypatch, 
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "old\n"
 
 
-def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_kill_script", "benchmarks/run_gemini_patch_predictions.py")
+def test_run_gemini_patch_predictions_should_build_attempt_ledger_payloads_by_instance(tmp_path):
+    module = _load_script_module(
+        "run_gemini_patch_predictions_ledger_script",
+        "benchmarks/run_gemini_patch_predictions.py",
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    driver_payload = {
+        "records": [{"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}]
+    }
+
+    ledgers = module.build_attempt_ledger_payloads(
+        driver_payload,
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "gemini-cli",
+                "model_patch": "",
+                "notes": "timeout after 60s",
+            }
+        ],
+    )
+
+    ledger = ledgers["demo-1"]
+    assert ledger["artifact"] == "agent_attempt_ledger"
+    assert ledger["task_id"] == "demo-1"
+    assert ledger["final_outcome"]["status"] == "needs_retry"
+    assert ledger["replay"]["next_action"] == "score patch bakeoff"
+    assert ledger["attempts"][0]["retry_reason"] == "timeout after 60s"
+
+
+def test_run_gemini_patch_predictions_should_write_attempt_ledgers_when_requested(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gemini_patch_predictions_ledger_cli_script",
+        "benchmarks/run_gemini_patch_predictions.py",
+    )
+    output_path = tmp_path / "gemini_predictions.json"
+    ledger_dir = tmp_path / "attempt_ledgers"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    captured: list[tuple[Path, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gemini_patch_predictions.py",
+            "--input",
+            str(tmp_path / "driver.json"),
+            "--output",
+            str(output_path),
+            "--attempt-ledger-dir",
+            str(ledger_dir),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "load_driver_payload",
+        lambda path: {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "build_payload",
+        lambda *args, **kwargs: {
+            "artifact": "gemini_patch_predictions",
+            "suite": "run_gemini_patch_predictions",
+            "generated_at_epoch_s": 1.0,
+            "environment": {"platform": "windows"},
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "gemini-cli",
+                    "model_patch": "",
+                    "notes": "timeout after 60s",
+                },
+            ],
+        },
+    )
+
+    def _fake_write_json(path: Path, payload: dict[str, object]) -> None:
+        captured.append((Path(path), payload))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured[0][0] == output_path.resolve()
+    assert captured[0][1]["artifact"] == "gemini_patch_predictions"
+    assert captured[1][0] == (ledger_dir / "demo-1.json").resolve()
+    assert captured[1][1]["artifact"] == "agent_attempt_ledger"
+
+
+def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gemini_patch_predictions_kill_script", "benchmarks/run_gemini_patch_predictions.py"
+    )
     calls: list[tuple[str, object]] = []
 
     class FakeProc:
@@ -3776,8 +5214,10 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(m
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda *args, **kwargs: calls.append(("taskkill", (list(args[0]), kwargs.get("timeout"))))
-        or type("Proc", (), {"returncode": 0})(),
+        lambda *args, **kwargs: (
+            calls.append(("taskkill", (list(args[0]), kwargs.get("timeout"))))
+            or type("Proc", (), {"returncode": 0})()
+        ),
     )
 
     try:
@@ -3791,8 +5231,13 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(m
     assert any(call[0] == "taskkill" and "/PID" in call[1][0] and call[1][1] == 5 for call in calls)
 
 
-def test_run_gemini_patch_predictions_should_fallback_to_kill_when_taskkill_hangs(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_kill_fallback_script", "benchmarks/run_gemini_patch_predictions.py")
+def test_run_gemini_patch_predictions_should_fallback_to_kill_when_taskkill_hangs(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gemini_patch_predictions_kill_fallback_script",
+        "benchmarks/run_gemini_patch_predictions.py",
+    )
     calls: list[tuple[str, object]] = []
 
     class FakeProc:
@@ -3809,7 +5254,9 @@ def test_run_gemini_patch_predictions_should_fallback_to_kill_when_taskkill_hang
     monkeypatch.setattr(
         module.subprocess,
         "run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(module.subprocess.TimeoutExpired(cmd="taskkill", timeout=5)),
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            module.subprocess.TimeoutExpired(cmd="taskkill", timeout=5)
+        ),
     )
 
     module._terminate_process_tree(FakeProc())
@@ -3819,17 +5266,18 @@ def test_run_gemini_patch_predictions_should_fallback_to_kill_when_taskkill_hang
 
 
 def test_run_gemini_patch_predictions_should_prepare_isolated_home_without_mcp(tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_isolated_home_script", "benchmarks/run_gemini_patch_predictions.py")
+    module = _load_script_module(
+        "run_gemini_patch_predictions_isolated_home_script",
+        "benchmarks/run_gemini_patch_predictions.py",
+    )
     source_home = tmp_path / "source-home"
     source_home.mkdir()
     (source_home / "settings.json").write_text(
-        json.dumps(
-            {
-                "mcpServers": {"Exa": {"command": "exa-mcp"}},
-                "security": {"auth": {"selectedType": "oauth-personal"}},
-                "general": {"preferredEditor": "vscode"},
-            }
-        ),
+        json.dumps({
+            "mcpServers": {"Exa": {"command": "exa-mcp"}},
+            "security": {"auth": {"selectedType": "oauth-personal"}},
+            "general": {"preferredEditor": "vscode"},
+        }),
         encoding="utf-8",
     )
     (source_home / "oauth_creds.json").write_text("{}", encoding="utf-8")
@@ -3837,7 +5285,9 @@ def test_run_gemini_patch_predictions_should_prepare_isolated_home_without_mcp(t
     (source_home / "GEMINI.md").write_text("persona", encoding="utf-8")
 
     isolated_root = module._prepare_isolated_gemini_home(tmp_path / "run-root", source_home)
-    isolated_settings = json.loads((isolated_root / ".gemini" / "settings.json").read_text(encoding="utf-8"))
+    isolated_settings = json.loads(
+        (isolated_root / ".gemini" / "settings.json").read_text(encoding="utf-8")
+    )
 
     assert "mcpServers" not in isolated_settings
     assert isolated_settings["security"]["auth"]["selectedType"] == "oauth-personal"
@@ -3846,7 +5296,9 @@ def test_run_gemini_patch_predictions_should_prepare_isolated_home_without_mcp(t
 
 
 def test_run_gemini_patch_predictions_should_run_with_isolated_home_env(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_env_script", "benchmarks/run_gemini_patch_predictions.py")
+    module = _load_script_module(
+        "run_gemini_patch_predictions_env_script", "benchmarks/run_gemini_patch_predictions.py"
+    )
     seen_env: dict[str, str] = {}
 
     class FakeProc:
@@ -3864,10 +5316,16 @@ def test_run_gemini_patch_predictions_should_run_with_isolated_home_env(monkeypa
         return FakeProc()
 
     monkeypatch.setattr(module, "resolve_gemini_binary", lambda: "gemini")
-    monkeypatch.setattr(module, "_prepare_isolated_gemini_home", lambda repo_root, source_home=None: repo_root / ".gemini-home")
+    monkeypatch.setattr(
+        module,
+        "_prepare_isolated_gemini_home",
+        lambda repo_root, source_home=None: repo_root / ".gemini-home",
+    )
     monkeypatch.setattr(module.subprocess, "Popen", _fake_popen)
 
-    module._run_gemini_command(tmp_path, "prompt", model="gemini-3-flash-preview", timeout_seconds=5)
+    module._run_gemini_command(
+        tmp_path, "prompt", model="gemini-3-flash-preview", timeout_seconds=5
+    )
 
     assert seen_env["HOME"].endswith(".gemini-home")
     assert seen_env["USERPROFILE"] == seen_env["HOME"]
@@ -3893,7 +5351,9 @@ def test_gemini_project_context_and_skill_should_exist():
 
 
 def test_run_gemini_skill_ab_should_install_project_skill(tmp_path):
-    module = _load_script_module("run_gemini_skill_ab_skill_script", "benchmarks/run_gemini_skill_ab.py")
+    module = _load_script_module(
+        "run_gemini_skill_ab_skill_script", "benchmarks/run_gemini_skill_ab.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     skill_dir = tmp_path / "skill"
@@ -3954,12 +5414,92 @@ def test_run_gemini_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     )
 
     assert payload["artifact"] == "gemini_skill_ab"
-    assert [record["system"] for record in payload["records"]] == ["gemini-baseline", "gemini-enhanced"]
-    assert all("diff --git a/demo.py b/demo.py" in record["model_patch"] for record in payload["records"])
+    assert [record["system"] for record in payload["records"]] == [
+        "gemini-baseline",
+        "gemini-enhanced",
+    ]
+    assert all(
+        "diff --git a/demo.py b/demo.py" in record["model_patch"] for record in payload["records"]
+    )
+
+
+def test_run_gemini_skill_ab_should_score_records_when_scenarios_are_provided(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gemini_skill_ab_scored_script", "benchmarks/run_gemini_skill_ab.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    context_path = tmp_path / "GEMINI.md"
+    context_path.write_text("# context\n", encoding="utf-8")
+    driver_payload = {
+        "records": [
+            {
+                "instance_id": "demo-1",
+                "repo_fixture": str(repo_root),
+                "prompt": f"Fix {repo_root}",
+                "actual_test_files": [],
+                "actual_validation_commands": ["pytest -q"],
+            }
+        ]
+    }
+    scenarios_path = tmp_path / "scenarios.json"
+    scenarios_path.write_text(
+        json.dumps({
+            "scenarios": [
+                {
+                    "instance_id": "demo-1",
+                    "repo_fixture": str(repo_root),
+                    "expected_primary_file": "demo.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 1},
+                    "expected_changed_files": ["demo.py"],
+                    "expected_test_files": [],
+                    "validation_commands": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    def _fake_run(repo_root, prompt, **kwargs):
+        del kwargs, prompt
+        target = repo_root / "demo.py"
+        if (repo_root / "GEMINI.md").exists():
+            target.write_text("enhanced\n", encoding="utf-8")
+        else:
+            target.write_text("baseline\n", encoding="utf-8")
+        return json.dumps({"response": "no diff emitted"})
+
+    monkeypatch.setattr(module.gemini_runner, "_run_gemini_command", _fake_run)
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gemini-3-flash-preview",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        context_path=context_path,
+        work_root=tmp_path / "work",
+        scenarios_path=scenarios_path,
+    )
+
+    assert payload["artifact"] == "gemini_skill_ab"
+    assert payload["summary"]["scenario_count"] == 2
+    assert len(payload["rows"]) == 2
+    assert payload["system_score_summary"]["gemini-baseline"]["mean_patch_applied_rate"] == 1.0
+    assert payload["system_score_summary"]["gemini-enhanced"]["mean_validation_pass_rate"] == 1.0
 
 
 def test_run_gemini_skill_ab_should_support_partial_resume(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_skill_ab_resume_script", "benchmarks/run_gemini_skill_ab.py")
+    module = _load_script_module(
+        "run_gemini_skill_ab_resume_script", "benchmarks/run_gemini_skill_ab.py"
+    )
     output_path = tmp_path / "gemini_ab.json"
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -3981,17 +5521,43 @@ def test_run_gemini_skill_ab_should_support_partial_resume(monkeypatch, tmp_path
         del kwargs
         seen.append(str(record["instance_id"]))
         return [
-            {"instance_id": str(record["instance_id"]), "system": "gemini-baseline", "model_patch": "", "wall_clock_seconds": 1.0, "notes": "", "use_skill": False},
-            {"instance_id": str(record["instance_id"]), "system": "gemini-enhanced", "model_patch": "", "wall_clock_seconds": 2.0, "notes": "", "use_skill": True},
+            {
+                "instance_id": str(record["instance_id"]),
+                "system": "gemini-baseline",
+                "model_patch": "",
+                "wall_clock_seconds": 1.0,
+                "notes": "",
+                "use_skill": False,
+            },
+            {
+                "instance_id": str(record["instance_id"]),
+                "system": "gemini-enhanced",
+                "model_patch": "",
+                "wall_clock_seconds": 2.0,
+                "notes": "",
+                "use_skill": True,
+            },
         ]
 
     monkeypatch.setattr(module, "run_ab_record", _fake_run)
-    partial = module.build_partial_payload(
-        [
-            {"instance_id": "demo-1", "system": "gemini-baseline", "model_patch": "", "wall_clock_seconds": 1.0, "notes": "", "use_skill": False},
-            {"instance_id": "demo-1", "system": "gemini-enhanced", "model_patch": "", "wall_clock_seconds": 2.0, "notes": "", "use_skill": True},
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-baseline",
+            "model_patch": "",
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+            "use_skill": False,
+        },
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-enhanced",
+            "model_patch": "",
+            "wall_clock_seconds": 2.0,
+            "notes": "",
+            "use_skill": True,
+        },
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -4009,8 +5575,210 @@ def test_run_gemini_skill_ab_should_support_partial_resume(monkeypatch, tmp_path
     assert len(payload["records"]) == 4
 
 
+def test_run_gemini_skill_ab_should_resume_incomplete_instance_ids(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gemini_skill_ab_incomplete_resume_script", "benchmarks/run_gemini_skill_ab.py"
+    )
+    output_path = tmp_path / "gemini_ab.json"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    context_path = tmp_path / "GEMINI.md"
+    context_path.write_text("# context\n", encoding="utf-8")
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "one"},
+            {"instance_id": "demo-2", "repo_fixture": str(repo_root), "prompt": "two"},
+        ]
+    }
+    seen: list[str] = []
+
+    def _fake_run(record, **kwargs):
+        del kwargs
+        seen.append(str(record["instance_id"]))
+        return [
+            {
+                "instance_id": str(record["instance_id"]),
+                "system": "gemini-baseline",
+                "model_patch": "",
+                "wall_clock_seconds": 1.0,
+                "notes": "",
+                "use_skill": False,
+            },
+            {
+                "instance_id": str(record["instance_id"]),
+                "system": "gemini-enhanced",
+                "model_patch": "",
+                "wall_clock_seconds": 2.0,
+                "notes": "",
+                "use_skill": True,
+            },
+        ]
+
+    monkeypatch.setattr(module, "run_ab_record", _fake_run)
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-enhanced",
+            "model_patch": "",
+            "wall_clock_seconds": 2.0,
+            "notes": "",
+            "use_skill": True,
+        },
+    ])
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_payload(
+        driver_payload,
+        model="gemini-3-flash-preview",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        context_path=context_path,
+        work_root=tmp_path / "work",
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-1", "demo-2"]
+    assert len(payload["records"]) == 4
+
+
+def test_run_gemini_skill_ab_should_build_attempt_ledger_payloads_by_instance(tmp_path):
+    module = _load_script_module(
+        "run_gemini_skill_ab_ledger_script", "benchmarks/run_gemini_skill_ab.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."},
+            {"instance_id": "demo-2", "repo_fixture": str(repo_root), "prompt": "Fix two."},
+        ]
+    }
+    prediction_records = [
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-baseline",
+            "model_patch": "",
+            "notes": "timeout after 60s",
+        },
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-enhanced",
+            "model_patch": "diff --git a/x b/x",
+            "notes": "",
+        },
+        {"instance_id": "demo-2", "system": "gemini-baseline", "model_patch": "", "notes": ""},
+        {"instance_id": "demo-2", "system": "gemini-enhanced", "model_patch": "", "notes": ""},
+    ]
+
+    ledgers = module.build_attempt_ledger_payloads(driver_payload, prediction_records)
+
+    assert set(ledgers) == {"demo-1", "demo-2"}
+    accepted = ledgers["demo-1"]
+    assert accepted["artifact"] == "agent_attempt_ledger"
+    assert accepted["task_id"] == "demo-1"
+    assert accepted["root"] == str(repo_root)
+    assert accepted["final_outcome"]["status"] == "completed"
+    assert accepted["replay"]["next_action"] == "score patch bakeoff"
+    assert accepted["attempts"][0]["status"] == "needs_retry"
+    assert accepted["attempts"][0]["retry_reason"] == "timeout after 60s"
+    assert accepted["attempts"][1]["status"] == "completed"
+    retry = ledgers["demo-2"]
+    assert retry["final_outcome"]["status"] == "needs_retry"
+    assert retry["attempts"][0]["status"] == "needs_retry"
+    assert retry["attempts"][1]["status"] == "needs_retry"
+
+
+def test_run_gemini_skill_ab_should_write_attempt_ledgers_when_requested(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_gemini_skill_ab_ledger_cli_script", "benchmarks/run_gemini_skill_ab.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\n---\n", encoding="utf-8")
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    context_path = tmp_path / "GEMINI.md"
+    context_path.write_text("# context\n", encoding="utf-8")
+    output_path = tmp_path / "gemini_ab.json"
+    ledger_dir = tmp_path / "attempt_ledgers"
+    captured: list[tuple[Path, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gemini_skill_ab.py",
+            "--input",
+            str(tmp_path / "driver.json"),
+            "--output",
+            str(output_path),
+            "--attempt-ledger-dir",
+            str(ledger_dir),
+            "--skill-dir",
+            str(skill_dir),
+            "--context-path",
+            str(context_path),
+            "--work-root",
+            str(tmp_path / "work"),
+        ],
+    )
+    monkeypatch.setattr(
+        module.gemini_runner,
+        "load_driver_payload",
+        lambda path: {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "build_payload",
+        lambda *args, **kwargs: {
+            "artifact": "gemini_skill_ab",
+            "suite": "run_gemini_skill_ab",
+            "generated_at_epoch_s": 1.0,
+            "environment": {"platform": "windows"},
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "gemini-baseline",
+                    "model_patch": "",
+                    "notes": "timeout after 60s",
+                },
+                {
+                    "instance_id": "demo-1",
+                    "system": "gemini-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "notes": "",
+                },
+            ],
+        },
+    )
+
+    def _fake_write_json(path: Path, payload: dict[str, object]) -> None:
+        captured.append((Path(path), payload))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured[0][0] == output_path.resolve()
+    assert captured[0][1]["artifact"] == "gemini_skill_ab"
+    assert captured[1][0] == (ledger_dir / "demo-1.json").resolve()
+    assert captured[1][1]["artifact"] == "agent_attempt_ledger"
+
+
 def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_resume_script", "benchmarks/run_gemini_patch_predictions.py")
+    module = _load_script_module(
+        "run_gemini_patch_predictions_resume_script", "benchmarks/run_gemini_patch_predictions.py"
+    )
     output_path = tmp_path / "gemini_predictions.json"
     driver_payload = {
         "records": [
@@ -4034,19 +5802,17 @@ def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch,
         }
 
     monkeypatch.setattr(module, "run_gemini_patch_record", _fake_run)
-    partial = module.build_partial_payload(
-        [
-            {
-                "instance_id": "demo-1",
-                "system": "gemini-cli",
-                "model_patch": "diff --git a/demo-1 b/demo-1",
-                "actual_test_files": [],
-                "actual_validation_commands": [],
-                "wall_clock_seconds": 1.0,
-                "notes": "",
-            }
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-cli",
+            "model_patch": "diff --git a/demo-1 b/demo-1",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        }
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -4061,7 +5827,10 @@ def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch,
 
 
 def test_run_gemini_patch_predictions_should_checkpoint_per_record(monkeypatch, tmp_path):
-    module = _load_script_module("run_gemini_patch_predictions_checkpoint_script", "benchmarks/run_gemini_patch_predictions.py")
+    module = _load_script_module(
+        "run_gemini_patch_predictions_checkpoint_script",
+        "benchmarks/run_gemini_patch_predictions.py",
+    )
     output_path = tmp_path / "gemini_predictions.json"
     driver_payload = {
         "records": [
@@ -4084,7 +5853,9 @@ def test_run_gemini_patch_predictions_should_checkpoint_per_record(monkeypatch, 
             "notes": "",
         },
     )
-    monkeypatch.setattr(module, "write_checkpoint", lambda path, records: writes.append(len(records)))
+    monkeypatch.setattr(
+        module, "write_checkpoint", lambda path, records: writes.append(len(records))
+    )
 
     payload = module.build_payload(
         driver_payload,
@@ -4098,7 +5869,9 @@ def test_run_gemini_patch_predictions_should_checkpoint_per_record(monkeypatch, 
 
 
 def test_run_copilot_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
-    module = _load_script_module("run_copilot_patch_predictions_script", "benchmarks/run_copilot_patch_predictions.py")
+    module = _load_script_module(
+        "run_copilot_patch_predictions_script", "benchmarks/run_copilot_patch_predictions.py"
+    )
     driver_payload = {
         "records": [
             {
@@ -4113,14 +5886,16 @@ def test_run_copilot_patch_predictions_should_build_patch_records(monkeypatch, t
     monkeypatch.setattr(
         module,
         "_run_copilot_command",
-        lambda *args, **kwargs: "```diff\n"
-        "diff --git a/demo.py b/demo.py\n"
-        "--- a/demo.py\n"
-        "+++ b/demo.py\n"
-        "@@ -1 +1 @@\n"
-        "-old\n"
-        "+new\n"
-        "```",
+        lambda *args, **kwargs: (
+            "```diff\n"
+            "diff --git a/demo.py b/demo.py\n"
+            "--- a/demo.py\n"
+            "+++ b/demo.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+            "```"
+        ),
     )
 
     payload = module.build_payload(driver_payload, model="gpt-5.2")
@@ -4132,7 +5907,10 @@ def test_run_copilot_patch_predictions_should_build_patch_records(monkeypatch, t
 
 
 def test_run_copilot_patch_predictions_should_strip_invalid_index_lines(monkeypatch, tmp_path):
-    module = _load_script_module("run_copilot_patch_predictions_normalize_script", "benchmarks/run_copilot_patch_predictions.py")
+    module = _load_script_module(
+        "run_copilot_patch_predictions_normalize_script",
+        "benchmarks/run_copilot_patch_predictions.py",
+    )
     driver_payload = {
         "records": [
             {
@@ -4147,13 +5925,15 @@ def test_run_copilot_patch_predictions_should_strip_invalid_index_lines(monkeypa
     monkeypatch.setattr(
         module,
         "_run_copilot_command",
-        lambda *args, **kwargs: "diff --git a/demo.py b/demo.py\n"
-        "index XXXXXXX..XXXXXXX 100644\n"
-        "--- a/demo.py\n"
-        "+++ b/demo.py\n"
-        "@@ -1 +1 @@\n"
-        "-old\n"
-        "+new\n",
+        lambda *args, **kwargs: (
+            "diff --git a/demo.py b/demo.py\n"
+            "index XXXXXXX..XXXXXXX 100644\n"
+            "--- a/demo.py\n"
+            "+++ b/demo.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        ),
     )
 
     payload = module.build_payload(driver_payload, model="gpt-5.2")
@@ -4163,7 +5943,10 @@ def test_run_copilot_patch_predictions_should_strip_invalid_index_lines(monkeypa
 
 
 def test_run_copilot_patch_predictions_should_capture_timeout_as_empty_patch(monkeypatch, tmp_path):
-    module = _load_script_module("run_copilot_patch_predictions_timeout_script", "benchmarks/run_copilot_patch_predictions.py")
+    module = _load_script_module(
+        "run_copilot_patch_predictions_timeout_script",
+        "benchmarks/run_copilot_patch_predictions.py",
+    )
     driver_payload = {
         "records": [
             {
@@ -4188,7 +5971,9 @@ def test_run_copilot_patch_predictions_should_capture_timeout_as_empty_patch(mon
 
 
 def test_run_copilot_patch_predictions_should_fallback_to_repo_diff(monkeypatch, tmp_path):
-    module = _load_script_module("run_copilot_patch_predictions_diff_script", "benchmarks/run_copilot_patch_predictions.py")
+    module = _load_script_module(
+        "run_copilot_patch_predictions_diff_script", "benchmarks/run_copilot_patch_predictions.py"
+    )
     (tmp_path / "demo.py").write_text("old\n", encoding="utf-8")
     driver_payload = {
         "records": [
@@ -4215,8 +6000,107 @@ def test_run_copilot_patch_predictions_should_fallback_to_repo_diff(monkeypatch,
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "old\n"
 
 
+def test_run_copilot_patch_predictions_should_build_attempt_ledger_payloads_by_instance(tmp_path):
+    module = _load_script_module(
+        "run_copilot_patch_predictions_ledger_script",
+        "benchmarks/run_copilot_patch_predictions.py",
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    driver_payload = {
+        "records": [{"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}]
+    }
+
+    ledgers = module.build_attempt_ledger_payloads(
+        driver_payload,
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "copilot",
+                "model_patch": "",
+                "notes": "timeout after 60s",
+            }
+        ],
+    )
+
+    ledger = ledgers["demo-1"]
+    assert ledger["artifact"] == "agent_attempt_ledger"
+    assert ledger["task_id"] == "demo-1"
+    assert ledger["final_outcome"]["status"] == "needs_retry"
+    assert ledger["attempts"][0]["retry_reason"] == "timeout after 60s"
+
+
+def test_run_copilot_patch_predictions_should_write_attempt_ledgers_when_requested(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_copilot_patch_predictions_ledger_cli_script",
+        "benchmarks/run_copilot_patch_predictions.py",
+    )
+    output_path = tmp_path / "copilot_predictions.json"
+    ledger_dir = tmp_path / "attempt_ledgers"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    captured: list[tuple[Path, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_copilot_patch_predictions.py",
+            "--input",
+            str(tmp_path / "driver.json"),
+            "--output",
+            str(output_path),
+            "--attempt-ledger-dir",
+            str(ledger_dir),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "load_driver_payload",
+        lambda path: {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "build_payload",
+        lambda *args, **kwargs: {
+            "artifact": "copilot_patch_predictions",
+            "suite": "run_copilot_patch_predictions",
+            "generated_at_epoch_s": 1.0,
+            "environment": {"platform": "windows"},
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "copilot",
+                    "model_patch": "",
+                    "notes": "timeout after 60s",
+                },
+            ],
+        },
+    )
+
+    def _fake_write_json(path: Path, payload: dict[str, object]) -> None:
+        captured.append((Path(path), payload))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured[0][0] == output_path.resolve()
+    assert captured[0][1]["artifact"] == "copilot_patch_predictions"
+    assert captured[1][0] == (ledger_dir / "demo-1.json").resolve()
+    assert captured[1][1]["artifact"] == "agent_attempt_ledger"
+
+
 def test_run_copilot_patch_predictions_should_support_partial_resume(monkeypatch, tmp_path):
-    module = _load_script_module("run_copilot_patch_predictions_resume_script", "benchmarks/run_copilot_patch_predictions.py")
+    module = _load_script_module(
+        "run_copilot_patch_predictions_resume_script", "benchmarks/run_copilot_patch_predictions.py"
+    )
     output_path = tmp_path / "copilot_predictions.json"
     driver_payload = {
         "records": [
@@ -4240,19 +6124,17 @@ def test_run_copilot_patch_predictions_should_support_partial_resume(monkeypatch
         }
 
     monkeypatch.setattr(module, "run_copilot_patch_record", _fake_run)
-    partial = module.build_partial_payload(
-        [
-            {
-                "instance_id": "demo-1",
-                "system": "copilot",
-                "model_patch": "diff --git a/demo-1 b/demo-1",
-                "actual_test_files": [],
-                "actual_validation_commands": [],
-                "wall_clock_seconds": 1.0,
-                "notes": "",
-            }
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "copilot",
+            "model_patch": "diff --git a/demo-1 b/demo-1",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        }
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -4267,7 +6149,10 @@ def test_run_copilot_patch_predictions_should_support_partial_resume(monkeypatch
 
 
 def test_run_copilot_patch_predictions_should_checkpoint_per_record(monkeypatch, tmp_path):
-    module = _load_script_module("run_copilot_patch_predictions_checkpoint_script", "benchmarks/run_copilot_patch_predictions.py")
+    module = _load_script_module(
+        "run_copilot_patch_predictions_checkpoint_script",
+        "benchmarks/run_copilot_patch_predictions.py",
+    )
     output_path = tmp_path / "copilot_predictions.json"
     driver_payload = {
         "records": [
@@ -4290,7 +6175,9 @@ def test_run_copilot_patch_predictions_should_checkpoint_per_record(monkeypatch,
             "notes": "",
         },
     )
-    monkeypatch.setattr(module, "write_checkpoint", lambda path, records: writes.append(len(records)))
+    monkeypatch.setattr(
+        module, "write_checkpoint", lambda path, records: writes.append(len(records))
+    )
 
     payload = module.build_payload(
         driver_payload,
@@ -4304,7 +6191,9 @@ def test_run_copilot_patch_predictions_should_checkpoint_per_record(monkeypatch,
 
 
 def test_run_claude_patch_predictions_should_build_patch_records(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_patch_predictions_script", "benchmarks/run_claude_patch_predictions.py")
+    module = _load_script_module(
+        "run_claude_patch_predictions_script", "benchmarks/run_claude_patch_predictions.py"
+    )
     driver_payload = {
         "records": [
             {
@@ -4319,17 +6208,21 @@ def test_run_claude_patch_predictions_should_build_patch_records(monkeypatch, tm
     monkeypatch.setattr(
         module,
         "_run_claude_command",
-        lambda *args, **kwargs: "```diff\n"
-        "diff --git a/demo.py b/demo.py\n"
-        "--- a/demo.py\n"
-        "+++ b/demo.py\n"
-        "@@ -1 +1 @@\n"
-        "-old\n"
-        "+new\n"
-        "```",
+        lambda *args, **kwargs: (
+            "```diff\n"
+            "diff --git a/demo.py b/demo.py\n"
+            "--- a/demo.py\n"
+            "+++ b/demo.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+            "```"
+        ),
     )
 
-    payload = module.build_payload(driver_payload, model="sonnet", permission_mode="bypassPermissions")
+    payload = module.build_payload(
+        driver_payload, model="sonnet", permission_mode="bypassPermissions"
+    )
 
     assert payload["suite"] == "run_claude_patch_predictions"
     assert payload["records"][0]["system"] == "claude-code"
@@ -4351,7 +6244,9 @@ def test_run_claude_patch_predictions_should_prefix_direct_edit_instruction():
 
 
 def test_run_claude_patch_predictions_should_capture_timeout_as_empty_patch(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_patch_predictions_timeout_script", "benchmarks/run_claude_patch_predictions.py")
+    module = _load_script_module(
+        "run_claude_patch_predictions_timeout_script", "benchmarks/run_claude_patch_predictions.py"
+    )
     driver_payload = {
         "records": [
             {
@@ -4381,7 +6276,9 @@ def test_run_claude_patch_predictions_should_capture_timeout_as_empty_patch(monk
 
 
 def test_run_claude_patch_predictions_should_fallback_to_repo_diff(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_patch_predictions_diff_script", "benchmarks/run_claude_patch_predictions.py")
+    module = _load_script_module(
+        "run_claude_patch_predictions_diff_script", "benchmarks/run_claude_patch_predictions.py"
+    )
     (tmp_path / "demo.py").write_text("old\n", encoding="utf-8")
     driver_payload = {
         "records": [
@@ -4402,10 +6299,109 @@ def test_run_claude_patch_predictions_should_fallback_to_repo_diff(monkeypatch, 
 
     monkeypatch.setattr(module, "_run_claude_command", _edit_repo)
 
-    payload = module.build_payload(driver_payload, model="sonnet", permission_mode="bypassPermissions")
+    payload = module.build_payload(
+        driver_payload, model="sonnet", permission_mode="bypassPermissions"
+    )
 
     assert "diff --git a/demo.py b/demo.py" in payload["records"][0]["model_patch"]
     assert (tmp_path / "demo.py").read_text(encoding="utf-8") == "old\n"
+
+
+def test_run_claude_patch_predictions_should_build_attempt_ledger_payloads_by_instance(tmp_path):
+    module = _load_script_module(
+        "run_claude_patch_predictions_ledger_script",
+        "benchmarks/run_claude_patch_predictions.py",
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    driver_payload = {
+        "records": [{"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}]
+    }
+
+    ledgers = module.build_attempt_ledger_payloads(
+        driver_payload,
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-code",
+                "model_patch": "",
+                "notes": "timeout after 60s",
+            }
+        ],
+    )
+
+    ledger = ledgers["demo-1"]
+    assert ledger["artifact"] == "agent_attempt_ledger"
+    assert ledger["task_id"] == "demo-1"
+    assert ledger["final_outcome"]["status"] == "needs_retry"
+    assert ledger["attempts"][0]["retry_reason"] == "timeout after 60s"
+
+
+def test_run_claude_patch_predictions_should_write_attempt_ledgers_when_requested(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_claude_patch_predictions_ledger_cli_script",
+        "benchmarks/run_claude_patch_predictions.py",
+    )
+    output_path = tmp_path / "claude_predictions.json"
+    ledger_dir = tmp_path / "attempt_ledgers"
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    captured: list[tuple[Path, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_claude_patch_predictions.py",
+            "--input",
+            str(tmp_path / "driver.json"),
+            "--output",
+            str(output_path),
+            "--attempt-ledger-dir",
+            str(ledger_dir),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "load_driver_payload",
+        lambda path: {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "build_payload",
+        lambda *args, **kwargs: {
+            "artifact": "claude_patch_predictions",
+            "suite": "run_claude_patch_predictions",
+            "generated_at_epoch_s": 1.0,
+            "environment": {"platform": "windows"},
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-code",
+                    "model_patch": "",
+                    "notes": "timeout after 60s",
+                },
+            ],
+        },
+    )
+
+    def _fake_write_json(path: Path, payload: dict[str, object]) -> None:
+        captured.append((Path(path), payload))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured[0][0] == output_path.resolve()
+    assert captured[0][1]["artifact"] == "claude_patch_predictions"
+    assert captured[1][0] == (ledger_dir / "demo-1.json").resolve()
+    assert captured[1][1]["artifact"] == "agent_attempt_ledger"
 
 
 def test_run_claude_patch_predictions_should_separate_prompt_from_add_dir(monkeypatch, tmp_path):
@@ -4442,10 +6438,14 @@ def test_run_claude_patch_predictions_should_separate_prompt_from_add_dir(monkey
 
 
 def test_run_claude_skill_ab_should_install_project_skill(tmp_path):
-    module = _load_script_module("run_claude_skill_ab_skill_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_skill_script", "benchmarks/run_claude_skill_ab.py"
+    )
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8"
+    )
     (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
@@ -4457,8 +6457,36 @@ def test_run_claude_skill_ab_should_install_project_skill(tmp_path):
     assert (repo_root / ".claude" / "skills" / "tensor-grep" / "REFERENCE.md").exists()
 
 
+def test_run_claude_skill_ab_should_prepare_unique_repo_copy_when_stale_run_root_exists(tmp_path):
+    module = _load_script_module(
+        "run_claude_skill_ab_repo_copy_script", "benchmarks/run_claude_skill_ab.py"
+    )
+    source_repo = tmp_path / "source"
+    source_repo.mkdir()
+    (source_repo / "demo.py").write_text("print('ok')\n", encoding="utf-8")
+
+    stale_run_root = tmp_path / "work" / "demo-1" / "claude-enhanced"
+    (stale_run_root / "b").mkdir(parents=True)
+    (stale_run_root / "b" / "stale.txt").write_text("stale\n", encoding="utf-8")
+
+    before_root, repo_root = module.prepare_persistent_repo_copy(
+        source_repo,
+        tmp_path / "work",
+        "demo-1",
+        "claude-enhanced",
+    )
+
+    assert before_root.exists()
+    assert repo_root.exists()
+    assert before_root.parent != stale_run_root
+    assert repo_root.parent != stale_run_root
+    assert (repo_root / "demo.py").read_text(encoding="utf-8") == "print('ok')\n"
+
+
 def test_run_claude_skill_ab_should_write_claude_md(tmp_path):
-    module = _load_script_module("run_claude_skill_ab_claude_md_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_claude_md_script", "benchmarks/run_claude_skill_ab.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
 
@@ -4472,7 +6500,9 @@ def test_run_claude_skill_ab_should_write_claude_md(tmp_path):
 
 
 def test_run_claude_skill_ab_should_install_tg_trace_wrapper(tmp_path):
-    module = _load_script_module("run_claude_skill_ab_tg_wrapper_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_tg_wrapper_script", "benchmarks/run_claude_skill_ab.py"
+    )
     run_root = tmp_path / "run"
     run_root.mkdir()
 
@@ -4486,40 +6516,61 @@ def test_run_claude_skill_ab_should_install_tg_trace_wrapper(tmp_path):
 
 
 def test_run_claude_skill_ab_should_classify_response_shape():
-    module = _load_script_module("run_claude_skill_ab_response_shape_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_response_shape_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     assert module.classify_response_shape("What would you like me to do?", "") == "meta_question"
-    assert module.classify_response_shape("What would you like me to help you with?", "") == "meta_question"
-    assert module.classify_response_shape("What task would you like me to work on?", "") == "meta_question"
+    assert (
+        module.classify_response_shape("What would you like me to help you with?", "")
+        == "meta_question"
+    )
+    assert (
+        module.classify_response_shape("What task would you like me to work on?", "")
+        == "meta_question"
+    )
     assert module.classify_response_shape("", "diff --git a/x b/x") == "direct_patch"
-    assert module.classify_response_shape("Fixed the bug.", "diff --git a/x b/x") == "analysis_then_patch"
+    assert (
+        module.classify_response_shape("Fixed the bug.", "diff --git a/x b/x")
+        == "analysis_then_patch"
+    )
     assert module.classify_response_shape("I inspected the repo.", "") == "analysis_only"
     assert module.classify_response_shape("", "") == "empty"
 
 
 def test_run_claude_skill_ab_should_compute_first_tg_seconds():
-    module = _load_script_module("run_claude_skill_ab_first_tg_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_first_tg_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     assert module.first_tg_seconds(100.0, []) is None
     assert module.first_tg_seconds(100.0, [{"timestamp_epoch_s": 100.75}]) == 0.75
 
 
 def test_run_claude_skill_ab_should_compute_post_edit_deliberation_seconds():
-    module = _load_script_module("run_claude_skill_ab_post_edit_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_post_edit_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     assert module.post_edit_deliberation_seconds(None, 10.0) is None
     assert module.post_edit_deliberation_seconds(0.5, None) is None
     assert module.post_edit_deliberation_seconds(0.5, 10.0) == 9.5
 
 
-def test_run_claude_skill_ab_should_clear_transient_file_change_when_no_final_diff(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_transient_change_script", "benchmarks/run_claude_skill_ab.py")
+def test_run_claude_skill_ab_should_clear_transient_file_change_when_no_final_diff(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_claude_skill_ab_transient_change_script", "benchmarks/run_claude_skill_ab.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8"
+    )
     (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
 
     def _fake_run(repo_dir, prompt, **kwargs):
@@ -4554,44 +6605,81 @@ def test_run_claude_skill_ab_should_clear_transient_file_change_when_no_final_di
 
 
 def test_run_claude_skill_ab_prompt_should_require_non_interactive_action(tmp_path):
-    module = _load_script_module("run_claude_skill_ab_prompt_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_prompt_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     prompt = module._build_claude_prompt("Fix the bug.")
     terse_prompt = module._build_claude_prompt("Fix the bug.", terse_output=True)
+    done_prompt = module._build_claude_prompt("Fix the bug.", done_output=True)
 
     assert "edit the repository files directly" in prompt
     assert "do not print a summary" in prompt
     assert prompt.endswith("Fix the bug.")
     assert "stop immediately" in terse_prompt
     assert "Do not print any explanation" in terse_prompt
+    assert "respond with exactly DONE" in done_prompt
 
 
 def test_run_claude_skill_ab_should_prepend_explicit_skill_instruction():
-    module = _load_script_module("run_claude_skill_ab_enhanced_prompt_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_enhanced_prompt_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     prompt = module.build_system_prompt("Fix the bug.", use_skill=True)
-    terse_prompt = module.build_system_prompt("Fix the bug.", use_skill=True, enhanced_output_contract="terse")
-    engage_prompt = module.build_system_prompt("Fix the bug.", use_skill=True, enhanced_task_contract="engage")
+    terse_prompt = module.build_system_prompt(
+        "Fix the bug.", use_skill=True, enhanced_output_contract="terse"
+    )
+    done_prompt = module.build_system_prompt(
+        "Fix the bug.", use_skill=True, enhanced_output_contract="done"
+    )
+    engage_prompt = module.build_system_prompt(
+        "Fix the bug.", use_skill=True, enhanced_task_contract="engage"
+    )
+    act_prompt = module.build_system_prompt(
+        "Fix the bug.", use_skill=True, enhanced_task_contract="act"
+    )
 
     assert "Use the tensor-grep project skill" in prompt
     assert prompt.endswith("Fix the bug.")
     assert "stop immediately" in terse_prompt
+    assert "respond with exactly DONE" in done_prompt
     assert "Start working on it immediately" in engage_prompt
+    assert "<system>" in act_prompt
+    assert "<task>" in act_prompt
+    assert "Do not ask clarifying questions" in act_prompt
+    assert act_prompt.endswith("</task>")
 
 
 def test_run_claude_skill_ab_should_resolve_contract_profiles(monkeypatch):
-    module = _load_script_module("run_claude_skill_ab_contract_profile_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_contract_profile_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     assert module.resolve_contract_profile(
         "current",
-        enhanced_output_contract="terse",
+        enhanced_output_contract="done",
         enhanced_task_contract="engage",
-    ) == ("terse", "engage")
+        enhanced_effort="low",
+    ) == ("done", "engage", "low")
     assert module.resolve_contract_profile(
         "probe-standard-engage",
+        enhanced_output_contract="done",
+        enhanced_task_contract="standard",
+        enhanced_effort="low",
+    ) == ("standard", "engage", "")
+    assert module.resolve_contract_profile(
+        "probe-standard-act",
         enhanced_output_contract="terse",
         enhanced_task_contract="standard",
-    ) == ("standard", "engage")
+        enhanced_effort="low",
+    ) == ("standard", "act", "")
+    assert module.resolve_contract_profile(
+        "probe-standard-act-low",
+        enhanced_output_contract="terse",
+        enhanced_task_contract="standard",
+        enhanced_effort="",
+    ) == ("standard", "act", "low")
 
     monkeypatch.setattr(
         sys,
@@ -4601,29 +6689,31 @@ def test_run_claude_skill_ab_should_resolve_contract_profiles(monkeypatch):
             "--input",
             "driver.json",
             "--enhanced-output-contract",
-            "terse",
+            "done",
             "--enhanced-task-contract",
             "standard",
             "--enhanced-contract-profile",
-            "probe-standard-engage",
+            "probe-standard-act-low",
         ],
     )
 
     args = module.parse_args()
 
     assert args.enhanced_output_contract == "standard"
-    assert args.enhanced_task_contract == "engage"
+    assert args.enhanced_task_contract == "act"
+    assert args.enhanced_effort == "low"
 
 
 def test_run_claude_skill_ab_should_rewrite_prompt_repo_paths(tmp_path):
-    module = _load_script_module("run_claude_skill_ab_rewrite_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_rewrite_script", "benchmarks/run_claude_skill_ab.py"
+    )
     source_repo = tmp_path / "source"
     copied_repo = tmp_path / "copy"
     source_repo.mkdir()
     copied_repo.mkdir()
     original = (
-        f"File: {source_repo}\\src\\demo.py\n"
-        f"Context path: {source_repo / 'tests' / 'test_demo.py'}"
+        f"File: {source_repo}\\src\\demo.py\nContext path: {source_repo / 'tests' / 'test_demo.py'}"
     )
 
     rewritten = module.rewrite_prompt_repo_paths(original, source_repo, copied_repo)
@@ -4633,7 +6723,9 @@ def test_run_claude_skill_ab_should_rewrite_prompt_repo_paths(tmp_path):
 
 
 def test_run_claude_skill_ab_default_work_root_should_live_outside_repo():
-    module = _load_script_module("run_claude_skill_ab_work_root_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_work_root_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     assert Path(module.DEFAULT_WORK_ROOT) != Path(module.ROOT_DIR)
     assert Path(module.DEFAULT_WORK_ROOT).is_absolute()
@@ -4647,7 +6739,9 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8"
+    )
     (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
 
     calls: list[tuple[str, str, str, str]] = []
@@ -4682,13 +6776,15 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
         timeout_seconds=5,
         skill_dir=skill_dir,
         work_root=tmp_path / "work",
-        enhanced_output_contract="terse",
+        enhanced_output_contract="done",
         enhanced_task_contract="engage",
+        enhanced_effort="low",
     )
 
     assert payload["artifact"] == "claude_skill_ab"
-    assert payload["enhanced_output_contract"] == "terse"
+    assert payload["enhanced_output_contract"] == "done"
     assert payload["enhanced_task_contract"] == "engage"
+    assert payload["enhanced_effort"] == "low"
     assert payload["trace_artifact"] == "claude_skill_ab_trace"
     assert len(payload["trace_records"]) == 2
     assert [record["system"] for record in payload["records"]] == [
@@ -4704,8 +6800,10 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert "Use the tensor-grep project skill" in calls[1][2]
     assert payload["trace_records"][0]["use_skill"] is False
     assert payload["trace_records"][1]["use_skill"] is True
-    assert payload["trace_records"][1]["enhanced_output_contract"] == "terse"
+    assert payload["trace_records"][1]["enhanced_output_contract"] == "done"
     assert payload["trace_records"][1]["enhanced_task_contract"] == "engage"
+    assert payload["trace_records"][0]["effort"] == "default"
+    assert payload["trace_records"][1]["effort"] == "low"
     assert payload["trace_records"][0]["response_shape"] == "analysis_only"
     assert payload["trace_records"][1]["response_shape"] == "analysis_then_patch"
     assert payload["trace_records"][1]["asked_meta_question"] is False
@@ -4721,14 +6819,177 @@ def test_run_claude_skill_ab_should_build_baseline_and_enhanced_records(monkeypa
     assert "claude_seconds" in payload["trace_records"][0]["timing"]
 
 
+def test_run_claude_skill_ab_should_build_attempt_ledger_payloads_by_instance(tmp_path):
+    module = _load_script_module(
+        "run_claude_skill_ab_ledger_script", "benchmarks/run_claude_skill_ab.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    driver_payload = {
+        "records": [
+            {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."},
+            {"instance_id": "demo-2", "repo_fixture": str(repo_root), "prompt": "Fix two."},
+        ]
+    }
+    prediction_records = [
+        {
+            "instance_id": "demo-1",
+            "system": "claude-baseline",
+            "model_patch": "",
+            "notes": "timeout after 60s",
+        },
+        {
+            "instance_id": "demo-1",
+            "system": "claude-enhanced",
+            "model_patch": "diff --git a/x b/x",
+            "notes": "",
+        },
+        {"instance_id": "demo-2", "system": "claude-baseline", "model_patch": "", "notes": ""},
+        {"instance_id": "demo-2", "system": "claude-enhanced", "model_patch": "", "notes": ""},
+    ]
+    trace_records = [
+        {"instance_id": "demo-1", "system": "claude-baseline", "response_shape": "analysis_only"},
+        {
+            "instance_id": "demo-1",
+            "system": "claude-enhanced",
+            "response_shape": "analysis_then_patch",
+        },
+        {"instance_id": "demo-2", "system": "claude-baseline", "response_shape": "meta_question"},
+        {"instance_id": "demo-2", "system": "claude-enhanced", "response_shape": "analysis_only"},
+    ]
+
+    ledgers = module.build_attempt_ledger_payloads(
+        driver_payload, prediction_records, trace_records
+    )
+
+    assert set(ledgers) == {"demo-1", "demo-2"}
+    accepted = ledgers["demo-1"]
+    assert accepted["artifact"] == "agent_attempt_ledger"
+    assert accepted["task_id"] == "demo-1"
+    assert accepted["root"] == str(repo_root)
+    assert accepted["final_outcome"]["status"] == "completed"
+    assert accepted["final_outcome"]["accepted_attempt_id"] is None
+    assert accepted["replay"]["next_action"] == "score patch bakeoff"
+    assert accepted["attempts"][0]["status"] == "needs_retry"
+    assert accepted["attempts"][0]["retry_reason"] == "timeout after 60s"
+    assert accepted["attempts"][1]["status"] == "completed"
+    assert accepted["attempts"][1]["outputs"] == ["analysis_then_patch"]
+    retry = ledgers["demo-2"]
+    assert retry["final_outcome"]["status"] == "needs_retry"
+    assert retry["attempts"][0]["status"] == "needs_retry"
+    assert retry["attempts"][1]["status"] == "needs_retry"
+
+
+def test_run_claude_skill_ab_should_write_attempt_ledgers_when_requested(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_claude_skill_ab_ledger_cli_script", "benchmarks/run_claude_skill_ab.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8"
+    )
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    output_path = tmp_path / "ab.json"
+    trace_path = tmp_path / "ab_trace.json"
+    ledger_dir = tmp_path / "attempt_ledgers"
+    captured: list[tuple[Path, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_claude_skill_ab.py",
+            "--input",
+            str(tmp_path / "driver.json"),
+            "--output",
+            str(output_path),
+            "--trace-output",
+            str(trace_path),
+            "--attempt-ledger-dir",
+            str(ledger_dir),
+            "--skill-dir",
+            str(skill_dir),
+            "--work-root",
+            str(tmp_path / "work"),
+        ],
+    )
+    monkeypatch.setattr(
+        module,
+        "load_driver_payload",
+        lambda path: {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."}
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "build_payload",
+        lambda *args, **kwargs: {
+            "artifact": "claude_skill_ab",
+            "trace_artifact": "claude_skill_ab_trace",
+            "suite": "run_claude_skill_ab",
+            "generated_at_epoch_s": 1.0,
+            "environment": {"platform": "windows"},
+            "records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-baseline",
+                    "model_patch": "",
+                    "notes": "timeout after 60s",
+                },
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "notes": "",
+                },
+            ],
+            "trace_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-baseline",
+                    "response_shape": "analysis_only",
+                },
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                },
+            ],
+        },
+    )
+
+    def _fake_write_json(path: Path, payload: dict[str, object]) -> None:
+        captured.append((Path(path), payload))
+
+    monkeypatch.setattr(module, "write_json", _fake_write_json)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    assert captured[0][0] == output_path.resolve()
+    assert captured[0][1]["artifact"] == "claude_skill_ab"
+    assert captured[1][0] == trace_path.resolve()
+    assert captured[1][1]["artifact"] == "claude_skill_ab_trace"
+    assert captured[2][0] == (ledger_dir / "demo-1.json").resolve()
+    assert captured[2][1]["artifact"] == "agent_attempt_ledger"
+
+
 def test_run_claude_skill_ab_should_support_partial_resume(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_resume_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_resume_script", "benchmarks/run_claude_skill_ab.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8"
+    )
     (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
     output_path = tmp_path / "ab.json"
 
@@ -4738,12 +6999,30 @@ def test_run_claude_skill_ab_should_support_partial_resume(monkeypatch, tmp_path
         seen.append(str(record["instance_id"]))
         return (
             [
-                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 1.0},
-                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 2.0},
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "model_patch": "",
+                    "wall_clock_seconds": 1.0,
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "wall_clock_seconds": 2.0,
+                },
             ],
             [
-                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "response_shape": "analysis_only"},
-                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "response_shape": "analysis_then_patch"},
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "response_shape": "analysis_only",
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                },
             ],
         )
 
@@ -4751,12 +7030,30 @@ def test_run_claude_skill_ab_should_support_partial_resume(monkeypatch, tmp_path
 
     partial = module.build_partial_payload(
         [
-            {"instance_id": "demo-1", "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 1.0},
-            {"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 2.0},
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "model_patch": "",
+                "wall_clock_seconds": 1.0,
+            },
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "model_patch": "diff --git a/x b/x",
+                "wall_clock_seconds": 2.0,
+            },
         ],
         [
-            {"instance_id": "demo-1", "system": "claude-baseline", "response_shape": "analysis_only"},
-            {"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch"},
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "response_shape": "analysis_only",
+            },
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "response_shape": "analysis_then_patch",
+            },
         ],
         enhanced_output_contract="standard",
         enhanced_task_contract="engage",
@@ -4786,14 +7083,118 @@ def test_run_claude_skill_ab_should_support_partial_resume(monkeypatch, tmp_path
     assert len(payload["trace_records"]) == 4
 
 
-def test_run_claude_skill_ab_should_checkpoint_per_record(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_checkpoint_script", "benchmarks/run_claude_skill_ab.py")
+def test_run_claude_skill_ab_should_resume_incomplete_instance_ids(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_claude_skill_ab_incomplete_resume_script", "benchmarks/run_claude_skill_ab.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
     skill_dir = tmp_path / "skill"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8"
+    )
+    (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
+    output_path = tmp_path / "ab.json"
+
+    seen: list[str] = []
+
+    def _fake_run_ab_record(record, **kwargs):
+        seen.append(str(record["instance_id"]))
+        return (
+            [
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "model_patch": "",
+                    "wall_clock_seconds": 1.0,
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "wall_clock_seconds": 2.0,
+                },
+            ],
+            [
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "response_shape": "analysis_only",
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                },
+            ],
+        )
+
+    monkeypatch.setattr(module, "run_ab_record", _fake_run_ab_record)
+
+    partial = module.build_partial_payload(
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "model_patch": "",
+                "wall_clock_seconds": 1.0,
+            },
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "model_patch": "diff --git a/x b/x",
+                "wall_clock_seconds": 2.0,
+            },
+        ],
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "response_shape": "analysis_only",
+            },
+        ],
+        enhanced_output_contract="standard",
+        enhanced_task_contract="engage",
+    )
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_payload(
+        {
+            "records": [
+                {"instance_id": "demo-1", "repo_fixture": str(repo_root), "prompt": "Fix one."},
+                {"instance_id": "demo-2", "repo_fixture": str(repo_root), "prompt": "Fix two."},
+            ]
+        },
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+        skill_dir=skill_dir,
+        work_root=tmp_path / "work",
+        enhanced_output_contract="standard",
+        enhanced_task_contract="engage",
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-1", "demo-2"]
+    assert len(payload["records"]) == 4
+    assert len(payload["trace_records"]) == 4
+
+
+def test_run_claude_skill_ab_should_checkpoint_per_record(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_claude_skill_ab_checkpoint_script", "benchmarks/run_claude_skill_ab.py"
+    )
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "demo.py").write_text("old\n", encoding="utf-8")
+    skill_dir = tmp_path / "skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: tensor-grep\ndescription: use tg\n---\n", encoding="utf-8"
+    )
     (skill_dir / "REFERENCE.md").write_text("# ref\n", encoding="utf-8")
     output_path = tmp_path / "ab.json"
 
@@ -4802,12 +7203,30 @@ def test_run_claude_skill_ab_should_checkpoint_per_record(monkeypatch, tmp_path)
         "run_ab_record",
         lambda record, **kwargs: (
             [
-                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 1.0},
-                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 2.0},
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "model_patch": "",
+                    "wall_clock_seconds": 1.0,
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "wall_clock_seconds": 2.0,
+                },
             ],
             [
-                {"instance_id": str(record["instance_id"]), "system": "claude-baseline", "response_shape": "analysis_only"},
-                {"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "response_shape": "analysis_then_patch"},
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "response_shape": "analysis_only",
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                },
             ],
         ),
     )
@@ -4843,7 +7262,9 @@ def test_run_claude_skill_ab_should_checkpoint_per_record(monkeypatch, tmp_path)
 
 
 def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_command_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_command_script", "benchmarks/run_claude_skill_ab.py"
+    )
     calls: list[list[str]] = []
     kwargs_calls: list[dict[str, object]] = []
 
@@ -4858,7 +7279,9 @@ def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypat
     monkeypatch.setattr(
         module.subprocess,
         "Popen",
-        lambda command, **kwargs: calls.append(list(command)) or kwargs_calls.append(kwargs) or FakeProc(),
+        lambda command, **kwargs: (
+            calls.append(list(command)) or kwargs_calls.append(kwargs) or FakeProc()
+        ),
     )
 
     output = module._run_claude_command(
@@ -4879,61 +7302,71 @@ def test_run_claude_skill_ab_should_pass_prompt_as_positional_argument(monkeypat
 
 
 def test_run_claude_skill_ab_matrix_should_build_experiment_configs():
-    module = _load_script_module("run_claude_skill_ab_matrix_configs_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_matrix_configs_script", "benchmarks/run_claude_skill_ab_matrix.py"
+    )
 
-    experiments = module.build_experiment_configs(["standard", "terse"], ["standard", "engage"])
+    experiments = module.build_experiment_configs(["standard", "done"], ["standard"], [""])
 
     assert experiments == [
-        {"name": "output-standard__task-standard", "enhanced_output_contract": "standard", "enhanced_task_contract": "standard"},
-        {"name": "output-standard__task-engage", "enhanced_output_contract": "standard", "enhanced_task_contract": "engage"},
-        {"name": "output-terse__task-standard", "enhanced_output_contract": "terse", "enhanced_task_contract": "standard"},
-        {"name": "output-terse__task-engage", "enhanced_output_contract": "terse", "enhanced_task_contract": "engage"},
+        {
+            "name": "output-standard__task-standard__effort-default",
+            "enhanced_output_contract": "standard",
+            "enhanced_task_contract": "standard",
+            "enhanced_effort": "",
+        },
+        {
+            "name": "output-done__task-standard__effort-default",
+            "enhanced_output_contract": "done",
+            "enhanced_task_contract": "standard",
+            "enhanced_effort": "",
+        },
     ]
 
 
 def test_run_claude_skill_ab_matrix_should_summarize_trace_rows():
-    module = _load_script_module("run_claude_skill_ab_matrix_summary_script", "benchmarks/run_claude_skill_ab_matrix.py")
-
-    summary = module.summarize_trace_rows(
-        [
-            {
-                "system": "claude-baseline",
-                "asked_meta_question": False,
-                "response_shape": "analysis_then_patch",
-                "first_tg_seconds": None,
-                "first_patch_seconds": 10.0,
-                "first_file_change_seconds": 0.2,
-                "post_edit_deliberation_seconds": 9.8,
-                "tg_invocation_count": 0,
-                "tg_seconds_total": 0.0,
-                "changed_file_count": 1,
-            },
-            {
-                "system": "claude-enhanced",
-                "asked_meta_question": True,
-                "response_shape": "meta_question",
-                "first_tg_seconds": 1.5,
-                "first_patch_seconds": None,
-                "first_file_change_seconds": None,
-                "post_edit_deliberation_seconds": None,
-                "tg_invocation_count": 2,
-                "tg_seconds_total": 0.75,
-                "changed_file_count": 0,
-            },
-            {
-                "system": "claude-enhanced",
-                "asked_meta_question": False,
-                "response_shape": "analysis_then_patch",
-                "first_tg_seconds": 1.0,
-                "first_patch_seconds": 20.0,
-                "first_file_change_seconds": 0.1,
-                "post_edit_deliberation_seconds": 19.9,
-                "tg_invocation_count": 1,
-                "tg_seconds_total": 0.25,
-                "changed_file_count": 1,
-            },
-        ]
+    module = _load_script_module(
+        "run_claude_skill_ab_matrix_summary_script", "benchmarks/run_claude_skill_ab_matrix.py"
     )
+
+    summary = module.summarize_trace_rows([
+        {
+            "system": "claude-baseline",
+            "asked_meta_question": False,
+            "response_shape": "analysis_then_patch",
+            "first_tg_seconds": None,
+            "first_patch_seconds": 10.0,
+            "first_file_change_seconds": 0.2,
+            "post_edit_deliberation_seconds": 9.8,
+            "tg_invocation_count": 0,
+            "tg_seconds_total": 0.0,
+            "changed_file_count": 1,
+        },
+        {
+            "system": "claude-enhanced",
+            "asked_meta_question": True,
+            "response_shape": "meta_question",
+            "first_tg_seconds": 1.5,
+            "first_patch_seconds": None,
+            "first_file_change_seconds": None,
+            "post_edit_deliberation_seconds": None,
+            "tg_invocation_count": 2,
+            "tg_seconds_total": 0.75,
+            "changed_file_count": 0,
+        },
+        {
+            "system": "claude-enhanced",
+            "asked_meta_question": False,
+            "response_shape": "analysis_then_patch",
+            "first_tg_seconds": 1.0,
+            "first_patch_seconds": 20.0,
+            "first_file_change_seconds": 0.1,
+            "post_edit_deliberation_seconds": 19.9,
+            "tg_invocation_count": 1,
+            "tg_seconds_total": 0.25,
+            "changed_file_count": 1,
+        },
+    ])
 
     assert summary["claude-baseline"]["record_count"] == 1
     assert summary["claude-baseline"]["response_shape_counts"] == {"analysis_then_patch": 1}
@@ -4945,11 +7378,15 @@ def test_run_claude_skill_ab_matrix_should_summarize_trace_rows():
 
 
 def test_run_claude_skill_ab_matrix_should_build_payload(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_matrix_payload_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_matrix_payload_script", "benchmarks/run_claude_skill_ab_matrix.py"
+    )
     driver_path = tmp_path / "driver.json"
     scenarios_path = tmp_path / "scenarios.json"
     driver_path.write_text(json.dumps({"records": [{"instance_id": "demo-1"}]}), encoding="utf-8")
-    scenarios_path.write_text(json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+    scenarios_path.write_text(
+        json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8"
+    )
 
     monkeypatch.setattr(
         module.ab_runner,
@@ -4967,12 +7404,46 @@ def test_run_claude_skill_ab_matrix_should_build_payload(monkeypatch, tmp_path):
         "run_ab_record",
         lambda record, **kwargs: (
             [
-                {"instance_id": "demo-1", "system": "claude-baseline", "model_patch": "", "wall_clock_seconds": 10.0},
-                {"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x", "wall_clock_seconds": 20.0},
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-baseline",
+                    "model_patch": "",
+                    "wall_clock_seconds": 10.0,
+                },
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "wall_clock_seconds": 20.0,
+                },
             ],
             [
-                {"instance_id": "demo-1", "system": "claude-baseline", "response_shape": "analysis_only", "asked_meta_question": False, "tg_invocation_count": 0, "tg_seconds_total": 0.0, "changed_file_count": 0, "first_tg_seconds": None, "first_patch_seconds": None, "first_file_change_seconds": None, "post_edit_deliberation_seconds": None},
-                {"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch", "asked_meta_question": False, "tg_invocation_count": 1, "tg_seconds_total": 0.1, "changed_file_count": 1, "first_tg_seconds": 0.5, "first_patch_seconds": 5.0, "first_file_change_seconds": 0.1, "post_edit_deliberation_seconds": 4.9},
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-baseline",
+                    "response_shape": "analysis_only",
+                    "asked_meta_question": False,
+                    "tg_invocation_count": 0,
+                    "tg_seconds_total": 0.0,
+                    "changed_file_count": 0,
+                    "first_tg_seconds": None,
+                    "first_patch_seconds": None,
+                    "first_file_change_seconds": None,
+                    "post_edit_deliberation_seconds": None,
+                },
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                    "asked_meta_question": False,
+                    "tg_invocation_count": 1,
+                    "tg_seconds_total": 0.1,
+                    "changed_file_count": 1,
+                    "first_tg_seconds": 0.5,
+                    "first_patch_seconds": 5.0,
+                    "first_file_change_seconds": 0.1,
+                    "post_edit_deliberation_seconds": 4.9,
+                },
             ],
         ),
     )
@@ -5000,19 +7471,23 @@ def test_run_claude_skill_ab_matrix_should_build_payload(monkeypatch, tmp_path):
         limit=1,
         output_contracts=["standard"],
         task_contracts=["engage"],
+        enhanced_efforts=["low"],
     )
 
     assert payload["artifact"] == "claude_skill_ab_matrix"
     assert payload["experiment_count"] == 1
     experiment = payload["experiments"][0]
-    assert experiment["name"] == "output-standard__task-engage"
+    assert experiment["name"] == "output-standard__task-engage__effort-low"
+    assert experiment["enhanced_effort"] == "low"
     assert experiment["trace_summary"]["claude-enhanced"]["mean_first_tg_seconds"] == 0.5
     assert experiment["bakeoff_summary"]["scenario_count"] == 2
     assert experiment["system_score_summary"]["claude-enhanced"]["mean_patch_applied_rate"] == 1.0
 
 
 def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_matrix_resume_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_matrix_resume_script", "benchmarks/run_claude_skill_ab_matrix.py"
+    )
     driver_path = tmp_path / "driver.json"
     scenarios_path = tmp_path / "scenarios.json"
     output_path = tmp_path / "matrix.json"
@@ -5028,12 +7503,20 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
     monkeypatch.setattr(
         module.ab_runner,
         "load_driver_payload",
-        lambda path: {"records": [{"instance_id": "demo-1", "prompt": "Fix it."}, {"instance_id": "demo-2", "prompt": "Fix it."}]},
+        lambda path: {
+            "records": [
+                {"instance_id": "demo-1", "prompt": "Fix it."},
+                {"instance_id": "demo-2", "prompt": "Fix it."},
+            ]
+        },
     )
     monkeypatch.setattr(
         module.patch_bakeoff,
         "load_patch_scenarios",
-        lambda path: [{"instance_id": "demo-1", "repo_fixture": "x"}, {"instance_id": "demo-2", "repo_fixture": "x"}],
+        lambda path: [
+            {"instance_id": "demo-1", "repo_fixture": "x"},
+            {"instance_id": "demo-2", "repo_fixture": "x"},
+        ],
     )
 
     seen: list[tuple[str, str]] = []
@@ -5045,7 +7528,8 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
         module.ab_runner,
         "run_ab_record",
         lambda record, **kwargs: (
-            seen.append(str(record["instance_id"])) or [
+            seen.append(str(record["instance_id"]))
+            or [
                 {
                     "instance_id": str(record["instance_id"]),
                     "system": "claude-enhanced",
@@ -5084,21 +7568,39 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
     )
 
     partial = module.build_partial_payload([])
-    partial["experiments"].append(
-        {
-            "name": "output-standard__task-standard",
-            "enhanced_output_contract": "standard",
-            "enhanced_task_contract": "standard",
-            "prediction_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x"}],
-            "trace_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch"}],
-            "bakeoff_rows": [{"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True}],
-            "prediction_record_count": 1,
-            "trace_record_count": 1,
-            "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
-            "bakeoff_summary": {"scenario_count": 1},
-            "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 1.0}},
-        }
-    )
+    partial["experiments"].append({
+        "name": "output-standard__task-standard__effort-default",
+        "enhanced_output_contract": "standard",
+        "enhanced_task_contract": "standard",
+        "enhanced_effort": "",
+        "prediction_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "model_patch": "diff --git a/x b/x",
+            }
+        ],
+        "trace_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "response_shape": "analysis_then_patch",
+            }
+        ],
+        "bakeoff_rows": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "patch_applied": True,
+                "validation_passed": True,
+            }
+        ],
+        "prediction_record_count": 1,
+        "trace_record_count": 1,
+        "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
+        "bakeoff_summary": {"scenario_count": 1},
+        "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 1.0}},
+    })
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -5112,27 +7614,203 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
         limit=2,
         output_contracts=["standard"],
         task_contracts=["standard"],
+        enhanced_efforts=[""],
         output_path=output_path,
         resume=True,
     )
 
-    assert seen == ["demo-2"]
+    assert seen == ["demo-1", "demo-2"]
     assert payload["experiment_count"] == 1
     assert [experiment["name"] for experiment in payload["experiments"]] == [
-        "output-standard__task-standard",
+        "output-standard__task-standard__effort-default",
     ]
 
 
+def test_run_claude_skill_ab_matrix_should_resume_incomplete_experiment_instance_ids(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_claude_skill_ab_matrix_incomplete_resume_script",
+        "benchmarks/run_claude_skill_ab_matrix.py",
+    )
+    driver_path = tmp_path / "driver.json"
+    scenarios_path = tmp_path / "scenarios.json"
+    output_path = tmp_path / "matrix.json"
+    driver_path.write_text(
+        json.dumps({"records": [{"instance_id": "demo-1"}, {"instance_id": "demo-2"}]}),
+        encoding="utf-8",
+    )
+    scenarios_path.write_text(
+        json.dumps({"scenarios": [{"instance_id": "demo-1"}, {"instance_id": "demo-2"}]}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        module.ab_runner,
+        "load_driver_payload",
+        lambda path: {
+            "records": [
+                {"instance_id": "demo-1", "prompt": "Fix it."},
+                {"instance_id": "demo-2", "prompt": "Fix it."},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "load_patch_scenarios",
+        lambda path: [
+            {"instance_id": "demo-1", "repo_fixture": "x"},
+            {"instance_id": "demo-2", "repo_fixture": "x"},
+        ],
+    )
+
+    seen: list[str] = []
+
+    monkeypatch.setattr(
+        module.ab_runner,
+        "run_ab_record",
+        lambda record, **kwargs: (
+            seen.append(str(record["instance_id"]))
+            or [
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "model_patch": "",
+                    "wall_clock_seconds": 10.0,
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "wall_clock_seconds": 20.0,
+                },
+            ],
+            [
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-baseline",
+                    "response_shape": "analysis_only",
+                    "asked_meta_question": False,
+                    "tg_invocation_count": 0,
+                    "tg_seconds_total": 0.0,
+                    "changed_file_count": 0,
+                    "first_tg_seconds": None,
+                    "first_patch_seconds": None,
+                    "first_file_change_seconds": None,
+                    "post_edit_deliberation_seconds": None,
+                },
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                    "asked_meta_question": False,
+                    "tg_invocation_count": 1,
+                    "tg_seconds_total": 0.1,
+                    "changed_file_count": 1,
+                    "first_tg_seconds": 0.5,
+                    "first_patch_seconds": 5.0,
+                    "first_file_change_seconds": 0.1,
+                    "post_edit_deliberation_seconds": 4.9,
+                },
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        module.patch_bakeoff,
+        "evaluate_prediction",
+        lambda scenario, prediction: {
+            "instance_id": str(prediction["instance_id"]),
+            "system": str(prediction["system"]),
+            "patch_applied": True,
+            "validation_passed": True,
+            "primary_file_hit": 1.0,
+            "primary_span_hit": 1.0,
+        },
+    )
+
+    partial = module.build_partial_payload([])
+    partial["experiments"].append({
+        "name": "output-standard__task-standard__effort-default",
+        "enhanced_output_contract": "standard",
+        "enhanced_task_contract": "standard",
+        "enhanced_effort": "",
+        "prediction_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "model_patch": "",
+                "wall_clock_seconds": 10.0,
+            },
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "model_patch": "diff --git a/x b/x",
+                "wall_clock_seconds": 20.0,
+            },
+        ],
+        "trace_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "response_shape": "analysis_only",
+            }
+        ],
+        "bakeoff_rows": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "patch_applied": False,
+                "validation_passed": False,
+            }
+        ],
+        "prediction_record_count": 2,
+        "trace_record_count": 1,
+        "trace_summary": {"claude-baseline": {"record_count": 1}},
+        "bakeoff_summary": {"scenario_count": 1},
+        "system_score_summary": {"claude-baseline": {"record_count": 1}},
+    })
+    output_path.write_text(json.dumps(partial), encoding="utf-8")
+
+    payload = module.build_matrix_payload(
+        input_path=driver_path,
+        scenarios_path=scenarios_path,
+        model="sonnet",
+        permission_mode="bypassPermissions",
+        timeout_seconds=30,
+        skill_dir=tmp_path / "skill",
+        work_root=tmp_path / "work",
+        limit=2,
+        output_contracts=["standard"],
+        task_contracts=["standard"],
+        enhanced_efforts=[""],
+        output_path=output_path,
+        resume=True,
+    )
+
+    assert seen == ["demo-1", "demo-2"]
+    assert payload["experiment_count"] == 1
+
+
 def test_run_claude_skill_ab_matrix_should_write_checkpoint_per_experiment(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_matrix_checkpoint_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_matrix_checkpoint_script", "benchmarks/run_claude_skill_ab_matrix.py"
+    )
     driver_path = tmp_path / "driver.json"
     scenarios_path = tmp_path / "scenarios.json"
     output_path = tmp_path / "matrix.json"
     driver_path.write_text(json.dumps({"records": [{"instance_id": "demo-1"}]}), encoding="utf-8")
-    scenarios_path.write_text(json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8")
+    scenarios_path.write_text(
+        json.dumps({"scenarios": [{"instance_id": "demo-1"}]}), encoding="utf-8"
+    )
 
-    monkeypatch.setattr(module.ab_runner, "load_driver_payload", lambda path: {"records": [{"instance_id": "demo-1"}]})
-    monkeypatch.setattr(module.patch_bakeoff, "load_patch_scenarios", lambda path: [{"instance_id": "demo-1"}])
+    monkeypatch.setattr(
+        module.ab_runner,
+        "load_driver_payload",
+        lambda path: {"records": [{"instance_id": "demo-1"}]},
+    )
+    monkeypatch.setattr(
+        module.patch_bakeoff, "load_patch_scenarios", lambda path: [{"instance_id": "demo-1"}]
+    )
     monkeypatch.setattr(
         module.ab_runner,
         "run_ab_record",
@@ -5141,7 +7819,12 @@ def test_run_claude_skill_ab_matrix_should_write_checkpoint_per_experiment(monke
     monkeypatch.setattr(
         module.patch_bakeoff,
         "evaluate_prediction",
-        lambda scenario, prediction: {"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True},
+        lambda scenario, prediction: {
+            "instance_id": "demo-1",
+            "system": "claude-enhanced",
+            "patch_applied": True,
+            "validation_passed": True,
+        },
     )
 
     writes: list[int] = []
@@ -5163,6 +7846,7 @@ def test_run_claude_skill_ab_matrix_should_write_checkpoint_per_experiment(monke
         limit=1,
         output_contracts=["standard", "terse"],
         task_contracts=["standard"],
+        enhanced_efforts=[""],
         output_path=output_path,
         resume=False,
     )
@@ -5172,30 +7856,29 @@ def test_run_claude_skill_ab_matrix_should_write_checkpoint_per_experiment(monke
 
 
 def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_matrix_record_resume_script", "benchmarks/run_claude_skill_ab_matrix.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_matrix_record_resume_script",
+        "benchmarks/run_claude_skill_ab_matrix.py",
+    )
     driver_path = tmp_path / "driver.json"
     scenarios_path = tmp_path / "scenarios.json"
     output_path = tmp_path / "matrix.json"
     driver_path.write_text(
-        json.dumps(
-            {
-                "records": [
-                    {"instance_id": "demo-1"},
-                    {"instance_id": "demo-2"},
-                ]
-            }
-        ),
+        json.dumps({
+            "records": [
+                {"instance_id": "demo-1"},
+                {"instance_id": "demo-2"},
+            ]
+        }),
         encoding="utf-8",
     )
     scenarios_path.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {"instance_id": "demo-1"},
-                    {"instance_id": "demo-2"},
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {"instance_id": "demo-1"},
+                {"instance_id": "demo-2"},
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -5215,8 +7898,20 @@ def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monk
     def _fake_run_ab_record(record, **_kwargs):
         seen.append(str(record["instance_id"]))
         return (
-            [{"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "model_patch": "diff --git a/x b/x"}],
-            [{"instance_id": str(record["instance_id"]), "system": "claude-enhanced", "response_shape": "analysis_then_patch"}],
+            [
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                }
+            ],
+            [
+                {
+                    "instance_id": str(record["instance_id"]),
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                }
+            ],
         )
 
     monkeypatch.setattr(module.ab_runner, "run_ab_record", _fake_run_ab_record)
@@ -5237,27 +7932,47 @@ def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monk
 
     def _fake_write_json(path, payload):
         if Path(path) == output_path:
-            writes.append((int(payload["experiment_count"]), len(payload["experiments"][0]["prediction_records"])))
+            writes.append((
+                int(payload["experiment_count"]),
+                len(payload["experiments"][0]["prediction_records"]),
+            ))
 
     monkeypatch.setattr(module, "write_json", _fake_write_json)
 
-    partial = module.build_partial_payload(
-        [
-            {
-                "name": "output-standard__task-standard",
-                "enhanced_output_contract": "standard",
-                "enhanced_task_contract": "standard",
-                "prediction_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "model_patch": "diff --git a/x b/x"}],
-                "trace_records": [{"instance_id": "demo-1", "system": "claude-enhanced", "response_shape": "analysis_then_patch"}],
-                "bakeoff_rows": [{"instance_id": "demo-1", "system": "claude-enhanced", "patch_applied": True, "validation_passed": True}],
-                "prediction_record_count": 1,
-                "trace_record_count": 1,
-                "trace_summary": {"claude-enhanced": {"record_count": 1}},
-                "bakeoff_summary": {"scenario_count": 1},
-                "system_score_summary": {"claude-enhanced": {"record_count": 1}},
-            }
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "name": "output-standard__task-standard",
+            "enhanced_output_contract": "standard",
+            "enhanced_task_contract": "standard",
+            "prediction_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                }
+            ],
+            "trace_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                }
+            ],
+            "bakeoff_rows": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "patch_applied": True,
+                    "validation_passed": True,
+                }
+            ],
+            "prediction_record_count": 1,
+            "trace_record_count": 1,
+            "trace_summary": {"claude-enhanced": {"record_count": 1}},
+            "bakeoff_summary": {"scenario_count": 1},
+            "system_score_summary": {"claude-enhanced": {"record_count": 1}},
+        }
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -5275,60 +7990,60 @@ def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monk
         resume=True,
     )
 
-    assert seen == ["demo-2"]
+    assert seen == ["demo-1", "demo-2"]
     experiment = payload["experiments"][0]
     assert [row["instance_id"] for row in experiment["prediction_records"]] == ["demo-1", "demo-2"]
     assert experiment["prediction_record_count"] == 2
-    assert writes == [(1, 2)]
+    assert writes == [(1, 1), (1, 2)]
 
 
 def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
-    module = _load_script_module("render_claude_skill_ab_matrix_script", "benchmarks/render_claude_skill_ab_matrix.py")
+    module = _load_script_module(
+        "render_claude_skill_ab_matrix_script", "benchmarks/render_claude_skill_ab_matrix.py"
+    )
     payload_path = tmp_path / "matrix.json"
     payload_path.write_text(
-        json.dumps(
-            {
-                "artifact": "claude_skill_ab_matrix",
-                "experiments": [
-                    {
-                        "name": "output-standard__task-standard",
-                        "enhanced_output_contract": "standard",
-                        "enhanced_task_contract": "standard",
-                        "system_score_summary": {
-                            "claude-enhanced": {
-                                "mean_patch_applied_rate": 0.0,
-                                "mean_validation_pass_rate": 0.0,
-                            }
-                        },
-                        "trace_summary": {
-                            "claude-enhanced": {
-                                "meta_question_rate": 1.0,
-                                "mean_post_edit_deliberation_seconds": None,
-                                "mean_first_tg_seconds": None,
-                            }
-                        },
+        json.dumps({
+            "artifact": "claude_skill_ab_matrix",
+            "experiments": [
+                {
+                    "name": "output-standard__task-standard",
+                    "enhanced_output_contract": "standard",
+                    "enhanced_task_contract": "standard",
+                    "system_score_summary": {
+                        "claude-enhanced": {
+                            "mean_patch_applied_rate": 0.0,
+                            "mean_validation_pass_rate": 0.0,
+                        }
                     },
-                    {
-                        "name": "output-terse__task-standard",
-                        "enhanced_output_contract": "terse",
-                        "enhanced_task_contract": "standard",
-                        "system_score_summary": {
-                            "claude-enhanced": {
-                                "mean_patch_applied_rate": 1.0,
-                                "mean_validation_pass_rate": 1.0,
-                            }
-                        },
-                        "trace_summary": {
-                            "claude-enhanced": {
-                                "meta_question_rate": 0.0,
-                                "mean_post_edit_deliberation_seconds": 41.545078,
-                                "mean_first_tg_seconds": None,
-                            }
-                        },
+                    "trace_summary": {
+                        "claude-enhanced": {
+                            "meta_question_rate": 1.0,
+                            "mean_post_edit_deliberation_seconds": None,
+                            "mean_first_tg_seconds": None,
+                        }
                     },
-                ],
-            }
-        ),
+                },
+                {
+                    "name": "output-terse__task-standard",
+                    "enhanced_output_contract": "terse",
+                    "enhanced_task_contract": "standard",
+                    "system_score_summary": {
+                        "claude-enhanced": {
+                            "mean_patch_applied_rate": 1.0,
+                            "mean_validation_pass_rate": 1.0,
+                        }
+                    },
+                    "trace_summary": {
+                        "claude-enhanced": {
+                            "meta_question_rate": 0.0,
+                            "mean_post_edit_deliberation_seconds": 41.545078,
+                            "mean_first_tg_seconds": None,
+                        }
+                    },
+                },
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -5340,17 +8055,53 @@ def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
     assert "meta_question_rate=`0.0`" in markdown
 
 
+def test_render_provider_navigation_scorecard_should_render_ranked_markdown(tmp_path):
+    module = _load_script_module(
+        "render_provider_navigation_scorecard_script",
+        "benchmarks/render_provider_navigation_scorecard.py",
+    )
+    payload_path = tmp_path / "provider.json"
+    payload_path.write_text(
+        json.dumps({
+            "artifact": "bench_provider_navigation",
+            "providers": ["native", "hybrid"],
+            "by_provider": {
+                "native": {
+                    "scenario_count": 2,
+                    "mean_caller_hit_rate": 0.0,
+                    "mean_caller_precision": 0.0,
+                    "mean_test_hit_rate": 1.0,
+                },
+                "hybrid": {
+                    "scenario_count": 2,
+                    "mean_caller_hit_rate": 1.0,
+                    "mean_caller_precision": 1.0,
+                    "mean_test_hit_rate": 1.0,
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+
+    markdown = module.render_markdown(payload_path)
+
+    assert markdown.startswith("# Provider Navigation Scorecard")
+    assert "`hybrid`" in markdown
+    assert "caller_hit_rate=`1.0`" in markdown
+    assert "Recommended Provider" in markdown
+
+
 def test_run_claude_skill_ab_should_load_tg_trace_records(tmp_path):
-    module = _load_script_module("run_claude_skill_ab_trace_log_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_trace_log_script", "benchmarks/run_claude_skill_ab.py"
+    )
     log_path = tmp_path / "tg_trace.jsonl"
     log_path.write_text(
-        '\n'.join(
-            [
-                '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.5}',
-                '{"argv":["tg","refs","Demo"],"exit_code":0,"duration_seconds":1.25}',
-            ]
-        )
-        + '\n',
+        "\n".join([
+            '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.5}',
+            '{"argv":["tg","refs","Demo"],"exit_code":0,"duration_seconds":1.25}',
+        ])
+        + "\n",
         encoding="utf-8",
     )
 
@@ -5362,7 +8113,9 @@ def test_run_claude_skill_ab_should_load_tg_trace_records(tmp_path):
 
 
 def test_run_claude_skill_ab_should_omit_model_flag_when_model_is_empty(monkeypatch, tmp_path):
-    module = _load_script_module("run_claude_skill_ab_model_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_model_script", "benchmarks/run_claude_skill_ab.py"
+    )
     calls: list[list[str]] = []
 
     class FakeProc:
@@ -5384,13 +8137,48 @@ def test_run_claude_skill_ab_should_omit_model_flag_when_model_is_empty(monkeypa
         model="",
         permission_mode="bypassPermissions",
         timeout_seconds=5,
+        effort="",
     )
 
     assert "--model" not in calls[0]
 
 
+def test_run_claude_skill_ab_should_include_effort_flag_when_requested(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_claude_skill_ab_effort_script", "benchmarks/run_claude_skill_ab.py"
+    )
+    calls: list[list[str]] = []
+
+    class FakeProc:
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return ("ok", "")
+
+    monkeypatch.setattr(module, "resolve_claude_binary", lambda: "claude")
+    monkeypatch.setattr(
+        module.subprocess,
+        "Popen",
+        lambda command, **kwargs: calls.append(list(command)) or FakeProc(),
+    )
+
+    module._run_claude_command(
+        tmp_path,
+        "Say hi in one word.",
+        model="",
+        permission_mode="bypassPermissions",
+        timeout_seconds=5,
+        effort="low",
+    )
+
+    assert "--effort" in calls[0]
+    assert calls[0][calls[0].index("--effort") + 1] == "low"
+
+
 def test_run_claude_skill_ab_default_trace_output_path():
-    module = _load_script_module("run_claude_skill_ab_trace_path_script", "benchmarks/run_claude_skill_ab.py")
+    module = _load_script_module(
+        "run_claude_skill_ab_trace_path_script", "benchmarks/run_claude_skill_ab.py"
+    )
 
     trace_path = module.default_trace_output_path(Path("C:/tmp/result.json"))
 
@@ -5406,27 +8194,34 @@ def test_tensor_grep_claude_skill_should_require_non_interactive_action():
 
 
 def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, tmp_path):
-    module = _load_script_module("run_editor_profiling_provider_script", "benchmarks/run_editor_profiling.py")
+    module = _load_script_module(
+        "run_editor_profiling_provider_script", "benchmarks/run_editor_profiling.py"
+    )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     captured: dict[str, object] = {}
     monkeypatch.setattr(
         module.repo_map,
         "build_symbol_blast_radius_render",
-        lambda symbol, path, max_depth=3, max_files=6, max_sources=6, profile=True, semantic_provider="native": captured.update(
-            {"provider": semantic_provider}
-        )
-        or {
-            "_profiling": {"total_elapsed_s": 0.2, "breakdown_pct": {}, "phases": []},
-            "files": [],
-            "tests": [],
-            "token_estimate": 0,
-            "truncated": False,
-        },
+        lambda symbol, path, max_depth=3, max_files=6, max_sources=6, profile=True, semantic_provider="native": (
+            captured.update({"provider": semantic_provider})
+            or {
+                "_profiling": {"total_elapsed_s": 0.2, "breakdown_pct": {}, "phases": []},
+                "files": [],
+                "tests": [],
+                "token_estimate": 0,
+                "truncated": False,
+            }
+        ),
     )
 
     row = module.benchmark_blast_radius_fixture(
-        {"root": str(repo_root), "name": "demo", "target_symbol": "create_invoice", "file_count": 1},
+        {
+            "root": str(repo_root),
+            "name": "demo",
+            "target_symbol": "create_invoice",
+            "file_count": 1,
+        },
         repeats=1,
         provider="hybrid",
     )
@@ -5435,7 +8230,9 @@ def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, 
     assert row["semantic_provider"] == "hybrid"
 
 
-def test_run_codex_competitor_eval_should_retry_without_schema_when_first_result_is_empty(tmp_path, monkeypatch):
+def test_run_codex_competitor_eval_should_retry_without_schema_when_first_result_is_empty(
+    tmp_path, monkeypatch
+):
     module = _load_script_module(
         "run_codex_competitor_eval_retry_script", "benchmarks/run_codex_competitor_eval.py"
     )
@@ -5453,57 +8250,45 @@ def test_run_codex_competitor_eval_should_retry_without_schema_when_first_result
         command = list(args[0])
         calls.append(command)
         if "--output-schema" in command:
-            stdout = "\n".join(
-                [
-                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {
-                                "type": "agent_message",
-                                "text": json.dumps(
-                                    {
-                                        "actual_primary_file": None,
-                                        "actual_primary_span": None,
-                                        "actual_dependent_files": [],
-                                        "actual_suggested_edit_files": [],
-                                        "actual_test_files": [],
-                                        "actual_validation_commands": [],
-                                        "context_token_count": 0,
-                                        "notes": "Awaiting code-edit task to plan against.",
-                                    }
-                                ),
-                            },
-                        }
-                    ),
-                ]
-            )
+            stdout = "\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps({
+                            "actual_primary_file": None,
+                            "actual_primary_span": None,
+                            "actual_dependent_files": [],
+                            "actual_suggested_edit_files": [],
+                            "actual_test_files": [],
+                            "actual_validation_commands": [],
+                            "context_token_count": 0,
+                            "notes": "Awaiting code-edit task to plan against.",
+                        }),
+                    },
+                }),
+            ])
         else:
-            stdout = "\n".join(
-                [
-                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {
-                                "type": "agent_message",
-                                "text": json.dumps(
-                                    {
-                                        "actual_primary_file": "a.py",
-                                        "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                        "actual_dependent_files": [],
-                                        "actual_suggested_edit_files": [],
-                                        "actual_test_files": [],
-                                        "actual_validation_commands": ["pytest -q"],
-                                        "context_token_count": 123,
-                                        "notes": "ok",
-                                    }
-                                ),
-                            },
-                        }
-                    ),
-                ]
-            )
+            stdout = "\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps({
+                            "actual_primary_file": "a.py",
+                            "actual_primary_span": {"start_line": 1, "end_line": 2},
+                            "actual_dependent_files": [],
+                            "actual_suggested_edit_files": [],
+                            "actual_test_files": [],
+                            "actual_validation_commands": ["pytest -q"],
+                            "context_token_count": 123,
+                            "notes": "ok",
+                        }),
+                    },
+                }),
+            ])
         return type("Proc", (), {"stdout": stdout})()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -5520,12 +8305,10 @@ def test_run_codex_competitor_eval_should_normalize_string_primary_span():
         "run_codex_competitor_eval_span_script", "benchmarks/run_codex_competitor_eval.py"
     )
 
-    record = module._normalize_primary_span(
-        {
-            "actual_primary_file": None,
-            "actual_primary_span": "src/pkg/mod.py:10-14",
-        }
-    )
+    record = module._normalize_primary_span({
+        "actual_primary_file": None,
+        "actual_primary_span": "src/pkg/mod.py:10-14",
+    })
 
     assert record["actual_primary_file"] == "src/pkg/mod.py"
     assert record["actual_primary_span"] == {"start_line": 10, "end_line": 14}
@@ -5537,27 +8320,25 @@ def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_pat
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -5570,18 +8351,16 @@ def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_pat
             (),
             {
                 "stdout": "● "
-                + json.dumps(
-                    {
-                        "actual_primary_file": "a.py",
-                        "actual_primary_span": {"start_line": 1, "end_line": 2},
-                        "actual_dependent_files": [],
-                        "actual_suggested_edit_files": [],
-                        "actual_test_files": [],
-                        "actual_validation_commands": ["pytest -q"],
-                        "context_token_count": 123,
-                        "notes": "ok",
-                    }
-                )
+                + json.dumps({
+                    "actual_primary_file": "a.py",
+                    "actual_primary_span": {"start_line": 1, "end_line": 2},
+                    "actual_dependent_files": [],
+                    "actual_suggested_edit_files": [],
+                    "actual_test_files": [],
+                    "actual_validation_commands": ["pytest -q"],
+                    "context_token_count": 123,
+                    "notes": "ok",
+                })
             },
         )(),
     )
@@ -5610,17 +8389,15 @@ def test_run_copilot_competitor_eval_should_parse_wrapped_final_json():
     module = _load_script_module(
         "run_copilot_competitor_eval_wrapped_script", "benchmarks/run_copilot_competitor_eval.py"
     )
-    stdout = "\n".join(
-        [
-            "● Planning the answer first.",
-            "",
-            '● {"actual_primary_file":"a.py","actual_primary_span":{"start_li',
-            '  ne":1,"end_line":2},"actual_dependent_files":[],"actual_suggested_',
-            '  edit_files":[],"actual_test_files":[],"actual_validation_commands":[',
-            '  "pytest -q"],"context_token_count":123,"notes":"ok"}',
-            "",
-        ]
-    )
+    stdout = "\n".join([
+        "● Planning the answer first.",
+        "",
+        '● {"actual_primary_file":"a.py","actual_primary_span":{"start_li',
+        '  ne":1,"end_line":2},"actual_dependent_files":[],"actual_suggested_',
+        '  edit_files":[],"actual_test_files":[],"actual_validation_commands":[',
+        '  "pytest -q"],"context_token_count":123,"notes":"ok"}',
+        "",
+    ])
 
     extracted = module._extract_text_from_copilot_output(stdout)
 
@@ -5631,15 +8408,13 @@ def test_run_copilot_competitor_eval_should_parse_fenced_json_from_mixed_output(
     module = _load_script_module(
         "run_copilot_competitor_eval_fenced_script", "benchmarks/run_copilot_competitor_eval.py"
     )
-    stdout = "\n".join(
-        [
-            "Analyzing repository...",
-            "I found the likely target below.",
-            "```json",
-            '{"actual_primary_file":"b.py","actual_primary_span":{"start_line":10,"end_line":12},"actual_dependent_files":[],"actual_suggested_edit_files":[],"actual_test_files":[],"actual_validation_commands":["pytest -q"],"context_token_count":321,"notes":"ok"}',
-            "```",
-        ]
-    )
+    stdout = "\n".join([
+        "Analyzing repository...",
+        "I found the likely target below.",
+        "```json",
+        '{"actual_primary_file":"b.py","actual_primary_span":{"start_line":10,"end_line":12},"actual_dependent_files":[],"actual_suggested_edit_files":[],"actual_test_files":[],"actual_validation_commands":["pytest -q"],"context_token_count":321,"notes":"ok"}',
+        "```",
+    ])
 
     extracted = module._extract_text_from_copilot_output(stdout)
 
@@ -5652,27 +8427,25 @@ def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -5684,24 +8457,20 @@ def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path
             "Proc",
             (),
             {
-                "stdout": json.dumps(
-                    {
-                        "session_id": "demo",
-                        "response": json.dumps(
-                            {
-                                "actual_primary_file": "a.py",
-                                "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                "actual_dependent_files": [],
-                                "actual_suggested_edit_files": [],
-                                "actual_test_files": [],
-                                "actual_validation_commands": ["pytest -q"],
-                                "context_token_count": 123,
-                                "notes": "ok",
-                            }
-                        ),
-                        "stats": {},
-                    }
-                )
+                "stdout": json.dumps({
+                    "session_id": "demo",
+                    "response": json.dumps({
+                        "actual_primary_file": "a.py",
+                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                        "actual_dependent_files": [],
+                        "actual_suggested_edit_files": [],
+                        "actual_test_files": [],
+                        "actual_validation_commands": ["pytest -q"],
+                        "context_token_count": 123,
+                        "notes": "ok",
+                    }),
+                    "stats": {},
+                })
             },
         )(),
     )
@@ -5712,3 +8481,292 @@ def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path
     assert payload["suite"] == "run_gemini_competitor_eval"
     assert payload["records"][0]["system"] == "gemini-cli"
     assert payload["records"][0]["actual_primary_file"] == "a.py"
+
+
+def test_build_external_agent_patch_driver_comparison_should_build_payload(tmp_path):
+    module = _load_script_module(
+        "build_external_agent_patch_driver_comparison_script",
+        "benchmarks/build_external_agent_patch_driver_comparison.py",
+    )
+    gemini_path = tmp_path / "gemini.json"
+    claude_path = tmp_path / "claude.json"
+    codex_path = tmp_path / "codex.json"
+    gemini_output_path = tmp_path / "gemini_output.json"
+    claude_output_path = tmp_path / "claude_output.json"
+    codex_output_path = tmp_path / "codex_output.json"
+    gemini_path.write_text(
+        json.dumps({
+            "artifact": "gemini_patch_driver_validation_summary",
+            "instance_id": "gemini-1",
+            "output_file": str(gemini_output_path),
+            "actual_primary_file": "glob.ts",
+            "follow_up_reads": ["glob.ts#L1-L10", "grep.ts#L1-L20"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
+        encoding="utf-8",
+    )
+    claude_path.write_text(
+        json.dumps({
+            "artifact": "claude_patch_driver_validation_summary",
+            "instance_id": "claude-1",
+            "output_file": str(claude_output_path),
+            "actual_primary_file": "FileWriteToolDiff.tsx",
+            "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
+        encoding="utf-8",
+    )
+    codex_path.write_text(
+        json.dumps({
+            "artifact": "codex_patch_driver_validation_summary",
+            "instance_id": "codex-1",
+            "output_file": str(codex_output_path),
+            "actual_primary_file": "fuzzy_file_search.rs",
+            "follow_up_reads": ["fuzzy_file_search.rs#L1-L10"],
+            "validation_commands": ["cargo test"],
+            "ledger_next_action": "run patch system",
+        }),
+        encoding="utf-8",
+    )
+    gemini_output_path.write_text(
+        json.dumps({
+            "records": [
+                {
+                    "instance_id": "gemini-1",
+                    "navigation_pack": {
+                        "parallel_read_groups": [
+                            {
+                                "phase": 0,
+                                "label": "primary",
+                                "can_parallelize": False,
+                                "mentions": ["glob.ts#L1-L10"],
+                                "files": ["glob.ts"],
+                                "roles": ["primary"],
+                            },
+                            {
+                                "phase": 1,
+                                "label": "related",
+                                "can_parallelize": True,
+                                "mentions": ["grep.ts#L1-L20"],
+                                "files": ["grep.ts"],
+                                "roles": ["related"],
+                            },
+                        ]
+                    },
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+    claude_output_path.write_text(
+        json.dumps({
+            "records": [
+                {
+                    "instance_id": "claude-1",
+                    "navigation_pack": {
+                        "parallel_read_groups": [
+                            {
+                                "phase": 0,
+                                "label": "primary",
+                                "can_parallelize": False,
+                                "mentions": ["FileWriteToolDiff.tsx#L1-L10"],
+                                "files": ["FileWriteToolDiff.tsx"],
+                                "roles": ["primary"],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+    codex_output_path.write_text(
+        json.dumps({
+            "records": [
+                {
+                    "instance_id": "codex-1",
+                    "navigation_pack": {
+                        "parallel_read_groups": [
+                            {
+                                "phase": 0,
+                                "label": "primary",
+                                "can_parallelize": False,
+                                "mentions": ["fuzzy_file_search.rs#L1-L10"],
+                                "files": ["fuzzy_file_search.rs"],
+                                "roles": ["primary"],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    payload = module.build_payload([
+        ("gemini", gemini_path),
+        ("claude", claude_path),
+        ("codex", codex_path),
+    ])
+
+    assert payload["artifact"] == "external_agent_patch_driver_comparison"
+    assert payload["common_contract"]["ledger_artifact"] == "agent_attempt_ledger"
+    assert payload["common_contract"]["next_action"] == "run patch system"
+    assert payload["systems"][0]["system"] == "gemini"
+    assert payload["systems"][0]["follow_up_count"] == 2
+    assert payload["systems"][0]["parallel_read_group_count"] == 2
+    assert payload["systems"][0]["estimated_saved_read_steps"] == 0
+    assert payload["systems"][2]["validation_commands"] == ["cargo test"]
+
+
+def test_build_external_agent_patch_driver_comparison_cli_should_write_output(tmp_path):
+    module = _load_script_module(
+        "build_external_agent_patch_driver_comparison_cli_script",
+        "benchmarks/build_external_agent_patch_driver_comparison.py",
+    )
+    gemini_path = tmp_path / "gemini.json"
+    claude_path = tmp_path / "claude.json"
+    output_path = tmp_path / "comparison.json"
+    gemini_output_path = tmp_path / "gemini_output.json"
+    claude_output_path = tmp_path / "claude_output.json"
+    gemini_path.write_text(
+        json.dumps({
+            "artifact": "gemini_patch_driver_validation_summary",
+            "instance_id": "gemini-1",
+            "output_file": str(gemini_output_path),
+            "actual_primary_file": "glob.ts",
+            "follow_up_reads": ["glob.ts#L1-L10"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
+        encoding="utf-8",
+    )
+    claude_path.write_text(
+        json.dumps({
+            "artifact": "claude_patch_driver_validation_summary",
+            "instance_id": "claude-1",
+            "output_file": str(claude_output_path),
+            "actual_primary_file": "FileWriteToolDiff.tsx",
+            "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
+        encoding="utf-8",
+    )
+    gemini_output_path.write_text(
+        json.dumps({
+            "records": [
+                {"instance_id": "gemini-1", "navigation_pack": {"parallel_read_groups": []}}
+            ]
+        }),
+        encoding="utf-8",
+    )
+    claude_output_path.write_text(
+        json.dumps({
+            "records": [
+                {"instance_id": "claude-1", "navigation_pack": {"parallel_read_groups": []}}
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    exit_code = module.main([
+        "--summary",
+        f"gemini={gemini_path}",
+        "--summary",
+        f"claude={claude_path}",
+        "--output",
+        str(output_path),
+    ])
+
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert written["systems"][1]["system"] == "claude"
+
+
+def test_build_external_agent_patch_driver_scorecard_should_score_compactness_and_validation_fit(
+    tmp_path,
+):
+    module = _load_script_module(
+        "build_external_agent_patch_driver_scorecard_script",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    comparison_path = tmp_path / "comparison.json"
+    comparison_path.write_text(
+        json.dumps({
+            "artifact": "external_agent_patch_driver_comparison",
+            "systems": [
+                {
+                    "system": "gemini",
+                    "primary_file": "glob.ts",
+                    "follow_up_count": 5,
+                    "parallel_read_group_count": 3,
+                    "estimated_saved_read_steps": 2,
+                    "validation_commands": ["uv run pytest -q"],
+                },
+                {
+                    "system": "codex",
+                    "primary_file": "fuzzy_file_search.rs",
+                    "follow_up_count": 5,
+                    "parallel_read_group_count": 3,
+                    "estimated_saved_read_steps": 2,
+                    "validation_commands": ["cargo test"],
+                },
+                {
+                    "system": "wide",
+                    "primary_file": "reader.py",
+                    "follow_up_count": 9,
+                    "parallel_read_group_count": 4,
+                    "estimated_saved_read_steps": 5,
+                    "validation_commands": ["pytest -q"],
+                },
+            ],
+            "common_contract": {"next_action": "run patch system"},
+        }),
+        encoding="utf-8",
+    )
+
+    payload = module.build_scorecard_payload(module.load_comparison(comparison_path))
+
+    assert payload["artifact"] == "external_agent_patch_driver_scorecard"
+    assert payload["summary"]["system_count"] == 3
+    assert payload["by_system"]["gemini"]["compactness_target_met"] is True
+    assert payload["by_system"]["gemini"]["validation_fit"] == "weak"
+    assert payload["by_system"]["gemini"]["parallel_read_reduction_score"] > 0.0
+    assert payload["by_system"]["codex"]["validation_fit"] == "strong"
+    assert payload["by_system"]["wide"]["compactness_score"] < 1.0
+    assert payload["summary"]["mean_parallel_read_reduction_score"] > 0.0
+
+
+def test_build_external_agent_patch_driver_scorecard_cli_should_write_output(tmp_path):
+    module = _load_script_module(
+        "build_external_agent_patch_driver_scorecard_cli_script",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    comparison_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    comparison_path.write_text(
+        json.dumps({
+            "artifact": "external_agent_patch_driver_comparison",
+            "systems": [
+                {
+                    "system": "codex",
+                    "primary_file": "fuzzy_file_search.rs",
+                    "follow_up_count": 5,
+                    "parallel_read_group_count": 3,
+                    "estimated_saved_read_steps": 2,
+                    "validation_commands": ["cargo test"],
+                }
+            ],
+            "common_contract": {"next_action": "run patch system"},
+        }),
+        encoding="utf-8",
+    )
+
+    exit_code = module.main(["--input", str(comparison_path), "--output", str(output_path)])
+
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert written["by_system"]["codex"]["validation_fit"] == "strong"

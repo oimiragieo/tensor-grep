@@ -42,7 +42,9 @@ def _write_package_json(
     (project / "package.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _suggested_edit(seed: dict[str, object], *, file_path: Path, edit_kind: str) -> dict[str, object]:
+def _suggested_edit(
+    seed: dict[str, object], *, file_path: Path, edit_kind: str
+) -> dict[str, object]:
     resolved = str(file_path.resolve())
     for current in seed["suggested_edits"]:
         if current["file"] == resolved and current["edit_kind"] == edit_kind:
@@ -56,8 +58,7 @@ def test_context_render_associates_pytest_parametrize_tests_via_framework_patter
     project = tmp_path / "project"
     _write(
         project / "src" / "payments.py",
-        "def create_invoice(total):\n"
-        "    return total + 1\n",
+        "def create_invoice(total):\n    return total + 1\n",
     )
     test_path = project / "tests" / "test_cases.py"
     _write(
@@ -87,9 +88,7 @@ def test_context_render_uses_jest_test_name_pattern_for_describe_it_targets(tmp_
     _write_package_json(project, dev_dependencies={"jest": "^29.0.0"})
     _write(
         project / "src" / "payments.js",
-        "export function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     test_path = project / "tests" / "ui_flow.test.js"
     _write(
@@ -119,23 +118,16 @@ def test_blast_radius_recognizes_tokio_tests_for_validation_commands(tmp_path: P
     project = tmp_path / "project"
     _write(
         project / "Cargo.toml",
-        "[package]\n"
-        'name = "sample"\n'
-        'version = "0.1.0"\n',
+        '[package]\nname = "sample"\nversion = "0.1.0"\n',
     )
     _write(
         project / "src" / "lib.rs",
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
     )
     test_path = project / "tests" / "integration_checks.rs"
     _write(
         test_path,
-        "#[tokio::test]\n"
-        "async fn issue_invoice_smoke() {\n"
-        "    assert_eq!(1, 1);\n"
-        "}\n",
+        "#[tokio::test]\nasync fn issue_invoice_smoke() {\n    assert_eq!(1, 1);\n}\n",
     )
 
     payload = repo_map.build_symbol_blast_radius_render("issue_invoice", project)
@@ -160,9 +152,7 @@ def test_context_render_includes_import_updates_for_default_import_resolution(
     project = tmp_path / "project"
     _write(
         project / "src" / f"payments{suffix}",
-        "export default function createInvoice(total) {\n"
-        "  return total + 1;\n"
-        "}\n",
+        "export default function createInvoice(total) {\n  return total + 1;\n}\n",
     )
     service_path = project / "src" / f"service{suffix}"
     _write(
@@ -175,7 +165,9 @@ def test_context_render_includes_import_updates_for_default_import_resolution(
     )
 
     payload = repo_map.build_context_render("createInvoice", project)
-    import_update = _suggested_edit(payload["edit_plan_seed"], file_path=service_path, edit_kind="import-update")
+    import_update = _suggested_edit(
+        payload["edit_plan_seed"], file_path=service_path, edit_kind="import-update"
+    )
 
     assert import_update["start_line"] == 1
     assert import_update["end_line"] == 1
@@ -185,29 +177,20 @@ def test_blast_radius_includes_import_updates_for_workspace_resolution(tmp_path:
     project = tmp_path / "workspace"
     _write(
         project / "Cargo.toml",
-        "[workspace]\n"
-        'members = ["app", "shared"]\n',
+        '[workspace]\nmembers = ["app", "shared"]\n',
     )
     _write(
         project / "shared" / "Cargo.toml",
-        "[package]\n"
-        'name = "shared"\n'
-        'version = "0.1.0"\n'
-        'edition = "2021"\n',
+        '[package]\nname = "shared"\nversion = "0.1.0"\nedition = "2021"\n',
     )
     _write(project / "shared" / "src" / "lib.rs", "pub mod billing;\n")
     _write(
         project / "shared" / "src" / "billing.rs",
-        "pub fn issue_invoice() -> usize {\n"
-        "    1\n"
-        "}\n",
+        "pub fn issue_invoice() -> usize {\n    1\n}\n",
     )
     _write(
         project / "app" / "Cargo.toml",
-        "[package]\n"
-        'name = "app"\n'
-        'version = "0.1.0"\n'
-        'edition = "2021"\n',
+        '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n',
     )
     app_lib = project / "app" / "src" / "lib.rs"
     _write(
@@ -219,7 +202,9 @@ def test_blast_radius_includes_import_updates_for_workspace_resolution(tmp_path:
     )
 
     payload = repo_map.build_symbol_blast_radius_render("issue_invoice", project)
-    import_update = _suggested_edit(payload["edit_plan_seed"], file_path=app_lib, edit_kind="import-update")
+    import_update = _suggested_edit(
+        payload["edit_plan_seed"], file_path=app_lib, edit_kind="import-update"
+    )
 
     assert import_update["start_line"] == 1
     assert import_update["end_line"] == 1

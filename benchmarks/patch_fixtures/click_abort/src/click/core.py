@@ -7,4 +7,4 @@ class Context:
     """Derived from click.Context.abort for patch benchmarking."""
 
     def abort(self) -> None:
-        raise RuntimeError("aborted")
+        raise Abort()

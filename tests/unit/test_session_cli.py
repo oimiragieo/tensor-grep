@@ -154,8 +154,7 @@ def test_session_serve_streams_jsonl_requests_from_cached_session(
     )
     test_path = tests_dir / "invoice_flow.py"
     test_path.write_text(
-        "from src.payments import create_invoice\n\n"
-        "assert create_invoice(1, 2) == 3\n",
+        "from src.payments import create_invoice\n\nassert create_invoice(1, 2) == 3\n",
         encoding="utf-8",
     )
 
@@ -169,14 +168,12 @@ def test_session_serve_streams_jsonl_requests_from_cached_session(
     )
 
     stdin = StringIO(
-        "\n".join(
-            [
-                json.dumps({"command": "repo_map"}),
-                json.dumps({"command": "context", "query": "invoice payment"}),
-                json.dumps({"command": "callers", "symbol": "create_invoice"}),
-                json.dumps({"command": "blast_radius", "symbol": "create_invoice", "max_depth": 1}),
-            ]
-        )
+        "\n".join([
+            json.dumps({"command": "repo_map"}),
+            json.dumps({"command": "context", "query": "invoice payment"}),
+            json.dumps({"command": "callers", "symbol": "create_invoice"}),
+            json.dumps({"command": "blast_radius", "symbol": "create_invoice", "max_depth": 1}),
+        ])
         + "\n"
     )
     stdout = StringIO()
@@ -276,7 +273,9 @@ def test_session_refresh_updates_cached_repo_map_after_file_change(tmp_path: Pat
     assert refreshed["file_count"] == 2
     assert refreshed["symbol_count"] == 2
 
-    show_result = runner.invoke(app, ["session", "show", opened["session_id"], str(project), "--json"])
+    show_result = runner.invoke(
+        app, ["session", "show", opened["session_id"], str(project), "--json"]
+    )
     shown = json.loads(show_result.stdout)
     assert str(second_path.resolve()) in shown["repo_map"]["files"]
 
@@ -358,13 +357,11 @@ def test_session_serve_reports_cache_stats(tmp_path: Path) -> None:
 
     opened = json.loads(CliRunner().invoke(app, ["session", "open", str(project), "--json"]).stdout)
     stdin = StringIO(
-        "\n".join(
-            [
-                json.dumps({"command": "repo_map"}),
-                json.dumps({"command": "repo_map"}),
-                json.dumps({"command": "stats"}),
-            ]
-        )
+        "\n".join([
+            json.dumps({"command": "repo_map"}),
+            json.dumps({"command": "repo_map"}),
+            json.dumps({"command": "stats"}),
+        ])
         + "\n"
     )
     stdout = StringIO()
@@ -419,7 +416,9 @@ def test_session_serve_reports_multi_root_stats_and_cache_provenance(tmp_path: P
     first_project = tmp_path / "project_one"
     first_src = first_project / "src"
     first_src.mkdir(parents=True)
-    (first_src / "payments.py").write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    (first_src / "payments.py").write_text(
+        "def create_invoice():\n    return 1\n", encoding="utf-8"
+    )
 
     second_project = tmp_path / "project_two"
     second_src = second_project / "src"
@@ -427,24 +426,24 @@ def test_session_serve_reports_multi_root_stats_and_cache_provenance(tmp_path: P
     (second_src / "billing.py").write_text("def issue_invoice():\n    return 2\n", encoding="utf-8")
 
     runner = CliRunner()
-    first_opened = json.loads(runner.invoke(app, ["session", "open", str(first_project), "--json"]).stdout)
-    second_opened = json.loads(runner.invoke(app, ["session", "open", str(second_project), "--json"]).stdout)
+    first_opened = json.loads(
+        runner.invoke(app, ["session", "open", str(first_project), "--json"]).stdout
+    )
+    second_opened = json.loads(
+        runner.invoke(app, ["session", "open", str(second_project), "--json"]).stdout
+    )
 
     stdin = StringIO(
-        "\n".join(
-            [
-                json.dumps({"command": "repo_map"}),
-                json.dumps({"command": "repo_map"}),
-                json.dumps(
-                    {
-                        "command": "repo_map",
-                        "session_id": second_opened["session_id"],
-                        "path": str(second_project),
-                    }
-                ),
-                json.dumps({"command": "stats"}),
-            ]
-        )
+        "\n".join([
+            json.dumps({"command": "repo_map"}),
+            json.dumps({"command": "repo_map"}),
+            json.dumps({
+                "command": "repo_map",
+                "session_id": second_opened["session_id"],
+                "path": str(second_project),
+            }),
+            json.dumps({"command": "stats"}),
+        ])
         + "\n"
     )
     stdout = StringIO()
@@ -631,8 +630,3 @@ def test_session_blast_radius_render_reuses_cached_repo_map(tmp_path: Path) -> N
     assert payload["sources"][0]["name"] == "create_invoice"
     assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
     assert "create_invoice" in payload["rendered_context"]
-
-
-
-
-

@@ -8,7 +8,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import click
+import click  # noqa: E402
 
 
 def test_style_non_text_is_coerced_to_string() -> None:

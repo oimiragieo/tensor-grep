@@ -227,8 +227,12 @@ def _location_from_external_payload(entry: dict[str, Any]) -> Location | None:
         return Location(
             uri=str(entry["uri"]),
             range=Range(
-                start=Position(line=int(payload_start["line"]), character=int(payload_start["character"])),
-                end=Position(line=int(payload_end["line"]), character=int(payload_end["character"])),
+                start=Position(
+                    line=int(payload_start["line"]), character=int(payload_start["character"])
+                ),
+                end=Position(
+                    line=int(payload_end["line"]), character=int(payload_end["character"])
+                ),
             ),
         )
     except Exception:
@@ -240,7 +244,9 @@ def _document_symbols_for_uri(ls: TensorGrepLSPServer, uri: str) -> list[Documen
         client = _external_client_for_uri(ls, uri)
         if client is not None:
             try:
-                external_result = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
+                external_result = client.request(
+                    "textDocument/documentSymbol", {"textDocument": {"uri": uri}}
+                )
             except LSPTransportError:
                 external_result = None
             if isinstance(external_result, list):
@@ -306,7 +312,9 @@ def _document_symbols_for_uri(ls: TensorGrepLSPServer, uri: str) -> list[Documen
     return native_symbols
 
 
-def _workspace_symbols(ls: TensorGrepLSPServer, query: str, path_hint: str | None = None) -> list[SymbolInformation]:
+def _workspace_symbols(
+    ls: TensorGrepLSPServer, query: str, path_hint: str | None = None
+) -> list[SymbolInformation]:
     if ls.provider_mode != "native" and path_hint is not None:
         client = _external_client_for_uri(ls, path_hint)
         if client is not None:
@@ -351,7 +359,13 @@ def _workspace_symbols(ls: TensorGrepLSPServer, query: str, path_hint: str | Non
         name = str(current.get("name", ""))
         if not normalized_query or normalized_query in name.lower():
             matches.append(dict(current))
-    matches.sort(key=lambda item: (str(item.get("name", "")), str(item.get("file", "")), int(item.get("line", 0))))
+    matches.sort(
+        key=lambda item: (
+            str(item.get("name", "")),
+            str(item.get("file", "")),
+            int(item.get("line", 0)),
+        )
+    )
     return [
         SymbolInformation(
             name=str(current.get("name", "")),
@@ -363,7 +377,9 @@ def _workspace_symbols(ls: TensorGrepLSPServer, query: str, path_hint: str | Non
     ]
 
 
-def _definitions_for_position(ls: TensorGrepLSPServer, uri: str, position: Position) -> list[Location]:
+def _definitions_for_position(
+    ls: TensorGrepLSPServer, uri: str, position: Position
+) -> list[Location]:
     text = _document_text(ls, uri)
     resolved = _word_range_at_position(text, position)
     if resolved is None:
@@ -371,7 +387,9 @@ def _definitions_for_position(ls: TensorGrepLSPServer, uri: str, position: Posit
     symbol, _ = resolved
     native_locations = [
         _location_from_entry(dict(current))
-        for current in repo_map.build_symbol_defs_from_map(_get_repo_map(ls, uri), symbol).get("definitions", [])
+        for current in repo_map.build_symbol_defs_from_map(_get_repo_map(ls, uri), symbol).get(
+            "definitions", []
+        )
     ]
     if ls.provider_mode == "native":
         return native_locations
@@ -381,7 +399,10 @@ def _definitions_for_position(ls: TensorGrepLSPServer, uri: str, position: Posit
     try:
         result = client.request(
             "textDocument/definition",
-            {"textDocument": {"uri": uri}, "position": {"line": position.line, "character": position.character}},
+            {
+                "textDocument": {"uri": uri},
+                "position": {"line": position.line, "character": position.character},
+            },
         )
     except LSPTransportError:
         return native_locations
@@ -411,14 +432,18 @@ def _definitions_for_position(ls: TensorGrepLSPServer, uri: str, position: Posit
     return list(deduped.values())
 
 
-def _references_for_position(ls: TensorGrepLSPServer, uri: str, position: Position) -> list[Location]:
+def _references_for_position(
+    ls: TensorGrepLSPServer, uri: str, position: Position
+) -> list[Location]:
     resolved = _symbol_and_range_for_position(ls, uri, position)
     if resolved is None:
         return []
     symbol, _ = resolved
     native_locations = [
         _location_from_entry(dict(current))
-        for current in repo_map.build_symbol_refs_from_map(_get_repo_map(ls, uri), symbol).get("references", [])
+        for current in repo_map.build_symbol_refs_from_map(_get_repo_map(ls, uri), symbol).get(
+            "references", []
+        )
     ]
     if ls.provider_mode == "native":
         return native_locations
@@ -498,7 +523,9 @@ def _workspace_edit_for_symbol(
     for current_file, entries in sorted(entries_by_file.items()):
         edits: list[TextEdit] = []
         seen_ranges: set[tuple[int, int, int, int]] = set()
-        for entry in sorted(entries, key=lambda item: (int(item.get("line", 0)), str(item.get("text", "")))):
+        for entry in sorted(
+            entries, key=lambda item: (int(item.get("line", 0)), str(item.get("text", "")))
+        ):
             location = _location_from_entry(entry)
             current_range = (
                 int(location.range.start.line),
@@ -599,7 +626,9 @@ def prepare_rename(
 @server.feature(TEXT_DOCUMENT_RENAME)  # type: ignore
 def rename(ls: TensorGrepLSPServer, params: RenameParams) -> WorkspaceEdit | None:
     """Return a workspace edit that renames a symbol across known definitions and references."""
-    return _workspace_edit_for_symbol(ls, params.text_document.uri, params.position, params.new_name)
+    return _workspace_edit_for_symbol(
+        ls, params.text_document.uri, params.position, params.new_name
+    )
 
 
 @server.feature(TEXT_DOCUMENT_DOCUMENT_SYMBOL)  # type: ignore
@@ -609,7 +638,9 @@ def document_symbol(ls: TensorGrepLSPServer, params: DocumentSymbolParams) -> li
 
 
 @server.feature(WORKSPACE_SYMBOL)  # type: ignore
-def workspace_symbol(ls: TensorGrepLSPServer, params: WorkspaceSymbolParams) -> list[SymbolInformation]:
+def workspace_symbol(
+    ls: TensorGrepLSPServer, params: WorkspaceSymbolParams
+) -> list[SymbolInformation]:
     """Return workspace symbols matching the query."""
     path_hint = next(iter(ls.documents_cache), None)
     return _workspace_symbols(ls, params.query, path_hint=path_hint)
