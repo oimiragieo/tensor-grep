@@ -1,0 +1,75 @@
+{
+  "artifact": "agent_attempt_ledger",
+  "suite": "agent_loop",
+  "generated_at_epoch_s": 1774918456.114201,
+  "task_id": "invoice-payment-rewrite",
+  "root": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack",
+  "attempts": [
+    {
+      "attempt_id": "att-001",
+      "parent_attempt_id": null,
+      "kind": "rewrite_apply_verify",
+      "status": "validation_failed",
+      "retryable": true,
+      "retry_stage": "validation",
+      "retry_reason": "post-apply validation failed; retry after repair or rollback",
+      "checkpoint_id": "ckpt-1742491200-deadbeef",
+      "audit_manifest_path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+      "validation_success": false,
+      "score_artifact": null,
+      "inputs": [
+        "docs/examples/edit_plan.json",
+        "docs/examples/rewrite_plan.json"
+      ],
+      "outputs": [
+        "docs/examples/rewrite_apply_verify_validation_failed.json"
+      ]
+    },
+    {
+      "attempt_id": "att-002",
+      "parent_attempt_id": "att-001",
+      "kind": "rewrite_apply_verify",
+      "status": "accepted",
+      "retryable": false,
+      "retry_stage": "full_attempt",
+      "retry_reason": "accepted fix after rerunning apply+verify with repaired validation commands",
+      "checkpoint_id": "ckpt-1742491260-feedface",
+      "audit_manifest_path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+      "validation_success": true,
+      "score_artifact": "docs/examples/patch_bakeoff.json",
+      "inputs": [
+        "docs/examples/edit_plan.json",
+        "docs/examples/rewrite_plan.json",
+        "docs/examples/rewrite_apply_verify_validation_failed.json"
+      ],
+      "outputs": [
+        "docs/examples/rewrite_apply_verify.json",
+        "docs/examples/audit_manifest_verify.json",
+        "docs/examples/patch_bakeoff.json"
+      ]
+    }
+  ],
+  "final_outcome": {
+    "status": "accepted",
+    "accepted_attempt_id": "att-002",
+    "score_artifact": "docs/examples/patch_bakeoff.json",
+    "summary": "Accepted on the second attempt after one validation-failed retry."
+  },
+  "replay": {
+    "preserve_attempt_ids": true,
+    "partial_retry_ledger": [
+      {
+        "from_attempt_id": "att-001",
+        "to_attempt_id": "att-002",
+        "resume_stage": "validation",
+        "reason": "validation commands failed after a byte-for-byte correct apply"
+      }
+    ],
+    "audit_chain": [
+      "docs/examples/rewrite_apply_verify_validation_failed.json",
+      "docs/examples/rewrite_apply_verify.json",
+      "docs/examples/audit_manifest_verify.json"
+    ],
+    "next_action": "score accepted attempt and preserve the full chain for replay and audit"
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "scenarios": [
+    {
+      "id": "python-simple-function-one-caller",
+      "language": "python",
+      "category": "simple_function_one_caller",
+      "description": "Simple Python function called from one file.",
+      "repo_fixture": "../bakeoff_fixtures/python/simple_function_one_caller",
+      "query_or_symbol": "create_invoice_simple",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [
+        "src/service.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "python-multiple-callers",
+      "language": "python",
+      "category": "multiple_callers_across_files",
+      "description": "Function used from multiple Python callers.",
+      "repo_fixture": "../bakeoff_fixtures/python/multiple_callers_across_files",
+      "query_or_symbol": "create_invoice_multi",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [
+        "src/service_a.py",
+        "src/service_b.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "python-class-method-inheritance",
+      "language": "python",
+      "category": "class_method_inheritance",
+      "description": "Inherited method called through a subclass.",
+      "repo_fixture": "../bakeoff_fixtures/python/class_method_inheritance",
+      "query_or_symbol": "finalize_invoice",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/builders.py",
+      "expected_primary_span": {
+        "start_line": 2,
+        "end_line": 3
+      },
+      "expected_dependent_files": [
+        "src/builders.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/test_builders.py"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest"
+      ]
+    },
+    {
+      "id": "python-module-import-change",
+      "language": "python",
+      "category": "module_level_import_change",
+      "description": "Module import alias should surface import update and caller impact.",
+      "repo_fixture": "../bakeoff_fixtures/python/module_level_import_change",
+      "query_or_symbol": "create_invoice_imported",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [
+        "src/service.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "python-leaf-function",
+      "language": "python",
+      "category": "leaf_function_no_callers",
+      "description": "Leaf function with no callers or tests.",
+      "repo_fixture": "../bakeoff_fixtures/python/leaf_function_no_callers",
+      "query_or_symbol": "calculate_leaf_discount",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/helpers.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "python-many-callers",
+      "language": "python",
+      "category": "many_callers_high_blast_radius",
+      "description": "Higher blast radius function with several direct callers.",
+      "repo_fixture": "../bakeoff_fixtures/python/many_callers_high_blast_radius",
+      "query_or_symbol": "create_invoice_blast",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [
+        "src/alpha.py",
+        "src/beta.py",
+        "src/gamma.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "python-test-coverage-present",
+      "language": "python",
+      "category": "test_coverage_present",
+      "description": "Function with direct pytest coverage.",
+      "repo_fixture": "../bakeoff_fixtures/python/test_coverage_present",
+      "query_or_symbol": "create_invoice_covered",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/covered.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/test_covered.py"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest"
+      ]
+    },
+    {
+      "id": "python-test-coverage-absent",
+      "language": "python",
+      "category": "test_coverage_absent",
+      "description": "Function with callers but no test coverage.",
+      "repo_fixture": "../bakeoff_fixtures/python/test_coverage_absent",
+      "query_or_symbol": "create_invoice_uncovered",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/uncovered.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [
+        "src/service.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "python-cross-module-chain",
+      "language": "python",
+      "category": "cross_module_dependency_chain",
+      "description": "Cross-module dependency chain three hops deep.",
+      "repo_fixture": "../bakeoff_fixtures/python/cross_module_dependency_chain",
+      "query_or_symbol": "create_invoice_chain",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [
+        "src/step_b.py",
+        "src/step_c.py",
+        "src/step_d.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [],
+      "expected_validation_commands_contain": []
+    },
+    {
+      "id": "python-circular-import",
+      "language": "python",
+      "category": "circular_import",
+      "description": "Circular import graph should stay deterministic.",
+      "repo_fixture": "../bakeoff_fixtures/python/circular_import",
+      "query_or_symbol": "create_invoice_cycle",
+      "mode": "blast-radius",
+      "expected_primary_file": "src/payments.py",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 2
+      },
+      "expected_dependent_files": [
+        "src/a.py",
+        "src/b.py"
+      ],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/test_cycle.py"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest"
+      ]
+    }
+  ]
+}

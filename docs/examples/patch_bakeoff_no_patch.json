@@ -1,0 +1,41 @@
+{
+  "artifact": "bench_patch_bakeoff",
+  "suite": "run_patch_bakeoff",
+  "generated_at_epoch_s": 1774918122.2860806,
+  "environment": {
+    "platform": "Windows-10-10.0.26100-SP0",
+    "machine": "AMD64",
+    "python_version": "3.12.12"
+  },
+  "summary": {
+    "scenario_count": 1,
+    "missing_predictions": [],
+    "mean_patch_applied_rate": 0.0,
+    "mean_validation_pass_rate": 0.0,
+    "mean_primary_file_hit_rate": 0.0,
+    "mean_primary_span_hit_rate": 0.0,
+    "mean_changed_file_recall": 0.0,
+    "mean_changed_file_precision": 1.0,
+    "mean_predicted_test_hit_rate": 0.0,
+    "mean_predicted_validation_cmd_hit_rate": 1.0
+  },
+  "rows": [
+    {
+      "instance_id": "click-echo-abort",
+      "system": "gemini-enhanced",
+      "patch_applied": false,
+      "validation_passed": false,
+      "reason": "timeout after 60s",
+      "apply_error": "timeout after 60s",
+      "actual_changed_files": [],
+      "primary_file_hit": 0.0,
+      "primary_span_hit": 0.0,
+      "changed_file_recall": 0.0,
+      "changed_file_precision": 1.0,
+      "unexpected_files_touched": [],
+      "predicted_test_hit_rate": 0.0,
+      "predicted_validation_cmd_hit_rate": 1.0,
+      "validation_results": []
+    }
+  ]
+}

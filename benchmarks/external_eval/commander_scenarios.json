@@ -1,0 +1,315 @@
+{
+  "scenarios": [
+    {
+      "id": "commander-option",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.Option.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "Option",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/option.js",
+      "expected_primary_span": {
+        "start_line": 328,
+        "end_line": 377
+      },
+      "expected_dependent_files": [
+        "lib/command.js",
+        "examples/options-conflicts.js",
+        "examples/options-env.js",
+        "examples/options-extra.js",
+        "examples/options-implies.js",
+        "examples/help-groups.js",
+        "examples/hook.js",
+        "index.js",
+        "typings/index.test-d.ts"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js",
+        "lib/option.js",
+        "typings/index.d.ts",
+        "typings/index.test-d.ts"
+      ],
+      "expected_test_files": [
+        "tests/command.createOption.test.js",
+        "tests/command.parseOptions.test.js",
+        "tests/command.positionalOptions.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/command.createOption.test.js --testNamePattern \"when override createOption then used for option()\"",
+        "jest tests/command.createOption.test.js",
+        "jest tests/command.parseOptions.test.js",
+        "jest tests/command.positionalOptions.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-argument",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.Argument.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "Argument",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/argument.js",
+      "expected_primary_span": {
+        "start_line": 3,
+        "end_line": 133
+      },
+      "expected_dependent_files": [
+        "examples/arguments-extra.js",
+        "index.js",
+        "lib/command.js",
+        "typings/index.test-d.ts"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js",
+        "typings/index.test-d.ts"
+      ],
+      "expected_test_files": [
+        "tests/argument.custom-processing.test.js",
+        "tests/command.allowExcessArguments.test.js",
+        "tests/command.argumentVariations.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/argument.custom-processing.test.js --testNamePattern \"when argument not specified then callback not called\"",
+        "jest tests/argument.custom-processing.test.js",
+        "jest tests/command.allowExcessArguments.test.js",
+        "jest tests/command.argumentVariations.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-invalidargumenterror",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.InvalidArgumentError.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "InvalidArgumentError",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/error.js",
+      "expected_primary_span": {
+        "start_line": 25,
+        "end_line": 36
+      },
+      "expected_dependent_files": [
+        "examples/arguments-custom-processing.js",
+        "examples/options-custom-processing.js",
+        "lib/argument.js",
+        "lib/option.js",
+        "typings/index.test-d.ts"
+      ],
+      "expected_suggested_edit_files": [
+        "examples/arguments-custom-processing.js",
+        "examples/options-custom-processing.js",
+        "lib/argument.js",
+        "lib/option.js",
+        "typings/index.test-d.ts"
+      ],
+      "expected_test_files": [
+        "tests/command.exitOverride.test.js",
+        "tests/program.test.js",
+        "tests/ts-imports.test.ts"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/command.exitOverride.test.js --testNamePattern \"when custom processing for option throws InvalidArgumentError then catch CommanderError\"",
+        "jest tests/command.exitOverride.test.js",
+        "jest tests/program.test.js",
+        "jest tests/ts-imports.test.ts",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-suggestsimilar",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.suggestSimilar.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "suggestSimilar",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/suggestSimilar.js",
+      "expected_primary_span": {
+        "start_line": 3,
+        "end_line": 46
+      },
+      "expected_dependent_files": [
+        "lib/command.js"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js",
+        "lib/suggestSimilar.js"
+      ],
+      "expected_test_files": [
+        "tests/help.suggestion.test.js",
+        "tests/command.addCommand.test.js",
+        "tests/command.chain.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/help.suggestion.test.js --testNamePattern \"when similar alias then suggest alias\"",
+        "jest tests/help.suggestion.test.js",
+        "jest tests/command.addCommand.test.js",
+        "jest tests/command.chain.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-humanreadableargname",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.humanReadableArgName.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "humanReadableArgName",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/argument.js",
+      "expected_primary_span": {
+        "start_line": 143,
+        "end_line": 147
+      },
+      "expected_dependent_files": [
+        "lib/command.js",
+        "lib/help.js"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js",
+        "lib/help.js"
+      ],
+      "expected_test_files": [
+        "tests/argument.required.test.js",
+        "tests/command.executableSubcommand.search.test.js",
+        "tests/command.name.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/argument.required.test.js --testNamePattern \"when name with surrounding <> then argument required\"",
+        "jest tests/argument.required.test.js",
+        "jest tests/command.executableSubcommand.search.test.js",
+        "jest tests/command.name.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-stripcolor",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.stripColor.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "stripColor",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/help.js",
+      "expected_primary_span": {
+        "start_line": 740,
+        "end_line": 744
+      },
+      "expected_dependent_files": [
+        "examples/color-help-replacement.mjs",
+        "lib/command.js"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js",
+        "lib/help.js",
+        "examples/color-help-replacement.mjs"
+      ],
+      "expected_test_files": [
+        "tests/help.style.test.js",
+        "tests/useColor.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/help.style.test.js --testNamePattern \"when getOutHasColors returns true then help has color\"",
+        "jest tests/help.style.test.js",
+        "jest tests/useColor.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-dualoptions",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.DualOptions.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "DualOptions",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/option.js",
+      "expected_primary_span": {
+        "start_line": 268,
+        "end_line": 306
+      },
+      "expected_dependent_files": [
+        "lib/command.js"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js"
+      ],
+      "expected_test_files": [
+        "tests/options.dual-options.test.js",
+        "tests/args.literal.test.js",
+        "tests/command.chain.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/options.dual-options.test.js --testNamePattern \"when unrelated positive and negative options then no dual options\"",
+        "jest tests/options.dual-options.test.js",
+        "jest tests/args.literal.test.js",
+        "jest tests/command.chain.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-suggestsimilar",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.suggestSimilar.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "suggestSimilar",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/suggestSimilar.js",
+      "expected_primary_span": {
+        "start_line": 3,
+        "end_line": 46
+      },
+      "expected_dependent_files": [
+        "lib/command.js"
+      ],
+      "expected_suggested_edit_files": [
+        "lib/command.js"
+      ],
+      "expected_test_files": [
+        "tests/help.suggestion.test.js",
+        "tests/command.addCommand.test.js",
+        "tests/command.chain.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/help.suggestion.test.js --testNamePattern \"when similar alias then suggest alias\"",
+        "jest tests/help.suggestion.test.js",
+        "jest tests/command.addCommand.test.js",
+        "jest tests/command.chain.test.js",
+        "jest"
+      ]
+    },
+    {
+      "id": "commander-splitoptionflags",
+      "language": "javascript",
+      "category": "external-commander-baseline",
+      "description": "Baseline external-repo scenario for commander.splitOptionFlags.",
+      "repo_fixture": "../external_repos/commander.js",
+      "query_or_symbol": "splitOptionFlags",
+      "mode": "blast-radius",
+      "expected_primary_file": "lib/option.js",
+      "expected_primary_span": {
+        "start_line": 328,
+        "end_line": 377
+      },
+      "expected_dependent_files": [],
+      "expected_suggested_edit_files": [],
+      "expected_test_files": [
+        "tests/command.addHelpOption.test.js",
+        "tests/command.chain.test.js",
+        "tests/command.copySettings.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "jest tests/command.addHelpOption.test.js --testNamePattern \"when addHelpOption has custom flags then custom long flag invokes help\"",
+        "jest tests/command.addHelpOption.test.js",
+        "jest tests/command.chain.test.js",
+        "jest tests/command.copySettings.test.js",
+        "jest"
+      ]
+    }
+  ]
+}

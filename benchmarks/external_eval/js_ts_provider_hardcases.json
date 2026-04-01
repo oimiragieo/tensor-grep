@@ -1,0 +1,28 @@
+{
+  "scenarios": [
+    {
+      "id": "js-ts-provider-tsconfig-alias-wrapper",
+      "description": "TS path alias import rebound locally before call.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/provider_alias_tsconfig_path_alias",
+      "query_or_symbol": "createInvoiceProviderAlias",
+      "expected_caller_files": [
+        "src/service.ts"
+      ],
+      "expected_test_files": [
+        "tests/service.test.ts"
+      ]
+    },
+    {
+      "id": "js-ts-provider-re-export-alias-wrapper",
+      "description": "Named re-export chain imported then rebound locally before call.",
+      "repo_fixture": "../bakeoff_fixtures/js_ts/provider_alias_re_export_chain",
+      "query_or_symbol": "createInvoiceProviderChain",
+      "expected_caller_files": [
+        "src/service.ts"
+      ],
+      "expected_test_files": [
+        "tests/service.test.ts"
+      ]
+    }
+  ]
+}

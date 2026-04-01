@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "context-pack",
+  "sidecar_used": false,
+  "query": "invoice payment",
+  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack",
+  "files": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py"
+  ],
+  "file_matches": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "score": 21,
+      "graph_score": 0.5,
+      "reasons": [
+        "symbol",
+        "definition"
+      ]
+    }
+  ],
+  "file_summaries": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "symbols": [
+        {
+          "name": "PaymentService",
+          "kind": "class",
+          "line": 3
+        },
+        {
+          "name": "create_invoice",
+          "kind": "function",
+          "line": 6
+        }
+      ]
+    }
+  ],
+  "symbols": [
+    {
+      "name": "PaymentService",
+      "kind": "class",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "line": 3,
+      "score": 4
+    },
+    {
+      "name": "create_invoice",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+      "line": 6,
+      "score": 6
+    }
+  ],
+  "imports": [],
+  "tests": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+  ],
+  "test_matches": [
+    {
+      "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py",
+      "score": 2,
+      "reasons": [
+        "filename"
+      ]
+    }
+  ],
+  "related_paths": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
+  ],
+  "coverage": {
+    "language_scope": "python-js-ts-rust",
+    "symbol_navigation": "python-ast+parser-js-ts-rust",
+    "test_matching": "filename+import+graph-heuristic"
+  }
+}
+
+
+
+
+

@@ -1,0 +1,88 @@
+{
+  "scenarios": [
+    {
+      "instance_id": "click-format-filename-shorten",
+      "repo_fixture": "../patch_fixtures/click_format_filename",
+      "query_or_symbol": "format_filename",
+      "mode": "blast-radius",
+      "problem_statement": "Fix format_filename so shorten=True strips parent directories and the filename formatting tests pass."
+    },
+    {
+      "instance_id": "commander-human-readable-arg-name",
+      "repo_fixture": "../patch_fixtures/commander_human_readable_arg_name",
+      "query_or_symbol": "humanReadableArgName",
+      "mode": "blast-radius",
+      "problem_statement": "Fix humanReadableArgName so required arguments use angle brackets and optional arguments use square brackets."
+    },
+    {
+      "instance_id": "click-unstyle-other-ansi",
+      "repo_fixture": "../patch_fixtures/click_unstyle_ansi",
+      "query_or_symbol": "unstyle",
+      "mode": "blast-radius",
+      "problem_statement": "Fix unstyle so ANSI cursor visibility escape sequences are stripped and the termui tests pass."
+    },
+    {
+      "instance_id": "commander-invalid-argument-error-code",
+      "repo_fixture": "../patch_fixtures/commander_invalid_argument_error",
+      "query_or_symbol": "InvalidArgumentError",
+      "mode": "blast-radius",
+      "problem_statement": "Fix InvalidArgumentError so it uses the commander.invalidArgument code."
+    },
+    {
+      "instance_id": "click-secho-bytes-pass-through",
+      "repo_fixture": "../patch_fixtures/click_secho_non_text",
+      "query_or_symbol": "secho",
+      "mode": "blast-radius",
+      "problem_statement": "Fix secho so bytes messages pass through without being styled while non-text values are still styled."
+    },
+    {
+      "instance_id": "click-style-non-text-coercion",
+      "repo_fixture": "../patch_fixtures/click_style_non_text",
+      "query_or_symbol": "style",
+      "mode": "blast-radius",
+      "problem_statement": "Fix style so non-string values are coerced to strings before ANSI styling is applied."
+    },
+    {
+      "instance_id": "click-abort-raises-abort",
+      "repo_fixture": "../patch_fixtures/click_abort",
+      "query_or_symbol": "Abort",
+      "mode": "blast-radius",
+      "problem_statement": "Fix Context.abort so it raises click.Abort."
+    },
+    {
+      "instance_id": "click-get-binary-stream-uses-binary-map",
+      "repo_fixture": "../patch_fixtures/click_get_binary_stream",
+      "query_or_symbol": "get_binary_stream",
+      "mode": "blast-radius",
+      "problem_statement": "Fix get_binary_stream so it opens the binary stream mapping instead of returning text streams."
+    },
+    {
+      "instance_id": "commander-strip-color-implicit-reset",
+      "repo_fixture": "../patch_fixtures/commander_strip_color",
+      "query_or_symbol": "stripColor",
+      "mode": "blast-radius",
+      "problem_statement": "Fix stripColor so it removes ANSI implicit reset sequences like ESC[m."
+    },
+    {
+      "instance_id": "commander-dual-options-unrelated-flags",
+      "repo_fixture": "../patch_fixtures/commander_dual_options",
+      "query_or_symbol": "DualOptions",
+      "mode": "blast-radius",
+      "problem_statement": "Fix DualOptions so unrelated positive and negative options are not treated as dual options."
+    },
+    {
+      "instance_id": "click-choice-invalid-message",
+      "repo_fixture": "../patch_fixtures/click_choice_invalid_message",
+      "query_or_symbol": "Choice",
+      "mode": "blast-radius",
+      "problem_statement": "Fix Choice so invalid choices expose get_invalid_choice_message and produce the current invalid-choice message."
+    },
+    {
+      "instance_id": "commander-use-color-env-conventions",
+      "repo_fixture": "../patch_fixtures/commander_use_color",
+      "query_or_symbol": "useColor",
+      "mode": "blast-radius",
+      "problem_statement": "Fix useColor so it follows current NO_COLOR, FORCE_COLOR, and CLICOLOR_FORCE conventions."
+    }
+  ]
+}

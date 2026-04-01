@@ -73,6 +73,9 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     errors: list[str] = []
     for expected in (
         "package-manager-readiness:",
+        "Build docs site (strict)",
+        "pip install mkdocs-material",
+        "mkdocs build --strict",
         "Validate Homebrew formula syntax",
         "Validate winget manifest syntax",
         "Validate package-manager publish bundle source state",
@@ -550,6 +553,72 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
     return errors
 
 
+def validate_readme_contract(*, readme_content: str) -> list[str]:
+    errors: list[str] = []
+    for expected in (
+        "## Canonical Docs",
+        "[docs/benchmarks.md](docs/benchmarks.md)",
+        "[docs/gpu_crossover.md](docs/gpu_crossover.md)",
+        "[docs/routing_policy.md](docs/routing_policy.md)",
+        "[docs/harness_api.md](docs/harness_api.md)",
+        "[docs/harness_cookbook.md](docs/harness_cookbook.md)",
+    ):
+        if expected not in readme_content:
+            errors.append(f"README missing canonical docs reference: {expected}")
+
+    if "[docs/installation.md](docs/installation.md)" not in readme_content:
+        errors.append(
+            "README must link installation docs: [docs/installation.md](docs/installation.md)"
+        )
+
+    if "[docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)" not in readme_content:
+        errors.append(
+            "README must link release checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)"
+        )
+
+    if "`tensor-grep` has first class support on Windows, macOS and Linux." not in readme_content:
+        errors.append("README must state current first-class platform support explicitly")
+
+    if "public contracts in [docs/harness_api.md](docs/harness_api.md)" not in readme_content:
+        errors.append("README must direct harness consumers to docs/harness_api.md")
+
+    return errors
+
+
+def validate_benchmarks_docs(*, benchmarks_content: str) -> list[str]:
+    errors: list[str] = []
+    for expected in (
+        "## Benchmark Matrix",
+        "| Surface | Script | Default artifact |",
+        "`benchmarks/run_benchmarks.py`",
+        "`benchmarks/run_hot_query_benchmarks.py`",
+        "`benchmarks/run_ast_rewrite_benchmarks.py`",
+    ):
+        if expected not in benchmarks_content:
+            errors.append(f"Benchmark docs missing required matrix contract: {expected}")
+
+    for expected in (
+        "## Artifact Conventions",
+        "`suite`",
+        "`artifact`",
+        "`environment`",
+        "`generated_at_epoch_s`",
+    ):
+        if expected not in benchmarks_content:
+            errors.append(f"Benchmark docs missing required artifact convention: {expected}")
+
+    for expected in (
+        "## Acceptance Rules",
+        "Do not update benchmark docs or claims until the relevant artifact has been rerun on the accepted line.",
+        "Compare against the current accepted baseline, not memory.",
+        "Keep backend labels explicit in artifacts so routing claims are auditable.",
+    ):
+        if expected not in benchmarks_content:
+            errors.append(f"Benchmark docs missing required acceptance rule: {expected}")
+
+    return errors
+
+
 def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
     errors: list[str] = []
     for expected in (
@@ -793,6 +862,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 )
         docs_step_contracts = {
             "Install mkdocs": ("pip install mkdocs-material",),
+            "Build Docs": ("mkdocs build --strict",),
             "Deploy Docs": ("mkdocs gh-deploy --force",),
         }
         for step_name, required_tokens in docs_step_contracts.items():
@@ -813,6 +883,14 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append(
                 "Release workflow publish-docs "
                 "`Install mkdocs` step must invoke `pip install mkdocs-material`"
+            )
+        build_docs_run = docs_run_by_name.get("Build Docs")
+        if build_docs_run is not None and not build_docs_run.lstrip().startswith(
+            "mkdocs build --strict"
+        ):
+            errors.append(
+                "Release workflow publish-docs "
+                "`Build Docs` step must invoke `mkdocs build --strict`"
             )
         deploy_docs_run = docs_run_by_name.get("Deploy Docs")
         if deploy_docs_run is not None:
@@ -1494,6 +1572,8 @@ def validate_all() -> list[str]:
     package_manager_runbook = _read(ROOT / "docs" / "package_manager_publish.md")
     release_checklist = _read(ROOT / "docs" / "RELEASE_CHECKLIST.md")
     installation_docs = _read(ROOT / "docs" / "installation.md")
+    benchmarks_docs = _read(ROOT / "docs" / "benchmarks.md")
+    readme = _read(ROOT / "README.md")
     errors.extend(
         validate_package_manager_docs(
             runbook_content=package_manager_runbook,
@@ -1501,6 +1581,8 @@ def validate_all() -> list[str]:
         )
     )
     errors.extend(validate_installation_docs(installation_content=installation_docs))
+    errors.extend(validate_benchmarks_docs(benchmarks_content=benchmarks_docs))
+    errors.extend(validate_readme_contract(readme_content=readme))
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})

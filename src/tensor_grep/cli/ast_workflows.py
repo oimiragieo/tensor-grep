@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
+from tensor_grep.cli.mcp_server import execute_rewrite_apply_json
 from tensor_grep.core.result import SearchResult
 from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -199,11 +200,52 @@ def run_command(
     rewrite: str | None = None,
     lang: str | None = None,
     config: str | None = "sgconfig.yml",
+    apply: bool = False,
+    verify: bool = False,
+    json_output: bool = False,
+    checkpoint: bool = False,
+    audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
+    policy: str | None = None,
 ) -> int:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
 
-    del rewrite, config  # reserved for parity; rewrite stays unimplemented in fast path
+    if policy is not None and not apply:
+        print("--policy requires --apply.", file=sys.stderr)
+        return 1
+    if (
+        verify or checkpoint or audit_manifest or audit_signing_key or lint_cmd or test_cmd
+    ) and not apply:
+        print(
+            "--verify, --checkpoint, --audit-manifest, --audit-signing-key, --lint-cmd, and "
+            "--test-cmd require --apply.",
+            file=sys.stderr,
+        )
+        return 1
+    if apply:
+        if rewrite is None:
+            print("--apply requires --rewrite.", file=sys.stderr)
+            return 1
+        rewrite_json, exit_code = execute_rewrite_apply_json(
+            pattern=pattern,
+            replacement=rewrite,
+            lang=lang or "",
+            path=path or ".",
+            verify=verify,
+            checkpoint=checkpoint,
+            audit_manifest=audit_manifest,
+            audit_signing_key=audit_signing_key,
+            lint_cmd=lint_cmd,
+            test_cmd=test_cmd,
+            policy=policy,
+        )
+        print(rewrite_json)
+        return exit_code
+
+    del rewrite, config, json_output, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
 
     search_path = path or "."
     cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang, query_pattern=pattern)
@@ -554,6 +596,15 @@ def main_entry(argv: list[str] | None = None) -> None:
     run_parser.add_argument("--rewrite", "-r", default=None)
     run_parser.add_argument("--lang", "-l", default=None)
     run_parser.add_argument("--config", "-c", default="sgconfig.yml")
+    run_parser.add_argument("--apply", action="store_true")
+    run_parser.add_argument("--verify", action="store_true")
+    run_parser.add_argument("--json", action="store_true")
+    run_parser.add_argument("--checkpoint", action="store_true")
+    run_parser.add_argument("--audit-manifest", default=None)
+    run_parser.add_argument("--audit-signing-key", default=None)
+    run_parser.add_argument("--lint-cmd", default=None)
+    run_parser.add_argument("--test-cmd", default=None)
+    run_parser.add_argument("--policy", default=None)
 
     scan_parser = subparsers.add_parser("scan")
     scan_parser.add_argument("--config", "-c", default="sgconfig.yml")
@@ -570,6 +621,15 @@ def main_entry(argv: list[str] | None = None) -> None:
                 rewrite=args.rewrite,
                 lang=args.lang,
                 config=args.config,
+                apply=args.apply,
+                verify=args.verify,
+                json_output=args.json,
+                checkpoint=args.checkpoint,
+                audit_manifest=args.audit_manifest,
+                audit_signing_key=args.audit_signing_key,
+                lint_cmd=args.lint_cmd,
+                test_cmd=args.test_cmd,
+                policy=args.policy,
             )
         )
     if args.command == "scan":

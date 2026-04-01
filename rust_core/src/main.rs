@@ -2,17 +2,22 @@ use anyhow::Context;
 #[cfg(feature = "cuda")]
 use clap::ValueEnum;
 use clap::{Args, Parser, Subcommand};
+use hmac::{Hmac, Mac};
 #[cfg(feature = "cuda")]
 use ignore::{overrides::OverrideBuilder, WalkBuilder};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
 #[cfg(feature = "cuda")]
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::crossover::{run_crossover_calibration, write_crossover_config};
@@ -39,6 +44,8 @@ use tensor_grep_rs::routing::{
 
 const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON  Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH         Path to the ripgrep executable used for text-search passthrough.";
 const JSON_OUTPUT_VERSION: u32 = 1;
+const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
+const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
@@ -203,6 +210,42 @@ pub struct RunArgs {
     #[arg(long)]
     pub verify: bool,
 
+    /// Run this command after apply/verify and capture structured lint results
+    #[arg(long = "lint-cmd")]
+    pub lint_cmd: Option<String>,
+
+    /// Run this command after apply/verify and capture structured test results
+    #[arg(long = "test-cmd")]
+    pub test_cmd: Option<String>,
+
+    /// Create a rollback checkpoint before applying rewrite edits
+    #[arg(long)]
+    pub checkpoint: bool,
+
+    /// Write a deterministic rewrite audit manifest for applied edits
+    #[arg(long = "audit-manifest")]
+    pub audit_manifest: Option<PathBuf>,
+
+    /// Sign the audit manifest using an HMAC-SHA256 key file
+    #[arg(long = "audit-signing-key", requires = "audit_manifest")]
+    pub audit_signing_key: Option<PathBuf>,
+
+    /// Apply only the specified comma-delimited rewrite edit IDs
+    #[arg(
+        long = "apply-edit-ids",
+        value_delimiter = ',',
+        conflicts_with = "reject_edit_ids"
+    )]
+    pub apply_edit_ids: Vec<String>,
+
+    /// Apply all planned rewrite edits except the specified comma-delimited edit IDs
+    #[arg(
+        long = "reject-edit-ids",
+        value_delimiter = ',',
+        conflicts_with = "apply_edit_ids"
+    )]
+    pub reject_edit_ids: Vec<String>,
+
     /// Emit machine-readable routing metadata as JSON
     #[arg(long)]
     pub json: bool,
@@ -221,6 +264,24 @@ pub struct RunArgs {
 #[derive(Args, Debug, Clone, Default)]
 pub struct CalibrateArgs {}
 
+#[derive(Args, Debug, Clone)]
+pub struct AuditVerifyArgs {
+    /// Path to the rewrite audit manifest JSON file
+    pub manifest_path: PathBuf,
+
+    /// Optional HMAC signing key path for signed manifests
+    #[arg(long = "signing-key")]
+    pub signing_key: Option<PathBuf>,
+
+    /// Optional previous manifest path for validating manifest chaining
+    #[arg(long = "previous-manifest")]
+    pub previous_manifest: Option<PathBuf>,
+
+    /// Emit structured JSON verification output
+    #[arg(long)]
+    pub json: bool,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Search for a regex pattern with ripgrep-compatible flags
@@ -230,6 +291,9 @@ pub enum Commands {
     /// Upgrade tensor-grep via the managed Python package path
     #[command(alias = "update")]
     Upgrade,
+    /// Verify a rewrite audit manifest digest, chain, and optional signature
+    #[command(name = "audit-verify")]
+    AuditVerify(AuditVerifyArgs),
     /// Start the AI-assistant Model Context Protocol (MCP) server
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
@@ -365,6 +429,27 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if let Some(exit_code) = try_early_ripgrep_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
+    if let Some(exit_code) = try_default_search_frontdoor_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
+    if let Some(exit_code) = try_early_positional_ripgrep_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
     if should_use_positional_cli(&raw_args) {
         return run_positional_cli(PositionalCli::parse_from(raw_args));
     }
@@ -374,11 +459,269 @@ fn main() -> anyhow::Result<()> {
     run_command_cli(cli)
 }
 
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    if !env_flag_enabled(TG_RUST_EARLY_RG_ENV) {
+        return Ok(None);
+    }
+    if !ripgrep_is_available() {
+        return Ok(None);
+    }
+
+    if raw_args
+        .get(1)
+        .map(|arg| arg.to_string_lossy() != "search")
+        .unwrap_or(true)
+    {
+        return Ok(None);
+    }
+
+    let rg_args = match parse_early_ripgrep_args(raw_args) {
+        Some(args) => args,
+        None => return Ok(None),
+    };
+    if !should_use_early_ripgrep_fast_path(&rg_args) {
+        return Ok(None);
+    }
+
+    let exit_code = execute_ripgrep_search(&rg_args)?;
+    Ok(Some(exit_code))
+}
+
+fn try_default_search_frontdoor_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    if !ripgrep_is_available() {
+        return Ok(None);
+    }
+    let rg_args = match parse_default_search_frontdoor_args(raw_args) {
+        Some(args) => args,
+        None => return Ok(None),
+    };
+
+    let exit_code = execute_ripgrep_search(&rg_args)?;
+    Ok(Some(exit_code))
+}
+
+fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    if !env_flag_enabled(TG_RUST_EARLY_POSITIONAL_RG_ENV) {
+        return Ok(None);
+    }
+    if !ripgrep_is_available() {
+        return Ok(None);
+    }
+
+    if !should_use_positional_cli(raw_args) {
+        return Ok(None);
+    }
+
+    let rg_args = match parse_early_positional_ripgrep_args(raw_args) {
+        Some(args) => args,
+        None => return Ok(None),
+    };
+
+    let exit_code = execute_ripgrep_search(&rg_args)?;
+    Ok(Some(exit_code))
+}
+
+fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
+    args.globs.is_empty() && !args.word_regexp && !args.fixed_strings
+}
+
+fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    let mut args = RipgrepSearchArgs {
+        ignore_case: false,
+        fixed_strings: false,
+        invert_match: false,
+        count: false,
+        line_number: false,
+        context: None,
+        max_count: None,
+        word_regexp: false,
+        globs: Vec::new(),
+        no_ignore: false,
+        patterns: Vec::new(),
+        path: String::new(),
+    };
+
+    let mut positionals: Vec<String> = Vec::new();
+    let tokens = raw_args
+        .iter()
+        .skip(2)
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let mut index = 0usize;
+    while index < tokens.len() {
+        let token = &tokens[index];
+        match token.as_str() {
+            "-i" | "--ignore-case" => args.ignore_case = true,
+            "-F" | "--fixed-strings" => args.fixed_strings = true,
+            "-v" | "--invert-match" => args.invert_match = true,
+            "-c" | "--count" => args.count = true,
+            "-w" | "--word-regexp" => args.word_regexp = true,
+            "--no-ignore" => args.no_ignore = true,
+            "-C" | "--context" => {
+                index += 1;
+                let value = tokens.get(index)?.parse::<usize>().ok()?;
+                args.context = Some(value);
+            }
+            "-m" | "--max-count" => {
+                index += 1;
+                let value = tokens.get(index)?.parse::<usize>().ok()?;
+                args.max_count = Some(value);
+            }
+            "-g" | "--glob" => {
+                index += 1;
+                args.globs.push(tokens.get(index)?.clone());
+            }
+            _ if token.starts_with("--glob=") => {
+                args.globs
+                    .push(token.split_once('=').map(|(_, value)| value.to_string())?);
+            }
+            _ if token.starts_with('-') => return None,
+            _ => positionals.push(token.clone()),
+        }
+        index += 1;
+    }
+
+    if positionals.len() != 2 {
+        return None;
+    }
+    args.patterns.push(positionals[0].clone());
+    args.path = positionals[1].clone();
+    args.line_number = false;
+    Some(args)
+}
+
+fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    let args = parse_early_ripgrep_args(raw_args)?;
+    should_use_early_ripgrep_fast_path(&args).then_some(args)
+}
+
+fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    let cli = PositionalCli::try_parse_from(raw_args).ok()?;
+    let pattern = cli.pattern.clone()?;
+    let path = cli.path.clone()?;
+
+    if cli.replace.is_some() || cli.force_cpu || !cli.gpu_device_ids.is_empty() {
+        return None;
+    }
+    if cli.json || cli.ndjson || cli.verbose {
+        return None;
+    }
+
+    Some(positional_ripgrep_args(&cli, &pattern, &path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_args(tokens: &[&str]) -> RipgrepSearchArgs {
+        let raw_args = tokens
+            .iter()
+            .map(|token| OsString::from(token))
+            .collect::<Vec<_>>();
+        parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
+    }
+
+    #[test]
+    fn early_ripgrep_fast_path_rejects_glob_fixed_and_word_cases() {
+        let glob = parse_args(&["tg", "search", "--glob=*.log", "ERROR", "bench_data"]);
+        let fixed = parse_args(&["tg", "search", "-F", "[ERROR]", "bench_data"]);
+        let word = parse_args(&["tg", "search", "-w", "timeout", "bench_data"]);
+
+        assert!(!should_use_early_ripgrep_fast_path(&glob));
+        assert!(!should_use_early_ripgrep_fast_path(&fixed));
+        assert!(!should_use_early_ripgrep_fast_path(&word));
+    }
+
+    #[test]
+    fn early_ripgrep_fast_path_keeps_plain_benchmark_shapes() {
+        let simple = parse_args(&["tg", "search", "ERROR", "bench_data"]);
+        let regex = parse_args(&["tg", "search", "ERROR.*timeout", "bench_data"]);
+        let count = parse_args(&["tg", "search", "-c", "ERROR", "bench_data"]);
+
+        assert!(should_use_early_ripgrep_fast_path(&simple));
+        assert!(should_use_early_ripgrep_fast_path(&regex));
+        assert!(should_use_early_ripgrep_fast_path(&count));
+    }
+
+    #[test]
+    fn early_positional_ripgrep_args_parse_plain_shapes() {
+        let raw_args = ["tg", "-i", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let parsed = parse_early_positional_ripgrep_args(&raw_args)
+            .expect("expected early positional rg args to parse");
+
+        assert!(parsed.ignore_case);
+        assert_eq!(parsed.patterns, vec!["warning".to_string()]);
+        assert_eq!(parsed.path, "bench_data".to_string());
+    }
+
+    #[test]
+    fn early_positional_ripgrep_args_reject_structured_and_force_cpu_shapes() {
+        let structured = ["tg", "--json", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let force_cpu = ["tg", "--cpu", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(parse_early_positional_ripgrep_args(&structured).is_none());
+        assert!(parse_early_positional_ripgrep_args(&force_cpu).is_none());
+    }
+
+    #[test]
+    fn default_search_frontdoor_accepts_plain_benchmark_shapes() {
+        let raw_args = ["tg", "search", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let parsed = parse_default_search_frontdoor_args(&raw_args)
+            .expect("expected default search frontdoor args to parse");
+
+        assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(parsed.path, "bench_data".to_string());
+        assert!(!parsed.line_number);
+    }
+
+    #[test]
+    fn default_search_frontdoor_rejects_structured_and_advanced_shapes() {
+        let structured = ["tg", "search", "--json", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let glob = ["tg", "search", "--glob=*.log", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(parse_default_search_frontdoor_args(&structured).is_none());
+        assert!(parse_default_search_frontdoor_args(&glob).is_none());
+    }
+}
+
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Search(args) => handle_ripgrep_search(args),
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
+        Commands::AuditVerify(args) => handle_audit_verify_command(args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
         Commands::Run(args) => handle_ast_run(args),
@@ -409,6 +752,28 @@ fn handle_calibrate_command(_args: CalibrateArgs) -> anyhow::Result<()> {
             eprintln!("{err}");
             std::process::exit(2);
         }
+    }
+}
+
+fn handle_audit_verify_command(args: AuditVerifyArgs) -> anyhow::Result<()> {
+    let payload = verify_audit_manifest_payload(&args)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("Manifest: {}", payload.manifest_path);
+        println!("valid={}", payload.valid);
+        println!(
+            "checks=digest:{} chain:{} signature:{}",
+            payload.checks.digest_valid, payload.checks.chain_valid, payload.checks.signature_valid
+        );
+        for error in &payload.errors {
+            println!("- {error}");
+        }
+    }
+    if payload.valid {
+        Ok(())
+    } else {
+        anyhow::bail!("audit manifest verification failed")
     }
 }
 
@@ -588,6 +953,7 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         "search",
         "calibrate",
         "upgrade",
+        "audit-verify",
         "update",
         "mcp",
         "classify",
@@ -781,7 +1147,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
         count: cli.count,
-        line_number: true,
+        line_number: false,
         context: None,
         max_count: None,
         word_regexp: false,
@@ -829,7 +1195,7 @@ fn native_search_config_for_positional(
         json: cli.json,
         ndjson: cli.ndjson,
         verbose: cli.verbose,
-        line_number: true,
+        line_number: !cli.count,
         ..NativeSearchConfig::default()
     }
 }
@@ -1356,8 +1722,11 @@ struct ApplyVerifyJson<'a> {
     routing_backend: &'static str,
     routing_reason: &'static str,
     sidecar_used: bool,
+    checkpoint: Option<&'a CheckpointCreateSummary>,
+    audit_manifest: Option<&'a AuditManifestSummary>,
     plan: &'a tensor_grep_rs::backend_ast::RewritePlan,
     verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
+    validation: Option<&'a ValidationSummary>,
 }
 
 #[derive(Serialize)]
@@ -1366,8 +1735,139 @@ struct BatchApplyVerifyJson<'a> {
     routing_backend: &'static str,
     routing_reason: &'static str,
     sidecar_used: bool,
+    checkpoint: Option<&'a CheckpointCreateSummary>,
+    audit_manifest: Option<&'a AuditManifestSummary>,
     plan: &'a BatchRewritePlan,
     verification: Option<&'a tensor_grep_rs::backend_ast::VerifyResult>,
+    validation: Option<&'a ValidationSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CheckpointCreateSummary {
+    checkpoint_id: String,
+    mode: String,
+    root: String,
+    created_at: String,
+    file_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CheckpointIndexRecord {
+    version: u32,
+    checkpoint_id: String,
+    mode: String,
+    root: String,
+    created_at: String,
+    file_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct CheckpointMetadata {
+    version: u32,
+    checkpoint_id: String,
+    mode: String,
+    root: String,
+    created_at: String,
+    file_count: usize,
+    entries: BTreeMap<String, bool>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ValidationSummary {
+    success: bool,
+    commands: Vec<ValidationCommandResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ValidationCommandResult {
+    kind: &'static str,
+    command: String,
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestSummary {
+    path: String,
+    file_count: usize,
+    applied_edit_count: usize,
+    signed: bool,
+    signature_kind: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RewriteAuditManifest {
+    version: u32,
+    kind: &'static str,
+    created_at: String,
+    lang: String,
+    path: String,
+    plan_total_edits: usize,
+    applied_edit_ids: Vec<String>,
+    previous_manifest_sha256: Option<String>,
+    checkpoint: Option<CheckpointCreateSummary>,
+    validation: Option<ValidationSummary>,
+    files: Vec<RewriteAuditManifestFile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest_sha256: Option<String>,
+    signature: Option<AuditManifestSignature>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RewriteAuditManifestFile {
+    path: String,
+    edit_ids: Vec<String>,
+    before_sha256: String,
+    after_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestSignature {
+    kind: &'static str,
+    key_path: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RewriteAuditManifestRead {
+    kind: String,
+    previous_manifest_sha256: Option<String>,
+    manifest_sha256: Option<String>,
+    signature: Option<AuditManifestSignatureRead>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AuditManifestSignatureRead {
+    kind: String,
+    key_path: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestVerifyChecks {
+    digest_valid: bool,
+    chain_valid: bool,
+    signature_valid: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct AuditManifestVerifyJson {
+    version: u32,
+    routing_backend: &'static str,
+    routing_reason: &'static str,
+    sidecar_used: bool,
+    manifest_path: String,
+    signing_key_path: Option<String>,
+    previous_manifest_path: Option<String>,
+    kind: Option<String>,
+    manifest_sha256: Option<String>,
+    previous_manifest_sha256: Option<String>,
+    checks: AuditManifestVerifyChecks,
+    signature_kind: Option<String>,
+    valid: bool,
+    errors: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1440,6 +1940,260 @@ fn run_pattern(args: &RunArgs) -> anyhow::Result<&str> {
     args.pattern.as_deref().ok_or_else(|| {
         anyhow::anyhow!("tg run requires PATTERN unless --batch-rewrite <config.json> is provided")
     })
+}
+
+fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
+    if (args.lint_cmd.is_some() || args.test_cmd.is_some()) && !args.apply {
+        anyhow::bail!("--lint-cmd and --test-cmd require --apply");
+    }
+    if args.checkpoint && !args.apply {
+        anyhow::bail!("--checkpoint requires --apply");
+    }
+    Ok(())
+}
+
+fn checkpoint_timestamp_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
+}
+
+fn checkpoint_storage_dir(root: &Path) -> PathBuf {
+    root.join(".tensor-grep").join("checkpoints")
+}
+
+fn checkpoint_snapshot_dir(root: &Path, checkpoint_id: &str) -> PathBuf {
+    checkpoint_storage_dir(root)
+        .join(checkpoint_id)
+        .join("snapshot")
+}
+
+fn checkpoint_metadata_path(root: &Path, checkpoint_id: &str) -> PathBuf {
+    checkpoint_storage_dir(root)
+        .join(checkpoint_id)
+        .join("metadata.json")
+}
+
+fn checkpoint_index_path(root: &Path) -> PathBuf {
+    checkpoint_storage_dir(root).join("index.json")
+}
+
+fn detect_checkpoint_root(path: &str) -> (PathBuf, String) {
+    let candidate = Path::new(path);
+    let resolved = candidate
+        .canonicalize()
+        .unwrap_or_else(|_| candidate.to_path_buf());
+    let probe_root = if resolved.is_dir() {
+        resolved.clone()
+    } else {
+        resolved
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
+
+    match Command::new("git")
+        .args([
+            "-C",
+            &probe_root.to_string_lossy(),
+            "rev-parse",
+            "--show-toplevel",
+        ])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let git_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if git_root.is_empty() {
+                (probe_root, "filesystem-snapshot".to_string())
+            } else {
+                (PathBuf::from(git_root), "git-worktree-snapshot".to_string())
+            }
+        }
+        _ => (probe_root, "filesystem-snapshot".to_string()),
+    }
+}
+
+fn collect_git_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap<String, bool>> {
+    let tracked = Command::new("git")
+        .args(["-C", &root.to_string_lossy(), "ls-files", "-z"])
+        .output()
+        .context("failed to enumerate git tracked files for checkpoint")?;
+    anyhow::ensure!(
+        tracked.status.success(),
+        "git ls-files failed while building checkpoint"
+    );
+    let untracked = Command::new("git")
+        .args([
+            "-C",
+            &root.to_string_lossy(),
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+        .output()
+        .context("failed to enumerate git untracked files for checkpoint")?;
+    anyhow::ensure!(
+        untracked.status.success(),
+        "git ls-files --others failed while building checkpoint"
+    );
+
+    let mut entries = BTreeMap::new();
+    for raw in tracked
+        .stdout
+        .split(|byte| *byte == 0)
+        .chain(untracked.stdout.split(|byte| *byte == 0))
+    {
+        if raw.is_empty() {
+            continue;
+        }
+        let rel = String::from_utf8_lossy(raw).to_string();
+        entries.insert(rel.clone(), root.join(&rel).exists());
+    }
+    Ok(entries)
+}
+
+fn should_skip_checkpoint_dir(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".hg"
+            | ".svn"
+            | ".venv"
+            | "node_modules"
+            | "__pycache__"
+            | ".pytest_cache"
+            | ".mypy_cache"
+            | ".ruff_cache"
+            | ".tensor-grep"
+    )
+}
+
+fn collect_filesystem_checkpoint_entries(root: &Path) -> anyhow::Result<BTreeMap<String, bool>> {
+    let mut entries = BTreeMap::new();
+    for result in walkdir::WalkDir::new(root) {
+        let entry = result.context("failed to walk checkpoint filesystem tree")?;
+        if entry.file_type().is_dir() {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(root)
+            .context("checkpoint path escaped snapshot root")?;
+        if relative
+            .components()
+            .any(|component| should_skip_checkpoint_dir(&component.as_os_str().to_string_lossy()))
+        {
+            continue;
+        }
+        entries.insert(relative.to_string_lossy().replace('\\', "/"), true);
+    }
+    Ok(entries)
+}
+
+fn collect_checkpoint_entries(root: &Path, mode: &str) -> anyhow::Result<BTreeMap<String, bool>> {
+    if mode == "git-worktree-snapshot" {
+        collect_git_checkpoint_entries(root)
+    } else {
+        collect_filesystem_checkpoint_entries(root)
+    }
+}
+
+fn create_checkpoint(path: &str) -> anyhow::Result<CheckpointCreateSummary> {
+    let (root, mode) = detect_checkpoint_root(path);
+    let created_at = checkpoint_timestamp_string();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let checkpoint_id = format!("ckpt-{created_at}-{unique:x}");
+    let entries = collect_checkpoint_entries(&root, &mode)?;
+
+    let snapshot_dir = checkpoint_snapshot_dir(&root, &checkpoint_id);
+    std::fs::create_dir_all(&snapshot_dir).with_context(|| {
+        format!(
+            "failed to create checkpoint snapshot dir {}",
+            snapshot_dir.display()
+        )
+    })?;
+
+    for (rel_path, exists) in &entries {
+        if !exists {
+            continue;
+        }
+        let source = root.join(rel_path);
+        let destination = snapshot_dir.join(rel_path);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create checkpoint parent dir {}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::copy(&source, &destination).with_context(|| {
+            format!(
+                "failed to copy {} into checkpoint snapshot {}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+    }
+
+    let summary = CheckpointCreateSummary {
+        checkpoint_id: checkpoint_id.clone(),
+        mode: mode.clone(),
+        root: root.to_string_lossy().to_string(),
+        created_at: created_at.clone(),
+        file_count: entries.len(),
+    };
+    let metadata = CheckpointMetadata {
+        version: JSON_OUTPUT_VERSION,
+        checkpoint_id: checkpoint_id.clone(),
+        mode: mode.clone(),
+        root: summary.root.clone(),
+        created_at: created_at.clone(),
+        file_count: entries.len(),
+        entries,
+    };
+    let metadata_path = checkpoint_metadata_path(&root, &checkpoint_id);
+    if let Some(parent) = metadata_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&metadata_path, serde_json::to_vec_pretty(&metadata)?)
+        .with_context(|| format!("failed to write {}", metadata_path.display()))?;
+
+    let index_path = checkpoint_index_path(&root);
+    let mut records: Vec<CheckpointIndexRecord> = if index_path.exists() {
+        serde_json::from_slice(
+            &std::fs::read(&index_path)
+                .with_context(|| format!("failed to read {}", index_path.display()))?,
+        )
+        .with_context(|| format!("failed to parse {}", index_path.display()))?
+    } else {
+        Vec::new()
+    };
+    records.insert(
+        0,
+        CheckpointIndexRecord {
+            version: JSON_OUTPUT_VERSION,
+            checkpoint_id: checkpoint_id.clone(),
+            mode,
+            root: summary.root.clone(),
+            created_at,
+            file_count: summary.file_count,
+        },
+    );
+    if let Some(parent) = index_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(&index_path, serde_json::to_vec_pretty(&records)?)
+        .with_context(|| format!("failed to write {}", index_path.display()))?;
+
+    Ok(summary)
 }
 
 fn load_batch_rewrite_config(config_path: &Path) -> anyhow::Result<BatchRewriteConfig> {
@@ -1539,7 +2293,495 @@ fn read_batch_rewrite_string_field(
     Ok(string_value.to_string())
 }
 
+fn validate_edit_id_selector(ids: &[String], flag_name: &str) -> anyhow::Result<()> {
+    let mut seen = std::collections::BTreeSet::new();
+    for id in ids {
+        if id.is_empty() {
+            anyhow::bail!("{flag_name} requires non-empty edit ids");
+        }
+        if !seen.insert(id.clone()) {
+            anyhow::bail!("duplicate edit id `{id}` provided via {flag_name}");
+        }
+    }
+    Ok(())
+}
+
+fn filter_rewrite_edits(
+    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+    args: &RunArgs,
+) -> anyhow::Result<Vec<tensor_grep_rs::backend_ast::RewriteEdit>> {
+    validate_edit_id_selector(&args.apply_edit_ids, "--apply-edit-ids")?;
+    validate_edit_id_selector(&args.reject_edit_ids, "--reject-edit-ids")?;
+
+    let known_ids: std::collections::BTreeSet<&str> =
+        edits.iter().map(|edit| edit.id.as_str()).collect();
+    for id in &args.apply_edit_ids {
+        if !known_ids.contains(id.as_str()) {
+            anyhow::bail!("unknown edit id `{id}` provided via --apply-edit-ids");
+        }
+    }
+    for id in &args.reject_edit_ids {
+        if !known_ids.contains(id.as_str()) {
+            anyhow::bail!("unknown edit id `{id}` provided via --reject-edit-ids");
+        }
+    }
+
+    if !args.apply_edit_ids.is_empty() {
+        let allowed: std::collections::BTreeSet<&str> =
+            args.apply_edit_ids.iter().map(String::as_str).collect();
+        return Ok(edits
+            .iter()
+            .filter(|edit| allowed.contains(edit.id.as_str()))
+            .cloned()
+            .collect());
+    }
+
+    if !args.reject_edit_ids.is_empty() {
+        let rejected: std::collections::BTreeSet<&str> =
+            args.reject_edit_ids.iter().map(String::as_str).collect();
+        return Ok(edits
+            .iter()
+            .filter(|edit| !rejected.contains(edit.id.as_str()))
+            .cloned()
+            .collect());
+    }
+
+    Ok(edits.to_vec())
+}
+
+fn filter_rewrite_plan(
+    plan: &tensor_grep_rs::backend_ast::RewritePlan,
+    args: &RunArgs,
+) -> anyhow::Result<tensor_grep_rs::backend_ast::RewritePlan> {
+    let edits = filter_rewrite_edits(&plan.edits, args)?;
+    let mut filtered = plan.clone();
+    filtered.total_edits = edits.len();
+    filtered.edits = edits;
+    Ok(filtered)
+}
+
+fn filter_batch_rewrite_plan(
+    plan: &BatchRewritePlan,
+    args: &RunArgs,
+) -> anyhow::Result<BatchRewritePlan> {
+    let edits = filter_rewrite_edits(&plan.edits, args)?;
+    let mut filtered = plan.clone();
+    filtered.total_edits = edits.len();
+    filtered.edits = edits;
+    Ok(filtered)
+}
+
+#[cfg(windows)]
+fn build_validation_shell_command(command: &str) -> Command {
+    let mut process = Command::new("cmd");
+    process.args(["/C", command]);
+    process
+}
+
+#[cfg(not(windows))]
+fn build_validation_shell_command(command: &str) -> Command {
+    let mut process = Command::new("sh");
+    process.args(["-c", command]);
+    process
+}
+
+fn validation_working_dir(path: &str) -> PathBuf {
+    let path = Path::new(path);
+    if path.is_dir() {
+        return path.to_path_buf();
+    }
+    if path.is_file() {
+        return path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+    }
+    path.parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn run_validation_command(
+    kind: &'static str,
+    command: &str,
+    working_dir: &Path,
+) -> ValidationCommandResult {
+    match build_validation_shell_command(command)
+        .current_dir(working_dir)
+        .output()
+    {
+        Ok(output) => ValidationCommandResult {
+            kind,
+            command: command.to_string(),
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        },
+        Err(error) => ValidationCommandResult {
+            kind,
+            command: command.to_string(),
+            success: false,
+            exit_code: None,
+            stdout: String::new(),
+            stderr: format!(
+                "failed to spawn validation command in {}: {error}",
+                working_dir.display()
+            ),
+        },
+    }
+}
+
+fn run_post_apply_validation(args: &RunArgs, path: &str) -> Option<ValidationSummary> {
+    let mut commands = Vec::new();
+    let working_dir = validation_working_dir(path);
+
+    if let Some(command) = &args.lint_cmd {
+        commands.push(run_validation_command("lint", command, &working_dir));
+    }
+    if let Some(command) = &args.test_cmd {
+        commands.push(run_validation_command("test", command, &working_dir));
+    }
+
+    if commands.is_empty() {
+        return None;
+    }
+
+    Some(ValidationSummary {
+        success: commands.iter().all(|command| command.success),
+        commands,
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
+}
+
+fn canonical_manifest_bytes(manifest: &RewriteAuditManifest) -> anyhow::Result<Vec<u8>> {
+    let mut value = serde_json::to_value(manifest)?;
+    value
+        .as_object_mut()
+        .expect("rewrite audit manifest should serialize as an object")
+        .remove("manifest_sha256");
+    value
+        .as_object_mut()
+        .expect("rewrite audit manifest should serialize as an object")
+        .remove("signature");
+    Ok(serde_json::to_vec_pretty(&value)?)
+}
+
+fn previous_manifest_digest(path: &Path) -> anyhow::Result<String> {
+    let previous_bytes = std::fs::read(path)
+        .with_context(|| format!("failed to read previous audit manifest {}", path.display()))?;
+    let previous_value: Option<serde_json::Value> = serde_json::from_slice(&previous_bytes).ok();
+    Ok(previous_value
+        .as_ref()
+        .and_then(|value| value.get("manifest_sha256"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| sha256_hex(&previous_bytes)))
+}
+
+fn collect_pre_apply_hashes(
+    edits: &[tensor_grep_rs::backend_ast::RewriteEdit],
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut hashes = BTreeMap::new();
+    for file in edits
+        .iter()
+        .map(|edit| edit.file.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let bytes = std::fs::read(&file)
+            .with_context(|| format!("failed to read {} for audit manifest", file.display()))?;
+        hashes.insert(file.to_string_lossy().to_string(), sha256_hex(&bytes));
+    }
+    Ok(hashes)
+}
+
+struct AuditManifestWriteInput<'a> {
+    path: &'a Path,
+    lang: &'a str,
+    root_path: &'a str,
+    edits: &'a [tensor_grep_rs::backend_ast::RewriteEdit],
+    plan_total_edits: usize,
+    checkpoint: Option<&'a CheckpointCreateSummary>,
+    validation: Option<&'a ValidationSummary>,
+    before_hashes: &'a BTreeMap<String, String>,
+    signing_key_path: Option<&'a Path>,
+}
+
+fn write_audit_manifest_for_plan(
+    input: AuditManifestWriteInput<'_>,
+) -> anyhow::Result<AuditManifestSummary> {
+    let AuditManifestWriteInput {
+        path,
+        lang,
+        root_path,
+        edits,
+        plan_total_edits,
+        checkpoint,
+        validation,
+        before_hashes,
+        signing_key_path,
+    } = input;
+    let previous_manifest_sha256 = if path.exists() {
+        Some(previous_manifest_digest(path)?)
+    } else {
+        None
+    };
+
+    let mut by_file: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for edit in edits {
+        by_file
+            .entry(edit.file.to_string_lossy().to_string())
+            .or_default()
+            .push(edit.id.clone());
+    }
+
+    let mut files = Vec::with_capacity(by_file.len());
+    for (file, edit_ids) in by_file {
+        let after_bytes = std::fs::read(&file)
+            .with_context(|| format!("failed to read {} for audit manifest", file))?;
+        let before_sha256 = before_hashes
+            .get(&file)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing pre-apply hash for {file}"))?;
+        files.push(RewriteAuditManifestFile {
+            path: file.clone(),
+            edit_ids,
+            before_sha256,
+            after_sha256: sha256_hex(&after_bytes),
+        });
+    }
+
+    let manifest = RewriteAuditManifest {
+        version: JSON_OUTPUT_VERSION,
+        kind: "rewrite-audit-manifest",
+        created_at: checkpoint_timestamp_string(),
+        lang: lang.to_string(),
+        path: root_path.to_string(),
+        plan_total_edits,
+        applied_edit_ids: edits.iter().map(|edit| edit.id.clone()).collect(),
+        previous_manifest_sha256,
+        checkpoint: checkpoint.cloned(),
+        validation: validation.cloned(),
+        files,
+        manifest_sha256: None,
+        signature: None,
+    };
+
+    let mut manifest = manifest;
+    let canonical_bytes = canonical_manifest_bytes(&manifest)?;
+    manifest.manifest_sha256 = Some(sha256_hex(&canonical_bytes));
+    if let Some(signing_key_path) = signing_key_path {
+        let key_bytes = std::fs::read(signing_key_path).with_context(|| {
+            format!(
+                "failed to read audit signing key {}",
+                signing_key_path.display()
+            )
+        })?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&key_bytes)
+            .map_err(|_| anyhow::anyhow!("invalid audit signing key"))?;
+        mac.update(&canonical_bytes);
+        let signature_bytes = mac.finalize().into_bytes();
+        let mut signature_value = String::with_capacity(signature_bytes.len() * 2);
+        for byte in signature_bytes {
+            signature_value.push_str(&format!("{byte:02x}"));
+        }
+        manifest.signature = Some(AuditManifestSignature {
+            kind: "hmac-sha256",
+            key_path: signing_key_path.to_string_lossy().to_string(),
+            value: signature_value,
+        });
+    }
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create audit manifest dir {}", parent.display()))?;
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(&manifest)?)
+        .with_context(|| format!("failed to write audit manifest {}", path.display()))?;
+
+    Ok(AuditManifestSummary {
+        path: path.to_string_lossy().to_string(),
+        file_count: manifest.files.len(),
+        applied_edit_count: manifest.applied_edit_ids.len(),
+        signed: manifest.signature.is_some(),
+        signature_kind: manifest.signature.as_ref().map(|signature| signature.kind),
+    })
+}
+
+fn verify_audit_manifest_payload(
+    args: &AuditVerifyArgs,
+) -> anyhow::Result<AuditManifestVerifyJson> {
+    let manifest_path = args.manifest_path.canonicalize().with_context(|| {
+        format!(
+            "failed to resolve audit manifest {}",
+            args.manifest_path.display()
+        )
+    })?;
+    let manifest_bytes = std::fs::read(&manifest_path)
+        .with_context(|| format!("failed to read audit manifest {}", manifest_path.display()))?;
+    let manifest: RewriteAuditManifestRead = serde_json::from_slice(&manifest_bytes)
+        .with_context(|| format!("failed to parse audit manifest {}", manifest_path.display()))?;
+
+    let mut manifest_value: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .with_context(|| format!("failed to parse audit manifest {}", manifest_path.display()))?;
+    let object = manifest_value
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("audit manifest must be a JSON object"))?;
+    object.remove("manifest_sha256");
+    object.remove("signature");
+    let canonical_bytes = serde_json::to_vec_pretty(&manifest_value)?;
+
+    let expected_digest = sha256_hex(&canonical_bytes);
+    let digest_valid = manifest
+        .manifest_sha256
+        .as_ref()
+        .map(|digest| digest == &expected_digest)
+        .unwrap_or(false);
+
+    let previous_manifest_path = args
+        .previous_manifest
+        .as_ref()
+        .map(|path| path.canonicalize())
+        .transpose()
+        .with_context(|| {
+            args.previous_manifest
+                .as_ref()
+                .map(|path| format!("failed to resolve previous manifest {}", path.display()))
+                .unwrap_or_default()
+        })?;
+    let mut chain_valid = true;
+    let mut errors = Vec::new();
+    if let Some(previous_digest) = manifest.previous_manifest_sha256.as_ref() {
+        if let Some(previous_path) = previous_manifest_path.as_ref() {
+            let actual_previous_digest = previous_manifest_digest(previous_path)?;
+            if previous_digest != &actual_previous_digest {
+                chain_valid = false;
+                errors.push(
+                    "Previous manifest digest does not match previous_manifest_sha256.".to_string(),
+                );
+            }
+        } else {
+            chain_valid = false;
+            errors.push(
+                "Manifest chain digest is present but no previous manifest was provided."
+                    .to_string(),
+            );
+        }
+    }
+
+    let signing_key_path = args
+        .signing_key
+        .as_ref()
+        .map(|path| path.canonicalize())
+        .transpose()
+        .with_context(|| {
+            args.signing_key
+                .as_ref()
+                .map(|path| format!("failed to resolve signing key {}", path.display()))
+                .unwrap_or_default()
+        })?;
+    let mut signature_valid = true;
+    let signature_kind = manifest
+        .signature
+        .as_ref()
+        .map(|signature| signature.kind.clone());
+    if let Some(signature) = manifest.signature.as_ref() {
+        if signature.kind != "hmac-sha256" {
+            signature_valid = false;
+            errors.push(format!("Unsupported signature kind: {}", signature.kind));
+        } else {
+            let key_path = signing_key_path
+                .as_deref()
+                .unwrap_or_else(|| Path::new(&signature.key_path));
+            let key_bytes = std::fs::read(key_path).with_context(|| {
+                format!("failed to read audit signing key {}", key_path.display())
+            })?;
+            let mut mac = Hmac::<Sha256>::new_from_slice(&key_bytes)
+                .map_err(|_| anyhow::anyhow!("invalid audit signing key"))?;
+            mac.update(&canonical_bytes);
+            let actual_signature = mac.finalize().into_bytes();
+            let mut actual_signature_hex = String::with_capacity(actual_signature.len() * 2);
+            for byte in actual_signature {
+                actual_signature_hex.push_str(&format!("{byte:02x}"));
+            }
+            if actual_signature_hex != signature.value {
+                signature_valid = false;
+                errors.push(
+                    "Manifest signature does not match the supplied signing key.".to_string(),
+                );
+            }
+        }
+    } else if signing_key_path.is_some() {
+        signature_valid = false;
+        errors.push("Signing key was provided but the manifest is unsigned.".to_string());
+    }
+
+    if !digest_valid {
+        errors.insert(
+            0,
+            "Manifest digest does not match manifest_sha256.".to_string(),
+        );
+    }
+
+    Ok(AuditManifestVerifyJson {
+        version: JSON_OUTPUT_VERSION,
+        routing_backend: "AuditManifest",
+        routing_reason: "audit-manifest-verify",
+        sidecar_used: false,
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        signing_key_path: signing_key_path.map(|path| path.to_string_lossy().to_string()),
+        previous_manifest_path: previous_manifest_path
+            .map(|path| path.to_string_lossy().to_string()),
+        kind: Some(manifest.kind),
+        manifest_sha256: manifest.manifest_sha256,
+        previous_manifest_sha256: manifest.previous_manifest_sha256,
+        checks: AuditManifestVerifyChecks {
+            digest_valid,
+            chain_valid,
+            signature_valid,
+        },
+        signature_kind,
+        valid: digest_valid && chain_valid && signature_valid,
+        errors,
+    })
+}
+
+fn emit_validation_status(summary: &ValidationSummary) {
+    for result in &summary.commands {
+        if result.success {
+            eprintln!(
+                "[validation:{}] passed{}",
+                result.kind,
+                result
+                    .exit_code
+                    .map(|code| format!(" (exit code {code})"))
+                    .unwrap_or_default()
+            );
+        } else {
+            eprintln!(
+                "[validation:{}] failed{}",
+                result.kind,
+                result
+                    .exit_code
+                    .map(|code| format!(" (exit code {code})"))
+                    .unwrap_or_else(|| " (no exit code)".to_string())
+            );
+        }
+    }
+}
+
 fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
+    validate_run_args(&args)?;
     let backend = AstBackend::new();
 
     if let Some(config_path) = &args.batch_rewrite {
@@ -1620,6 +2862,7 @@ fn handle_ast_rewrite(
 
     let pattern = run_pattern(args)?;
     let plan = backend.plan_rewrites(pattern, replacement, &args.lang, path)?;
+    let plan = filter_rewrite_plan(&plan, args)?;
 
     if !plan.rejected_overlaps.is_empty() {
         eprintln!(
@@ -1664,18 +2907,38 @@ fn handle_ast_rewrite_apply(
     }
 
     let pattern = run_pattern(args)?;
-    let plan = backend.plan_and_apply(pattern, replacement, &args.lang, path)?;
+    let plan = backend.plan_rewrites(pattern, replacement, &args.lang, path)?;
+    let plan = filter_rewrite_plan(&plan, args)?;
+
+    if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
+        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        return Ok(());
+    }
+
+    let checkpoint = if args.checkpoint {
+        let checkpoint = create_checkpoint(path)?;
+        eprintln!(
+            "[checkpoint] created {} ({}, files={})",
+            checkpoint.checkpoint_id, checkpoint.mode, checkpoint.file_count
+        );
+        Some(checkpoint)
+    } else {
+        None
+    };
+
+    let before_hashes = if args.audit_manifest.is_some() {
+        Some(collect_pre_apply_hashes(&plan.edits)?)
+    } else {
+        None
+    };
+
+    AstBackend::apply_rewrites(&plan)?;
 
     if !plan.rejected_overlaps.is_empty() {
         eprintln!(
             "[rewrite] {} overlapping edit(s) rejected",
             plan.rejected_overlaps.len()
         );
-    }
-
-    if plan.edits.is_empty() {
-        eprintln!("[rewrite] no matches found, nothing to rewrite");
-        return Ok(());
     }
 
     eprintln!("[rewrite] applied {} edit(s)", plan.edits.len(),);
@@ -1697,16 +2960,48 @@ fn handle_ast_rewrite_apply(
         None
     };
 
+    let validation = run_post_apply_validation(args, path);
+    if let Some(summary) = &validation {
+        emit_validation_status(summary);
+    }
+
+    let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
+        Some(write_audit_manifest_for_plan(AuditManifestWriteInput {
+            path: audit_manifest_path,
+            lang: &args.lang,
+            root_path: path,
+            edits: &plan.edits,
+            plan_total_edits: plan.total_edits,
+            checkpoint: checkpoint.as_ref(),
+            validation: validation.as_ref(),
+            before_hashes: before_hashes
+                .as_ref()
+                .expect("pre-apply hashes should exist when audit manifest requested"),
+            signing_key_path: args.audit_signing_key.as_deref(),
+        })?)
+    } else {
+        None
+    };
+
     if args.json {
         let payload = ApplyVerifyJson {
             version: plan.version,
             routing_backend: plan.routing_backend,
             routing_reason: plan.routing_reason,
             sidecar_used: plan.sidecar_used,
+            checkpoint: checkpoint.as_ref(),
+            audit_manifest: audit_manifest.as_ref(),
             plan: &plan,
             verification: verification.as_ref(),
+            validation: validation.as_ref(),
         };
         println!("{}", serde_json::to_string_pretty(&payload)?);
+    }
+
+    if let Some(summary) = &validation {
+        if !summary.success {
+            anyhow::bail!("post-apply validation failed");
+        }
     }
 
     Ok(())
@@ -1723,6 +3018,7 @@ fn handle_ast_batch_rewrite(
     }
 
     let plan = backend.plan_batch_rewrites(&config.rewrites, path)?;
+    let plan = filter_batch_rewrite_plan(&plan, args)?;
 
     if !plan.rejected_overlaps.is_empty() {
         eprintln!(
@@ -1774,18 +3070,38 @@ fn handle_ast_batch_rewrite_apply(
         emit_verbose_metadata(RoutingDecision::ast());
     }
 
-    let plan = backend.plan_and_apply_batch(&config.rewrites, path)?;
+    let plan = backend.plan_batch_rewrites(&config.rewrites, path)?;
+    let plan = filter_batch_rewrite_plan(&plan, args)?;
+
+    if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
+        eprintln!("[rewrite] no matches found, nothing to rewrite");
+        return Ok(());
+    }
+
+    let checkpoint = if args.checkpoint {
+        let checkpoint = create_checkpoint(path)?;
+        eprintln!(
+            "[checkpoint] created {} ({}, files={})",
+            checkpoint.checkpoint_id, checkpoint.mode, checkpoint.file_count
+        );
+        Some(checkpoint)
+    } else {
+        None
+    };
+
+    let before_hashes = if args.audit_manifest.is_some() {
+        Some(collect_pre_apply_hashes(&plan.edits)?)
+    } else {
+        None
+    };
+
+    AstBackend::apply_batch_rewrites(&plan)?;
 
     if !plan.rejected_overlaps.is_empty() {
         eprintln!(
             "[rewrite] {} overlapping edit(s) rejected",
             plan.rejected_overlaps.len()
         );
-    }
-
-    if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
-        eprintln!("[rewrite] no matches found, nothing to rewrite");
-        return Ok(());
     }
 
     if plan.edits.is_empty() {
@@ -1814,16 +3130,48 @@ fn handle_ast_batch_rewrite_apply(
         None
     };
 
+    let validation = run_post_apply_validation(args, path);
+    if let Some(summary) = &validation {
+        emit_validation_status(summary);
+    }
+
+    let audit_manifest = if let Some(audit_manifest_path) = &args.audit_manifest {
+        Some(write_audit_manifest_for_plan(AuditManifestWriteInput {
+            path: audit_manifest_path,
+            lang: &args.lang,
+            root_path: path,
+            edits: &plan.edits,
+            plan_total_edits: plan.total_edits,
+            checkpoint: checkpoint.as_ref(),
+            validation: validation.as_ref(),
+            before_hashes: before_hashes
+                .as_ref()
+                .expect("pre-apply hashes should exist when audit manifest requested"),
+            signing_key_path: args.audit_signing_key.as_deref(),
+        })?)
+    } else {
+        None
+    };
+
     if args.json {
         let payload = BatchApplyVerifyJson {
             version: plan.version,
             routing_backend: plan.routing_backend,
             routing_reason: plan.routing_reason,
             sidecar_used: plan.sidecar_used,
+            checkpoint: checkpoint.as_ref(),
+            audit_manifest: audit_manifest.as_ref(),
             plan: &plan,
             verification: verification.as_ref(),
+            validation: validation.as_ref(),
         };
         println!("{}", serde_json::to_string_pretty(&payload)?);
+    }
+
+    if let Some(summary) = &validation {
+        if !summary.success {
+            anyhow::bail!("post-apply validation failed");
+        }
     }
 
     Ok(())

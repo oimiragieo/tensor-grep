@@ -6,6 +6,7 @@ use std::process::Command;
 use std::time::{Duration, UNIX_EPOCH};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tempfile::{tempdir, TempDir};
 use tensor_grep_rs::backend_ast::{AstBackend, BatchRewriteRule};
 
@@ -972,6 +973,598 @@ fn test_tg_run_apply_verify_json_is_single_document() {
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_can_create_checkpoint() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--checkpoint")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let checkpoint = parsed["checkpoint"]
+        .as_object()
+        .expect("checkpoint metadata must be present");
+    let checkpoint_id = checkpoint["checkpoint_id"]
+        .as_str()
+        .expect("checkpoint id must be a string");
+    assert!(!checkpoint_id.is_empty());
+    assert_eq!(checkpoint["file_count"], 1);
+    assert_eq!(checkpoint["mode"], "filesystem-snapshot");
+
+    let checkpoint_root = file_path.parent().unwrap();
+    let metadata_path = checkpoint_root
+        .join(".tensor-grep")
+        .join("checkpoints")
+        .join(checkpoint_id)
+        .join("metadata.json");
+    let index_path = checkpoint_root
+        .join(".tensor-grep")
+        .join("checkpoints")
+        .join("index.json");
+    assert!(
+        metadata_path.exists(),
+        "missing {}",
+        metadata_path.display()
+    );
+    assert!(index_path.exists(), "missing {}", index_path.display());
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_can_apply_selected_edit_ids_only() {
+    let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        plan_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&plan_output.stderr)
+    );
+    let planned: Value = serde_json::from_slice(&plan_output.stdout).unwrap();
+    let selected_id = planned["edits"][0]["id"].as_str().unwrap().to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--apply-edit-ids")
+        .arg(&selected_id)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["plan"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "lambda x, y: x + y\ndef mul(a, b): return a * b\n"
+    );
+}
+
+#[test]
+fn test_tg_run_apply_edit_ids_rejects_unknown_id() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--apply-edit-ids")
+        .arg("missing-edit-id")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown edit id"), "stderr={stderr}");
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "def add(x, y): return x + y\n"
+    );
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_can_reject_selected_edit_ids() {
+    let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
+    let (_dir, file_path) = write_source_file("py", source);
+
+    let plan_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--json")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        plan_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&plan_output.stderr)
+    );
+    let planned: Value = serde_json::from_slice(&plan_output.stdout).unwrap();
+    let rejected_id = planned["edits"][0]["id"].as_str().unwrap().to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--reject-edit-ids")
+        .arg(&rejected_id)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["plan"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["total_edits"], 1);
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "def add(x, y): return x + y\nlambda a, b: a * b\n"
+    );
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_includes_validation_results() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--lint-cmd")
+        .arg("echo lint-ok")
+        .arg("--test-cmd")
+        .arg("echo test-ok")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(parsed["validation"]["success"], true);
+    let commands = parsed["validation"]["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0]["kind"], "lint");
+    assert_eq!(commands[1]["kind"], "test");
+    assert_eq!(commands[0]["success"], true);
+    assert_eq!(commands[1]["success"], true);
+    assert!(commands[0]["stdout"].as_str().unwrap().contains("lint-ok"));
+    assert!(commands[1]["stdout"].as_str().unwrap().contains("test-ok"));
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_can_emit_audit_manifest() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--checkpoint")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("--lint-cmd")
+        .arg("echo lint-ok")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let manifest_summary = parsed["audit_manifest"]
+        .as_object()
+        .expect("audit manifest summary must be present");
+    assert_eq!(
+        manifest_summary["path"].as_str().unwrap(),
+        audit_manifest_path.to_str().unwrap()
+    );
+    let manifest_json: Value =
+        serde_json::from_slice(&fs::read(&audit_manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest_json["version"], 1);
+    assert_eq!(manifest_json["kind"], "rewrite-audit-manifest");
+    assert_eq!(manifest_json["lang"], "python");
+    assert_eq!(manifest_json["plan_total_edits"], 1);
+    assert_eq!(
+        manifest_json["applied_edit_ids"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        manifest_json["checkpoint"]["checkpoint_id"],
+        parsed["checkpoint"]["checkpoint_id"]
+    );
+    assert_eq!(manifest_json["validation"]["success"], true);
+    let files = manifest_json["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(
+        files[0]["path"].as_str().unwrap(),
+        file_path.to_str().unwrap()
+    );
+    assert!(files[0]["before_sha256"].as_str().unwrap().len() >= 32);
+    assert!(files[0]["after_sha256"].as_str().unwrap().len() >= 32);
+    assert_eq!(manifest_json["previous_manifest_sha256"], Value::Null);
+    let manifest_digest = manifest_json["manifest_sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut canonical_manifest = manifest_json.clone();
+    canonical_manifest
+        .as_object_mut()
+        .unwrap()
+        .remove("manifest_sha256");
+    canonical_manifest
+        .as_object_mut()
+        .unwrap()
+        .remove("signature");
+    let mut hasher = Sha256::new();
+    hasher.update(serde_json::to_vec_pretty(&canonical_manifest).unwrap());
+    assert_eq!(manifest_digest, format!("{:x}", hasher.finalize()));
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: ($EXPR)")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        second_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let second_manifest: Value =
+        serde_json::from_slice(&fs::read(&audit_manifest_path).unwrap()).unwrap();
+    let second_digest = second_manifest["manifest_sha256"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut second_canonical = second_manifest.clone();
+    second_canonical
+        .as_object_mut()
+        .unwrap()
+        .remove("manifest_sha256");
+    second_canonical
+        .as_object_mut()
+        .unwrap()
+        .remove("signature");
+    let mut second_hasher = Sha256::new();
+    second_hasher.update(serde_json::to_vec_pretty(&second_canonical).unwrap());
+    assert_eq!(second_digest, format!("{:x}", second_hasher.finalize()));
+    assert_eq!(
+        second_manifest["previous_manifest_sha256"],
+        Value::String(manifest_digest)
+    );
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_can_sign_audit_manifest() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+    let signing_key_path = file_path.parent().unwrap().join("audit.key");
+    fs::write(&signing_key_path, b"super-secret-key").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("--audit-signing-key")
+        .arg(&signing_key_path)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let manifest_summary = parsed["audit_manifest"].as_object().unwrap();
+    assert_eq!(manifest_summary["signed"], true);
+    assert_eq!(manifest_summary["signature_kind"], "hmac-sha256");
+
+    let manifest_json: Value =
+        serde_json::from_slice(&fs::read(&audit_manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest_json["signature"]["kind"], "hmac-sha256");
+    assert_eq!(
+        manifest_json["signature"]["key_path"].as_str().unwrap(),
+        signing_key_path.to_str().unwrap()
+    );
+    assert!(manifest_json["signature"]["value"].as_str().unwrap().len() >= 32);
+}
+
+#[test]
+fn test_tg_audit_verify_json_accepts_signed_manifest() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+    let signing_key_path = file_path.parent().unwrap().join("audit.key");
+    fs::write(&signing_key_path, b"super-secret-key").unwrap();
+
+    let apply_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("--audit-signing-key")
+        .arg(&signing_key_path)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        apply_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&apply_output.stderr)
+    );
+
+    let verify_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("audit-verify")
+        .arg(&audit_manifest_path)
+        .arg("--signing-key")
+        .arg(&signing_key_path)
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    assert!(
+        verify_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&verify_output.stderr)
+    );
+
+    let parsed: Value = serde_json::from_slice(&verify_output.stdout).unwrap();
+    assert_eq!(parsed["routing_reason"], "audit-manifest-verify");
+    assert_eq!(parsed["checks"]["digest_valid"], true);
+    assert_eq!(parsed["checks"]["chain_valid"], true);
+    assert_eq!(parsed["checks"]["signature_valid"], true);
+    assert_eq!(parsed["valid"], true);
+}
+
+#[test]
+fn test_tg_audit_verify_json_reports_chain_failure() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+    let audit_manifest_path = file_path.parent().unwrap().join("rewrite-audit.json");
+
+    let first_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        first_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&first_output.stderr)
+    );
+
+    let previous_manifest_path = file_path.parent().unwrap().join("previous-audit.json");
+    fs::copy(&audit_manifest_path, &previous_manifest_path).unwrap();
+    fs::write(
+        &previous_manifest_path,
+        br#"{"version":1,"manifest_sha256":"deadbeef"}"#,
+    )
+    .unwrap();
+
+    let second_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: ($EXPR)")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--audit-manifest")
+        .arg(&audit_manifest_path)
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        second_output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&second_output.stderr)
+    );
+
+    let verify_output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("audit-verify")
+        .arg(&audit_manifest_path)
+        .arg("--previous-manifest")
+        .arg(&previous_manifest_path)
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    assert!(!verify_output.status.success());
+    let parsed: Value = serde_json::from_slice(&verify_output.stdout).unwrap();
+    assert_eq!(parsed["checks"]["digest_valid"], true);
+    assert_eq!(parsed["checks"]["chain_valid"], false);
+    assert_eq!(parsed["checks"]["signature_valid"], true);
+    assert_eq!(parsed["valid"], false);
+    assert!(parsed["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value
+            .as_str()
+            .unwrap()
+            .contains("Previous manifest digest does not match previous_manifest_sha256.")));
+}
+
+#[test]
+fn test_tg_run_apply_verify_json_reports_failed_validation_and_exits_non_zero() {
+    let (_dir, file_path) = write_source_file("py", "def add(x, y): return x + y\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("--verify")
+        .arg("--json")
+        .arg("--lint-cmd")
+        .arg("echo lint-fail 1>&2 && exit /b 3")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    let parsed: Value =
+        serde_json::from_slice(&output.stdout).expect("stdout must remain valid JSON on failure");
+    assert_eq!(parsed["verification"]["verified"], 1);
+    assert_eq!(parsed["validation"]["success"], false);
+    let commands = parsed["validation"]["commands"].as_array().unwrap();
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0]["kind"], "lint");
+    assert_eq!(commands[0]["success"], false);
+    assert_eq!(commands[0]["exit_code"], 3);
+    assert!(commands[0]["stderr"]
+        .as_str()
+        .unwrap()
+        .contains("lint-fail"));
+    assert_eq!(
+        fs::read_to_string(&file_path).unwrap(),
+        "lambda x, y: x + y\n"
+    );
 }
 
 #[test]

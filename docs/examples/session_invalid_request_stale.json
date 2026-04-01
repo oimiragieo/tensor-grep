@@ -1,0 +1,7 @@
+{
+  "session_id": "session-20260320071200-rewrite",
+  "error": {
+    "code": "invalid_request",
+    "message": "Stale session session-20260320071200-rewrite changed on disk; refresh the session or pass --refresh-on-stale."
+  }
+}

@@ -126,8 +126,20 @@ def default_binary_path() -> Path:
     return ROOT_DIR / "rust_core" / "target" / "release" / binary_name
 
 
+def default_fast_binary_path() -> Path:
+    binary_name = "tg-search-fast.exe" if os.name == "nt" else "tg-search-fast"
+    return ROOT_DIR / "rust_core" / "target" / "release" / binary_name
+
+
+def resolve_tg_binary_with_source(binary: str | None = None) -> tuple[Path, str]:
+    if binary:
+        return Path(binary).expanduser().resolve(), "explicit_arg"
+    return default_binary_path(), "default_binary_path"
+
+
 def resolve_tg_binary(binary: str | None = None) -> Path:
-    return Path(binary).expanduser().resolve() if binary else default_binary_path()
+    resolved, _ = resolve_tg_binary_with_source(binary)
+    return resolved
 
 
 def resolve_tg_cli_launcher(binary: str | None = None) -> list[str]:
@@ -173,13 +185,15 @@ def generate_test_data(directory: str, num_files: int = 5, lines_per_file: int =
         f.write("This is a readme file.\nERROR: do not delete.\n")
 
 
-def run_cmd_capture(cmd):
+def run_cmd_capture(cmd, *, env_overrides: dict[str, str] | None = None):
     start = time.perf_counter()
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
         f"{SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_DIR)
     )
+    if env_overrides:
+        env.update(env_overrides)
     try:
         # Run subprocess and capture stdout
         result = subprocess.run(
@@ -198,13 +212,17 @@ def run_cmd_capture(cmd):
     return time.perf_counter() - start, stdout
 
 
-def run_cmd_timing(cmd, capture_stdout: bool = False):
+def run_cmd_timing(
+    cmd, capture_stdout: bool = False, *, env_overrides: dict[str, str] | None = None
+):
     start = time.perf_counter()
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
         f"{SRC_DIR}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_DIR)
     )
+    if env_overrides:
+        env.update(env_overrides)
     try:
         subprocess.run(
             cmd,
@@ -223,10 +241,19 @@ def collect_timing_samples(
     sample_count: int = TIMING_SAMPLES_PER_SCENARIO,
     *,
     capture_stdout: bool = False,
+    env_overrides: dict[str, str] | None = None,
 ):
     samples: list[float] = []
     for _ in range(sample_count):
-        samples.append(round(run_cmd_timing(cmd, capture_stdout=capture_stdout), 6))
+        if env_overrides:
+            sample = run_cmd_timing(
+                cmd,
+                capture_stdout=capture_stdout,
+                env_overrides=env_overrides,
+            )
+        else:
+            sample = run_cmd_timing(cmd, capture_stdout=capture_stdout)
+        samples.append(round(sample, 6))
     return round(statistics.median(samples), 6), samples
 
 
@@ -245,18 +272,168 @@ def build_tg_benchmark_cmd(
     binary: Path | None = None,
     *,
     force_cpu: bool = False,
-) -> list[str]:
+    return_mode: bool = False,
+    return_env: bool = False,
+    launcher_mode: str = "auto",
+) -> tuple[list[str], str] | tuple[list[str], str, dict[str, str]] | list[str]:
+    return build_tg_benchmark_cmd_with_mode(
+        tg_args,
+        binary=binary,
+        force_cpu=force_cpu,
+        return_mode=return_mode,
+        return_env=return_env,
+        launcher_mode=launcher_mode,
+    )
+
+
+def build_tg_benchmark_cmd_with_mode(
+    tg_args: list[str],
+    binary: Path | None = None,
+    *,
+    force_cpu: bool = False,
+    return_mode: bool = False,
+    return_env: bool = False,
+    launcher_mode: str = "auto",
+) -> tuple[list[str], str] | tuple[list[str], str, dict[str, str]] | list[str]:
     resolved_binary = binary or resolve_tg_binary()
-    if force_cpu:
+    if launcher_mode not in {
+        "auto",
+        "explicit_binary",
+        "explicit_fast_binary",
+        "explicit_binary_positional",
+        "explicit_binary_positional_early_rg",
+        "explicit_binary_early_rg",
+        "discovered_cli_binary",
+        "python_module_launcher",
+        "python_module_rust_first",
+    }:
+        raise ValueError(f"unsupported launcher mode: {launcher_mode}")
+
+    mode = "explicit_binary"
+    env_overrides: dict[str, str] = {}
+    positional_dispatch = False
+    if launcher_mode == "python_module_launcher":
+        launcher = [sys.executable, "-m", "tensor_grep"]
+        mode = "python_module_launcher"
+        cmd = [*launcher, "search"]
+        if force_cpu:
+            cmd.append("--cpu")
+    elif launcher_mode == "python_module_rust_first":
+        launcher = [sys.executable, "-m", "tensor_grep"]
+        mode = "python_module_rust_first"
+        env_overrides["TG_RUST_FIRST_SEARCH"] = "1"
+        cmd = [*launcher, "search"]
+        if force_cpu:
+            cmd.append("--cpu")
+    elif launcher_mode == "explicit_fast_binary":
+        mode = "explicit_fast_binary"
+        if force_cpu:
+            cmd = [str(resolved_binary), "--cpu"]
+        else:
+            cmd = [str(resolved_binary)]
+    elif launcher_mode == "explicit_binary_positional":
+        mode = "explicit_binary_positional"
+        if force_cpu:
+            cmd = [str(resolved_binary), "search", "--cpu"]
+        elif can_use_positional_launcher(tg_args):
+            cmd = [str(resolved_binary)]
+            positional_dispatch = True
+        else:
+            cmd = [str(resolved_binary), "search"]
+    elif launcher_mode == "explicit_binary_positional_early_rg":
+        mode = "explicit_binary_positional_early_rg"
+        env_overrides["TG_RUST_EARLY_POSITIONAL_RG"] = "1"
+        if force_cpu:
+            cmd = [str(resolved_binary), "search", "--cpu"]
+        elif can_use_positional_launcher(tg_args):
+            cmd = [str(resolved_binary)]
+            positional_dispatch = True
+        else:
+            cmd = [str(resolved_binary), "search"]
+    elif launcher_mode == "explicit_binary_early_rg":
+        mode = "explicit_binary_early_rg"
+        env_overrides["TG_RUST_EARLY_RG"] = "1"
+        cmd = [str(resolved_binary), "search"]
+        if force_cpu:
+            cmd.append("--cpu")
+    elif launcher_mode == "discovered_cli_binary":
+        launcher = resolve_tg_cli_launcher()
+        cmd = [*launcher, "search"]
+        mode = (
+            "python_module_launcher"
+            if launcher[:2] == [sys.executable, "-m"]
+            else "discovered_cli_binary"
+        )
+        if force_cpu:
+            cmd.append("--cpu")
+    elif force_cpu:
         launcher = [str(binary)] if binary is not None else resolve_tg_cli_launcher()
         cmd = [*launcher, "search", "--cpu"]
+        if binary is None:
+            mode = (
+                "python_module_launcher"
+                if launcher[:2] == [sys.executable, "-m"]
+                else "discovered_cli_binary"
+            )
     elif resolved_binary.exists():
         cmd = [str(resolved_binary), "search"]
     else:
-        cmd = [*resolve_tg_cli_launcher(), "search"]
-    cmd.append("--no-ignore")
+        launcher = resolve_tg_cli_launcher()
+        cmd = [*launcher, "search"]
+        mode = (
+            "python_module_launcher"
+            if launcher[:2] == [sys.executable, "-m"]
+            else "discovered_cli_binary"
+        )
+    if "--no-ignore" not in tg_args and not positional_dispatch:
+        cmd.append("--no-ignore")
     cmd.extend(tg_args)
+    if return_mode and return_env:
+        return cmd, mode, env_overrides
+    if return_mode:
+        return cmd, mode
     return cmd
+
+
+def can_use_positional_launcher(tg_args: list[str]) -> bool:
+    if len(tg_args) < 2:
+        return False
+
+    supported_flags = {
+        "-i",
+        "--ignore-case",
+        "-F",
+        "--fixed-strings",
+        "-v",
+        "--invert-match",
+        "-c",
+        "--count",
+        "--cpu",
+        "--json",
+        "--ndjson",
+        "--verbose",
+    }
+    unsupported_prefixes = (
+        "--glob=",
+        "--format=",
+        "--gpu-device-ids=",
+        "--lang=",
+        "--replace=",
+    )
+
+    positional_count = 0
+    for arg in tg_args:
+        if arg == "--no-ignore":
+            continue
+        if arg.startswith("-"):
+            if arg in supported_flags:
+                continue
+            if arg.startswith(unsupported_prefixes):
+                return False
+            return False
+        positional_count += 1
+
+    return positional_count == 2
 
 
 def build_benchmark_scenarios(
@@ -267,6 +444,7 @@ def build_benchmark_scenarios(
     force_cpu: bool = False,
     binary: Path | None = None,
     rg_binary: str | None = None,
+    launcher_mode: str = "auto",
 ) -> list[dict[str, object]]:
     resolved_rg_binary = rg_binary or resolve_rg_binary()
     scenarios: list[dict[str, object]] = []
@@ -281,7 +459,12 @@ def build_benchmark_scenarios(
         scenarios.append({
             "name": scenario["name"],
             "rg_cmd": [resolved_rg_binary, "--no-ignore", *rg_args],
-            "tg_cmd": build_tg_benchmark_cmd(tg_args, binary=binary, force_cpu=False),
+            "tg_cmd": build_tg_benchmark_cmd(
+                tg_args,
+                binary=binary,
+                force_cpu=False,
+                launcher_mode=launcher_mode,
+            ),
         })
 
     if force_cpu and large_file_path is not None and many_file_dir is not None:
@@ -295,6 +478,7 @@ def build_benchmark_scenarios(
                     extra_tg_args,
                     binary=binary,
                     force_cpu=False,
+                    launcher_mode=launcher_mode,
                 ),
             })
 
@@ -386,7 +570,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run text-search benchmarks for tensor-grep.")
     parser.add_argument(
         "--binary",
-        default=str(default_binary_path()),
+        default=None,
         help="Path to tg binary. Defaults to rust_core/target/release/tg.exe.",
     )
     parser.add_argument(
@@ -405,8 +589,30 @@ def main() -> int:
         action="store_true",
         help="Force tg benchmark runs to use the native CPU engine via --cpu and include native large-file and many-file scenarios.",
     )
+    parser.add_argument(
+        "--launcher-mode",
+        choices=(
+            "auto",
+            "explicit_binary",
+            "explicit_fast_binary",
+            "explicit_binary_positional",
+            "explicit_binary_positional_early_rg",
+            "explicit_binary_early_rg",
+            "discovered_cli_binary",
+            "python_module_launcher",
+            "python_module_rust_first",
+        ),
+        default="auto",
+        help="Override the tg launcher path for Roadmap 1 control-plane experiments.",
+    )
     args = parser.parse_args()
-    tg_binary = resolve_tg_binary(args.binary)
+    if args.launcher_mode == "explicit_fast_binary":
+        if args.binary:
+            tg_binary, tg_binary_source = resolve_tg_binary_with_source(args.binary)
+        else:
+            tg_binary, tg_binary_source = default_fast_binary_path(), "default_fast_binary_path"
+    else:
+        tg_binary, tg_binary_source = resolve_tg_binary_with_source(args.binary)
 
     bench_dir = resolve_bench_data_dir()
     generate_test_data(
@@ -444,6 +650,15 @@ def main() -> int:
         force_cpu=args.native,
         binary=tg_binary,
         rg_binary=rg_bin,
+        launcher_mode=args.launcher_mode,
+    )
+    _, tg_launcher_mode, tg_env_overrides = build_tg_benchmark_cmd_with_mode(
+        ["ERROR", str(bench_dir)],
+        binary=tg_binary,
+        force_cpu=args.native,
+        return_mode=True,
+        return_env=True,
+        launcher_mode=args.launcher_mode,
     )
 
     print("\nStarting Benchmarks: ripgrep vs tensor-grep")
@@ -462,7 +677,14 @@ def main() -> int:
         # Warmup to reduce first-run jitter (regex compilation/import effects).
         for _ in range(scenario_timing_warmup_runs(str(scenario["name"]))):
             run_cmd_timing(rg_cmd, capture_stdout=capture_stdout_for_timing)
-            run_cmd_timing(actual_tg_cmd, capture_stdout=capture_stdout_for_timing)
+            if tg_env_overrides:
+                run_cmd_timing(
+                    actual_tg_cmd,
+                    capture_stdout=capture_stdout_for_timing,
+                    env_overrides=tg_env_overrides,
+                )
+            else:
+                run_cmd_timing(actual_tg_cmd, capture_stdout=capture_stdout_for_timing)
 
         # Actual benchmark
         rg_time, rg_samples = collect_timing_samples(
@@ -470,10 +692,17 @@ def main() -> int:
             capture_stdout=capture_stdout_for_timing,
         )
 
-        tg_time, tg_samples = collect_timing_samples(
-            actual_tg_cmd,
-            capture_stdout=capture_stdout_for_timing,
-        )
+        if tg_env_overrides:
+            tg_time, tg_samples = collect_timing_samples(
+                actual_tg_cmd,
+                capture_stdout=capture_stdout_for_timing,
+                env_overrides=tg_env_overrides,
+            )
+        else:
+            tg_time, tg_samples = collect_timing_samples(
+                actual_tg_cmd,
+                capture_stdout=capture_stdout_for_timing,
+            )
 
         row = {
             "name": scenario["name"],
@@ -488,7 +717,10 @@ def main() -> int:
 
     for scenario_name, rg_cmd, actual_tg_cmd, row in parity_jobs:
         _, rg_out = run_cmd_capture(rg_cmd)
-        _, tg_out = run_cmd_capture(actual_tg_cmd)
+        if tg_env_overrides:
+            _, tg_out = run_cmd_capture(actual_tg_cmd, env_overrides=tg_env_overrides)
+        else:
+            _, tg_out = run_cmd_capture(actual_tg_cmd)
 
         parity_ok = compare_results(rg_out, tg_out, scenario_name)
         parity_str = "PASS" if parity_ok else "FAIL"
@@ -515,6 +747,8 @@ def main() -> int:
             "platform": platform.system().lower(),
             "machine": platform.machine().lower(),
             "python_version": platform.python_version(),
+            "tg_binary_source": tg_binary_source,
+            "tg_launcher_mode": tg_launcher_mode,
         },
         "rows": rows,
         "parity_failures": parity_failures,

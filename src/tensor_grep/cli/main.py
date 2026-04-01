@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import subprocess
@@ -5,6 +6,7 @@ import sys
 import time
 from contextlib import nullcontext
 from dataclasses import replace
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -44,6 +46,24 @@ persisted repeated-query acceleration, and optional GPU routing.
     add_completion=False,
     rich_markup_mode="markdown",
 )
+checkpoint_app = typer.Typer(
+    help="Create, list, and undo edit checkpoints.",
+    no_args_is_help=True,
+)
+session_app = typer.Typer(
+    help="Open and reuse cached repository-map sessions.",
+    no_args_is_help=True,
+)
+session_daemon_app = typer.Typer(
+    help="Run and inspect the warm localhost session daemon.",
+    no_args_is_help=True,
+)
+review_bundle_app = typer.Typer(
+    help="Create and verify enterprise review bundles.",
+    no_args_is_help=True,
+)
+
+session_app.add_typer(session_daemon_app, name="daemon")
 
 
 def _read_project_version_fallback() -> str:
@@ -56,6 +76,19 @@ def _read_project_version_fallback() -> str:
     except Exception:
         pass
     return "0.0.0"
+
+
+@lru_cache(maxsize=1)
+def _json_output_version() -> int:
+    try:
+        main_rs = Path(__file__).resolve().parents[3] / "rust_core" / "src" / "main.rs"
+        match = re.search(
+            r"const\s+JSON_OUTPUT_VERSION\s*:\s*u32\s*=\s*(\d+)\s*;",
+            main_rs.read_text(encoding="utf-8"),
+        )
+    except OSError:
+        match = None
+    return int(match.group(1)) if match else 1
 
 
 _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
@@ -480,6 +513,582 @@ def _suffix_for_language(language: str) -> str:
     if normalized in {"ts", "typescript"}:
         return ".ts"
     return ".py"
+
+
+def _build_rulesets_payload() -> dict[str, object]:
+    from tensor_grep.cli.rule_packs import list_rule_packs
+
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AstBackend",
+        "routing_reason": "builtin-rulesets",
+        "sidecar_used": False,
+        "rulesets": list_rule_packs(),
+    }
+
+
+def _ruleset_finding_fingerprint(
+    *,
+    rule_id: str,
+    language: str,
+    matched_files: list[str],
+) -> str:
+    import hashlib
+
+    fingerprint_input = json.dumps(
+        {
+            "rule_id": rule_id,
+            "language": language,
+            "files": matched_files,
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(fingerprint_input).hexdigest()
+
+
+def _truncate_evidence_snippet(text: str, max_chars: int) -> dict[str, object]:
+    normalized = " ".join(text.split())
+    if max_chars <= 0:
+        return {"text": "", "truncated": bool(normalized)}
+    if len(normalized) <= max_chars:
+        return {"text": normalized, "truncated": False}
+    return {"text": normalized[:max_chars], "truncated": True}
+
+
+def _load_ruleset_baseline(path: str) -> dict[str, object]:
+    baseline_path = Path(path).expanduser().resolve()
+    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Ruleset baseline must be a JSON object.")
+    fingerprints = payload.get("fingerprints")
+    if not isinstance(fingerprints, list) or not all(
+        isinstance(item, str) and item.strip() for item in fingerprints
+    ):
+        raise ValueError("Ruleset baseline must include a non-empty 'fingerprints' string list.")
+    return {
+        "path": str(baseline_path),
+        "fingerprints": sorted(dict.fromkeys(fingerprints)),
+    }
+
+
+def _load_ruleset_suppressions(path: str) -> dict[str, object]:
+    suppressions_path = Path(path).expanduser().resolve()
+    payload = json.loads(suppressions_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Ruleset suppressions must be a JSON object.")
+    entries_payload = payload.get("entries")
+    if entries_payload is not None:
+        if not isinstance(entries_payload, list):
+            raise ValueError("Ruleset suppressions 'entries' must be a list.")
+        entries: list[dict[str, object]] = []
+        for raw_entry in entries_payload:
+            if not isinstance(raw_entry, dict):
+                raise ValueError("Ruleset suppressions entries must be JSON objects.")
+            fingerprint = raw_entry.get("fingerprint")
+            if not isinstance(fingerprint, str) or not fingerprint.strip():
+                raise ValueError(
+                    "Ruleset suppressions entries must include a non-empty 'fingerprint' string."
+                )
+            justification = raw_entry.get("justification")
+            if not isinstance(justification, str) or not justification.strip():
+                raise ValueError(
+                    "Ruleset suppressions entries must include a non-empty 'justification' string."
+                )
+            created_at = raw_entry.get("created_at")
+            if not isinstance(created_at, str) or not created_at.strip():
+                raise ValueError(
+                    "Ruleset suppressions entries must include a non-empty 'created_at' timestamp."
+                )
+            try:
+                datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ValueError(
+                    "Ruleset suppressions entries must include ISO-8601 'created_at' timestamps."
+                ) from exc
+            entry: dict[str, object] = {
+                "fingerprint": fingerprint.strip(),
+                "justification": justification.strip(),
+                "created_at": created_at,
+            }
+            file_path = raw_entry.get("file")
+            if file_path is not None:
+                if not isinstance(file_path, str) or not file_path.strip():
+                    raise ValueError(
+                        "Ruleset suppressions entries must use non-empty strings for optional 'file'."
+                    )
+                entry["file"] = file_path
+            line = raw_entry.get("line")
+            if line is not None:
+                if isinstance(line, bool) or not isinstance(line, int) or line <= 0:
+                    raise ValueError(
+                        "Ruleset suppressions entries must use positive integers for optional 'line'."
+                    )
+                entry["line"] = line
+            rule_id = raw_entry.get("rule_id")
+            if rule_id is not None:
+                if not isinstance(rule_id, str) or not rule_id.strip():
+                    raise ValueError(
+                        "Ruleset suppressions entries must use non-empty strings for optional 'rule_id'."
+                    )
+                entry["rule_id"] = rule_id
+            entries.append(entry)
+        return {
+            "path": str(suppressions_path),
+            "entries": entries,
+            "warnings": [],
+        }
+    fingerprints = payload.get("fingerprints")
+    if not isinstance(fingerprints, list) or not all(
+        isinstance(item, str) and item.strip() for item in fingerprints
+    ):
+        raise ValueError(
+            "Ruleset suppressions must include a non-empty 'fingerprints' string list."
+        )
+    return {
+        "path": str(suppressions_path),
+        "entries": [{"fingerprint": item} for item in sorted(dict.fromkeys(fingerprints))],
+        "warnings": [
+            "Legacy suppression format using 'fingerprints' is deprecated; use 'entries' instead."
+        ],
+    }
+
+
+def _ruleset_suppression_timestamp() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_ruleset_source_path(file_path: str, root_dir: Path) -> Path:
+    candidate = Path(file_path)
+    if candidate.is_absolute():
+        return candidate
+    return (root_dir / candidate).resolve()
+
+
+def _ruleset_files_match(entry_file: str, occurrence_file: str, root_dir: Path) -> bool:
+    if entry_file == occurrence_file:
+        return True
+    return _resolve_ruleset_source_path(entry_file, root_dir) == _resolve_ruleset_source_path(
+        occurrence_file, root_dir
+    )
+
+
+def _inline_suppression_targets(line_text: str, language: str) -> set[str]:
+    comment_prefix = (
+        "#"
+        if language == "python"
+        else "//"
+        if language
+        in {
+            "javascript",
+            "typescript",
+            "rust",
+        }
+        else None
+    )
+    if comment_prefix is None:
+        return set()
+    match = re.search(
+        rf"{re.escape(comment_prefix)}\s*tg-ignore\s*:\s*([^\r\n]+)",
+        line_text,
+    )
+    if not match:
+        return set()
+    return {token.strip() for token in match.group(1).split(",") if token.strip()}
+
+
+def _occurrence_has_inline_suppression(
+    *,
+    occurrence_file: str,
+    occurrence_line: int,
+    rule_id: str,
+    language: str,
+    root_dir: Path,
+    source_cache: dict[str, list[str]],
+) -> bool:
+    try:
+        source_path = _resolve_ruleset_source_path(occurrence_file, root_dir)
+        cache_key = str(source_path)
+        if cache_key not in source_cache:
+            source_cache[cache_key] = source_path.read_text(encoding="utf-8").splitlines()
+        source_lines = source_cache[cache_key]
+    except OSError:
+        return False
+    targets: set[str] = set()
+    for candidate_line in (occurrence_line - 1, occurrence_line):
+        if 1 <= candidate_line <= len(source_lines):
+            targets.update(_inline_suppression_targets(source_lines[candidate_line - 1], language))
+    return "*" in targets or rule_id in targets
+
+
+def _suppression_entry_matches(
+    *,
+    entry: dict[str, object],
+    fingerprint: str,
+    rule_id: str,
+    occurrence_file: str | None,
+    occurrence_line: int | None,
+    root_dir: Path,
+) -> bool:
+    if cast(str, entry["fingerprint"]) != fingerprint:
+        return False
+    entry_rule_id = entry.get("rule_id")
+    if entry_rule_id is not None and cast(str, entry_rule_id) != rule_id:
+        return False
+    entry_file = entry.get("file")
+    if entry_file is not None:
+        if occurrence_file is None or not _ruleset_files_match(
+            cast(str, entry_file), occurrence_file, root_dir
+        ):
+            return False
+    entry_line = entry.get("line")
+    if entry_line is not None and occurrence_line != cast(int, entry_line):
+        return False
+    return True
+
+
+def _apply_ruleset_baseline(
+    payload: dict[str, object],
+    *,
+    baseline_path: str | None = None,
+    write_baseline_path: str | None = None,
+    suppressions_path: str | None = None,
+    write_suppressions_path: str | None = None,
+    suppression_justification: str | None = None,
+) -> None:
+    findings = cast(list[dict[str, object]], payload["findings"])
+    matched_fingerprints = sorted({
+        cast(str, finding["fingerprint"])
+        for finding in findings
+        if cast(int, finding["matches"]) > 0
+    })
+    if baseline_path is not None:
+        baseline = _load_ruleset_baseline(baseline_path)
+        baseline_fingerprints = set(cast(list[str], baseline["fingerprints"]))
+        current_fingerprints = set(matched_fingerprints)
+        for finding in findings:
+            if cast(int, finding["matches"]) <= 0:
+                finding["status"] = "clear"
+                continue
+            finding["status"] = (
+                "existing" if cast(str, finding["fingerprint"]) in baseline_fingerprints else "new"
+            )
+        payload["baseline"] = {
+            "path": baseline["path"],
+            "new_findings": sum(1 for finding in findings if finding.get("status") == "new"),
+            "existing_findings": sum(
+                1 for finding in findings if finding.get("status") == "existing"
+            ),
+            "resolved_findings": len(baseline_fingerprints - current_fingerprints),
+            "resolved_fingerprints": sorted(baseline_fingerprints - current_fingerprints),
+        }
+    else:
+        for finding in findings:
+            if cast(int, finding["matches"]) <= 0:
+                finding["status"] = "clear"
+            else:
+                finding["status"] = "new"
+    if write_baseline_path is not None:
+        write_path = Path(write_baseline_path).expanduser().resolve()
+        baseline_payload = {
+            "version": _json_output_version(),
+            "kind": "ruleset-scan-baseline",
+            "ruleset": payload.get("ruleset"),
+            "language": payload.get("language"),
+            "fingerprints": matched_fingerprints,
+        }
+        write_path.write_text(json.dumps(baseline_payload, indent=2), encoding="utf-8")
+        payload["baseline_written"] = {
+            "path": str(write_path),
+            "fingerprints": matched_fingerprints,
+            "count": len(matched_fingerprints),
+        }
+    suppressions_summary: dict[str, object] | None = None
+    suppression_entries: list[dict[str, object]] = []
+    suppression_warnings: list[str] = []
+    if suppressions_path is not None:
+        suppressions = _load_ruleset_suppressions(suppressions_path)
+        suppressions_summary = {"path": suppressions["path"]}
+        suppression_entries = cast(list[dict[str, object]], suppressions["entries"])
+        suppression_warnings = cast(list[str], suppressions["warnings"])
+        if suppression_warnings:
+            suppressions_summary["warnings"] = suppression_warnings
+    root_dir = Path(str(payload["path"]))
+    source_cache: dict[str, list[str]] = {}
+    suppressed_occurrences = 0
+    inline_suppressed_occurrences = 0
+    for finding in findings:
+        raw_occurrences = cast(
+            list[dict[str, object]],
+            finding.pop("_raw_occurrences", []),
+        )
+        if cast(int, finding["matches"]) <= 0:
+            continue
+        base_status = cast(str, finding["status"])
+        occurrence_rows: list[dict[str, object]] = []
+        finding_suppressed_occurrences = 0
+        finding_inline_occurrences = 0
+        active_occurrences = 0
+        for occurrence in raw_occurrences:
+            occurrence_file = cast(str, occurrence["file"])
+            occurrence_line = cast(int, occurrence["line"])
+            occurrence_status = base_status
+            if any(
+                _suppression_entry_matches(
+                    entry=entry,
+                    fingerprint=cast(str, finding["fingerprint"]),
+                    rule_id=cast(str, finding["rule_id"]),
+                    occurrence_file=occurrence_file,
+                    occurrence_line=occurrence_line,
+                    root_dir=root_dir,
+                )
+                for entry in suppression_entries
+            ):
+                occurrence_status = "suppressed"
+                finding_suppressed_occurrences += 1
+            elif _occurrence_has_inline_suppression(
+                occurrence_file=occurrence_file,
+                occurrence_line=occurrence_line,
+                rule_id=cast(str, finding["rule_id"]),
+                language=cast(str, finding["language"]),
+                root_dir=root_dir,
+                source_cache=source_cache,
+            ):
+                occurrence_status = "inline-suppressed"
+                finding_inline_occurrences += 1
+            else:
+                active_occurrences += 1
+            occurrence_rows.append({
+                "file": occurrence_file,
+                "line": occurrence_line,
+                "status": occurrence_status,
+            })
+        if not raw_occurrences and any(
+            _suppression_entry_matches(
+                entry=entry,
+                fingerprint=cast(str, finding["fingerprint"]),
+                rule_id=cast(str, finding["rule_id"]),
+                occurrence_file=None,
+                occurrence_line=None,
+                root_dir=root_dir,
+            )
+            for entry in suppression_entries
+        ):
+            finding["status"] = "suppressed"
+            finding_suppressed_occurrences += 1
+        elif occurrence_rows:
+            if active_occurrences == 0:
+                finding["status"] = (
+                    "inline-suppressed"
+                    if finding_inline_occurrences > 0
+                    else "suppressed"
+                    if finding_suppressed_occurrences > 0
+                    else base_status
+                )
+            else:
+                finding["status"] = base_status
+        if occurrence_rows and (
+            suppressions_path is not None
+            or finding_suppressed_occurrences > 0
+            or finding_inline_occurrences > 0
+        ):
+            finding["occurrences"] = sorted(
+                occurrence_rows,
+                key=lambda row: (str(row["file"]), cast(int, row["line"])),
+            )
+        suppressed_occurrences += finding_suppressed_occurrences
+        inline_suppressed_occurrences += finding_inline_occurrences
+    if suppressions_summary is not None or inline_suppressed_occurrences > 0:
+        if suppressions_summary is None:
+            suppressions_summary = {}
+        suppressions_summary["suppressed_findings"] = sum(
+            1 for finding in findings if finding.get("status") == "suppressed"
+        )
+        if suppressed_occurrences > 0:
+            suppressions_summary["suppressed_occurrences"] = suppressed_occurrences
+        if inline_suppressed_occurrences > 0:
+            suppressions_summary["inline_suppressed_findings"] = sum(
+                1 for finding in findings if finding.get("status") == "inline-suppressed"
+            )
+            suppressions_summary["inline_suppressed_occurrences"] = inline_suppressed_occurrences
+        payload["suppressions"] = suppressions_summary
+    if write_suppressions_path is not None:
+        if not isinstance(suppression_justification, str) or not suppression_justification.strip():
+            raise ValueError("--write-suppressions requires a non-empty --justification value.")
+        write_path = Path(write_suppressions_path).expanduser().resolve()
+        suppressions_payload = {
+            "version": _json_output_version(),
+            "kind": "ruleset-scan-suppressions",
+            "ruleset": payload.get("ruleset"),
+            "language": payload.get("language"),
+            "entries": [
+                {
+                    "fingerprint": fingerprint,
+                    "justification": suppression_justification.strip(),
+                    "created_at": _ruleset_suppression_timestamp(),
+                }
+                for fingerprint in matched_fingerprints
+            ],
+        }
+        write_path.write_text(json.dumps(suppressions_payload, indent=2), encoding="utf-8")
+        payload["suppressions_written"] = {
+            "path": str(write_path),
+            "fingerprints": matched_fingerprints,
+            "count": len(matched_fingerprints),
+        }
+
+
+def _run_ast_scan_payload(
+    project_cfg: dict[str, object],
+    rules: list[dict[str, str]],
+    *,
+    routing_reason: str,
+    ruleset_name: str | None = None,
+    baseline_path: str | None = None,
+    write_baseline_path: str | None = None,
+    suppressions_path: str | None = None,
+    write_suppressions_path: str | None = None,
+    suppression_justification: str | None = None,
+    include_evidence_snippets: bool = False,
+    max_evidence_snippets_per_file: int = 1,
+    max_evidence_snippet_chars: int = 120,
+) -> dict[str, object]:
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    cfg = SearchConfig(
+        ast=True,
+        ast_prefer_native=True,
+        lang=cast(str, project_cfg["language"]),
+    )
+    root_dir = cast(Path, project_cfg["root_dir"])
+    scanner: DirectoryScanner | None = None
+    candidate_files: list[str] | None = None
+    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
+    backend_names_used: set[str] = set()
+
+    total_matches = 0
+    matched_rules = 0
+    findings: list[dict[str, object]] = []
+    for rule in rules:
+        rule_cfg = replace(cfg, lang=rule["language"])
+        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        backend_names_used.add(type(backend).__name__)
+        matched_files: set[str] = set()
+        match_counts_by_file: dict[str, int] = {}
+        snippets_by_file: dict[str, list[dict[str, object]]] = {}
+        rule_occurrences: list[dict[str, object]] = []
+        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
+            rule_matches = result.total_matches
+            matched_files.update(result.matched_file_paths)
+            for file_path, count in result.match_counts_by_file.items():
+                match_counts_by_file[file_path] = match_counts_by_file.get(file_path, 0) + count
+            for match in result.matches:
+                if match.file:
+                    match_counts_by_file[match.file] = match_counts_by_file.get(match.file, 0) + 1
+                    rule_occurrences.append({"file": match.file, "line": match.line_number})
+                    if (
+                        include_evidence_snippets
+                        and len(snippets_by_file.get(match.file, []))
+                        < max_evidence_snippets_per_file
+                    ):
+                        snippets_by_file.setdefault(match.file, []).append(
+                            _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                        )
+            if not matched_files and result.total_files > 0:
+                matched_files.update(match.file for match in result.matches if match.file)
+        else:
+            if scanner is None:
+                scanner = DirectoryScanner(cfg)
+            if candidate_files is None:
+                candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+            rule_matches = 0
+            for current_file in candidate_files:
+                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                rule_matches += result.total_matches
+                if result.total_files > 0 or result.total_matches > 0:
+                    matched_files.add(current_file)
+                    match_counts_by_file[current_file] = (
+                        match_counts_by_file.get(current_file, 0) + result.total_matches
+                    )
+                    for match in result.matches:
+                        rule_occurrences.append({
+                            "file": match.file or current_file,
+                            "line": match.line_number,
+                        })
+                    if include_evidence_snippets:
+                        file_snippets = snippets_by_file.setdefault(current_file, [])
+                        for match in result.matches:
+                            if len(file_snippets) >= max_evidence_snippets_per_file:
+                                break
+                            file_snippets.append(
+                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                            )
+        total_matches += rule_matches
+        if rule_matches > 0:
+            matched_rules += 1
+        sorted_files = sorted(matched_files)
+        findings.append({
+            "rule_id": rule["id"],
+            "language": rule["language"],
+            "severity": rule.get("severity"),
+            "message": rule.get("message"),
+            "fingerprint": _ruleset_finding_fingerprint(
+                rule_id=rule["id"],
+                language=rule["language"],
+                matched_files=sorted_files,
+            ),
+            "matches": rule_matches,
+            "files": sorted_files,
+            "evidence": [
+                {
+                    "file": file_path,
+                    "match_count": match_counts_by_file.get(file_path, 0),
+                    **(
+                        {"snippets": snippets_by_file.get(file_path, [])}
+                        if include_evidence_snippets
+                        else {}
+                    ),
+                }
+                for file_path in sorted_files
+            ],
+            "_raw_occurrences": sorted({
+                (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
+                for occurrence in rule_occurrences
+            }),
+        })
+        if findings[-1]["_raw_occurrences"]:
+            findings[-1]["_raw_occurrences"] = [
+                {"file": file_path, "line": line_number}
+                for file_path, line_number in cast(
+                    list[tuple[str, int]], findings[-1]["_raw_occurrences"]
+                )
+            ]
+
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AstBackend",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "config_path": str(project_cfg["config_path"]),
+        "path": str(root_dir),
+        "ruleset": ruleset_name,
+        "language": str(project_cfg["language"]),
+        "rule_count": len(rules),
+        "matched_rules": matched_rules,
+        "total_matches": total_matches,
+        "backends": sorted(backend_names_used),
+        "findings": findings,
+    }
+    _apply_ruleset_baseline(
+        payload,
+        baseline_path=baseline_path,
+        write_baseline_path=write_baseline_path,
+        suppressions_path=suppressions_path,
+        write_suppressions_path=write_suppressions_path,
+        suppression_justification=suppression_justification,
+    )
+    return payload
 
 
 def _search_ast_test_snippets_with_wrapper(
@@ -1483,6 +2092,1228 @@ def devices(
 
 
 @app.command()
+def map(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a deterministic repository map for AI editing workflows."""
+    from tensor_grep.cli.repo_map import build_repo_map, build_repo_map_json
+
+    try:
+        if json_output:
+            typer.echo(build_repo_map_json(path))
+            return
+
+        payload = build_repo_map(path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Repository map for {payload['path']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+    typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+
+
+@app.command()
+def context(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank relevant repo context."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a ranked repository context pack for edit planning."""
+    from tensor_grep.cli.repo_map import build_context_pack, build_context_pack_json
+
+    try:
+        if json_output:
+            typer.echo(build_context_pack_json(query, path))
+            return
+
+        payload = build_context_pack(query, path)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Context pack for {payload['path']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+    typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+
+
+@app.command(name="context-render")
+def context_render(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank and render repo context."
+    ),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
+    max_tokens: int | None = typer.Option(
+        None, "--max-tokens", min=1, help="Approximate maximum tokens to emit in rendered_context."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
+    ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
+    profile: bool = typer.Option(
+        False, "--profile", help="Include per-phase profiling in JSON output."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready repository context bundle for edit planning."""
+    from tensor_grep.cli.repo_map import build_context_render, build_context_render_json
+
+    try:
+        if json_output:
+            typer.echo(
+                build_context_render_json(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    max_tokens=max_tokens,
+                    model=model,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    profile=profile,
+                )
+            )
+            return
+
+        payload = build_context_render(
+            query,
+            path,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+            max_tokens=max_tokens,
+            model=model,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
+            profile=profile,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(payload["rendered_context"])
+
+
+@app.command(name="edit-plan")
+def edit_plan(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    profile: bool = typer.Option(
+        False, "--profile", help="Include per-phase profiling in JSON output."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a machine-readable edit-planning bundle without rendered source text."""
+    from tensor_grep.cli.repo_map import build_context_edit_plan, build_context_edit_plan_json
+
+    try:
+        if json_output:
+            typer.echo(
+                build_context_edit_plan_json(
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                    profile=profile,
+                )
+            )
+            return
+
+        payload = build_context_edit_plan(
+            query,
+            path,
+            max_files=max_files,
+            max_symbols=max_symbols,
+            profile=profile,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Edit plan for {payload['path']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
+
+
+@app.command()
+def defs(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return exact definition locations for a symbol."""
+    from tensor_grep.cli.repo_map import build_symbol_defs, build_symbol_defs_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_defs_json(symbol, path, semantic_provider=provider))
+            return
+
+        payload = build_symbol_defs(symbol, path, semantic_provider=provider)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Definitions for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"definitions={len(payload['definitions'])}")
+
+
+@app.command()
+def source(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return exact source blocks for a symbol definition."""
+    from tensor_grep.cli.repo_map import build_symbol_source, build_symbol_source_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_source_json(symbol, path, semantic_provider=provider))
+            return
+
+        payload = build_symbol_source(symbol, path, semantic_provider=provider)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Source for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"sources={len(payload['sources'])} files={len(payload['files'])}")
+
+
+@app.command()
+def impact(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to evaluate."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return likely impacted files and tests for a symbol change."""
+    from tensor_grep.cli.repo_map import build_symbol_impact, build_symbol_impact_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_impact_json(symbol, path, semantic_provider=provider))
+            return
+
+        payload = build_symbol_impact(symbol, path, semantic_provider=provider)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Impact for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+
+
+@app.command()
+def refs(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return Python-first symbol references across the inventory root."""
+    from tensor_grep.cli.repo_map import build_symbol_refs, build_symbol_refs_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_refs_json(symbol, path, semantic_provider=provider))
+            return
+
+        payload = build_symbol_refs(symbol, path, semantic_provider=provider)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"References for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"references={len(payload['references'])} files={len(payload['files'])}")
+
+
+@app.command()
+def callers(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return Python-first call sites and likely impacted tests for a symbol."""
+    from tensor_grep.cli.repo_map import build_symbol_callers, build_symbol_callers_json
+
+    try:
+        if json_output:
+            typer.echo(build_symbol_callers_json(symbol, path, semantic_provider=provider))
+            return
+
+        payload = build_symbol_callers(symbol, path, semantic_provider=provider)
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Callers for {payload['symbol']} in {payload['path']}")
+    typer.echo(f"callers={len(payload['callers'])} files={len(payload['files'])}")
+
+
+@app.command(name="blast-radius")
+def blast_radius(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return exact callers plus a transitive file/test blast radius for a symbol."""
+    from tensor_grep.cli.repo_map import (
+        build_symbol_blast_radius,
+        build_symbol_blast_radius_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(
+                build_symbol_blast_radius_json(
+                    symbol, path, max_depth=max_depth, semantic_provider=provider
+                )
+            )
+            return
+
+        payload = build_symbol_blast_radius(
+            symbol, path, max_depth=max_depth, semantic_provider=provider
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Blast radius for {payload['symbol']} in {payload['path']}")
+    typer.echo(
+        f"definitions={len(payload['definitions'])} callers={len(payload['callers'])} "
+        f"files={len(payload['files'])} tests={len(payload['tests'])}"
+    )
+
+
+@app.command(name="blast-radius-render")
+def blast_radius_render(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
+    profile: bool = typer.Option(
+        False, "--profile", help="Include per-phase profiling in JSON output."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready blast-radius bundle for a symbol."""
+    from tensor_grep.cli.repo_map import (
+        build_symbol_blast_radius_render,
+        build_symbol_blast_radius_render_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(
+                build_symbol_blast_radius_render_json(
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    profile=profile,
+                    semantic_provider=provider,
+                )
+            )
+            return
+
+        payload = build_symbol_blast_radius_render(
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_sources=max_sources,
+            max_symbols_per_file=max_symbols_per_file,
+            max_render_chars=max_render_chars,
+            optimize_context=optimize_context,
+            render_profile=render_profile,
+            profile=profile,
+            semantic_provider=provider,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(payload["rendered_context"])
+
+
+@app.command(name="blast-radius-plan")
+def blast_radius_plan(
+    path: str = typer.Argument(".", help="File or directory to inventory"),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    provider: str = typer.Option(
+        "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
+    ),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a machine-readable blast-radius planning bundle without rendered source text."""
+    from tensor_grep.cli.repo_map import (
+        build_symbol_blast_radius_plan,
+        build_symbol_blast_radius_plan_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(
+                build_symbol_blast_radius_plan_json(
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                    semantic_provider=provider,
+                )
+            )
+            return
+
+        payload = build_symbol_blast_radius_plan(
+            symbol,
+            path,
+            max_depth=max_depth,
+            max_files=max_files,
+            max_symbols=max_symbols,
+            semantic_provider=provider,
+        )
+    except FileNotFoundError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Blast radius plan for {payload['symbol']} in {payload['path']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
+
+
+@session_app.command("open")
+def session_open(
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Create a cached repo-map session for repeated edit loops."""
+    from tensor_grep.cli.session_store import open_session
+
+    try:
+        payload = open_session(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Opened session {payload.session_id} "
+        f"(files={payload.file_count}, symbols={payload.symbol_count})"
+    )
+
+
+@session_daemon_app.command("start")
+def session_daemon_start(
+    path: str = typer.Argument(".", help="File or directory rooted at the daemon scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Start or reuse a warm localhost session daemon for the current root."""
+    from tensor_grep.cli.session_daemon import start_session_daemon
+
+    try:
+        payload = start_session_daemon(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(
+        f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}"
+    )
+
+
+@session_daemon_app.command("status")
+def session_daemon_status(
+    path: str = typer.Argument(".", help="File or directory rooted at the daemon scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Show daemon status for the current root."""
+    from tensor_grep.cli.session_daemon import get_session_daemon_status
+
+    try:
+        payload = get_session_daemon_status(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if payload.get("running"):
+        typer.echo(
+            f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}"
+        )
+    else:
+        typer.echo("Session daemon not running")
+
+
+@session_daemon_app.command("stop")
+def session_daemon_stop(
+    path: str = typer.Argument(".", help="File or directory rooted at the daemon scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Stop the warm localhost session daemon for the current root."""
+    from tensor_grep.cli.session_daemon import stop_session_daemon
+
+    try:
+        payload = stop_session_daemon(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo("Session daemon stopped" if payload.get("stopped") else "Session daemon not running")
+
+
+@session_app.command("list")
+def session_list(
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """List cached sessions for the current root."""
+    from tensor_grep.cli.session_store import list_sessions
+
+    try:
+        records = [record.__dict__ for record in list_sessions(path)]
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps({"version": 1, "sessions": records}, indent=2))
+        return
+
+    if not records:
+        typer.echo("No sessions found.")
+        return
+
+    for record in records:
+        typer.echo(
+            f"{record['session_id']}  {record['created_at']}  "
+            f"files={record['file_count']} symbols={record['symbol_count']}"
+        )
+
+
+@session_app.command("show")
+def session_show(
+    session_id: str = typer.Argument(..., help="Session ID to inspect."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Show the cached repo-map payload for a session."""
+    from tensor_grep.cli.session_store import get_session
+
+    try:
+        payload = get_session(session_id, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session {payload['session_id']} for {payload['root']}")
+    typer.echo(
+        f"files={len(payload['repo_map']['files'])} symbols={len(payload['repo_map']['symbols'])}"
+    )
+
+
+@session_app.command("refresh")
+def session_refresh(
+    session_id: str = typer.Argument(..., help="Session ID to refresh."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Refresh a cached session after file changes."""
+    from tensor_grep.cli.session_store import refresh_session
+
+    try:
+        payload = refresh_session(session_id, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Refreshed session {payload.session_id} "
+        f"(files={payload.file_count}, symbols={payload.symbol_count})"
+    )
+
+
+@session_app.command("context")
+def session_context_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank relevant repo context."
+    ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a context pack derived from a cached session."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
+    from tensor_grep.cli.session_store import session_context
+
+    try:
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "context",
+                    "session_id": session_id,
+                    "path": path,
+                    "query": query,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_context(session_id, query, path, refresh_on_stale=refresh_on_stale)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session context for {payload['session_id']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
+
+
+@session_app.command("context-render")
+def session_context_render_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    query: str = typer.Option(
+        ..., "--query", help="Query text used to rank and render repo context."
+    ),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
+    max_tokens: int | None = typer.Option(
+        None, "--max-tokens", min=1, help="Approximate maximum tokens to emit in rendered_context."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Future tokenizer model selector; currently accepted but ignored."
+    ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready render bundle derived from a cached session."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
+    from tensor_grep.cli.session_store import SessionStaleError, session_context_render
+
+    try:
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "context_render",
+                    "session_id": session_id,
+                    "path": path,
+                    "query": query,
+                    "max_files": max_files,
+                    "max_sources": max_sources,
+                    "max_symbols_per_file": max_symbols_per_file,
+                    "max_render_chars": max_render_chars,
+                    "max_tokens": max_tokens,
+                    "model": model,
+                    "optimize_context": optimize_context,
+                    "render_profile": render_profile,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_context_render(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                max_tokens=max_tokens,
+                model=model,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                refresh_on_stale=refresh_on_stale,
+            )
+    except SessionStaleError as exc:
+        error_payload = {
+            "version": 1,
+            "session_id": session_id,
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+        typer.echo(json.dumps(error_payload, indent=2))
+        raise typer.Exit(1) from exc
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(payload["rendered_context"])
+
+
+@session_app.command("edit-plan")
+def session_edit_plan_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    query: str = typer.Option(..., "--query", help="Query text used to rank edit targets."),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a cached-session edit-planning bundle without rendered source text."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
+    from tensor_grep.cli.session_store import session_context_edit_plan
+
+    try:
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "context_edit_plan",
+                    "session_id": session_id,
+                    "path": path,
+                    "query": query,
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_context_edit_plan(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
+            )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session edit plan for {payload['session_id']}")
+    typer.echo(f"query={payload['query']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
+
+
+@session_app.command("blast-radius")
+def session_blast_radius_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a cached-session blast radius for a symbol."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
+    from tensor_grep.cli.session_store import session_blast_radius
+
+    try:
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "blast_radius",
+                    "session_id": session_id,
+                    "path": path,
+                    "symbol": symbol,
+                    "max_depth": max_depth,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_blast_radius(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                refresh_on_stale=refresh_on_stale,
+            )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(payload["rendered_caller_tree"])
+
+
+@session_app.command("blast-radius-render")
+def session_blast_radius_render_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the render bundle."
+    ),
+    max_sources: int = typer.Option(
+        5, "--max-sources", min=1, help="Maximum exact source blocks to include."
+    ),
+    max_symbols_per_file: int = typer.Option(
+        6, "--max-symbols-per-file", min=1, help="Maximum summary symbols to include per file."
+    ),
+    max_render_chars: int | None = typer.Option(
+        None, "--max-render-chars", min=1, help="Maximum characters to emit in rendered_context."
+    ),
+    optimize_context: bool = typer.Option(
+        False,
+        "--optimize-context",
+        help="Strip blank lines and comment-only lines from rendered source blocks.",
+    ),
+    render_profile: str = typer.Option(
+        "full",
+        "--render-profile",
+        help="Render profile: full, compact, or llm.",
+    ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a prompt-ready cached-session blast radius bundle."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
+    from tensor_grep.cli.session_store import session_blast_radius_render
+
+    try:
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "blast_radius_render",
+                    "session_id": session_id,
+                    "path": path,
+                    "symbol": symbol,
+                    "max_depth": max_depth,
+                    "max_files": max_files,
+                    "max_sources": max_sources,
+                    "max_symbols_per_file": max_symbols_per_file,
+                    "max_render_chars": max_render_chars,
+                    "optimize_context": optimize_context,
+                    "render_profile": render_profile,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_blast_radius_render(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                refresh_on_stale=refresh_on_stale,
+            )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(payload["rendered_context"])
+
+
+@session_app.command("blast-radius-plan")
+def session_blast_radius_plan_cmd(
+    session_id: str = typer.Argument(..., help="Session ID to query."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    symbol: str = typer.Option(..., "--symbol", help="Exact symbol name to resolve."),
+    max_depth: int = typer.Option(
+        3,
+        "--max-depth",
+        min=0,
+        help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_files: int = typer.Option(
+        3, "--max-files", min=1, help="Maximum files to include in the plan."
+    ),
+    max_symbols: int = typer.Option(
+        5, "--max-symbols", min=1, help="Maximum ranked symbols to retain in the plan payload."
+    ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+    daemon: bool = typer.Option(
+        False,
+        "--daemon",
+        help="Route this request through the warm localhost session daemon.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Return a cached-session blast-radius planning bundle without rendered source text."""
+    from tensor_grep.cli.session_daemon import request_session_daemon
+    from tensor_grep.cli.session_store import session_blast_radius_plan
+
+    try:
+        if daemon:
+            payload = request_session_daemon(
+                path,
+                {
+                    "command": "blast_radius_plan",
+                    "session_id": session_id,
+                    "path": path,
+                    "symbol": symbol,
+                    "max_depth": max_depth,
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                    "refresh_on_stale": refresh_on_stale,
+                },
+            )
+        else:
+            payload = session_blast_radius_plan(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                refresh_on_stale=refresh_on_stale,
+            )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    typer.echo(f"Session blast radius plan for {payload['session_id']}")
+    typer.echo(f"symbol={payload['symbol']}")
+    typer.echo(
+        f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+    )
+
+
+@session_app.command("serve")
+def session_serve(
+    session_id: str = typer.Argument(..., help="Session ID to serve from cache."),
+    path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
+    jsonl: bool = typer.Option(
+        True,
+        "--jsonl/--no-jsonl",
+        help="Read newline-delimited JSON requests from stdin and emit JSON responses.",
+    ),
+    refresh_on_stale: bool = typer.Option(
+        False,
+        "--refresh-on-stale",
+        help="Refresh the cached session once when file changes are detected, then retry the request.",
+    ),
+) -> None:
+    """Serve repeated repo-map and symbol requests from a cached session."""
+    from tensor_grep.cli.session_store import serve_session_stream
+
+    if not jsonl:
+        typer.echo("session serve currently requires --jsonl mode", err=True)
+        raise typer.Exit(2)
+
+    try:
+        serve_session_stream(session_id, path, refresh_on_stale=refresh_on_stale)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
+@checkpoint_app.command("create")
+def checkpoint_create(
+    path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Create a checkpoint for the current editable tree."""
+    from tensor_grep.cli.checkpoint_store import create_checkpoint
+
+    try:
+        payload = create_checkpoint(path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Created checkpoint {payload.checkpoint_id} ({payload.mode}, files={payload.file_count})"
+    )
+
+
+@checkpoint_app.command("list")
+def checkpoint_list(
+    path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """List available checkpoints."""
+    from tensor_grep.cli.checkpoint_store import list_checkpoints
+
+    try:
+        records = [record.__dict__ for record in list_checkpoints(path)]
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps({"version": 1, "checkpoints": records}, indent=2))
+        return
+
+    if not records:
+        typer.echo("No checkpoints found.")
+        return
+
+    for record in records:
+        typer.echo(
+            f"{record['checkpoint_id']}  {record['mode']}  "
+            f"{record['created_at']}  files={record['file_count']}"
+        )
+
+
+@checkpoint_app.command("undo")
+def checkpoint_undo(
+    checkpoint_id: str = typer.Argument(..., help="Checkpoint ID to restore."),
+    path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Restore a checkpoint."""
+    from tensor_grep.cli.checkpoint_store import undo_checkpoint
+
+    try:
+        payload = undo_checkpoint(checkpoint_id, path)
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(payload.__dict__, indent=2))
+        return
+
+    typer.echo(
+        f"Restored checkpoint {payload.checkpoint_id} "
+        f"({payload.mode}, restored_files={payload.restored_files}, removed_paths={payload.removed_paths})"
+    )
+
+
+@app.command()
 def classify(
     file_path: str, format_type: str = typer.Option("json", "--format", help="Output format")
 ) -> None:
@@ -1573,77 +3404,200 @@ def run(
 
 
 @app.command()
+def rulesets(
+    json_output: bool = typer.Option(False, "--json", help="Emit structured ruleset metadata."),
+) -> None:
+    """List built-in security and compliance rule packs."""
+    payload = _build_rulesets_payload()
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    if not payload["rulesets"]:
+        typer.echo("No built-in rulesets are currently registered.")
+        return
+
+    for ruleset in cast(list[dict[str, object]], payload["rulesets"]):
+        typer.echo(
+            f"{ruleset['name']}: {ruleset['description']} "
+            f"[category={ruleset['category']} status={ruleset['status']} "
+            f"languages={','.join(cast(list[str], ruleset['languages']))} "
+            f"rules={ruleset['rule_count']}]"
+        )
+
+
+@app.command()
 def scan(
     config: str | None = typer.Option(
         "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
     ),
+    ruleset: str | None = typer.Option(
+        None,
+        "--ruleset",
+        help="Built-in security/compliance ruleset to scan without sgconfig.",
+    ),
+    path: str = typer.Option(
+        ".",
+        "--path",
+        help="Scan root when using a built-in ruleset.",
+    ),
+    language: str | None = typer.Option(
+        None,
+        "--language",
+        help="Language override when using a built-in ruleset.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured scan findings.",
+    ),
+    baseline: str | None = typer.Option(
+        None,
+        "--baseline",
+        help="Compare matched findings against a saved baseline fingerprint file.",
+    ),
+    write_baseline: str | None = typer.Option(
+        None,
+        "--write-baseline",
+        help="Write the current matched finding fingerprints to a baseline file.",
+    ),
+    suppressions: str | None = typer.Option(
+        None,
+        "--suppressions",
+        help="Mark matched findings present in a suppression fingerprint file as suppressed.",
+    ),
+    write_suppressions: str | None = typer.Option(
+        None,
+        "--write-suppressions",
+        help="Write the current matched finding fingerprints to a suppression file.",
+    ),
+    justification: str | None = typer.Option(
+        None,
+        "--justification",
+        help="Required justification text when writing suppressions.",
+    ),
+    include_evidence_snippets: bool = typer.Option(
+        False,
+        "--include-evidence-snippets",
+        help="Attach bounded raw match snippets to structured ruleset scan evidence rows.",
+    ),
+    max_evidence_snippets_per_file: int = typer.Option(
+        1,
+        "--max-evidence-snippets-per-file",
+        min=1,
+        help="Maximum number of snippets to keep per matched file when snippet evidence is enabled.",
+    ),
+    max_evidence_snippet_chars: int = typer.Option(
+        120,
+        "--max-evidence-snippet-chars",
+        min=1,
+        help="Maximum characters to keep per evidence snippet when snippet evidence is enabled.",
+    ),
 ) -> None:
     """Scan and rewrite code by configuration."""
-    from tensor_grep.core.config import SearchConfig
-    from tensor_grep.io.directory_scanner import DirectoryScanner
+    from tensor_grep.cli.rule_packs import resolve_rule_pack
 
+    if ruleset:
+        try:
+            ruleset_meta, rules = resolve_rule_pack(ruleset, language)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        project_cfg: dict[str, object] = {
+            "config_path": f"builtin:{ruleset_meta['name']}",
+            "root_dir": Path(path).resolve(),
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": ruleset_meta["language"],
+        }
+        scan_banner = (
+            "Scanning project using built-in ruleset "
+            f"{ruleset_meta['name']} ({ruleset_meta['language']})"
+        )
+        routing_reason = "builtin-ruleset-scan"
+    else:
+        try:
+            project_cfg = _load_sg_project_config(config)
+        except (FileNotFoundError, ValueError) as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+
+        rules = _load_rule_specs(project_cfg)
+        if not rules:
+            typer.echo("Error: No valid rules found in configured rule directories.", err=True)
+            sys.exit(1)
+        scan_banner = "Scanning project using adaptive AST routing"
+        routing_reason = "ast-project-scan"
+
+    if not json_output:
+        typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
     try:
-        project_cfg = _load_sg_project_config(config)
-    except (FileNotFoundError, ValueError) as exc:
+        payload = _run_ast_scan_payload(
+            project_cfg,
+            rules,
+            routing_reason=routing_reason,
+            ruleset_name=ruleset_meta["name"] if ruleset else None,
+            baseline_path=baseline,
+            write_baseline_path=write_baseline,
+            suppressions_path=suppressions,
+            write_suppressions_path=write_suppressions,
+            suppression_justification=justification,
+            include_evidence_snippets=include_evidence_snippets,
+            max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+            max_evidence_snippet_chars=max_evidence_snippet_chars,
+        )
+    except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
 
-    rules = _load_rule_specs(project_cfg)
-    if not rules:
-        typer.echo("Error: No valid rules found in configured rule directories.", err=True)
-        sys.exit(1)
-
-    cfg = SearchConfig(
-        ast=True,
-        ast_prefer_native=True,
-        lang=cast(str, project_cfg["language"]),
-    )
-    root_dir = cast(Path, project_cfg["root_dir"])
-    scanner: DirectoryScanner | None = None
-    candidate_files: list[str] | None = None
-    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
-    backend_names_used: set[str] = set()
-
-    scan_banner = "Scanning project using adaptive AST routing"
-    typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
-
-    total_matches = 0
-    matched_rules = 0
-    for rule in rules:
-        rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
-        backend_names_used.add(type(backend).__name__)
-        matched_files: set[str] = set()
-        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
-            rule_matches = result.total_matches
-            matched_files.update(result.matched_file_paths)
-            if not matched_files and result.total_files > 0:
-                matched_files.update(match.file for match in result.matches if match.file)
-        else:
-            if scanner is None:
-                scanner = DirectoryScanner(cfg)
-            if candidate_files is None:
-                candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
-            rule_matches = 0
-            for current_file in candidate_files:
-                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    matched_files.add(current_file)
-        total_matches += rule_matches
-        if rule_matches > 0:
-            matched_rules += 1
+    for finding in cast(list[dict[str, object]], payload["findings"]):
         typer.echo(
-            f"[scan] rule={rule['id']} lang={rule['language']} "
-            f"matches={rule_matches} files={len(matched_files)}"
+            f"[scan] rule={finding['rule_id']} lang={finding['language']} "
+            f"matches={finding['matches']} files={len(cast(list[str], finding['files']))}"
         )
 
     typer.echo(
         "Scan completed. "
-        f"rules={len(rules)} matched_rules={matched_rules} total_matches={total_matches} "
-        f"backends={','.join(sorted(backend_names_used)) or 'none'}"
+        f"rules={payload['rule_count']} matched_rules={payload['matched_rules']} "
+        f"total_matches={payload['total_matches']} "
+        f"backends={','.join(cast(list[str], payload['backends'])) or 'none'}"
     )
+    if payload.get("baseline"):
+        baseline_summary = cast(dict[str, object], payload["baseline"])
+        typer.echo(
+            "Baseline compared. "
+            f"new={baseline_summary['new_findings']} "
+            f"existing={baseline_summary['existing_findings']} "
+            f"resolved={baseline_summary['resolved_findings']}"
+        )
+    if payload.get("baseline_written"):
+        baseline_written = cast(dict[str, object], payload["baseline_written"])
+        typer.echo(
+            f"Baseline written to {baseline_written['path']} (count={baseline_written['count']})."
+        )
+    if payload.get("suppressions"):
+        suppressions_summary = cast(dict[str, object], payload["suppressions"])
+        if suppressions_summary.get("path"):
+            typer.echo(
+                f"Suppressions applied from {suppressions_summary['path']} "
+                f"(suppressed={suppressions_summary['suppressed_findings']})."
+            )
+        if suppressions_summary.get("inline_suppressed_findings"):
+            typer.echo(
+                "Inline suppressions applied "
+                f"(suppressed={suppressions_summary['inline_suppressed_findings']})."
+            )
+        for warning in cast(list[str], suppressions_summary.get("warnings", [])):
+            typer.echo(f"Warning: {warning}", err=True)
+    if payload.get("suppressions_written"):
+        suppressions_written = cast(dict[str, object], payload["suppressions_written"])
+        typer.echo(
+            f"Suppressions written to {suppressions_written['path']} "
+            f"(count={suppressions_written['count']})."
+        )
 
 
 @app.command()
@@ -1821,11 +3775,35 @@ def new() -> None:
 
 
 @app.command()
-def lsp() -> None:
-    """Start the structural search language server."""
+def lsp(
+    provider: str = typer.Option(
+        "native",
+        "--provider",
+        help="Semantic provider mode. native=repo-map only, lsp=external provider only, hybrid=merge both.",
+    ),
+) -> None:
+    """Start the structural search language server.
+
+    Examples:
+      tg lsp
+      tg lsp --provider native
+      tg lsp --provider lsp
+      tg lsp --provider hybrid
+
+    The provider mode is also exposed to editor clients through the
+    `TG_LSP_PROVIDER` environment variable.
+    """
+    import os
+
     from tensor_grep.cli.lsp_server import run_lsp
 
+    os.environ["TG_LSP_PROVIDER"] = provider
     run_lsp()
+
+
+app.add_typer(checkpoint_app, name="checkpoint")
+app.add_typer(session_app, name="session")
+app.add_typer(review_bundle_app, name="review-bundle")
 
 
 @app.command(name="mcp")
@@ -1901,6 +3879,419 @@ def upgrade() -> None:
         sys.exit(1)
 
 
+def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-diff",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+
+
+def _audit_history_error_payload(message: str, *, code: str) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-history",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+
+
+def _review_bundle_error_payload(
+    message: str, *, code: str, routing_reason: str
+) -> dict[str, object]:
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+
+
+@app.command(name="audit-verify")
+def audit_verify(
+    manifest_path: str = typer.Argument(..., help="Path to the rewrite audit manifest JSON file."),
+    signing_key: str | None = typer.Option(
+        None,
+        "--signing-key",
+        help="Optional HMAC signing key path for signed manifests.",
+    ),
+    previous_manifest: str | None = typer.Option(
+        None,
+        "--previous-manifest",
+        help="Optional previous manifest path for validating manifest chaining.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured JSON verification output.",
+    ),
+) -> None:
+    """Verify a rewrite audit manifest digest, chain, and optional signature."""
+    from tensor_grep.cli.audit_manifest import (
+        verify_audit_manifest,
+        verify_audit_manifest_json,
+    )
+
+    try:
+        if json_output:
+            typer.echo(
+                verify_audit_manifest_json(
+                    manifest_path,
+                    signing_key=signing_key,
+                    previous_manifest=previous_manifest,
+                )
+            )
+            return
+
+        payload = verify_audit_manifest(
+            manifest_path,
+            signing_key=signing_key,
+            previous_manifest=previous_manifest,
+        )
+    except Exception as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Manifest: {payload['manifest_path']}")
+    typer.echo(f"valid={payload['valid']}")
+    checks = payload["checks"]
+    typer.echo(
+        "checks="
+        f"digest:{checks['digest_valid']} "
+        f"chain:{checks['chain_valid']} "
+        f"signature:{checks['signature_valid']}"
+    )
+    for error in payload["errors"]:
+        typer.echo(f"- {error}")
+    if not payload["valid"]:
+        raise typer.Exit(code=1)
+
+
+@app.command(name="audit-history")
+def audit_history(
+    path: str = typer.Argument(".", help="Project root to inspect for audit manifests."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured JSON history output.",
+    ),
+) -> None:
+    """List known audit manifests in newest-first chain order."""
+    from tensor_grep.cli.audit_manifest import list_audit_history, list_audit_history_payload
+
+    try:
+        if json_output:
+            typer.echo(json.dumps(list_audit_history_payload(path), indent=2))
+            return
+        payload = list_audit_history(path)
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(_audit_history_error_payload(str(exc), code="not_found"), indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except ValueError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(_audit_history_error_payload(str(exc), code="invalid_input"), indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(_audit_history_error_payload(str(exc), code="internal_error"), indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    for entry in payload:
+        annotations: list[str] = []
+        if entry["missing_timestamp"]:
+            annotations.append("missing_timestamp")
+        if entry["chain_gap"]:
+            annotations.append("chain_gap")
+        if entry["signature_kind"] is not None:
+            annotations.append(f"signature={entry['signature_kind']}")
+        created_at = entry["created_at"] or "<missing>"
+        suffix = f" [{' '.join(annotations)}]" if annotations else ""
+        typer.echo(f"{created_at}  {entry['manifest_sha256']}  {entry['file_path']}{suffix}")
+
+
+@app.command(name="audit-diff")
+def audit_diff(
+    previous_manifest: str = typer.Argument(
+        ..., help="Path to the previous audit manifest JSON file."
+    ),
+    current_manifest: str = typer.Argument(
+        ..., help="Path to the current audit manifest JSON file."
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured JSON diff output.",
+    ),
+) -> None:
+    """Compute a semantic diff between two audit manifests."""
+    from tensor_grep.cli.audit_manifest import diff_audit_manifests, diff_audit_manifests_payload
+
+    try:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    diff_audit_manifests_payload(previous_manifest, current_manifest), indent=2
+                )
+            )
+            return
+        payload = diff_audit_manifests(previous_manifest, current_manifest)
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(json.dumps(_audit_diff_error_payload(str(exc), code="not_found"), indent=2))
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(_audit_diff_error_payload(str(exc), code="invalid_json"), indent=2)
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _audit_diff_error_payload(str(exc), code="internal_error"),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Audit diff: {previous_manifest} -> {current_manifest}")
+    for section_name in ("added", "removed", "changed"):
+        typer.echo(f"{section_name.capitalize()}:")
+        section = payload[section_name]
+        if not section:
+            typer.echo("  (none)")
+            continue
+        for key, value in section.items():
+            if section_name == "changed":
+                typer.echo(f"  {key}:")
+                typer.echo(f"    old: {json.dumps(value['old'], sort_keys=True)}")
+                typer.echo(f"    new: {json.dumps(value['new'], sort_keys=True)}")
+                continue
+            typer.echo(f"  {key}: {json.dumps(value, sort_keys=True)}")
+
+
+@review_bundle_app.command("create")
+def review_bundle_create(
+    manifest_path: str = typer.Option(
+        ...,
+        "--manifest",
+        help="Path to the rewrite audit manifest JSON file.",
+    ),
+    scan_path: str | None = typer.Option(
+        None,
+        "--scan",
+        help="Optional path to the ruleset scan JSON file.",
+    ),
+    checkpoint_id: str | None = typer.Option(
+        None,
+        "--checkpoint-id",
+        help="Optional checkpoint ID to include in the bundle.",
+    ),
+    previous_manifest: str | None = typer.Option(
+        None,
+        "--previous-manifest",
+        help="Optional previous audit manifest JSON for diff generation.",
+    ),
+    output_path: str | None = typer.Option(
+        None,
+        "--output",
+        help="Optional file path where the review bundle JSON should be written.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the review bundle as structured JSON.",
+    ),
+) -> None:
+    """Create a review bundle for enterprise change review."""
+    from tensor_grep.cli.audit_manifest import create_review_bundle, create_review_bundle_json
+
+    try:
+        if json_output:
+            typer.echo(
+                create_review_bundle_json(
+                    manifest_path,
+                    scan_path=scan_path,
+                    checkpoint_id=checkpoint_id,
+                    previous_manifest=previous_manifest,
+                    output_path=output_path,
+                )
+            )
+            return
+        payload = create_review_bundle(
+            manifest_path,
+            scan_path=scan_path,
+            checkpoint_id=checkpoint_id,
+            previous_manifest=previous_manifest,
+            output_path=output_path,
+        )
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="not_found",
+                        routing_reason="review-bundle-create",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="invalid_json",
+                        routing_reason="review-bundle-create",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="internal_error",
+                        routing_reason="review-bundle-create",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    included_components = [
+        component
+        for component in (
+            "audit_manifest",
+            "scan_results",
+            "checkpoint_metadata",
+            "diff",
+        )
+        if payload[component] is not None
+    ]
+    target = output_path or "<not written>"
+    typer.echo(
+        f"Created review bundle {target} "
+        f"(components={','.join(included_components)}, bundle_sha256={payload['bundle_sha256']})"
+    )
+
+
+@review_bundle_app.command("verify")
+def review_bundle_verify(
+    bundle_path: str = typer.Argument(..., help="Path to the review bundle JSON file."),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit structured verification JSON.",
+    ),
+) -> None:
+    """Verify review bundle integrity and component checksums."""
+    from tensor_grep.cli.audit_manifest import verify_review_bundle, verify_review_bundle_json
+
+    try:
+        if json_output:
+            typer.echo(verify_review_bundle_json(bundle_path))
+            return
+        payload = verify_review_bundle(bundle_path)
+    except FileNotFoundError as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="not_found",
+                        routing_reason="review-bundle-verify",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except (json.JSONDecodeError, ValueError) as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="invalid_json",
+                        routing_reason="review-bundle-verify",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    except Exception as exc:
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    _review_bundle_error_payload(
+                        str(exc),
+                        code="internal_error",
+                        routing_reason="review-bundle-verify",
+                    ),
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Review bundle: {payload['bundle_path']}")
+    typer.echo(f"valid={payload['valid']}")
+    for component, check in cast(dict[str, dict[str, object]], payload["checks"]).items():
+        typer.echo(
+            f"{component}: valid={check['valid']} "
+            f"expected={check['expected']} actual={check['actual']}"
+        )
+    bundle_integrity = cast(dict[str, object], payload["bundle_integrity"])
+    typer.echo(
+        "bundle_integrity="
+        f"{bundle_integrity['valid']} "
+        f"expected={bundle_integrity['expected']} actual={bundle_integrity['actual']}"
+    )
+    if not payload["valid"]:
+        raise typer.Exit(code=1)
+
+
 @app.command("update")
 def update() -> None:
     """Alias for upgrade."""
@@ -1937,10 +4328,23 @@ def main_entry() -> None:
         "search",
         "calibrate",
         "devices",
+        "map",
+        "context",
+        "defs",
+        "source",
+        "impact",
+        "refs",
+        "callers",
+        "checkpoint",
+        "session",
         "classify",
         "run",
         "scan",
         "test",
+        "audit-verify",
+        "audit-history",
+        "audit-diff",
+        "review-bundle",
         "new",
         "lsp",
         "mcp",

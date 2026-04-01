@@ -6,6 +6,16 @@ import pytest
 from tensor_grep.cli import bootstrap
 
 
+def test_resolve_native_tg_binary_should_prefer_env_override(monkeypatch, tmp_path):
+    native_binary = tmp_path / "tg.exe"
+    native_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(native_binary))
+
+    resolved = bootstrap._resolve_native_tg_binary()
+
+    assert resolved == str(native_binary)
+
+
 def test_main_entry_should_passthrough_search_subcommand_to_rg(monkeypatch):
     seen: dict[str, object] = {}
 
@@ -68,6 +78,31 @@ def test_main_entry_should_fallback_to_full_cli_for_tg_specific_flags(monkeypatc
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_not_delegate_tg_specific_flags_even_when_rust_first_env_is_enabled(
+    monkeypatch,
+):
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--debug"])
+    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setenv("TG_RUST_FIRST_SEARCH", "1")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda *_args, **_kwargs: pytest.fail("native tg should not run"),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_delegate_cpu_flag_to_native_tg(monkeypatch):
     seen: dict[str, object] = {}
 
@@ -87,6 +122,58 @@ def test_main_entry_should_delegate_cpu_flag_to_native_tg(monkeypatch):
 
     assert excinfo.value.code == 0
     assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--cpu"]}
+
+
+def test_main_entry_should_delegate_plain_search_to_native_tg_when_rust_first_env_is_enabled(
+    monkeypatch,
+):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "-i", "ERROR", "."])
+    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setenv("TG_RUST_FIRST_SEARCH", "1")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": "tg.exe", "search_args": ["-i", "ERROR", "."]}
+
+
+def test_main_entry_should_delegate_cpu_flag_to_env_override_native_tg(monkeypatch, tmp_path):
+    seen: dict[str, object] = {}
+    native_binary = tmp_path / "tg.exe"
+    native_binary.write_text("binary", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--cpu"])
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(native_binary))
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": str(native_binary), "search_args": ["ERROR", ".", "--cpu"]}
 
 
 def test_main_entry_should_delegate_ndjson_flag_to_native_tg(monkeypatch):

@@ -10,13 +10,15 @@ NOTE: Startup and cleanup are handled by `worker-base`. This skill defines the W
 ## When to Use This Skill
 
 Use this worker for:
+- Edit planning intelligence (`src/tensor_grep/cli/repo_map.py`) — span extraction, plan seed, context ranking, rendering
+- Session system (`src/tensor_grep/cli/session_store.py`) — caching, refresh, serve loop
+- Audit/trust features (`src/tensor_grep/cli/audit_manifest.py`, `checkpoint_store.py`) — history, diff, policies, bundles
+- Security rule packs (`src/tensor_grep/cli/rule_packs.py`) — new packs, suppressions
+- CLI commands (`src/tensor_grep/cli/main.py`) — new commands, flag wiring
+- MCP server extensions (`src/tensor_grep/cli/mcp_server.py`) — new tools, parity
 - Python benchmark scripts (`benchmarks/`)
 - Corpus generators (`benchmarks/gen_corpus.py`)
-- MCP server extensions (`src/tensor_grep/cli/mcp_server.py`)
-- GPU benchmark scaling and crossover documentation
 - JSON schema documentation and example artifacts
-- Routing policy documentation
-- Python sidecar protocol changes (`src/tensor_grep/sidecar.py`)
 
 ## Windows-Specific Notes
 
@@ -51,10 +53,23 @@ Use this worker for:
    - Existing tools still work after adding new ones
    - Add tests in `tests/unit/test_mcp_server.py`
 
-6. **For documentation features**: 
-   - Generate example JSON by running actual `tg` commands on `bench_data` or test fixtures
-   - Validate all example JSON files parse correctly
-   - Cross-reference documentation against actual code
+6. **For repo_map.py changes** (edit planning, rendering, context):
+   - The file is 91K+ — read only the relevant sections, not the whole file
+   - Key functions: `build_context_render_from_map` (~line 1700), `build_symbol_blast_radius_render` (~line 2400), `_render_context_parts` (~line 1550), `_render_source_block` (~line 1400), `_validation_commands_for_tests` (~line 1660)
+   - Edit plan seed generated at two sites (~line 1805 and ~line 2490) — update BOTH
+   - All new JSON fields must be additive (never remove existing fields)
+   - Symbol extraction functions: `_python_symbol_definitions` (~line 600), `_js_symbol_definitions` (~line 700), `_ts_symbol_definitions` (~line 730), `_rust_symbol_definitions` (~line 760)
+
+7. **For session_store.py changes**:
+   - Key functions: `_stale_reason` (staleness detection), `refresh_session`, `serve_session_stream`
+   - Session JSON lives at `<root>/.tensor-grep/sessions/<session_id>.json`
+   - JSONL serve protocol: each request has `command` field, response is one JSON line
+
+8. **For audit/trust/ruleset changes**:
+   - Follow existing patterns in `audit_manifest.py` (HMAC signing, chain verification)
+   - Rule packs use ast-grep AST pattern syntax in `_RULE_PACKS` dict
+   - All new CLI commands must have MCP tool parity
+   - Policy engine should use subprocess for running lint/test commands with timeout
 
 7. Run local Python gates:
    ```powershell

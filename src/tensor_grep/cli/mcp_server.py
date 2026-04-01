@@ -8,6 +8,20 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from tensor_grep.cli.main import _build_rulesets_payload, _run_ast_scan_payload
+from tensor_grep.cli.repo_map import (
+    build_context_pack,
+    build_context_render,
+    build_repo_map,
+    build_symbol_blast_radius,
+    build_symbol_blast_radius_render,
+    build_symbol_callers,
+    build_symbol_defs,
+    build_symbol_impact,
+    build_symbol_refs,
+    build_symbol_source,
+)
+from tensor_grep.cli.rule_packs import resolve_rule_pack
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 from tensor_grep.core.pipeline import Pipeline
@@ -49,9 +63,128 @@ def _rewrite_envelope() -> dict[str, Any]:
     }
 
 
-def _rewrite_error(message: str, *, code: str) -> str:
+def _rewrite_error_payload(
+    message: str,
+    *,
+    code: str,
+    details: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     payload = _rewrite_envelope()
-    payload["error"] = {"code": code, "message": message}
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details:
+        error["details"] = details
+    payload["error"] = error
+    return payload
+
+
+def _rewrite_error(message: str, *, code: str) -> str:
+    return json.dumps(_rewrite_error_payload(message, code=code), indent=2)
+
+
+def _audit_manifest_error(message: str, *, code: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-verify",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _audit_history_error(message: str, *, code: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-history",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _audit_diff_error(message: str, *, code: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": "audit-manifest-diff",
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _effective_auto_refresh(refresh_on_stale: bool, auto_refresh: bool | None) -> bool:
+    return bool(refresh_on_stale or auto_refresh)
+
+
+def _session_error_payload(
+    *,
+    session_id: str,
+    path: str,
+    code: str,
+    message: str,
+    detail: dict[str, Any] | None = None,
+    **extra: Any,
+) -> str:
+    payload: dict[str, Any] = {
+        "version": _json_output_version(),
+        "session_id": session_id,
+        "path": str(Path(path).expanduser()),
+        **extra,
+        "error": {
+            "code": code,
+            "message": message,
+            "detail": detail or {},
+        },
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _session_exception_payload(
+    *,
+    session_id: str | None = None,
+    path: str,
+    message: str,
+    detail: dict[str, Any] | None = None,
+    **extra: Any,
+) -> str:
+    payload: dict[str, Any] = {
+        "version": _json_output_version(),
+        "path": str(Path(path).expanduser()),
+        **extra,
+        "error": {
+            "code": "invalid_input",
+            "message": message,
+            "detail": detail or {},
+        },
+    }
+    if session_id is not None:
+        payload["session_id"] = session_id
+    return json.dumps(payload, indent=2)
+
+
+def _review_bundle_error(message: str, *, code: str, routing_reason: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AuditManifest",
+        "routing_reason": routing_reason,
+        "sidecar_used": False,
+        "error": {"code": code, "message": message},
+    }
+    return json.dumps(payload, indent=2)
+
+
+def _ruleset_scan_error(message: str, *, code: str, ruleset: str, path: str) -> str:
+    payload = {
+        "version": _json_output_version(),
+        "routing_backend": "AstBackend",
+        "routing_reason": "builtin-ruleset-scan",
+        "sidecar_used": False,
+        "ruleset": ruleset,
+        "path": str(Path(path).expanduser()),
+        "error": {"code": code, "message": message},
+    }
     return json.dumps(payload, indent=2)
 
 
@@ -158,6 +291,11 @@ def _build_rewrite_command(
     path: str,
     mode: str,
     verify: bool = False,
+    checkpoint: bool = False,
+    audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
 ) -> list[str]:
     command = [
         str(_resolve_native_tg_binary()),
@@ -174,6 +312,16 @@ def _build_rewrite_command(
         command.append("--apply")
         if verify:
             command.append("--verify")
+        if checkpoint:
+            command.append("--checkpoint")
+        if audit_manifest:
+            command.extend(["--audit-manifest", audit_manifest])
+        if audit_signing_key:
+            command.extend(["--audit-signing-key", audit_signing_key])
+        if lint_cmd:
+            command.extend(["--lint-cmd", lint_cmd])
+        if test_cmd:
+            command.extend(["--test-cmd", test_cmd])
         command.append("--json")
     elif mode == "diff":
         command.append("--diff")
@@ -235,7 +383,91 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
             "Rewrite command produced invalid JSON output.", code="invalid_output"
         )
 
+    _record_generated_audit_manifest(payload)
     return _normalize_rewrite_json_payload(payload)
+
+
+def execute_rewrite_apply_json(
+    *,
+    pattern: str,
+    replacement: str,
+    lang: str,
+    path: str = ".",
+    verify: bool = False,
+    checkpoint: bool = False,
+    audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
+    policy: str | None = None,
+) -> tuple[str, int]:
+    from tensor_grep.cli.apply_policy import (
+        PolicyValidationError,
+        evaluate_apply_policy,
+        load_apply_policy,
+    )
+
+    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    if validation_error:
+        return _rewrite_error(validation_error, code="invalid_input"), 1
+
+    loaded_policy = None
+    if policy is not None:
+        try:
+            loaded_policy = load_apply_policy(
+                policy,
+                legacy_lint_cmd=lint_cmd,
+                legacy_test_cmd=test_cmd,
+            )
+        except FileNotFoundError as exc:
+            return _rewrite_error(str(exc), code="not_found"), 1
+        except PolicyValidationError as exc:
+            return (
+                json.dumps(
+                    _rewrite_error_payload(
+                        str(exc),
+                        code="invalid_policy",
+                        details=exc.details,
+                    ),
+                    indent=2,
+                ),
+                1,
+            )
+        if loaded_policy.on_failure == "rollback" and not checkpoint:
+            return (
+                _rewrite_error(
+                    "Policy on_failure=rollback requires checkpoint=true.",
+                    code="invalid_input",
+                ),
+                1,
+            )
+
+    command = _build_rewrite_command(
+        pattern=pattern,
+        replacement=replacement,
+        lang=lang,
+        path=path,
+        mode="apply",
+        verify=verify,
+        checkpoint=checkpoint,
+        audit_manifest=audit_manifest,
+        audit_signing_key=audit_signing_key,
+        lint_cmd=None if loaded_policy is not None else lint_cmd,
+        test_cmd=None if loaded_policy is not None else test_cmd,
+    )
+    rewrite_json = _execute_rewrite_json_command(command)
+    rewrite_payload = json.loads(rewrite_json)
+    if rewrite_payload.get("error"):
+        return rewrite_json, 1
+    if loaded_policy is None:
+        return rewrite_json, 0
+
+    policy_payload, exit_code = evaluate_apply_policy(
+        rewrite_payload,
+        loaded_policy,
+        path=path,
+    )
+    return json.dumps(policy_payload, indent=2), exit_code
 
 
 def _execute_rewrite_diff_command(command: list[str]) -> str:
@@ -312,6 +544,23 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
         )
 
     return _normalize_index_search_json_payload(payload, pattern=pattern, path=path)
+
+
+def _record_generated_audit_manifest(payload: object) -> None:
+    if not isinstance(payload, dict):
+        return
+    audit_manifest = payload.get("audit_manifest")
+    if not isinstance(audit_manifest, dict):
+        return
+    manifest_path = audit_manifest.get("path")
+    if not isinstance(manifest_path, str) or not manifest_path.strip():
+        return
+    try:
+        from tensor_grep.cli.audit_manifest import record_audit_manifest
+
+        record_audit_manifest(manifest_path)
+    except Exception:
+        return
 
 
 def _routing_summary(result: SearchResult) -> str:
@@ -396,6 +645,847 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
             all_results.match_counts_by_file[match.file] = (
                 all_results.match_counts_by_file.get(match.file, 0) + 1
             )
+
+
+@mcp.tool()  # type: ignore
+def tg_rulesets() -> str:
+    """Return metadata for built-in security and compliance rulesets."""
+    return json.dumps(_build_rulesets_payload(), indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_ruleset_scan(
+    ruleset: str,
+    path: str = ".",
+    language: str | None = None,
+    baseline_path: str | None = None,
+    write_baseline: str | None = None,
+    suppressions_path: str | None = None,
+    write_suppressions: str | None = None,
+    justification: str | None = None,
+    include_evidence_snippets: bool = False,
+    max_evidence_snippets_per_file: int = 1,
+    max_evidence_snippet_chars: int = 120,
+) -> str:
+    """
+    Execute a built-in ruleset scan and return structured findings.
+
+    Args:
+        ruleset: Built-in ruleset name to execute.
+        path: Root path to scan.
+        language: Optional language override for the ruleset.
+    """
+    try:
+        ruleset_meta, rules = resolve_rule_pack(ruleset, language)
+    except ValueError as exc:
+        return _ruleset_scan_error(
+            str(exc),
+            code="invalid_input",
+            ruleset=ruleset,
+            path=path,
+        )
+
+    project_cfg: dict[str, object] = {
+        "config_path": f"builtin:{ruleset_meta['name']}",
+        "root_dir": Path(path).expanduser().resolve(),
+        "rule_dirs": [],
+        "test_dirs": [],
+        "language": ruleset_meta["language"],
+    }
+    try:
+        payload = _run_ast_scan_payload(
+            project_cfg,
+            rules,
+            routing_reason="builtin-ruleset-scan",
+            ruleset_name=ruleset_meta["name"],
+            baseline_path=baseline_path,
+            write_baseline_path=write_baseline,
+            suppressions_path=suppressions_path,
+            write_suppressions_path=write_suppressions,
+            suppression_justification=justification,
+            include_evidence_snippets=include_evidence_snippets,
+            max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+            max_evidence_snippet_chars=max_evidence_snippet_chars,
+        )
+    except ValueError as exc:
+        return _ruleset_scan_error(
+            str(exc),
+            code="invalid_input",
+            ruleset=ruleset,
+            path=path,
+        )
+    return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_repo_map(path: str = ".") -> str:
+    """
+    Return a deterministic repository inventory for agent context selection.
+
+    Args:
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_repo_map(path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "repo-map",
+            "sidecar_used": False,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_context_pack(query: str, path: str = ".") -> str:
+    """
+    Return a ranked repository context pack for edit planning.
+
+    Args:
+        query: Query text used to rank relevant files, symbols, and tests.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_context_pack(query, path), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-pack",
+            "sidecar_used": False,
+            "query": query,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_edit_plan(
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_symbols: int = 5,
+) -> str:
+    """
+    Return a machine-readable edit-planning bundle without rendered source text.
+
+    Args:
+        query: Query text used to rank edit targets.
+        path: File or directory to inventory.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.repo_map import build_context_edit_plan
+
+    try:
+        return json.dumps(
+            build_context_edit_plan(
+                query,
+                path,
+                max_files=max_files,
+                max_symbols=max_symbols,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-edit-plan",
+            "sidecar_used": False,
+            "query": query,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_context_render(
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+    profile: bool = False,
+) -> str:
+    """
+    Return a prompt-ready repository context bundle for edit planning.
+
+    Args:
+        query: Query text used to rank and render repo context.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(
+            build_context_render(
+                query,
+                path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                max_tokens=max_tokens,
+                model=model,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                profile=profile,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "context-render",
+            "sidecar_used": False,
+            "query": query,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_edit_plan(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_symbols: int = 5,
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Return a cached-session edit-planning bundle without rendered source text.
+
+    Args:
+        session_id: Session ID to query.
+        query: Query text used to rank edit targets.
+        path: File or directory rooted at the session scope.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
+
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+    try:
+        return json.dumps(
+            session_context_edit_plan(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                refresh_on_stale=effective_refresh,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+            query=query,
+        )
+    except FileNotFoundError:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+            query=query,
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_session_context_render(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+    profile: bool = False,
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Return a prompt-ready repository context bundle derived from a cached session.
+
+    Args:
+        session_id: Session ID to query.
+        query: Query text used to rank and render repo context.
+        path: File or directory rooted at the session scope.
+        max_files: Maximum files to include in the render bundle.
+        max_sources: Maximum exact source blocks to include.
+        max_symbols_per_file: Maximum summary symbols to include per file.
+        max_render_chars: Maximum characters to emit in rendered_context.
+        optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
+        render_profile: Render profile to use: full, compact, or llm.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_context_render
+
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+    try:
+        return json.dumps(
+            session_context_render(
+                session_id,
+                query,
+                path,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                max_tokens=max_tokens,
+                model=model,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                profile=profile,
+                refresh_on_stale=effective_refresh,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query, "render_profile": render_profile},
+            query=query,
+        )
+    except FileNotFoundError:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"query": query, "render_profile": render_profile},
+            query=query,
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_session_blast_radius(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Return a cached-session blast radius for a symbol.
+
+    Args:
+        session_id: Session ID to query.
+        symbol: Exact symbol name to resolve.
+        path: File or directory rooted at the session scope.
+        max_depth: Maximum reverse-import depth to include.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius
+
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+    try:
+        return json.dumps(
+            session_blast_radius(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                refresh_on_stale=effective_refresh,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+    except FileNotFoundError:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_blast_radius_plan(
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+    provider: str = "native",
+) -> str:
+    """
+    Return a machine-readable blast-radius planning bundle without rendered source text.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius_plan
+
+    try:
+        return json.dumps(
+            build_symbol_blast_radius_plan(
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                semantic_provider=provider,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-blast-radius-plan",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_blast_radius_render(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Return a prompt-ready cached-session blast radius bundle for a symbol.
+
+    Args:
+        session_id: Session ID to query.
+        symbol: Exact symbol name to resolve.
+        path: File or directory rooted at the session scope.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the render bundle.
+        max_sources: Maximum exact source blocks to include.
+        max_symbols_per_file: Maximum summary symbols to include per file.
+        max_render_chars: Maximum characters to emit in rendered_context.
+        optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
+        render_profile: Render profile to use: full, compact, or llm.
+    """
+    from tensor_grep.cli.session_store import (
+        SessionStaleError,
+        session_blast_radius_render,
+    )
+
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+    try:
+        return json.dumps(
+            session_blast_radius_render(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                refresh_on_stale=effective_refresh,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "render_profile": render_profile,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+    except FileNotFoundError:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "render_profile": render_profile,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_session_blast_radius_plan(
+    session_id: str,
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_symbols: int = 5,
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Return a cached-session blast-radius planning bundle without rendered source text.
+
+    Args:
+        session_id: Session ID to query.
+        symbol: Exact symbol name to resolve.
+        path: File or directory rooted at the session scope.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the plan.
+        max_symbols: Maximum ranked symbols to retain.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius_plan
+
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+    try:
+        return json.dumps(
+            session_blast_radius_plan(
+                session_id,
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_symbols=max_symbols,
+                refresh_on_stale=effective_refresh,
+            ),
+            indent=2,
+        )
+    except SessionStaleError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+    except FileNotFoundError:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={
+                "symbol": symbol,
+                "max_depth": max(0, int(max_depth)),
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+            },
+            symbol=symbol,
+            max_depth=max(0, int(max_depth)),
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_defs(symbol: str, path: str = ".", provider: str = "native") -> str:
+    """
+    Return exact definition locations for a symbol.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_defs(symbol, path, semantic_provider=provider), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-defs",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_source(symbol: str, path: str = ".", provider: str = "native") -> str:
+    """
+    Return exact source blocks for a symbol definition.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_source(symbol, path, semantic_provider=provider), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-source",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> str:
+    """
+    Return likely impacted files and tests for a symbol change.
+
+    Args:
+        symbol: Exact symbol name to evaluate.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_impact(symbol, path, semantic_provider=provider), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-impact",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_refs(symbol: str, path: str = ".", provider: str = "native") -> str:
+    """
+    Return Python-first symbol references across the inventory root.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_refs(symbol, path, semantic_provider=provider), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-refs",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_symbol_callers(symbol: str, path: str = ".", provider: str = "native") -> str:
+    """
+    Return Python-first symbol call sites and likely impacted tests.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+    """
+    try:
+        return json.dumps(build_symbol_callers(symbol, path, semantic_provider=provider), indent=2)
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-callers",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()
+def tg_symbol_blast_radius(
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    provider: str = "native",
+) -> str:
+    """
+    Return exact callers plus a transitive file/test blast radius for a symbol.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+        max_depth: Maximum reverse-import depth to include.
+    """
+    try:
+        return json.dumps(
+            build_symbol_blast_radius(
+                symbol, path, max_depth=max_depth, semantic_provider=provider
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-blast-radius",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+
+@mcp.tool()
+def tg_symbol_blast_radius_render(
+    symbol: str,
+    path: str = ".",
+    max_depth: int = 3,
+    max_files: int = 3,
+    max_sources: int = 5,
+    max_symbols_per_file: int = 6,
+    max_render_chars: int | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "full",
+    profile: bool = False,
+    provider: str = "native",
+) -> str:
+    """
+    Return a prompt-ready blast-radius bundle for a symbol.
+
+    Args:
+        symbol: Exact symbol name to resolve.
+        path: File or directory to inventory.
+        max_depth: Maximum reverse-import depth to include.
+        max_files: Maximum files to include in the render bundle.
+        max_sources: Maximum exact source blocks to include.
+        max_symbols_per_file: Maximum summary symbols to include per file.
+        max_render_chars: Maximum characters to emit in rendered_context.
+        optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
+        render_profile: Render profile to use: full, compact, or llm.
+    """
+    try:
+        return json.dumps(
+            build_symbol_blast_radius_render(
+                symbol,
+                path,
+                max_depth=max_depth,
+                max_files=max_files,
+                max_sources=max_sources,
+                max_symbols_per_file=max_symbols_per_file,
+                max_render_chars=max_render_chars,
+                optimize_context=optimize_context,
+                render_profile=render_profile,
+                profile=profile,
+                semantic_provider=provider,
+            ),
+            indent=2,
+        )
+    except FileNotFoundError:
+        payload = {
+            "version": _json_output_version(),
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-blast-radius-render",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "max_depth": max(0, int(max_depth)),
+            "path": str(Path(path).expanduser()),
+            "error": {
+                "code": "invalid_input",
+                "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            },
+        }
+        return json.dumps(payload, indent=2)
 
 
 @mcp.tool()  # type: ignore
@@ -742,6 +1832,12 @@ def tg_rewrite_apply(
     lang: str,
     path: str = ".",
     verify: bool = False,
+    checkpoint: bool = False,
+    audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
+    policy: str | None = None,
 ) -> str:
     """
     Apply native AST rewrites and optionally verify the written bytes.
@@ -752,20 +1848,419 @@ def tg_rewrite_apply(
         lang: Tree-sitter language name.
         path: File or directory to scan.
         verify: When true, request post-apply verification from the native CLI.
+        checkpoint: When true, create a rollback checkpoint before applying edits.
+        audit_manifest: Optional path for a deterministic rewrite audit manifest.
+        audit_signing_key: Optional path to an HMAC signing key for the audit manifest.
+        lint_cmd: Optional command to run after apply/verify for structured lint validation.
+        test_cmd: Optional command to run after apply/verify for structured test validation.
+        policy: Optional path to an apply policy JSON file for post-apply checks and rollback.
     """
-    validation_error = _validate_rewrite_inputs(pattern, lang, path)
-    if validation_error:
-        return _rewrite_error(validation_error, code="invalid_input")
-
-    command = _build_rewrite_command(
+    payload, _exit_code = execute_rewrite_apply_json(
         pattern=pattern,
         replacement=replacement,
         lang=lang,
         path=path,
-        mode="apply",
         verify=verify,
+        checkpoint=checkpoint,
+        audit_manifest=audit_manifest,
+        audit_signing_key=audit_signing_key,
+        lint_cmd=lint_cmd,
+        test_cmd=test_cmd,
+        policy=policy,
     )
-    return _execute_rewrite_json_command(command)
+    return payload
+
+
+@mcp.tool()  # type: ignore
+def tg_audit_manifest_verify(
+    manifest_path: str,
+    signing_key: str | None = None,
+    previous_manifest: str | None = None,
+) -> str:
+    """
+    Verify a rewrite audit manifest digest, chain, and optional signature.
+
+    Args:
+        manifest_path: Path to the rewrite audit manifest JSON file.
+        signing_key: Optional HMAC signing key path for signed manifests.
+        previous_manifest: Optional previous manifest path for validating manifest chaining.
+    """
+    from tensor_grep.cli.audit_manifest import verify_audit_manifest_json
+
+    if not manifest_path.strip():
+        return _audit_manifest_error("manifest_path must not be empty.", code="invalid_input")
+
+    try:
+        return verify_audit_manifest_json(
+            manifest_path,
+            signing_key=signing_key,
+            previous_manifest=previous_manifest,
+        )
+    except FileNotFoundError as exc:
+        return _audit_manifest_error(str(exc), code="not_found")
+    except ValueError as exc:
+        return _audit_manifest_error(str(exc), code="invalid_input")
+    except Exception as exc:
+        return _audit_manifest_error(str(exc), code="internal_error")
+
+
+@mcp.tool()  # type: ignore
+def tg_audit_history(path: str = ".") -> str:
+    """
+    List audit manifest history for a project root.
+
+    Args:
+        path: Project root to inspect for audit manifests.
+    """
+    from tensor_grep.cli.audit_manifest import list_audit_history_payload
+
+    if not path.strip():
+        return _audit_history_error("path must not be empty.", code="invalid_input")
+
+    try:
+        return json.dumps(list_audit_history_payload(path), indent=2)
+    except FileNotFoundError as exc:
+        return _audit_history_error(str(exc), code="not_found")
+    except ValueError as exc:
+        return _audit_history_error(str(exc), code="invalid_input")
+    except Exception as exc:
+        return _audit_history_error(str(exc), code="internal_error")
+
+
+@mcp.tool()  # type: ignore
+def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
+    """
+    Compute a semantic diff between two audit manifest JSON files.
+
+    Args:
+        previous_manifest: Path to the previous audit manifest JSON file.
+        current_manifest: Path to the current audit manifest JSON file.
+    """
+    from tensor_grep.cli.audit_manifest import diff_audit_manifests_payload
+
+    if not previous_manifest.strip() or not current_manifest.strip():
+        return _audit_diff_error(
+            "previous_manifest and current_manifest must not be empty.",
+            code="invalid_input",
+        )
+
+    try:
+        return json.dumps(
+            diff_audit_manifests_payload(previous_manifest, current_manifest),
+            indent=2,
+        )
+    except FileNotFoundError as exc:
+        return _audit_diff_error(str(exc), code="not_found")
+    except (json.JSONDecodeError, ValueError) as exc:
+        return _audit_diff_error(str(exc), code="invalid_json")
+    except Exception as exc:
+        return _audit_diff_error(str(exc), code="internal_error")
+
+
+@mcp.tool()  # type: ignore
+def tg_review_bundle_create(
+    manifest_path: str,
+    scan_path: str | None = None,
+    checkpoint_id: str | None = None,
+    previous_manifest: str | None = None,
+    output_path: str | None = None,
+) -> str:
+    """
+    Create a review bundle containing audit, scan, checkpoint, and diff artifacts.
+
+    Args:
+        manifest_path: Path to the rewrite audit manifest JSON file.
+        scan_path: Optional path to the ruleset scan JSON file.
+        checkpoint_id: Optional checkpoint ID to include.
+        previous_manifest: Optional previous audit manifest JSON for diff generation.
+        output_path: Optional file path where the bundle JSON should be written.
+    """
+    from tensor_grep.cli.audit_manifest import create_review_bundle_json
+
+    if not manifest_path.strip():
+        return _review_bundle_error(
+            "manifest_path must not be empty.",
+            code="invalid_input",
+            routing_reason="review-bundle-create",
+        )
+
+    try:
+        return create_review_bundle_json(
+            manifest_path,
+            scan_path=scan_path,
+            checkpoint_id=checkpoint_id,
+            previous_manifest=previous_manifest,
+            output_path=output_path,
+        )
+    except FileNotFoundError as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="not_found",
+            routing_reason="review-bundle-create",
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="invalid_json",
+            routing_reason="review-bundle-create",
+        )
+    except Exception as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="internal_error",
+            routing_reason="review-bundle-create",
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_review_bundle_verify(bundle_path: str) -> str:
+    """
+    Verify review bundle integrity and component checksums.
+
+    Args:
+        bundle_path: Path to the review bundle JSON file.
+    """
+    from tensor_grep.cli.audit_manifest import verify_review_bundle_json
+
+    if not bundle_path.strip():
+        return _review_bundle_error(
+            "bundle_path must not be empty.",
+            code="invalid_input",
+            routing_reason="review-bundle-verify",
+        )
+
+    try:
+        return verify_review_bundle_json(bundle_path)
+    except FileNotFoundError as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="not_found",
+            routing_reason="review-bundle-verify",
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="invalid_json",
+            routing_reason="review-bundle-verify",
+        )
+    except Exception as exc:
+        return _review_bundle_error(
+            str(exc),
+            code="internal_error",
+            routing_reason="review-bundle-verify",
+        )
+
+
+@mcp.tool()  # type: ignore
+def tg_checkpoint_create(path: str = ".") -> str:
+    """
+    Create an edit checkpoint rooted at the given path.
+
+    Args:
+        path: File or directory rooted at the checkpoint scope.
+    """
+    from tensor_grep.cli.checkpoint_store import create_checkpoint
+
+    try:
+        payload = create_checkpoint(path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_checkpoint_list(path: str = ".") -> str:
+    """
+    List checkpoints rooted at the given path.
+
+    Args:
+        path: File or directory rooted at the checkpoint scope.
+    """
+    from tensor_grep.cli.checkpoint_store import list_checkpoints
+
+    try:
+        checkpoints = [record.__dict__ for record in list_checkpoints(path)]
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+            },
+            indent=2,
+        )
+
+    return json.dumps({"version": _json_output_version(), "checkpoints": checkpoints}, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
+    """
+    Undo an edit checkpoint rooted at the given path.
+
+    Args:
+        checkpoint_id: Checkpoint ID to restore.
+        path: File or directory rooted at the checkpoint scope.
+    """
+    from tensor_grep.cli.checkpoint_store import undo_checkpoint
+
+    try:
+        payload = undo_checkpoint(checkpoint_id, path)
+    except Exception as exc:
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {"code": "invalid_input", "message": str(exc)},
+                "path": str(Path(path).expanduser()),
+                "checkpoint_id": checkpoint_id,
+            },
+            indent=2,
+        )
+
+    return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_open(path: str = ".") -> str:
+    """
+    Create a cached repository-map session for repeated edit loops.
+
+    Args:
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import open_session
+
+    try:
+        payload = open_session(path)
+    except Exception as exc:
+        return _session_exception_payload(path=path, message=str(exc), detail={})
+
+    return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_list(path: str = ".") -> str:
+    """
+    List cached sessions for the current root.
+
+    Args:
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import list_sessions
+
+    try:
+        sessions = [record.__dict__ for record in list_sessions(path)]
+    except Exception as exc:
+        return _session_exception_payload(path=path, message=str(exc), detail={})
+
+    return json.dumps({"version": _json_output_version(), "sessions": sessions}, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_show(session_id: str, path: str = ".") -> str:
+    """
+    Return the cached repository-map payload for a session.
+
+    Args:
+        session_id: Session ID to inspect.
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import get_session
+
+    try:
+        payload = get_session(session_id, path)
+    except Exception as exc:
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
+            message=str(exc),
+            detail={},
+        )
+
+    return json.dumps(payload, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_refresh(session_id: str, path: str = ".") -> str:
+    """
+    Refresh a cached repository-map session after file changes.
+
+    Args:
+        session_id: Session ID to refresh.
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import refresh_session
+
+    try:
+        payload = refresh_session(session_id, path)
+    except Exception as exc:
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
+            message=str(exc),
+            detail={},
+        )
+
+    return json.dumps(payload.__dict__, indent=2)
+
+
+@mcp.tool()  # type: ignore
+def tg_session_context(
+    session_id: str,
+    query: str,
+    path: str = ".",
+    refresh_on_stale: bool = False,
+    auto_refresh: bool | None = None,
+) -> str:
+    """
+    Return a context pack derived from a cached session.
+
+    Args:
+        session_id: Session ID to query.
+        query: Query text used to rank relevant repo context.
+        path: File or directory rooted at the session scope.
+    """
+    from tensor_grep.cli.session_store import SessionStaleError, session_context
+
+    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+    try:
+        payload = session_context(session_id, query, path, refresh_on_stale=effective_refresh)
+    except SessionStaleError as exc:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=str(exc),
+            detail={"query": query},
+            query=query,
+        )
+    except FileNotFoundError:
+        return _session_error_payload(
+            session_id=session_id,
+            path=path,
+            code="invalid_input",
+            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            detail={"query": query},
+            query=query,
+        )
+    except Exception as exc:
+        return _session_exception_payload(
+            session_id=session_id,
+            path=path,
+            message=str(exc),
+            detail={"query": query},
+            query=query,
+        )
+
+    return json.dumps(payload, indent=2)
 
 
 @mcp.tool()  # type: ignore

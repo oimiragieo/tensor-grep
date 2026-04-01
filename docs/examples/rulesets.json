@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "routing_backend": "AstBackend",
+  "routing_reason": "builtin-rulesets",
+  "sidecar_used": false,
+  "rulesets": [
+    {
+      "name": "crypto-safe",
+      "description": "Preview crypto hygiene checks for weak or obsolete hashing primitives.",
+      "category": "security",
+      "status": "preview",
+      "default_language": "python",
+      "languages": [
+        "javascript",
+        "python",
+        "rust",
+        "typescript"
+      ],
+      "rule_count": 7
+    },
+    {
+      "name": "secrets-basic",
+      "description": "Preview rules for obvious hardcoded secret assignments.",
+      "category": "security",
+      "status": "preview",
+      "default_language": "python",
+      "languages": [
+        "javascript",
+        "python",
+        "rust",
+        "typescript"
+      ],
+      "rule_count": 12
+    },
+    {
+      "name": "tls-safe",
+      "description": "Preview TLS hygiene checks for certificate verification bypasses.",
+      "category": "security",
+      "status": "preview",
+      "default_language": "python",
+      "languages": [
+        "javascript",
+        "python",
+        "rust",
+        "typescript"
+      ],
+      "rule_count": 6
+    }
+  ]
+}

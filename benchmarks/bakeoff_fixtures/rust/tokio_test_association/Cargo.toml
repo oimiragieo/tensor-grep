@@ -1,0 +1,7 @@
+[package]
+name = "tokio_test_association"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

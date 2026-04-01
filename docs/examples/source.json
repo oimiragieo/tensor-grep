@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "symbol-source",
+  "sidecar_used": false,
+  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite",
+  "symbol": "add",
+  "files": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+  ],
+  "symbols": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    },
+    {
+      "name": "mul",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 2
+    }
+  ],
+  "imports": [],
+  "tests": [],
+  "related_paths": [
+    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py"
+  ],
+  "definitions": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    }
+  ],
+  "sources": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+      "start_line": 1,
+      "end_line": 1,
+      "source": "def add(x, y): return x + y\n"
+    }
+  ],
+  "coverage": {
+    "language_scope": "python-js-ts-rust",
+    "symbol_navigation": "python-ast+parser-js-ts-rust",
+    "test_matching": "filename+import+graph-heuristic"
+  }
+}
+
+
+
+
+

@@ -87,6 +87,29 @@ ARTIFACT_SCHEMAS: dict[str, tuple[str, ...]] = {
         "scales",
         "suite",
     ),
+    "bench_context_render.json": (
+        "artifact",
+        "environment",
+        "generated_at_epoch_s",
+        "rows",
+        "suite",
+    ),
+    "bench_blast_radius.json": (
+        "artifact",
+        "environment",
+        "generated_at_epoch_s",
+        "rows",
+        "suite",
+    ),
+    "bench_session.json": (
+        "artifact",
+        "environment",
+        "generated_at_epoch_s",
+        "passed",
+        "refresh_rows",
+        "session_rows",
+        "suite",
+    ),
 }
 
 

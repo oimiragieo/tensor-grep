@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "routing_backend": "AstBackend",
+  "routing_reason": "ast-native",
+  "sidecar_used": false,
+  "checkpoint": {
+    "checkpoint_id": "ckpt-1742491200-deadbeef",
+    "mode": "filesystem-snapshot",
+    "root": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite",
+    "created_at": "1742491200",
+    "file_count": 1
+  },
+  "audit_manifest": {
+    "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+    "file_count": 1,
+    "applied_edit_count": 2,
+    "signed": false,
+    "signature_kind": null
+  },
+  "plan": {
+    "version": 1,
+    "routing_backend": "AstBackend",
+    "routing_reason": "ast-native",
+    "sidecar_used": false,
+    "pattern": "def $F($$$ARGS): return $EXPR",
+    "replacement": "lambda $$$ARGS: $EXPR",
+    "lang": "python",
+    "total_files_scanned": 1,
+    "total_edits": 2,
+    "edits": [
+      {
+        "id": "e0000:rewrite_fixture.py:0-27",
+        "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite_fixture.py",
+        "line": 1,
+        "byte_range": {
+          "start": 0,
+          "end": 27
+        },
+        "original_text": "def add(x, y): return x + y",
+        "replacement_text": "lambda x, y: x + y",
+        "metavar_env": {
+          "ARGS": "x, y",
+          "EXPR": "x + y",
+          "F": "add"
+        }
+      }
+    ]
+  },
+  "validation": {
+    "success": false,
+    "commands": [
+      {
+        "kind": "lint",
+        "command": "ruff check .",
+        "success": true,
+        "exit_code": 0,
+        "stdout": "All checks passed!\n",
+        "stderr": ""
+      },
+      {
+        "kind": "test",
+        "command": "pytest -q",
+        "success": false,
+        "exit_code": 1,
+        "stdout": "F                                                                        [100%]\n",
+        "stderr": "AssertionError: expected 4, got 5\n"
+      }
+    ],
+    "errors": [
+      "pytest -q failed with exit code 1"
+    ]
+  },
+  "verification": {
+    "total_edits": 1,
+    "verified": 1,
+    "mismatches": []
+  }
+}

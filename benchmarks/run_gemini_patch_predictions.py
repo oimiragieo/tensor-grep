@@ -1,0 +1,372 @@
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+BENCHMARKS_DIR = Path(__file__).resolve().parent
+for candidate in (SRC_DIR, BENCHMARKS_DIR):
+    if str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
+
+import attempt_ledger_helpers  # noqa: E402
+from patch_runner_common import (  # noqa: E402
+    derive_patch_from_repo_changes,
+    is_probably_patch_text,
+    isolated_repo_pair,
+    normalize_model_patch_text,
+)
+
+from tensor_grep.perf_guard import write_json  # noqa: E402
+
+
+def default_output_path() -> Path:
+    return ROOT_DIR / "artifacts" / "gemini_patch_predictions.json"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run Gemini headlessly against tensor-grep patch bundles."
+    )
+    parser.add_argument("--input", required=True, help="Path to tensor-grep patch driver JSON.")
+    parser.add_argument("--output", default=str(default_output_path()))
+    parser.add_argument("--model", default="gemini-3-flash-preview")
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--timeout-seconds", type=int, default=300)
+    parser.add_argument(
+        "--attempt-ledger-dir",
+        default="",
+        help="Optional directory to write one inferred attempt ledger per instance_id.",
+    )
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume from an existing predictions artifact."
+    )
+    return parser.parse_args()
+
+
+def resolve_gemini_binary() -> str:
+    binary = shutil.which("gemini")
+    if binary:
+        return binary
+    raise FileNotFoundError("gemini binary not found on PATH")
+
+
+def load_driver_payload(path: str | Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).expanduser().resolve().read_text(encoding="utf-8"))
+    records = payload.get("records")
+    if not isinstance(records, list):
+        raise ValueError("driver payload missing records list")
+    return payload
+
+
+def _build_sanitized_gemini_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    sanitized = json.loads(json.dumps(settings))
+    sanitized.pop("mcpServers", None)
+    return sanitized
+
+
+def _prepare_isolated_gemini_home(root: Path, source_home: Path | None = None) -> Path:
+    source_root = source_home or (Path.home() / ".gemini")
+    isolated_root = root / ".gemini-home"
+    isolated_gemini_dir = isolated_root / ".gemini"
+    isolated_gemini_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = source_root / "settings.json"
+    if settings_path.exists():
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        (isolated_gemini_dir / "settings.json").write_text(
+            json.dumps(_build_sanitized_gemini_settings(settings), indent=2),
+            encoding="utf-8",
+        )
+    for name in (
+        "oauth_creds.json",
+        "google_accounts.json",
+        "installation_id",
+        "state.json",
+        "trustedFolders.json",
+    ):
+        source_path = source_root / name
+        if source_path.exists():
+            shutil.copy2(source_path, isolated_gemini_dir / name)
+    return isolated_root
+
+
+def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextManager[None]:
+    @contextlib.contextmanager
+    def _manager() -> Any:
+        instructions_path = repo_root / "AGENTS.md"
+        if instructions_path.exists():
+            yield
+            return
+        instructions_path.write_text(
+            "\n".join([
+                "# Evaluation Instructions",
+                "",
+                "You are running inside an automated patch evaluation harness.",
+                "Analyze this repository directly.",
+                "Return only a unified diff patch that can be applied with git apply.",
+                "Do not include markdown fences or explanations.",
+            ])
+            + "\n",
+            encoding="utf-8",
+        )
+        try:
+            yield
+        finally:
+            instructions_path.unlink(missing_ok=True)
+
+    return _manager()
+
+
+def _extract_response_text(stdout: str) -> str:
+    anchor = stdout.find("{")
+    if anchor < 0:
+        raise ValueError("Unable to locate Gemini JSON payload in output")
+    payload = json.loads(stdout[anchor:])
+    response = payload.get("response")
+    if not isinstance(response, str):
+        raise ValueError("Unable to extract Gemini response from JSON output")
+    stripped = response.strip()
+    if stripped.startswith("```diff"):
+        stripped = stripped[len("```diff") :].strip()
+    elif stripped.startswith("```patch"):
+        stripped = stripped[len("```patch") :].strip()
+    elif stripped.startswith("```"):
+        stripped = stripped[3:].strip()
+    if stripped.endswith("```"):
+        stripped = stripped[:-3].strip()
+    return stripped
+
+
+def _terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+    if platform.system().lower().startswith("win"):
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=5,
+            )
+        except Exception:
+            with contextlib.suppress(Exception):
+                proc.kill()
+    else:
+        with contextlib.suppress(Exception):
+            proc.kill()
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        with contextlib.suppress(Exception):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=1)
+
+
+def _run_gemini_command(
+    repo_root: Path,
+    prompt: str,
+    *,
+    model: str,
+    timeout_seconds: int,
+) -> str:
+    isolated_home = _prepare_isolated_gemini_home(repo_root)
+    command = [
+        resolve_gemini_binary(),
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--model",
+        model,
+        "--yolo",
+        "--include-directories",
+        str(repo_root),
+    ]
+    popen_kwargs: dict[str, Any] = {
+        "cwd": str(repo_root),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "env": {
+            **os.environ,
+            "HOME": str(isolated_home),
+            "USERPROFILE": str(isolated_home),
+            "APPDATA": str(isolated_home),
+            "LOCALAPPDATA": str(isolated_home),
+        },
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(command, **popen_kwargs)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_tree(proc)
+        raise subprocess.TimeoutExpired(
+            command, timeout_seconds, output=exc.output, stderr=exc.stderr
+        ) from None
+    if proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, command, output=stdout, stderr=stderr)
+    return stdout
+
+
+def run_gemini_patch_record(
+    record: dict[str, Any],
+    *,
+    model: str,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    repo_root = Path(str(record["repo_fixture"])).resolve()
+    prompt = str(record["prompt"])
+    started = time.perf_counter()
+    notes = ""
+    patch_text = ""
+    with isolated_repo_pair(repo_root) as (before_root, work_root):
+        try:
+            with _ephemeral_repo_instructions(work_root):
+                stdout = _run_gemini_command(
+                    work_root,
+                    prompt,
+                    model=model,
+                    timeout_seconds=timeout_seconds,
+                )
+            patch_text = normalize_model_patch_text(_extract_response_text(stdout))
+            if not is_probably_patch_text(patch_text):
+                patch_text = ""
+        except subprocess.TimeoutExpired:
+            notes = f"timeout after {timeout_seconds}s"
+        except subprocess.CalledProcessError as exc:
+            notes = (exc.stderr or exc.stdout or str(exc)).strip()
+        except ValueError as exc:
+            notes = str(exc)
+        if not patch_text.strip():
+            patch_text = derive_patch_from_repo_changes(before_root, work_root)
+    wall_clock_seconds = round(time.perf_counter() - started, 6)
+    return {
+        "instance_id": str(record["instance_id"]),
+        "system": "gemini-cli",
+        "model_patch": patch_text,
+        "actual_test_files": list(record.get("actual_test_files", [])),
+        "actual_validation_commands": list(record.get("actual_validation_commands", [])),
+        "wall_clock_seconds": wall_clock_seconds,
+        "notes": notes,
+    }
+
+
+def build_partial_payload(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "artifact": "gemini_patch_predictions",
+        "suite": "run_gemini_patch_predictions",
+        "generated_at_epoch_s": time.time(),
+        "environment": {
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
+        },
+        "records": records,
+    }
+
+
+def build_attempt_ledger_payloads(
+    driver_payload: dict[str, Any],
+    prediction_records: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    return attempt_ledger_helpers.build_prediction_attempt_ledgers(
+        driver_payload,
+        prediction_records,
+        reason_getter=lambda _instance_id, row: str(
+            row.get("notes") or attempt_ledger_helpers.prediction_attempt_status(row)
+        ),
+        outputs_getter=lambda _instance_id, row: [str(row.get("notes") or "")],
+    )
+
+
+def load_existing_payload(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return [dict(record) for record in list(payload.get("records", [])) if isinstance(record, dict)]
+
+
+def write_checkpoint(output_path: Path, records: list[dict[str, Any]]) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(output_path, build_partial_payload(records))
+
+
+def build_payload(
+    driver_payload: dict[str, Any],
+    *,
+    model: str,
+    limit: int = 0,
+    timeout_seconds: int = 300,
+    output_path: Path | None = None,
+    resume: bool = False,
+) -> dict[str, Any]:
+    records = list(driver_payload.get("records", []))
+    if limit > 0:
+        records = records[:limit]
+    prediction_records: list[dict[str, Any]] = []
+    if resume and output_path is not None:
+        prediction_records = load_existing_payload(output_path)
+    completed_instance_ids = {
+        str(record.get("instance_id", ""))
+        for record in prediction_records
+        if record.get("instance_id")
+    }
+    for record in records:
+        instance_id = str(record["instance_id"])
+        if instance_id in completed_instance_ids:
+            continue
+        prediction_records.append(
+            run_gemini_patch_record(
+                dict(record),
+                model=model,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        completed_instance_ids.add(instance_id)
+        if output_path is not None:
+            write_checkpoint(output_path, prediction_records)
+    return build_partial_payload(prediction_records)
+
+
+def main() -> int:
+    args = parse_args()
+    driver_payload = load_driver_payload(args.input)
+    output_path = Path(args.output).expanduser().resolve()
+    payload = build_payload(
+        driver_payload,
+        model=args.model,
+        limit=args.limit,
+        timeout_seconds=args.timeout_seconds,
+        output_path=output_path,
+        resume=args.resume,
+    )
+    write_json(output_path, payload)
+    if args.attempt_ledger_dir:
+        ledger_dir = Path(args.attempt_ledger_dir).expanduser().resolve()
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        for instance_id, ledger in build_attempt_ledger_payloads(
+            driver_payload, list(payload["records"])
+        ).items():
+            write_json(ledger_dir / f"{instance_id}.json", ledger)
+    print(f"Results written to {output_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

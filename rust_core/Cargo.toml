@@ -18,12 +18,14 @@ cuda = ["dep:cudarc"]
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.5.60", features = ["derive"] }
+hmac = "0.12.1"
 memmap2 = "0.9.10"
 rayon = "1.11.0"
 regex = "1.12.3"
 regex-syntax = "0.8.10"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sha2 = "0.10.9"
 ast-grep-core = "0.41.1"
 ast-grep-language = { version = "0.41.1", default-features = false, features = ["tree-sitter-python", "tree-sitter-javascript", "tree-sitter-typescript", "tree-sitter-rust"] }
 tree-sitter = "0.26.6"
@@ -47,6 +49,10 @@ cudarc = { version = "0.19.3", optional = true, features = ["cuda-13010"] }
 [[bin]]
 name = "tg"
 path = "src/main.rs"
+
+[[bin]]
+name = "tg-search-fast"
+path = "src/bin/tg_search_fast.rs"
 
 [dev-dependencies]
 tempfile = "3.26.0"

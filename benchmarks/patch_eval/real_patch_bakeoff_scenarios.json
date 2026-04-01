@@ -1,0 +1,262 @@
+{
+  "scenarios": [
+    {
+      "instance_id": "click-format-filename-shorten",
+      "repo_fixture": "../patch_fixtures/click_format_filename",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 7,
+        "end_line": 24
+      },
+      "expected_changed_files": [
+        "src/click/utils.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_utils.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest -q"
+      ]
+    },
+    {
+      "instance_id": "commander-human-readable-arg-name",
+      "repo_fixture": "../patch_fixtures/commander_human_readable_arg_name",
+      "expected_primary_file": "lib/argument.js",
+      "expected_primary_span": {
+        "start_line": 32,
+        "end_line": 36
+      },
+      "expected_changed_files": [
+        "lib/argument.js"
+      ],
+      "expected_test_files": [
+        "tests/argument.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/argument.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test"
+      ]
+    },
+    {
+      "instance_id": "click-unstyle-other-ansi",
+      "repo_fixture": "../patch_fixtures/click_unstyle_ansi",
+      "expected_primary_file": "src/click/_compat.py",
+      "expected_primary_span": {
+        "start_line": 5,
+        "end_line": 8
+      },
+      "expected_changed_files": [
+        "src/click/_compat.py"
+      ],
+      "expected_test_files": [
+        "tests/test_termui.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_termui.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest -q"
+      ]
+    },
+    {
+      "instance_id": "commander-invalid-argument-error-code",
+      "repo_fixture": "../patch_fixtures/commander_invalid_argument_error",
+      "expected_primary_file": "lib/error.js",
+      "expected_primary_span": {
+        "start_line": 11,
+        "end_line": 16
+      },
+      "expected_changed_files": [
+        "lib/error.js"
+      ],
+      "expected_test_files": [
+        "tests/error.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/error.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test"
+      ]
+    },
+    {
+      "instance_id": "click-secho-bytes-pass-through",
+      "repo_fixture": "../patch_fixtures/click_secho_non_text",
+      "expected_primary_file": "src/click/termui.py",
+      "expected_primary_span": {
+        "start_line": 38,
+        "end_line": 47
+      },
+      "expected_changed_files": [
+        "src/click/termui.py"
+      ],
+      "expected_test_files": [
+        "tests/test_termui.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_termui.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest -q"
+      ]
+    },
+    {
+      "instance_id": "click-style-non-text-coercion",
+      "repo_fixture": "../patch_fixtures/click_style_non_text",
+      "expected_primary_file": "src/click/termui.py",
+      "expected_primary_span": {
+        "start_line": 7,
+        "end_line": 20
+      },
+      "expected_changed_files": [
+        "src/click/termui.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_utils.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "pytest -q"
+      ]
+    },
+    {
+      "instance_id": "click-abort-raises-abort",
+      "repo_fixture": "../patch_fixtures/click_abort",
+      "expected_primary_file": "src/click/core.py",
+      "expected_primary_span": {
+        "start_line": 7,
+        "end_line": 9
+      },
+      "expected_changed_files": [
+        "src/click/core.py"
+      ],
+      "expected_test_files": [
+        "tests/test_commands.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_commands.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_commands.py -q",
+        "-q"
+      ]
+    },
+    {
+      "instance_id": "click-get-binary-stream-uses-binary-map",
+      "repo_fixture": "../patch_fixtures/click_get_binary_stream",
+      "expected_primary_file": "src/click/utils.py",
+      "expected_primary_span": {
+        "start_line": 41,
+        "end_line": 46
+      },
+      "expected_changed_files": [
+        "src/click/utils.py"
+      ],
+      "expected_test_files": [
+        "tests/test_utils.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_utils.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_utils.py -q",
+        "-q"
+      ]
+    },
+    {
+      "instance_id": "commander-strip-color-implicit-reset",
+      "repo_fixture": "../patch_fixtures/commander_strip_color",
+      "expected_primary_file": "lib/help.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 5
+      },
+      "expected_changed_files": [
+        "lib/help.js"
+      ],
+      "expected_test_files": [
+        "tests/help.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/help.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test",
+        "tests/help.test.js"
+      ]
+    },
+    {
+      "instance_id": "commander-dual-options-unrelated-flags",
+      "repo_fixture": "../patch_fixtures/commander_dual_options",
+      "expected_primary_file": "lib/option.js",
+      "expected_primary_span": {
+        "start_line": 19,
+        "end_line": 25
+      },
+      "expected_changed_files": [
+        "lib/option.js"
+      ],
+      "expected_test_files": [
+        "tests/options.dual-options.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/options.dual-options.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test",
+        "options.dual-options.test.js"
+      ]
+    },
+    {
+      "instance_id": "click-choice-invalid-message",
+      "repo_fixture": "../patch_fixtures/click_choice_invalid_message",
+      "expected_primary_file": "src/click/types.py",
+      "expected_primary_span": {
+        "start_line": 6,
+        "end_line": 30
+      },
+      "expected_changed_files": [
+        "src/click/types.py"
+      ],
+      "expected_test_files": [
+        "tests/test_types.py"
+      ],
+      "validation_commands": [
+        "python -m pytest tests/test_types.py -q"
+      ],
+      "expected_validation_commands_contain": [
+        "tests/test_types.py -q",
+        "-q"
+      ]
+    },
+    {
+      "instance_id": "commander-use-color-env-conventions",
+      "repo_fixture": "../patch_fixtures/commander_use_color",
+      "expected_primary_file": "lib/command.js",
+      "expected_primary_span": {
+        "start_line": 1,
+        "end_line": 5
+      },
+      "expected_changed_files": [
+        "lib/command.js"
+      ],
+      "expected_test_files": [
+        "tests/useColor.test.js"
+      ],
+      "validation_commands": [
+        "node --test tests/useColor.test.js"
+      ],
+      "expected_validation_commands_contain": [
+        "node --test",
+        "tests/useColor.test.js"
+      ]
+    }
+  ]
+}

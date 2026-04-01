@@ -1,0 +1,24 @@
+{
+  "packs": [
+    {
+      "name": "click",
+      "language": "python",
+      "scenario_pack": "click_scenarios.json",
+      "artifact_output": "../../artifacts/bench_bakeoff_click.json",
+      "analysis_output": "../../artifacts/bench_bakeoff_click_analysis.json",
+      "analysis_markdown": "../../artifacts/bench_bakeoff_click_analysis.md"
+    },
+    {
+      "name": "commander",
+      "language": "javascript",
+      "scenario_pack": "commander_scenarios.json",
+      "artifact_output": "../../artifacts/bench_bakeoff_commander.json"
+    },
+    {
+      "name": "clap_lex",
+      "language": "rust",
+      "scenario_pack": "clap_lex_scenarios.json",
+      "artifact_output": "../../artifacts/bench_bakeoff_clap_lex.json"
+    }
+  ]
+}

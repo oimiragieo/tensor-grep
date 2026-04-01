@@ -1,0 +1,28 @@
+{
+  "scenarios": [
+    {
+      "id": "rust-provider-use-alias-wrapper",
+      "description": "Rust use-alias import rebound locally before call.",
+      "repo_fixture": "../bakeoff_fixtures/rust/provider_alias_use_chain",
+      "query_or_symbol": "create_invoice_provider_rust",
+      "expected_caller_files": [
+        "service.rs"
+      ],
+      "expected_test_files": [
+        "tests/service.rs"
+      ]
+    },
+    {
+      "id": "rust-provider-re-export-alias-wrapper",
+      "description": "Rust pub use re-export rebound locally before call.",
+      "repo_fixture": "../bakeoff_fixtures/rust/provider_alias_re_export_chain",
+      "query_or_symbol": "create_invoice_provider_chain",
+      "expected_caller_files": [
+        "service.rs"
+      ],
+      "expected_test_files": [
+        "tests/service.rs"
+      ]
+    }
+  ]
+}
