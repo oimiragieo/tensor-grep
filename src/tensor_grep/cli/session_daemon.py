@@ -40,7 +40,10 @@ def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
     metadata_path = _daemon_metadata_path(root)
     if not metadata_path.exists():
         return None
-    return cast(dict[str, Any], json.loads(metadata_path.read_text(encoding="utf-8")))
+    try:
+        return cast(dict[str, Any], json.loads(metadata_path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:

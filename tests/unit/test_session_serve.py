@@ -208,7 +208,27 @@ def test_session_daemon_returns_invalid_request_for_malformed_json(tmp_path: Pat
         server.server_close()
 
 
-def test_session_daemon_retries_initial_missing_session_payload(tmp_path: Path, monkeypatch) -> None:
+def test_session_daemon_treats_disappearing_metadata_as_stale(tmp_path: Path, monkeypatch) -> None:
+    project = _build_project(tmp_path / "project", "payments", "create_invoice")
+    metadata_path = session_daemon_module._daemon_metadata_path(project)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text('{"port": 1}', encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def _missing_on_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self == metadata_path:
+            raise FileNotFoundError(self)
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _missing_on_read)
+
+    assert session_daemon_module._read_daemon_metadata(project) is None
+
+
+def test_session_daemon_retries_initial_missing_session_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
     project = _build_project(tmp_path / "project", "payments", "create_invoice")
     server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0))
     calls = {"count": 0}
@@ -245,14 +265,12 @@ def test_session_daemon_retries_initial_missing_session_payload(tmp_path: Path, 
         handler.server = server
         handler.rfile = BytesIO(
             (
-                json.dumps(
-                    {
-                        "command": "context",
-                        "session_id": opened.session_id,
-                        "path": str(project),
-                        "query": "invoice",
-                    }
-                )
+                json.dumps({
+                    "command": "context",
+                    "session_id": opened.session_id,
+                    "path": str(project),
+                    "query": "invoice",
+                })
                 + "\n"
             ).encode("utf-8")
         )
