@@ -215,6 +215,17 @@ def _ordered_unique_strings(values: Any) -> list[str]:
 def _normalize_path(path_value: str | None, repo_root: Path) -> str:
     if not path_value:
         return ""
+    normalized = path_value.replace("\\", "/")
+    repo_root_normalized = str(repo_root).replace("\\", "/").rstrip("/")
+    if _looks_like_windows_absolute_path(normalized):
+        normalized_lower = normalized.lower()
+        repo_root_lower = repo_root_normalized.lower()
+        prefix = f"{repo_root_lower}/"
+        if normalized_lower == repo_root_lower:
+            return ""
+        if normalized_lower.startswith(prefix):
+            return normalized[len(prefix) :]
+        return normalized
     current_path = Path(path_value)
     if current_path.is_absolute():
         try:
@@ -222,6 +233,10 @@ def _normalize_path(path_value: str | None, repo_root: Path) -> str:
         except ValueError:
             return current_path.resolve().as_posix()
     return current_path.as_posix()
+
+
+def _looks_like_windows_absolute_path(path_value: str) -> bool:
+    return len(path_value) >= 3 and path_value[1:3] == ":/"
 
 
 def _rate_hits(hits: int, expected_count: int) -> float:

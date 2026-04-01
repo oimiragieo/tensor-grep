@@ -4396,6 +4396,21 @@ def test_run_provider_navigation_bakeoff_should_score_callers_and_tests() -> Non
     assert row["semantic_provider"] == "hybrid"
 
 
+def test_run_provider_navigation_bakeoff_should_normalize_windows_paths_on_non_windows_hosts() -> (
+    None
+):
+    module = _load_script_module(
+        "run_provider_navigation_bakeoff_windows_paths_script",
+        "benchmarks/run_provider_navigation_bakeoff.py",
+    )
+
+    assert module._normalize_path("C:/repo/termui.py", Path("C:/repo")) == "termui.py"
+    assert (
+        module._normalize_path("C:/repo/tests/test_termui.py", Path("C:/repo"))
+        == "tests/test_termui.py"
+    )
+
+
 def test_run_provider_navigation_bakeoff_should_build_payload_for_multiple_providers(
     tmp_path,
 ) -> None:
