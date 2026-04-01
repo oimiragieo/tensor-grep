@@ -1550,6 +1550,9 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
         raise AssertionError("pip fallback should not be used when uv succeeds")
 
+    versions = iter(["0.31.0", "0.32.0"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
     monkeypatch.setattr("subprocess.run", _fake_run)
 
     runner = CliRunner()
@@ -1558,6 +1561,28 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
     assert result.exit_code == 0
     assert calls[0][0] == "uv"
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
+
+
+def test_upgrade_reports_latest_pypi_version_when_installed_version_does_not_change(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        raise AssertionError("pip fallback should not be used when uv succeeds")
+
+    versions = iter(["0.32.0", "0.32.0"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "uv"
+    assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
 
 
 def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
@@ -1580,6 +1605,9 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr("sys.executable", "python")
+    versions = iter(["0.31.0", "0.32.0"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
     monkeypatch.setattr("subprocess.run", _fake_run)
 
     runner = CliRunner()

@@ -72,6 +72,9 @@ def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[st
 def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     errors: list[str] = []
     for expected in (
+        "release-intent:",
+        "Validate PR title for semantic release",
+        "scripts/validate_pr_title_semver.py",
         "package-manager-readiness:",
         "Build docs site (strict)",
         "pip install mkdocs-material",
@@ -159,6 +162,33 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     if isinstance(parsed_ci, dict):
         jobs = parsed_ci.get("jobs")
         if isinstance(jobs, dict):
+            release_intent_job = jobs.get("release-intent")
+            if isinstance(release_intent_job, dict):
+                release_intent_if = release_intent_job.get("if")
+                if release_intent_if != "github.event_name == 'pull_request'":
+                    errors.append(
+                        "CI workflow release-intent job must run only for pull_request events"
+                    )
+                release_intent_steps = release_intent_job.get("steps", [])
+                release_intent_run_by_name: dict[str, str] = {}
+                if isinstance(release_intent_steps, list):
+                    for step in release_intent_steps:
+                        if not isinstance(step, dict):
+                            continue
+                        name = step.get("name")
+                        run = step.get("run")
+                        if isinstance(name, str) and isinstance(run, str):
+                            release_intent_run_by_name[name] = run
+                step_name = "Validate PR title for semantic release"
+                run = release_intent_run_by_name.get(step_name)
+                if run is None:
+                    errors.append(f"CI workflow release-intent job must include step `{step_name}`")
+                elif "scripts/validate_pr_title_semver.py" not in run:
+                    errors.append(
+                        "CI workflow release-intent "
+                        f"`{step_name}` step must invoke `scripts/validate_pr_title_semver.py`"
+                    )
+
             release_job = jobs.get("release")
             if isinstance(release_job, dict):
                 needs = release_job.get("needs", [])
@@ -458,6 +488,10 @@ def validate_package_manager_docs(*, runbook_content: str, checklist_content: st
         "## 5. Rollback runbook",
         "Homebrew",
         "Winget",
+        "feat: ...` -> minor",
+        "fix: ...` or `perf: ...` -> patch",
+        "feat!: ...` / `fix!: ...` -> major",
+        "Squash and merge",
     ):
         if marker not in checklist_content:
             errors.append(f"Release checklist missing package-manager marker: {marker}")

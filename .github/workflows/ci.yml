@@ -17,6 +17,18 @@ env:
   PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
 
 jobs:
+  release-intent:
+    name: release-intent
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PR title for semantic release
+        run: python scripts/validate_pr_title_semver.py
+
   release-readiness:
     name: release-readiness
     runs-on: ubuntu-latest

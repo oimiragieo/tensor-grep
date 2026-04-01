@@ -220,6 +220,46 @@ def test_should_require_ci_package_manager_bundle_build_and_checksum_verificatio
     assert any("Upload package-manager bundle artifact" in err for err in errors)
 
 
+def test_should_require_release_checklist_to_document_semantic_pr_title_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_package_manager_docs(
+        runbook_content="## Homebrew Tap Flow\n## Winget Flow\n## Rollback Procedures\n## Verification Commands\n"
+        "gh run list --limit 10\n"
+        "uv run python scripts/prepare_package_manager_release.py --check\n"
+        "ruby -c Formula/tensor-grep.rb\n"
+        "winget validate --manifest\n"
+        "winget validate --manifest .\\manifests\\o\\oimiragieo\\tensor-grep\\X.Y.Z\\\n"
+        "uv run python scripts/verify_package_manager_bundle_checksums.py --bundle-dir\n"
+        "uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir\n"
+        "python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag vX.Y.Z\n"
+        "python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-pypi\n"
+        "python scripts/validate_release_version_parity.py --expected-version X.Y.Z --expected-tag vX.Y.Z --check-npm\n"
+        "brew install oimiragieo/tap/tensor-grep\n"
+        "winget install oimiragieo.tensor-grep\n"
+        "tg --version\n"
+        "git revert <tap-formula-commit>\n"
+        "git push origin <rollback-branch>\n"
+        "brew update\n"
+        "winget uninstall oimiragieo.tensor-grep\n"
+        "npm/GitHub mismatch\n",
+        checklist_content=(
+            "## 4. Package-manager distribution finalization\n"
+            "## 5. Rollback runbook\n"
+            "Homebrew\n"
+            "Winget\n"
+        ),
+    )
+    assert any("feat: ...` -> minor" in err for err in errors)
+    assert any("Squash and merge" in err for err in errors)
+
+
 def test_should_require_ci_terminal_publish_success_gate():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
@@ -262,6 +302,48 @@ def test_should_require_release_job_to_depend_on_benchmark_regression_gate():
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any("release job must depend on benchmark-regression" in err for err in errors)
+
+
+def test_should_require_release_intent_job_and_semantic_pr_title_validator():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release-intent:
+        if: github.event_name == 'pull_request'
+        steps:
+          - name: Validate PR title for semantic release
+            run: python scripts/something_else.py
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("scripts/validate_pr_title_semver.py" in err for err in errors)
+
+
+def test_should_require_release_intent_job_to_be_pull_request_only():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release-intent:
+        if: github.event_name == 'push'
+        steps:
+          - name: Validate PR title for semantic release
+            run: python scripts/validate_pr_title_semver.py
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any("release-intent job must run only for pull_request events" in err for err in errors)
 
 
 def test_should_require_ci_benchmark_jobs_to_use_auto_baseline_resolution():
