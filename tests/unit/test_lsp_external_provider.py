@@ -72,6 +72,11 @@ def test_provider_status_reports_configured_timeouts_without_cached_client(
 ) -> None:
     monkeypatch.setenv("TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS", "6")
     monkeypatch.setenv("TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS", "21")
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
 
     manager = ExternalLSPProviderManager()
     status = manager.provider_status(language="python", workspace_root=tmp_path)
