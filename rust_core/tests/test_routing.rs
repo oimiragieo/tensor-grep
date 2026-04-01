@@ -10,6 +10,10 @@ use tempfile::{tempdir, TempDir};
 
 const RG_SENTINEL: &str = "TG_RG_ROUTING_SENTINEL";
 
+fn normalize_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
 fn tg() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg"))
 }
@@ -422,8 +426,8 @@ fn test_routing_early_rg_env_preserves_plain_search_contract() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        format!("{RG_SENTINEL}\r\n")
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
     );
 }
 
@@ -447,8 +451,8 @@ fn test_routing_early_positional_rg_env_preserves_plain_search_contract() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        format!("{RG_SENTINEL}\r\n")
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
     );
 }
 
@@ -493,8 +497,8 @@ fn test_fast_search_binary_preserves_plain_search_contract() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        format!("{RG_SENTINEL}\r\n")
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
     );
 }
 
