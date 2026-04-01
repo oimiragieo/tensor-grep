@@ -474,6 +474,9 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
     if !env_flag_enabled(TG_RUST_EARLY_RG_ENV) {
         return Ok(None);
     }
+    if !ripgrep_is_available() {
+        return Ok(None);
+    }
 
     if raw_args
         .get(1)
@@ -496,6 +499,9 @@ fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option
 }
 
 fn try_default_search_frontdoor_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    if !ripgrep_is_available() {
+        return Ok(None);
+    }
     let rg_args = match parse_default_search_frontdoor_args(raw_args) {
         Some(args) => args,
         None => return Ok(None),
@@ -507,6 +513,9 @@ fn try_default_search_frontdoor_passthrough(raw_args: &[OsString]) -> anyhow::Re
 
 fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
     if !env_flag_enabled(TG_RUST_EARLY_POSITIONAL_RG_ENV) {
+        return Ok(None);
+    }
+    if !ripgrep_is_available() {
         return Ok(None);
     }
 
@@ -533,7 +542,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         fixed_strings: false,
         invert_match: false,
         count: false,
-        line_number: true,
+        line_number: false,
         context: None,
         max_count: None,
         word_regexp: false,
@@ -588,7 +597,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
     }
     args.patterns.push(positionals[0].clone());
     args.path = positionals[1].clone();
-    args.line_number = !args.count;
+    args.line_number = false;
     Some(args)
 }
 
@@ -688,6 +697,7 @@ mod tests {
 
         assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
         assert_eq!(parsed.path, "bench_data".to_string());
+        assert!(!parsed.line_number);
     }
 
     #[test]
@@ -1137,7 +1147,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
         count: cli.count,
-        line_number: true,
+        line_number: false,
         context: None,
         max_count: None,
         word_regexp: false,
@@ -1185,7 +1195,7 @@ fn native_search_config_for_positional(
         json: cli.json,
         ndjson: cli.ndjson,
         verbose: cli.verbose,
-        line_number: true,
+        line_number: false,
         ..NativeSearchConfig::default()
     }
 }

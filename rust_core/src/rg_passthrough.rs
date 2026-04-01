@@ -53,6 +53,8 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         command.arg("-c");
     } else if args.line_number {
         command.arg("-n");
+    } else {
+        command.arg("--no-line-number");
     }
     if let Some(context) = args.context {
         command.arg("-C").arg(context.to_string());

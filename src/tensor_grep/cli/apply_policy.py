@@ -306,6 +306,26 @@ def _run_ruleset_scan_policy(
         ruleset_name=ruleset_meta["name"],
         baseline_path=policy.baseline,
     )
+    backend_names = [
+        str(item) for item in payload.get("backends", []) if isinstance(item, str) and item.strip()
+    ]
+    if backend_names and not {
+        "AstBackend",
+        "AstGrepWrapperBackend",
+    }.intersection(backend_names):
+        result = _command_result(
+            passed=False,
+            detail=(
+                "Ruleset scan requires an AST backend; "
+                f"resolved {', '.join(sorted(backend_names))}."
+            ),
+        )
+        result["new_findings"] = 0
+        result["ruleset"] = ruleset_meta["name"]
+        result["language"] = ruleset_meta["language"]
+        if policy.baseline is not None:
+            result["baseline_path"] = policy.baseline
+        return result
     baseline_summary = payload.get("baseline")
     if isinstance(baseline_summary, dict):
         new_findings = int(baseline_summary.get("new_findings", 0))

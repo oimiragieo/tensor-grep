@@ -1054,6 +1054,33 @@ fn test_routing_falls_back_to_native_when_ripgrep_is_unavailable() {
 }
 
 #[test]
+fn test_default_frontdoor_falls_back_to_native_when_ripgrep_is_unavailable() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("hello")
+        .arg(dir.path())
+        .env("PATH", "")
+        .env("TG_DISABLE_RG", "1")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("hello world"), "stdout={stdout}");
+    assert!(stdout.contains("hello again friend"), "stdout={stdout}");
+}
+
+#[test]
 fn test_search_json_and_ndjson_are_mutually_exclusive() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());

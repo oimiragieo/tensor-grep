@@ -624,6 +624,38 @@ def test_ruleset_scan_uses_parent_directory_for_file_targets(
     assert captured["project_cfg"]["root_dir"] == source_file.parent
 
 
+def test_ruleset_scan_fails_closed_when_no_ast_backend_is_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli.apply_policy import RulesetScanPolicy, _run_ruleset_scan_policy
+
+    source_file = tmp_path / "sample.py"
+    source_file.write_text("eval(user_input)\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._run_ast_scan_payload",
+        lambda *_args, **_kwargs: {
+            "routing_backend": "AstBackend",
+            "backends": ["CpuBackend"],
+            "findings": [],
+        },
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.rule_packs.resolve_rule_pack",
+        lambda pack, language: ({"name": pack, "language": language}, [{"id": "x"}]),
+    )
+
+    result = _run_ruleset_scan_policy(
+        RulesetScanPolicy(enabled=True, pack="auth-safe", language="python", baseline=None),
+        source_file,
+        tmp_path,
+    )
+
+    assert result["passed"] is False
+    assert result["new_findings"] == 0
+    assert "requires an AST backend" in result["detail"]
+
+
 def test_ast_workflow_run_command_requires_apply_when_policy_is_set(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
