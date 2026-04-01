@@ -687,6 +687,8 @@ def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatc
 
 def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_path):
     module = _load_script_module("run_benchmarks_script_samples", "benchmarks/run_benchmarks.py")
+    tg_binary = tmp_path / "tg"
+    tg_binary.write_text("fake tg", encoding="utf-8")
     monkeypatch.setattr("sys.argv", ["run_benchmarks.py"])
     monkeypatch.setattr(
         module,
@@ -702,6 +704,7 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
     monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
     monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda: tg_binary)
     monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
 
     timing_samples = iter([
