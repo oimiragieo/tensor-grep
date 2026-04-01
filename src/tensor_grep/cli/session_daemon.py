@@ -29,6 +29,7 @@ _DAEMON_METADATA_FILE = "daemon.json"
 _DAEMON_HOST = "127.0.0.1"
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
+_DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
 
 
 def _daemon_metadata_path(root: Path) -> Path:
@@ -39,7 +40,10 @@ def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
     metadata_path = _daemon_metadata_path(root)
     if not metadata_path.exists():
         return None
-    return cast(dict[str, Any], json.loads(metadata_path.read_text(encoding="utf-8")))
+    try:
+        return cast(dict[str, Any], json.loads(metadata_path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
@@ -211,6 +215,19 @@ def request_session_daemon(path: str, request: dict[str, Any]) -> dict[str, Any]
     )
 
 
+def _load_payload_with_status_retry(
+    cache: _SessionServeCache, session_id: str, path: str
+) -> tuple[dict[str, Any], str]:
+    deadline = time.time() + _DAEMON_SESSION_LOOKUP_RETRY_SECONDS
+    while True:
+        try:
+            return cache.load_with_status(session_id, path)
+        except FileNotFoundError:
+            if time.time() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -274,7 +291,8 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "request_count": server.request_count,
                 }
             elif command == "health":
-                payload, cache_status = server.payload_cache.load_with_status(
+                payload, cache_status = _load_payload_with_status_retry(
+                    server.payload_cache,
                     request_session_id,
                     request_path,
                 )
@@ -286,7 +304,8 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 }
             else:
                 try:
-                    payload, cache_status = server.payload_cache.load_with_status(
+                    payload, cache_status = _load_payload_with_status_retry(
+                        server.payload_cache,
                         request_session_id,
                         request_path,
                     )
@@ -306,7 +325,8 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         payload_cache=server.payload_cache,
                     )
                     server.payload_cache.record_refresh()
-                    payload, cache_status = server.payload_cache.load_with_status(
+                    payload, cache_status = _load_payload_with_status_retry(
+                        server.payload_cache,
                         request_session_id,
                         request_path,
                     )

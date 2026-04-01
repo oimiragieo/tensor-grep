@@ -3817,6 +3817,7 @@ def mcp_server() -> None:
 @app.command()
 def upgrade() -> None:
     """Upgrade tensor-grep to the latest version published on PyPI."""
+    import importlib.metadata
     import subprocess
     import sys
 
@@ -3859,14 +3860,24 @@ def upgrade() -> None:
                         errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
         raise RuntimeError("; ".join(errors))
 
+    def _installed_version() -> str | None:
+        try:
+            return importlib.metadata.version("tensor-grep")
+        except importlib.metadata.PackageNotFoundError:
+            return None
+
     typer.echo("Upgrading tensor-grep to the latest version...")
 
     try:
+        previous_version = _installed_version()
         result, method = _run_upgrade()
+        current_version = _installed_version()
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )
-        if "Requirement already satisfied" in output:
+        if current_version is not None and current_version == previous_version:
+            typer.echo(f"tensor-grep is already at the latest PyPI version ({current_version}).")
+        elif "Requirement already satisfied" in output:
             typer.echo("tensor-grep is already up to date!")
         else:
             typer.echo(f"Successfully upgraded tensor-grep via {method}!")

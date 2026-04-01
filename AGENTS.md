@@ -182,6 +182,21 @@ Preferred approach:
 3. rerun narrow checks and relevant benchmarks
 4. push only the accepted change
 
+## PR Title And Release Intent
+
+AI-generated PRs must use conventional titles so CI can infer semantic-release intent.
+
+Use this schema:
+
+- `feat: ...` => minor release
+- `fix: ...` or `perf: ...` => patch release
+- `feat!: ...` or `fix!: ...` => major release
+- `docs: ...`, `test: ...`, `chore: ...`, `ci: ...`, `build: ...` => no release
+
+Release-bearing PRs must use `Squash and merge` so the validated PR title becomes the commit subject on `main`.
+
+Do not manually create release tags when semantic-release is active.
+
 ## Documentation Discipline
 
 When a candidate is accepted or explicitly rejected, update:

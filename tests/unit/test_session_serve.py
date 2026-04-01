@@ -2,6 +2,7 @@ import json
 from io import BytesIO, StringIO
 from pathlib import Path
 
+import tensor_grep.cli.session_daemon as session_daemon_module
 from tensor_grep.cli import session_store
 from tensor_grep.cli.session_daemon import _SessionDaemonHandler, _ThreadedSessionDaemon
 
@@ -203,5 +204,83 @@ def test_session_daemon_returns_invalid_request_for_malformed_json(tmp_path: Pat
 
         payload = json.loads(handler.wfile.getvalue().decode("utf-8").strip())
         assert payload["error"]["code"] == "invalid_request"
+    finally:
+        server.server_close()
+
+
+def test_session_daemon_treats_disappearing_metadata_as_stale(tmp_path: Path, monkeypatch) -> None:
+    project = _build_project(tmp_path / "project", "payments", "create_invoice")
+    metadata_path = session_daemon_module._daemon_metadata_path(project)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text('{"port": 1}', encoding="utf-8")
+
+    original_read_text = Path.read_text
+
+    def _missing_on_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self == metadata_path:
+            raise FileNotFoundError(self)
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _missing_on_read)
+
+    assert session_daemon_module._read_daemon_metadata(project) is None
+
+
+def test_session_daemon_retries_initial_missing_session_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = _build_project(tmp_path / "project", "payments", "create_invoice")
+    server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0))
+    calls = {"count": 0}
+    session_payload = {
+        "repo_map": {
+            "path": str(project),
+            "files": [str((project / "src" / "payments.py").resolve())],
+            "symbols": [],
+        }
+    }
+
+    def _flaky_load_with_status(session_id: str, path: str) -> tuple[dict[str, object], str]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise FileNotFoundError(f"Session not found: {session_id}")
+        return session_payload, "miss"
+
+    monkeypatch.setattr(server.payload_cache, "load_with_status", _flaky_load_with_status)
+    monkeypatch.setattr(
+        session_daemon_module,
+        "serve_session_request",
+        lambda session_id, request, path, payload=None: {
+            "version": 1,
+            "session_id": session_id,
+            "routing_reason": "session-context",
+            "files": payload["repo_map"]["files"],
+        },
+    )
+    monkeypatch.setattr(session_daemon_module.time, "sleep", lambda _seconds: None)
+
+    try:
+        opened = session_store.open_session(str(project))
+        handler = _SessionDaemonHandler.__new__(_SessionDaemonHandler)
+        handler.server = server
+        handler.rfile = BytesIO(
+            (
+                json.dumps({
+                    "command": "context",
+                    "session_id": opened.session_id,
+                    "path": str(project),
+                    "query": "invoice",
+                })
+                + "\n"
+            ).encode("utf-8")
+        )
+        handler.wfile = BytesIO()
+
+        _SessionDaemonHandler.handle(handler)
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8").strip())
+        assert payload["session_id"] == opened.session_id
+        assert payload["routing_reason"] == "session-context"
+        assert calls["count"] == 2
     finally:
         server.server_close()

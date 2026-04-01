@@ -31,11 +31,18 @@ This checklist reflects the current enterprise release pipeline:
    uv run mypy src/tensor_grep
    uv run pytest tests -v --tb=short
    ```
+5. Set the PR title to the intended semantic-release bump so squash merge can drive versioning:
+   - `feat: ...` -> minor
+   - `fix: ...` or `perf: ...` -> patch
+   - `feat!: ...` / `fix!: ...` -> major
+   - `docs: ...`, `test: ...`, `chore: ...`, `ci: ...`, `build: ...` -> no release
+6. Merge release-bearing PRs with **Squash and merge** so the validated PR title becomes the commit subject on `main`.
 
 ## 2. CI gate requirements on `main`
 
 1. Push to `main` only after local checks pass.
 2. Ensure all required jobs are green:
+   - `release-intent` on pull requests
    - `Formatting & Linting`
    - `release-readiness`
    - `package-manager-readiness`
@@ -48,26 +55,27 @@ This checklist reflects the current enterprise release pipeline:
 ## 3. Release and publication flow
 
 1. Do not manually bump tags when semantic-release is active.
-2. Let the `Semantic Release` job create:
+2. Let the `Semantic Release` job infer the next version from the squash-merge commit title created from the PR title.
+3. Let the `Semantic Release` job create:
    - release commit
    - Git tag `vX.Y.Z`
    - GitHub release metadata
-3. If `publish_pypi=true`, confirm downstream jobs pass:
+4. If `publish_pypi=true`, confirm downstream jobs pass:
    - `build-pypi-wheels`
    - `build-pypi-sdist`
    - `validate-pypi-artifacts`
    - `publish-pypi`
    - `publish-success-gate`
    - parity gate step `Verify release version parity across tag/assets/PyPI`
-4. On tag release workflow, confirm GitHub release asset verification passes:
+5. On tag release workflow, confirm GitHub release asset verification passes:
    - `verify-release-assets`
    - step `Verify uploaded release assets and checksum coverage`
    - includes required package-manager bundle assets (`tensor-grep.rb`, `oimiragieo.tensor-grep.yaml`, `PUBLISH_INSTRUCTIONS.md`)
    - includes `BUNDLE_CHECKSUMS.txt` parity validation for package-manager bundle assets
-5. Confirm terminal publish gate is green:
+6. Confirm terminal publish gate is green:
    - `release-success-gate` (depends on parity + npm publish + docs deploy)
    - includes final npm + PyPI registry parity re-checks before success confirmation
-5. Verify published version parity:
+7. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version
    - npm registry `latest` equals `X.Y.Z` (verified by release workflow parity step)
