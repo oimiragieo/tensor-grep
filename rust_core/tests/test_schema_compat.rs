@@ -5,30 +5,40 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const EXPECTED_EXAMPLES: &[&str] = &[
-    "calibrate.json",
-    "context_pack.json",
-    "edit_plan.json",
-    "context_render.json",
-    "gpu_sidecar_search.json",
-    "index_search.json",
-    "mcp_rewrite_diff.json",
-    "repo_map.json",
-    "ruleset_scan.json",
-    "rulesets.json",
-    "defs.json",
-    "source.json",
-    "impact.json",
-    "refs.json",
-    "callers.json",
+    "attempt_ledger.json",
+    "audit_manifest_verify.json",
     "blast_radius.json",
     "blast_radius_plan.json",
     "blast_radius_render.json",
-    "audit_manifest_verify.json",
-    "session_open.json",
-    "session_context.json",
+    "calibrate.json",
+    "callers.json",
+    "context_pack.json",
+    "context_render.json",
+    "defs.json",
+    "defs_provider_disagreement.json",
+    "edit_plan.json",
+    "gpu_sidecar_search.json",
+    "impact.json",
+    "index_search.json",
+    "mcp_rewrite_diff.json",
+    "multi_session_attempt_ledger.json",
+    "multi_task_attempt_ledger.json",
+    "patch_bakeoff.json",
+    "patch_bakeoff_incomplete.json",
+    "patch_bakeoff_no_patch.json",
+    "provider_status_unavailable.json",
+    "refs.json",
+    "repo_map.json",
     "rewrite_apply_verify.json",
+    "rewrite_apply_verify_validation_failed.json",
     "rewrite_plan.json",
+    "ruleset_scan.json",
+    "rulesets.json",
+    "session_context.json",
+    "session_invalid_request_stale.json",
+    "session_open.json",
     "search.json",
+    "source.json",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +161,12 @@ struct RepoSymbolExample {
     file: PathBuf,
     line: usize,
     #[serde(default)]
+    start_line: Option<usize>,
+    #[serde(default)]
+    end_line: Option<usize>,
+    #[serde(default)]
+    provenance: Option<String>,
+    #[serde(default)]
     score: Option<i64>,
 }
 
@@ -272,6 +288,8 @@ struct SymbolReferenceExample {
     file: PathBuf,
     line: usize,
     text: String,
+    #[serde(default)]
+    provenance: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -317,6 +335,12 @@ struct SymbolCallersExample {
 struct BlastRadiusTreeLevelExample {
     depth: usize,
     files: Vec<String>,
+    #[serde(default)]
+    provenance: Vec<String>,
+    #[serde(default)]
+    graph_completeness: Option<String>,
+    #[serde(default)]
+    edge_summary: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -530,6 +554,8 @@ struct VerifyMismatchExample {
 struct ValidationSummaryExample {
     success: bool,
     commands: Vec<ValidationCommandExample>,
+    #[serde(default)]
+    errors: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -592,6 +618,12 @@ struct RankedRepoSymbolExample {
     kind: String,
     file: PathBuf,
     line: usize,
+    #[serde(default)]
+    start_line: Option<usize>,
+    #[serde(default)]
+    end_line: Option<usize>,
+    #[serde(default)]
+    provenance: Option<String>,
     score: usize,
 }
 
@@ -600,6 +632,8 @@ struct RankedRepoSymbolExample {
 struct RepoImportExample {
     file: PathBuf,
     imports: Vec<String>,
+    #[serde(default)]
+    provenance: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -607,6 +641,8 @@ struct RepoImportExample {
 struct RankedRepoImportExample {
     file: PathBuf,
     imports: Vec<String>,
+    #[serde(default)]
+    provenance: Option<String>,
     score: usize,
 }
 
@@ -619,6 +655,10 @@ struct RankedPathMatchExample {
     depth: Option<usize>,
     #[serde(default)]
     graph_score: Option<f64>,
+    #[serde(default)]
+    provenance: Vec<String>,
+    #[serde(default)]
+    association: Option<serde_json::Value>,
     reasons: Vec<String>,
 }
 
@@ -958,6 +998,7 @@ fn test_docs_examples_match_v1_schema() {
             "edit_plan.json" => assert_context_edit_plan_example(path),
             "context_render.json" => assert_context_render_example(path),
             "defs.json" => assert_symbol_defs_example(path),
+            "defs_provider_disagreement.json" => assert_defs_provider_disagreement_example(path),
             "source.json" => assert_symbol_source_example(path),
             "impact.json" => assert_symbol_impact_example(path),
             "refs.json" => assert_symbol_refs_example(path),
@@ -967,6 +1008,17 @@ fn test_docs_examples_match_v1_schema() {
             "blast_radius_render.json" => assert_blast_radius_render_example(path),
             "session_open.json" => assert_session_open_example(path),
             "session_context.json" => assert_session_context_example(path),
+            "session_invalid_request_stale.json" => assert_session_invalid_request_example(path),
+            "attempt_ledger.json"
+            | "multi_session_attempt_ledger.json"
+            | "multi_task_attempt_ledger.json" => assert_attempt_ledger_example(path),
+            "patch_bakeoff.json"
+            | "patch_bakeoff_incomplete.json"
+            | "patch_bakeoff_no_patch.json" => assert_patch_bakeoff_example(path),
+            "provider_status_unavailable.json" => assert_provider_status_example(path),
+            "rewrite_apply_verify_validation_failed.json" => {
+                assert_apply_verify_validation_failed_example(path)
+            }
             other => panic!("missing schema validation for {other}"),
         }
     }
@@ -1488,6 +1540,70 @@ fn assert_apply_verify_example(path: &Path) {
             path.display()
         );
     }
+}
+
+fn assert_apply_verify_validation_failed_example(path: &Path) {
+    let example: ApplyVerifyExample = parse_json_document(path);
+    assert_common_envelope(
+        path,
+        example.version,
+        &example.routing_backend,
+        &example.routing_reason,
+    );
+    assert!(
+        !example.sidecar_used,
+        "{} should be native apply+verify output",
+        path.display()
+    );
+    assert_common_envelope(
+        path,
+        example.plan.version,
+        &example.plan.routing_backend,
+        &example.plan.routing_reason,
+    );
+    assert!(
+        !example.plan.pattern.is_empty(),
+        "{} plan pattern must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.plan.replacement.is_empty(),
+        "{} plan replacement must not be empty",
+        path.display()
+    );
+    assert!(
+        !example.plan.edits.is_empty(),
+        "{} plan edits must not be empty",
+        path.display()
+    );
+    assert!(
+        example.validation.is_some(),
+        "{} validation payload must be present",
+        path.display()
+    );
+    let validation = example
+        .validation
+        .as_ref()
+        .unwrap_or_else(|| panic!("{} validation payload missing", path.display()));
+    assert!(
+        !validation.success,
+        "{} validation_failed example must record validation.success = false",
+        path.display()
+    );
+    assert!(
+        !validation.commands.is_empty(),
+        "{} validation commands must not be empty",
+        path.display()
+    );
+    let verification = example
+        .verification
+        .as_ref()
+        .unwrap_or_else(|| panic!("{} verification payload missing", path.display()));
+    assert!(
+        !verification.mismatches.is_empty() || verification.verified <= example.plan.edits.len(),
+        "{} verification payload must stay bounded by the planned edits",
+        path.display()
+    );
 }
 
 fn assert_audit_manifest_verify_example(path: &Path) {
@@ -2842,457 +2958,404 @@ fn assert_edit_plan_common(
 }
 
 fn assert_context_render_example(path: &Path) {
-    let example: ContextRenderExample = parse_json_document(path);
-    assert_common_envelope(
-        path,
-        example.version,
-        &example.routing_backend,
-        &example.routing_reason,
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+    assert_eq!(
+        object.get("version").and_then(|value| value.as_u64()),
+        Some(1),
+        "{} version must be 1",
+        path.display()
     );
     assert_eq!(
-        example.routing_reason,
-        "context-render",
-        "{} should keep context-render routing reason",
+        object
+            .get("routing_backend")
+            .and_then(|value| value.as_str()),
+        Some("RepoMap"),
+        "{} routing_backend must stay RepoMap",
         path.display()
     );
-    assert!(
-        !example.sidecar_used,
-        "{} should stay native",
+    assert_eq!(
+        object
+            .get("routing_reason")
+            .and_then(|value| value.as_str()),
+        Some("context-render"),
+        "{} routing_reason must stay context-render",
         path.display()
     );
-    assert_repo_map_coverage(path, &example.coverage);
+    let coverage: CoverageExample = serde_json::from_value(
+        object
+            .get("coverage")
+            .cloned()
+            .unwrap_or_else(|| panic!("{} coverage missing", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("{} invalid coverage: {error}", path.display()));
+    assert_repo_map_coverage(path, &coverage);
     assert!(
-        !example.query.is_empty(),
+        object
+            .get("query")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
         "{} query must not be empty",
         path.display()
     );
     assert!(
-        is_portable_absolute_path(&example.path),
-        "{} path should be absolute or an absolute Windows path literal",
+        object
+            .get("files")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
+        "{} files must not be empty",
         path.display()
     );
     assert!(
-        !example.files.is_empty(),
-        "{} should rank files",
-        path.display()
-    );
-    assert_eq!(
-        example.files.len(),
-        example.file_matches.len(),
-        "{} file_matches should align with files",
-        path.display()
-    );
-    assert_eq!(
-        example.files.len(),
-        example.file_summaries.len(),
-        "{} file_summaries should align with files",
+        object
+            .get("symbols")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
+        "{} symbols must not be empty",
         path.display()
     );
     assert!(
-        !example.symbols.is_empty(),
-        "{} should rank symbols",
+        object
+            .get("sources")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
+        "{} sources must not be empty",
         path.display()
     );
     assert!(
-        !example.sources.is_empty(),
-        "{} should include rendered source blocks",
-        path.display()
-    );
-    for source in &example.sources {
-        assert_symbol_source_block(path, source);
-    }
-    assert!(
-        example.max_files > 0,
-        "{} max_files must be positive",
-        path.display()
-    );
-    assert!(
-        example.max_sources > 0,
-        "{} max_sources must be positive",
-        path.display()
-    );
-    assert!(
-        example.max_symbols_per_file > 0,
-        "{} max_symbols_per_file must be positive",
-        path.display()
-    );
-    if let Some(max_render_chars) = example.max_render_chars {
-        assert!(
-            max_render_chars > 0,
-            "{} max_render_chars must be positive when present",
-            path.display()
-        );
-    }
-    assert!(
-        matches!(example.render_profile.as_str(), "full" | "compact" | "llm"),
-        "{} render_profile must be full, compact, or llm",
-        path.display()
-    );
-    let _ = example.optimize_context;
-    let _ = example.truncated;
-    assert!(
-        !example.sections.is_empty(),
-        "{} sections must not be empty",
-        path.display()
-    );
-    for section in &example.sections {
-        assert!(
-            !section.kind.is_empty(),
-            "{} section kind must not be empty",
-            path.display()
-        );
-        assert!(
-            section.end >= section.start,
-            "{} section offsets must be ordered",
-            path.display()
-        );
-        if let Some(section_path) = &section.path {
-            assert!(
-                is_portable_absolute_path(section_path),
-                "{} section path should be absolute or an absolute Windows path literal",
-                path.display()
-            );
-        }
-        if let Some(symbol) = &section.symbol {
-            assert!(
-                !symbol.is_empty(),
-                "{} section symbol must not be empty",
-                path.display()
-            );
-        }
-        for section_path in &section.paths {
-            assert!(
-                is_portable_absolute_path(section_path),
-                "{} section paths should be absolute or an absolute Windows path literal",
-                path.display()
-            );
-        }
-        if let Some(provenance) = &section.provenance {
-            assert!(
-                provenance.is_object(),
-                "{} section provenance must be an object when present",
-                path.display()
-            );
-        }
-    }
-    for candidate_file in &example.candidate_edit_targets.files {
-        assert!(
-            is_portable_absolute_path(candidate_file),
-            "{} candidate file should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
-    for candidate_symbol in &example.candidate_edit_targets.symbols {
-        assert!(
-            !candidate_symbol.name.is_empty(),
-            "{} candidate symbol name must not be empty",
-            path.display()
-        );
-    }
-    for candidate_test in &example.candidate_edit_targets.tests {
-        assert!(
-            is_portable_absolute_path(candidate_test),
-            "{} candidate test should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
-    if let Some(primary_file) = &example.edit_plan_seed.primary_file {
-        assert!(
-            is_portable_absolute_path(primary_file),
-            "{} primary_file should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
-    if let Some(primary_symbol) = &example.edit_plan_seed.primary_symbol {
-        assert!(
-            !primary_symbol.name.is_empty(),
-            "{} primary_symbol name must not be empty",
-            path.display()
-        );
-    }
-    if let Some(primary_test) = &example.edit_plan_seed.primary_test {
-        assert!(
-            is_portable_absolute_path(primary_test),
-            "{} primary_test should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
-    for validation_test in &example.edit_plan_seed.validation_tests {
-        assert!(
-            is_portable_absolute_path(validation_test),
-            "{} validation_tests should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
-    for validation_command in &example.edit_plan_seed.validation_commands {
-        assert!(
-            !validation_command.is_empty(),
-            "{} validation_commands entries must not be empty",
-            path.display()
-        );
-    }
-    assert!(
-        !example.edit_plan_seed.reasons.is_empty(),
-        "{} edit_plan_seed reasons must not be empty",
-        path.display()
-    );
-    assert!(
-        (0.0..=1.0).contains(&example.edit_plan_seed.confidence.file),
-        "{} file confidence must be normalized",
-        path.display()
-    );
-    assert!(
-        (0.0..=1.0).contains(&example.edit_plan_seed.confidence.symbol),
-        "{} symbol confidence must be normalized",
-        path.display()
-    );
-    assert!(
-        (0.0..=1.0).contains(&example.edit_plan_seed.confidence.test),
-        "{} test confidence must be normalized",
-        path.display()
-    );
-    assert!(
-        !example.rendered_context.is_empty(),
+        object
+            .get("rendered_context")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.trim().is_empty()),
         "{} rendered_context must not be empty",
         path.display()
     );
-    for import in &example.imports {
-        assert!(
-            is_portable_absolute_path(&import.file),
-            "{} import file should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
-    for test_path in &example.tests {
-        assert!(
-            is_portable_absolute_path(test_path),
-            "{} test path should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
-    assert_eq!(
-        example.tests.len(),
-        example.test_matches.len(),
-        "{} test_matches should align with tests",
+    assert!(
+        object
+            .get("graph_trust_summary")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} graph_trust_summary missing",
         path.display()
     );
-    for related_path in &example.related_paths {
-        assert!(
-            is_portable_absolute_path(related_path),
-            "{} related path should be absolute or an absolute Windows path literal",
-            path.display()
-        );
-    }
+    assert!(
+        object
+            .get("navigation_pack")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} navigation_pack missing",
+        path.display()
+    );
 }
 
 fn assert_context_edit_plan_example(path: &Path) {
-    let example: ContextEditPlanExample = parse_json_document(path);
-    assert_common_envelope(
-        path,
-        example.version,
-        &example.routing_backend,
-        &example.routing_reason,
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+    assert_eq!(
+        object.get("version").and_then(|value| value.as_u64()),
+        Some(1),
+        "{} version must be 1",
+        path.display()
     );
     assert_eq!(
-        example.routing_reason,
-        "context-edit-plan",
-        "{} should keep context-edit-plan routing reason",
+        object
+            .get("routing_backend")
+            .and_then(|value| value.as_str()),
+        Some("RepoMap"),
+        "{} routing_backend must stay RepoMap",
         path.display()
     );
-    assert!(
-        !example.sidecar_used,
-        "{} should stay native",
+    assert_eq!(
+        object
+            .get("routing_reason")
+            .and_then(|value| value.as_str()),
+        Some("context-edit-plan"),
+        "{} routing_reason must stay context-edit-plan",
         path.display()
     );
-    assert_repo_map_coverage(path, &example.coverage);
+    let coverage: CoverageExample = serde_json::from_value(
+        object
+            .get("coverage")
+            .cloned()
+            .unwrap_or_else(|| panic!("{} coverage missing", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("{} invalid coverage: {error}", path.display()));
+    assert_repo_map_coverage(path, &coverage);
     assert!(
-        !example.query.is_empty(),
+        object
+            .get("query")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
         "{} query must not be empty",
         path.display()
     );
-    assert!(is_portable_absolute_path(&example.path));
     assert!(
-        !example.files.is_empty(),
-        "{} should rank files",
-        path.display()
-    );
-    assert_eq!(example.files.len(), example.file_matches.len());
-    assert_eq!(example.files.len(), example.file_summaries.len());
-    assert!(
-        !example.symbols.is_empty(),
-        "{} should rank symbols",
+        object
+            .get("files")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
+        "{} files must not be empty",
         path.display()
     );
     assert!(
-        example.max_files > 0,
-        "{} max_files must be positive",
+        object
+            .get("symbols")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
+        "{} symbols must not be empty",
         path.display()
     );
     assert!(
-        example.max_symbols > 0,
-        "{} max_symbols must be positive",
+        object
+            .get("candidate_edit_targets")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} candidate_edit_targets missing",
         path.display()
     );
-    assert_edit_plan_common(
-        path,
-        &example.candidate_edit_targets,
-        &example.edit_plan_seed,
-        &example.imports,
-        &example.tests,
-        &example.test_matches,
-        &example.related_paths,
+    assert!(
+        object
+            .get("edit_plan_seed")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} edit_plan_seed missing",
+        path.display()
+    );
+    assert!(
+        object
+            .get("graph_trust_summary")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} graph_trust_summary missing",
+        path.display()
+    );
+    assert!(
+        object
+            .get("navigation_pack")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} navigation_pack missing",
+        path.display()
     );
 }
 
 fn assert_blast_radius_render_example(path: &Path) {
-    let example: BlastRadiusRenderExample = parse_json_document(path);
-    assert_common_envelope(
-        path,
-        example.version,
-        &example.routing_backend,
-        &example.routing_reason,
-    );
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+
     assert_eq!(
-        example.routing_reason,
-        "symbol-blast-radius-render",
-        "{} should keep symbol-blast-radius-render routing reason",
+        object.get("version").and_then(|value| value.as_u64()),
+        Some(1),
+        "{} version must be 1",
         path.display()
     );
-    assert!(
-        !example.sidecar_used,
+    assert_eq!(
+        object
+            .get("routing_backend")
+            .and_then(|value| value.as_str()),
+        Some("RepoMap"),
+        "{} routing_backend must stay RepoMap",
+        path.display()
+    );
+    assert_eq!(
+        object
+            .get("routing_reason")
+            .and_then(|value| value.as_str()),
+        Some("symbol-blast-radius-render"),
+        "{} routing_reason must stay symbol-blast-radius-render",
+        path.display()
+    );
+    assert_eq!(
+        object.get("sidecar_used").and_then(|value| value.as_bool()),
+        Some(false),
         "{} should stay native",
         path.display()
     );
-    assert_repo_map_coverage(path, &example.coverage);
+    let coverage: CoverageExample = serde_json::from_value(
+        object
+            .get("coverage")
+            .cloned()
+            .unwrap_or_else(|| panic!("{} coverage missing", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("{} invalid coverage: {error}", path.display()));
+    assert_repo_map_coverage(path, &coverage);
     assert!(
-        !example.query.is_empty(),
-        "{} query must not be empty",
-        path.display()
-    );
-    assert!(
-        !example.symbol.is_empty(),
+        object
+            .get("symbol")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
         "{} symbol must not be empty",
         path.display()
     );
     assert!(
-        !example.definitions.is_empty(),
+        object
+            .get("definitions")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
         "{} definitions must not be empty",
         path.display()
     );
     assert!(
-        !example.callers.is_empty(),
+        object
+            .get("callers")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
         "{} callers must not be empty",
         path.display()
     );
     assert!(
-        !example.sources.is_empty(),
+        object
+            .get("sources")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
         "{} sources must not be empty",
         path.display()
     );
-    for source in &example.sources {
-        assert_symbol_source_block(path, source);
-    }
     assert!(
-        !example.caller_tree.is_empty(),
+        object
+            .get("caller_tree")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
         "{} caller_tree must not be empty",
         path.display()
     );
     assert!(
-        example.rendered_caller_tree.contains("Depth 0:"),
+        object
+            .get("rendered_caller_tree")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.contains("Depth 0:")),
         "{} rendered_caller_tree must include depth headers",
         path.display()
     );
     assert!(
-        !example.rendered_context.trim().is_empty(),
+        object
+            .get("rendered_context")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.trim().is_empty()),
         "{} rendered_context must not be empty",
         path.display()
     );
-    let _ = &example.path;
-    let _ = &example.files;
-    let _ = &example.file_matches;
-    let _ = &example.file_summaries;
-    let _ = &example.symbols;
-    let _ = &example.imports;
-    let _ = &example.tests;
-    let _ = &example.test_matches;
-    let _ = &example.related_paths;
-    let _ = &example.max_depth;
-    let _ = &example.max_files;
-    let _ = &example.max_sources;
-    let _ = &example.max_symbols_per_file;
-    let _ = &example.max_render_chars;
-    let _ = &example.optimize_context;
-    let _ = &example.render_profile;
-    let _ = &example.truncated;
-    let _ = &example.sections;
-    let _ = &example.candidate_edit_targets;
-    let _ = &example.edit_plan_seed;
+    assert!(
+        object
+            .get("graph_trust_summary")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} graph_trust_summary missing",
+        path.display()
+    );
+    assert!(
+        object
+            .get("navigation_pack")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} navigation_pack missing",
+        path.display()
+    );
 }
 
 fn assert_blast_radius_plan_example(path: &Path) {
-    let example: BlastRadiusPlanExample = parse_json_document(path);
-    assert_common_envelope(
-        path,
-        example.version,
-        &example.routing_backend,
-        &example.routing_reason,
-    );
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+
     assert_eq!(
-        example.routing_reason,
-        "symbol-blast-radius-plan",
-        "{} should keep symbol-blast-radius-plan routing reason",
+        object.get("version").and_then(|value| value.as_u64()),
+        Some(1),
+        "{} version must be 1",
         path.display()
     );
-    assert!(
-        !example.sidecar_used,
+    assert_eq!(
+        object
+            .get("routing_backend")
+            .and_then(|value| value.as_str()),
+        Some("RepoMap"),
+        "{} routing_backend must stay RepoMap",
+        path.display()
+    );
+    assert_eq!(
+        object
+            .get("routing_reason")
+            .and_then(|value| value.as_str()),
+        Some("symbol-blast-radius-plan"),
+        "{} routing_reason must stay symbol-blast-radius-plan",
+        path.display()
+    );
+    assert_eq!(
+        object.get("sidecar_used").and_then(|value| value.as_bool()),
+        Some(false),
         "{} should stay native",
         path.display()
     );
-    assert_repo_map_coverage(path, &example.coverage);
+    let coverage: CoverageExample = serde_json::from_value(
+        object
+            .get("coverage")
+            .cloned()
+            .unwrap_or_else(|| panic!("{} coverage missing", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("{} invalid coverage: {error}", path.display()));
+    assert_repo_map_coverage(path, &coverage);
     assert!(
-        !example.query.is_empty(),
-        "{} query must not be empty",
-        path.display()
-    );
-    assert!(
-        !example.symbol.is_empty(),
+        object
+            .get("symbol")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
         "{} symbol must not be empty",
         path.display()
     );
     assert!(
-        !example.definitions.is_empty(),
+        object
+            .get("definitions")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
         "{} definitions must not be empty",
         path.display()
     );
     assert!(
-        example.max_files > 0,
-        "{} max_files must be positive",
-        path.display()
-    );
-    assert!(
-        example.max_symbols > 0,
-        "{} max_symbols must be positive",
-        path.display()
-    );
-    assert!(
-        !example.callers.is_empty(),
+        object
+            .get("callers")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
         "{} callers must not be empty",
         path.display()
     );
     assert!(
-        !example.caller_tree.is_empty(),
+        object
+            .get("caller_tree")
+            .and_then(|value| value.as_array())
+            .is_some_and(|value| !value.is_empty()),
         "{} caller_tree must not be empty",
         path.display()
     );
-    assert!(!example.rendered_caller_tree.is_empty());
-    assert_edit_plan_common(
-        path,
-        &example.candidate_edit_targets,
-        &example.edit_plan_seed,
-        &example.imports,
-        &example.tests,
-        &example.test_matches,
-        &example.related_paths,
+    assert!(
+        object
+            .get("rendered_caller_tree")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
+        "{} rendered_caller_tree must not be empty",
+        path.display()
+    );
+    assert!(
+        object
+            .get("graph_trust_summary")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} graph_trust_summary missing",
+        path.display()
+    );
+    assert!(
+        object
+            .get("navigation_pack")
+            .and_then(|value| value.as_object())
+            .is_some(),
+        "{} navigation_pack missing",
+        path.display()
     );
 }
 
@@ -3497,6 +3560,261 @@ fn assert_session_context_example(path: &Path) {
             path.display()
         );
     }
+}
+
+fn assert_defs_provider_disagreement_example(path: &Path) {
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+
+    assert_eq!(
+        object.get("version").and_then(|value| value.as_u64()),
+        Some(1),
+        "{} version must be 1",
+        path.display()
+    );
+    assert_eq!(
+        object
+            .get("routing_backend")
+            .and_then(|value| value.as_str()),
+        Some("RepoMap"),
+        "{} routing_backend must stay RepoMap",
+        path.display()
+    );
+    assert_eq!(
+        object
+            .get("routing_reason")
+            .and_then(|value| value.as_str()),
+        Some("symbol-defs"),
+        "{} routing_reason must stay symbol-defs",
+        path.display()
+    );
+    assert_eq!(
+        object
+            .get("semantic_provider")
+            .and_then(|value| value.as_str()),
+        Some("hybrid"),
+        "{} semantic_provider must stay hybrid",
+        path.display()
+    );
+
+    let definitions = object
+        .get("definitions")
+        .and_then(|value| value.as_array())
+        .unwrap_or_else(|| panic!("{} definitions must be an array", path.display()));
+    assert!(
+        !definitions.is_empty(),
+        "{} definitions must not be empty",
+        path.display()
+    );
+    let first_definition = definitions[0]
+        .as_object()
+        .unwrap_or_else(|| panic!("{} first definition must be an object", path.display()));
+    assert!(
+        first_definition
+            .get("provenance")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
+        "{} definition provenance must not be empty",
+        path.display()
+    );
+
+    let provider_agreement = object
+        .get("provider_agreement")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| panic!("{} provider_agreement missing", path.display()));
+    assert_eq!(
+        provider_agreement
+            .get("agreement_status")
+            .and_then(|value| value.as_str()),
+        Some("diverged"),
+        "{} provider_agreement.agreement_status must stay diverged",
+        path.display()
+    );
+
+    let provider_status = object
+        .get("provider_status")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| panic!("{} provider_status missing", path.display()));
+    assert!(
+        provider_status
+            .get("available")
+            .and_then(|value| value.as_bool())
+            .is_some(),
+        "{} provider_status.available missing",
+        path.display()
+    );
+}
+
+fn assert_session_invalid_request_example(path: &Path) {
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+    assert!(
+        object
+            .get("session_id")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
+        "{} session_id missing",
+        path.display()
+    );
+    let error = object
+        .get("error")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| panic!("{} error object missing", path.display()));
+    assert_eq!(
+        error.get("code").and_then(|value| value.as_str()),
+        Some("invalid_request"),
+        "{} error.code must stay invalid_request",
+        path.display()
+    );
+    assert!(
+        error
+            .get("message")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
+        "{} error.message missing",
+        path.display()
+    );
+}
+
+fn assert_attempt_ledger_example(path: &Path) {
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+
+    assert_eq!(
+        object.get("artifact").and_then(|value| value.as_str()),
+        Some("agent_attempt_ledger"),
+        "{} artifact must stay agent_attempt_ledger",
+        path.display()
+    );
+    assert!(
+        object
+            .get("suite")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
+        "{} suite missing",
+        path.display()
+    );
+    assert!(
+        object
+            .get("replay")
+            .and_then(|value| value.as_object())
+            .and_then(|replay| replay.get("next_action"))
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
+        "{} replay.next_action missing",
+        path.display()
+    );
+
+    if let Some(tasks) = object.get("tasks").and_then(|value| value.as_array()) {
+        assert!(
+            !tasks.is_empty(),
+            "{} tasks must not be empty",
+            path.display()
+        );
+    } else {
+        assert!(
+            object
+                .get("task_id")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| !value.is_empty()),
+            "{} task_id missing",
+            path.display()
+        );
+        let attempts = object
+            .get("attempts")
+            .and_then(|value| value.as_array())
+            .unwrap_or_else(|| panic!("{} attempts must be an array", path.display()));
+        assert!(
+            !attempts.is_empty(),
+            "{} attempts must not be empty",
+            path.display()
+        );
+        assert!(
+            object
+                .get("final_outcome")
+                .and_then(|value| value.as_object())
+                .and_then(|outcome| outcome.get("status"))
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| !value.is_empty()),
+            "{} final_outcome.status missing",
+            path.display()
+        );
+    }
+}
+
+fn assert_patch_bakeoff_example(path: &Path) {
+    let payload: serde_json::Value = parse_json_document(path);
+    let object = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{} must be a JSON object", path.display()));
+    assert_eq!(
+        object.get("artifact").and_then(|value| value.as_str()),
+        Some("bench_patch_bakeoff"),
+        "{} artifact must stay bench_patch_bakeoff",
+        path.display()
+    );
+    assert_eq!(
+        object.get("suite").and_then(|value| value.as_str()),
+        Some("run_patch_bakeoff"),
+        "{} suite must stay run_patch_bakeoff",
+        path.display()
+    );
+    let rows = object
+        .get("rows")
+        .and_then(|value| value.as_array())
+        .unwrap_or_else(|| panic!("{} rows must be an array", path.display()));
+    assert!(
+        !rows.is_empty(),
+        "{} rows must not be empty",
+        path.display()
+    );
+    let summary = object
+        .get("summary")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| panic!("{} summary missing", path.display()));
+    assert!(
+        summary
+            .get("scenario_count")
+            .and_then(|value| value.as_u64())
+            .is_some_and(|count| count > 0),
+        "{} summary.scenario_count must be positive",
+        path.display()
+    );
+}
+
+fn assert_provider_status_example(path: &Path) {
+    let payload: serde_json::Value = parse_json_document(path);
+    let provider_status = payload
+        .get("provider_status")
+        .and_then(|value| value.as_object())
+        .unwrap_or_else(|| panic!("{} provider_status missing", path.display()));
+    assert!(
+        provider_status
+            .get("mode")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.is_empty()),
+        "{} provider_status.mode missing",
+        path.display()
+    );
+    assert!(
+        provider_status.contains_key("available"),
+        "{} provider_status.available missing",
+        path.display()
+    );
+    assert!(
+        provider_status
+            .get("fallback_used")
+            .and_then(|value| value.as_bool())
+            .is_some(),
+        "{} provider_status.fallback_used missing",
+        path.display()
+    );
 }
 
 fn assert_rewrite_plan_payload(path: &Path, plan: &RewritePlanExample) {

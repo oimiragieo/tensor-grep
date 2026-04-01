@@ -226,7 +226,7 @@ def test_list_audit_history_discovers_manifests_in_nested_audit_directories(tmp_
     history = audit_manifest.list_audit_history(project)
 
     assert history[0]["manifest_sha256"] == payload["manifest_sha256"]
-    assert history[0]["file_path"].endswith("nested\\rewrite-audit.json")
+    assert Path(history[0]["file_path"]).as_posix().endswith("nested/rewrite-audit.json")
 
 
 def test_list_audit_history_json_matches_python_payload(tmp_path: Path):
