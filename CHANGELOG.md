@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v0.34.0 (2026-04-01)
+
+### Continuous Integration
+
+- Enforce PR release intent for semantic versioning
+  ([#9](https://github.com/oimiragieo/tensor-grep/pull/9),
+  [`c07633e`](https://github.com/oimiragieo/tensor-grep/commit/c07633efec09ba438c3477545b17665f969fe01e))
+
+* ci: enforce PR release intent and honest updater messaging
+
+* docs: add PR release-intent contract to agents guide
+
+* fix: retry initial daemon session lookup
+
+* fix: harden session daemon metadata races
+
+### Features
+
+- Surface AI workflows in top-level help ([#10](https://github.com/oimiragieo/tensor-grep/pull/10),
+  [`a490fb5`](https://github.com/oimiragieo/tensor-grep/commit/a490fb5f7849aacc56242bf72ff2241064eab645))
+
+
 ## v0.33.0 (2026-04-01)
 
 ### Features
