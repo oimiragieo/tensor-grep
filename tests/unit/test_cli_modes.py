@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -342,7 +343,9 @@ def test_session_context_help_mentions_daemon_flag() -> None:
     result = runner.invoke(app, ["session", "context", "--help"])
 
     assert result.exit_code == 0
-    assert "--daemon" in result.stdout
+    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "-daemon" in normalized_output
+    assert "localhost session daemon" in normalized_output
 
 
 def test_lsp_help_mentions_provider_modes() -> None:
