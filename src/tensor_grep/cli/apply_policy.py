@@ -292,10 +292,11 @@ def _run_ruleset_scan_policy(
     assert policy.pack is not None
     assert policy.language is not None
     ruleset_meta, rules = resolve_rule_pack(policy.pack, policy.language)
+    scan_root = target_path if target_path.is_dir() else target_path.parent
     payload = _run_ast_scan_payload(
         {
             "config_path": f"builtin:{ruleset_meta['name']}",
-            "root_dir": target_path,
+            "root_dir": scan_root,
             "rule_dirs": [],
             "test_dirs": [],
             "language": ruleset_meta["language"],

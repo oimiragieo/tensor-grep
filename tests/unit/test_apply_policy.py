@@ -593,6 +593,37 @@ def test_evaluate_apply_policy_real_ruleset_scan_honors_baseline(tmp_path: Path)
     assert payload["policy_result"]["all_passed"] is True
 
 
+def test_ruleset_scan_uses_parent_directory_for_file_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli.apply_policy import RulesetScanPolicy, _run_ruleset_scan_policy
+
+    source_file = tmp_path / "sample.py"
+    source_file.write_text("eval(user_input)\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def _fake_run_ast_scan_payload(project_cfg, rules, **kwargs):
+        captured["project_cfg"] = project_cfg
+        captured["rules"] = rules
+        captured["kwargs"] = kwargs
+        return {"findings": [], "baseline": {"new_findings": 0}}
+
+    monkeypatch.setattr("tensor_grep.cli.main._run_ast_scan_payload", _fake_run_ast_scan_payload)
+    monkeypatch.setattr(
+        "tensor_grep.cli.rule_packs.resolve_rule_pack",
+        lambda pack, language: ({"name": pack, "language": language}, [{"id": "x"}]),
+    )
+
+    result = _run_ruleset_scan_policy(
+        RulesetScanPolicy(enabled=True, pack="auth-safe", language="python", baseline=None),
+        source_file,
+        tmp_path,
+    )
+
+    assert result["passed"] is True
+    assert captured["project_cfg"]["root_dir"] == source_file.parent
+
+
 def test_ast_workflow_run_command_requires_apply_when_policy_is_set(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -3670,6 +3670,11 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
 
     scenario_by_id = {scenario["instance_id"]: scenario for scenario in bakeoff_scenarios}
 
+    def _pin_pytest_validation(instance_id: str, test_path: str) -> None:
+        scenario_by_id[instance_id]["validation_commands"] = [
+            f'"{sys.executable}" -m pytest {test_path} -q'
+        ]
+
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -3706,15 +3711,35 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         scenario_by_id[instance_id]["repo_fixture"] = str(broken_root)
         return broken_root
 
+    def _prepare_fixture_patch(
+        repo_root: Path,
+        relative_path: str,
+        *,
+        broken_snippet: str,
+        fixed_snippet: str,
+        instance_id: str,
+    ) -> tuple[Path, str]:
+        current_text = (repo_root / relative_path).read_text(encoding="utf-8")
+        if broken_snippet in current_text:
+            fixed_text = current_text.replace(broken_snippet, fixed_snippet, 1)
+            return repo_root, fixed_text
+        if fixed_snippet in current_text:
+            broken_text = current_text.replace(fixed_snippet, broken_snippet, 1)
+            broken_root = _materialize_broken_fixture_copy(
+                repo_root, relative_path, broken_text, instance_id
+            )
+            return broken_root, current_text
+        raise AssertionError(f"Fixture text did not contain expected snippet for {instance_id}")
+
     click_repo = Path("benchmarks/patch_fixtures/click_format_filename")
-    click_source = click_repo / "src/click/utils.py"
-    click_original = click_source.read_text(encoding="utf-8")
-    click_fixed = click_original.replace(
-        "        filename = os.fspath(filename)\n",
-        "        filename = os.path.basename(filename)\n",
-        1,
+    click_patch_repo, click_fixed = _prepare_fixture_patch(
+        click_repo,
+        "src/click/utils.py",
+        broken_snippet="        filename = os.fspath(filename)\n",
+        fixed_snippet="        filename = os.path.basename(filename)\n",
+        instance_id="click-format-filename-shorten",
     )
-    click_patch = _build_git_patch(click_repo, "src/click/utils.py", click_fixed)
+    click_patch = _build_git_patch(click_patch_repo, "src/click/utils.py", click_fixed)
     click_prediction = {
         "instance_id": "click-format-filename-shorten",
         "system": "oracle",
@@ -3722,6 +3747,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_utils.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    _pin_pytest_validation("click-format-filename-shorten", "tests/test_utils.py")
     commander_repo = Path("benchmarks/patch_fixtures/commander_human_readable_arg_name")
     commander_source = commander_repo / "lib/argument.js"
     commander_fixed = commander_source.read_text(encoding="utf-8")
@@ -3745,15 +3771,15 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_validation_commands": ["node --test tests/argument.test.js"],
     }
     click_unstyle_repo = Path("benchmarks/patch_fixtures/click_unstyle_ansi")
-    click_unstyle_source = click_unstyle_repo / "src/click/_compat.py"
-    click_unstyle_original = click_unstyle_source.read_text(encoding="utf-8")
-    click_unstyle_fixed = click_unstyle_original.replace(
-        r're.compile(r"\x1b\[[0-9;]*m")',
-        r're.compile(r"\x1b\[[0-9;?]*[A-Za-z]")',
-        1,
+    click_unstyle_patch_repo, click_unstyle_fixed = _prepare_fixture_patch(
+        click_unstyle_repo,
+        "src/click/_compat.py",
+        broken_snippet=r're.compile(r"\x1b\[[0-9;]*m")',
+        fixed_snippet=r're.compile(r"\x1b\[[0-9;?]*[A-Za-z]")',
+        instance_id="click-unstyle-other-ansi",
     )
     click_unstyle_patch = _build_git_patch(
-        click_unstyle_repo, "src/click/_compat.py", click_unstyle_fixed
+        click_unstyle_patch_repo, "src/click/_compat.py", click_unstyle_fixed
     )
     click_unstyle_prediction = {
         "instance_id": "click-unstyle-other-ansi",
@@ -3762,6 +3788,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_termui.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    _pin_pytest_validation("click-unstyle-other-ansi", "tests/test_termui.py")
     commander_error_repo = Path("benchmarks/patch_fixtures/commander_invalid_argument_error")
     commander_error_source = commander_error_repo / "lib/error.js"
     commander_error_fixed = commander_error_source.read_text(encoding="utf-8")
@@ -3787,14 +3814,16 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_validation_commands": ["node --test tests/error.test.js"],
     }
     click_secho_repo = Path("benchmarks/patch_fixtures/click_secho_non_text")
-    click_secho_source = click_secho_repo / "src/click/termui.py"
-    click_secho_original = click_secho_source.read_text(encoding="utf-8")
-    click_secho_fixed = click_secho_original.replace(
-        "    if message is not None:\n",
-        "    if message is not None and not isinstance(message, (bytes, bytearray)):\n",
-        1,
+    click_secho_patch_repo, click_secho_fixed = _prepare_fixture_patch(
+        click_secho_repo,
+        "src/click/termui.py",
+        broken_snippet="    if message is not None:\n",
+        fixed_snippet="    if message is not None and not isinstance(message, (bytes, bytearray)):\n",
+        instance_id="click-secho-bytes-pass-through",
     )
-    click_secho_patch = _build_git_patch(click_secho_repo, "src/click/termui.py", click_secho_fixed)
+    click_secho_patch = _build_git_patch(
+        click_secho_patch_repo, "src/click/termui.py", click_secho_fixed
+    )
     click_secho_prediction = {
         "instance_id": "click-secho-bytes-pass-through",
         "system": "oracle",
@@ -3802,19 +3831,18 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_termui.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    _pin_pytest_validation("click-secho-bytes-pass-through", "tests/test_termui.py")
     click_style_repo = Path("benchmarks/patch_fixtures/click_style_non_text")
-    click_style_source = click_style_repo / "src/click/termui.py"
-    click_style_original = click_style_source.read_text(encoding="utf-8")
-    click_style_fixed = click_style_original.replace(
-        "def style(\n",
-        "def style(\n",
-        1,
-    ).replace(
-        "    bits: list[str] = []\n",
-        "    if not isinstance(text, str):\n        text = str(text)\n\n    bits: list[str] = []\n",
-        1,
+    click_style_patch_repo, click_style_fixed = _prepare_fixture_patch(
+        click_style_repo,
+        "src/click/termui.py",
+        broken_snippet="    bits: list[str] = []\n",
+        fixed_snippet="    if not isinstance(text, str):\n        text = str(text)\n\n    bits: list[str] = []\n",
+        instance_id="click-style-non-text-coercion",
     )
-    click_style_patch = _build_git_patch(click_style_repo, "src/click/termui.py", click_style_fixed)
+    click_style_patch = _build_git_patch(
+        click_style_patch_repo, "src/click/termui.py", click_style_fixed
+    )
     click_style_prediction = {
         "instance_id": "click-style-non-text-coercion",
         "system": "oracle",
@@ -3822,6 +3850,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_utils.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    _pin_pytest_validation("click-style-non-text-coercion", "tests/test_utils.py")
     click_abort_repo = Path("benchmarks/patch_fixtures/click_abort")
     click_abort_source = click_abort_repo / "src/click/core.py"
     click_abort_fixed = click_abort_source.read_text(encoding="utf-8")
@@ -3846,16 +3875,17 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_commands.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    _pin_pytest_validation("click-abort-raises-abort", "tests/test_commands.py")
     click_binary_repo = Path("benchmarks/patch_fixtures/click_get_binary_stream")
-    click_binary_source = click_binary_repo / "src/click/utils.py"
-    click_binary_original = click_binary_source.read_text(encoding="utf-8")
-    click_binary_fixed = click_binary_original.replace(
-        "    opener = text_streams.get(name)\n",
-        "    opener = binary_streams.get(name)\n",
-        1,
+    click_binary_patch_repo, click_binary_fixed = _prepare_fixture_patch(
+        click_binary_repo,
+        "src/click/utils.py",
+        broken_snippet="    opener = text_streams.get(name)\n",
+        fixed_snippet="    opener = binary_streams.get(name)\n",
+        instance_id="click-get-binary-stream-uses-binary-map",
     )
     click_binary_patch = _build_git_patch(
-        click_binary_repo, "src/click/utils.py", click_binary_fixed
+        click_binary_patch_repo, "src/click/utils.py", click_binary_fixed
     )
     click_binary_prediction = {
         "instance_id": "click-get-binary-stream-uses-binary-map",
@@ -3864,6 +3894,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_utils.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    _pin_pytest_validation("click-get-binary-stream-uses-binary-map", "tests/test_utils.py")
     commander_strip_repo = Path("benchmarks/patch_fixtures/commander_strip_color")
     commander_strip_source = commander_strip_repo / "lib/help.js"
     commander_strip_fixed = commander_strip_source.read_text(encoding="utf-8")
@@ -3913,19 +3944,19 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_validation_commands": ["node --test tests/options.dual-options.test.js"],
     }
     click_choice_repo = Path("benchmarks/patch_fixtures/click_choice_invalid_message")
-    click_choice_source = click_choice_repo / "src/click/types.py"
-    click_choice_original = click_choice_source.read_text(encoding="utf-8")
-    click_choice_fixed = click_choice_original.replace(
-        '        choices_str = ", ".join(map(repr, self.choices))\n'
+    click_choice_patch_repo, click_choice_fixed = _prepare_fixture_patch(
+        click_choice_repo,
+        "src/click/types.py",
+        broken_snippet='        choices_str = ", ".join(map(repr, self.choices))\n'
         '        raise ValueError(f"{value!r} is not one of {choices_str}.")\n',
-        "        raise ValueError(self.get_invalid_choice_message(value, ctx=ctx))\n\n"
+        fixed_snippet="        raise ValueError(self.get_invalid_choice_message(value, ctx=ctx))\n\n"
         "    def get_invalid_choice_message(self, value: t.Any, ctx: t.Any) -> str:\n"
         '        choices_str = ", ".join(map(repr, self.choices))\n'
         '        return f"{value!r} is not one of {choices_str}."\n',
-        1,
+        instance_id="click-choice-invalid-message",
     )
     click_choice_patch = _build_git_patch(
-        click_choice_repo, "src/click/types.py", click_choice_fixed
+        click_choice_patch_repo, "src/click/types.py", click_choice_fixed
     )
     click_choice_prediction = {
         "instance_id": "click-choice-invalid-message",
@@ -3934,6 +3965,7 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
         "actual_test_files": ["tests/test_types.py"],
         "actual_validation_commands": ["pytest -q"],
     }
+    _pin_pytest_validation("click-choice-invalid-message", "tests/test_types.py")
     commander_color_repo = Path("benchmarks/patch_fixtures/commander_use_color")
     commander_color_source = commander_color_repo / "lib/command.js"
     commander_color_fixed = commander_color_source.read_text(encoding="utf-8")
@@ -4743,7 +4775,11 @@ def test_build_attempt_ledger_should_infer_multi_session_and_multi_task_replay(t
             {"task_id": "tg-task-2", "status": "accepted", "accepted_attempt_id": "attempt-3"},
         ],
         "attempts": [
-            {"attempt_id": "attempt-1", "status": "validation_failed", "session_id": "session-a"},
+            {
+                "attempt_id": "attempt-1",
+                "status": "validation_failed",
+                "session_id": "session-a",
+            },
             {
                 "attempt_id": "attempt-2",
                 "parent_attempt_id": "attempt-1",
