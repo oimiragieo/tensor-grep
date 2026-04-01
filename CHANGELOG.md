@@ -1,6 +1,693 @@
 # CHANGELOG
 
 
+## v0.33.0 (2026-04-01)
+
+### Features
+
+- Stabilize AI handoff and validation pipeline
+  ([#8](https://github.com/oimiragieo/tensor-grep/pull/8),
+  [`ff08db3`](https://github.com/oimiragieo/tensor-grep/commit/ff08db390f159d8bb3d96f7d82ab586a44c1015c))
+
+* feat: add agent edit tooling contracts
+
+Add repo map/context pack, selective rewrite controls, post-apply validation, checkpoints, and
+  symbol navigation surfaces for defs/impact/refs/callers.
+
+* feat: add reusable edit sessions
+
+Add cached repo-map sessions with CLI and MCP entry points, validate the new session JSON contracts,
+  and document the workflow surfaces.
+
+Also normalize the Python formatting drift that Ruff was already flagging so the full local lint and
+  test gates stay green.
+
+* docs: describe repo-map coverage limits
+
+Add an explicit coverage object to repo-map-derived outputs so agent consumers can tell these
+  surfaces are python-first and heuristic rather than a full cross-language semantic index.
+
+Sync the committed JSON examples, cookbook/API docs, MCP assertions, and Rust schema validators to
+  the new contract.
+
+* feat: broaden repo-map inventory coverage
+
+Extend repo-map inventory and exact definition lookup beyond Python by extracting imports and
+  top-level symbols from JavaScript, TypeScript, and Rust sources.
+
+Keep refs/callers explicitly python-ast, update the coverage contract to reflect the broader
+  inventory scope, and sync the docs/examples/schema validators to that boundary.
+
+* feat: add heuristic cross-language refs and callers
+
+Extend symbol refs and callers beyond Python by adding heuristic JavaScript, TypeScript, and Rust
+  line-based matching for exact symbol names and call sites.
+
+Update the coverage contract to make the tradeoff explicit: Python keeps AST-backed navigation while
+  JS/TS/Rust now use heuristic matching, with examples/docs/schema validators synced to that
+  boundary.
+
+* feat: improve cross-language test association
+
+Boost repo-map test ranking with import-aware heuristics so impact, context, and callers can surface
+  TS and Rust tests even when filenames do not mirror source stems.
+
+Update the coverage contract, examples, docs, and schema validators to reflect the stronger
+  filename+import heuristic.
+
+* feat: add long-lived session serve loop
+
+Add a JSONL-based session serve command that reuses cached repo-map sessions for repeated repo_map,
+  context, defs, impact, refs, and callers requests without rebuilding inventory each call.
+
+Document the session-serve contract and validate it with CLI and harness doc tests so the long-lived
+  surface stays aligned with the one-shot edit tooling outputs.
+
+* feat: reject stale cached sessions
+
+Detect on-disk changes for cached session files and return a stale_session error instead of serving
+  outdated repo-map responses.
+
+This keeps the new session serve loop honest until an automatic refresh path is added.
+
+* feat: add session refresh recovery
+
+Add explicit session refresh plus optional --refresh-on-stale handling for the long-lived session
+  serve loop so cached edit sessions can recover after file changes.
+
+Also exclude .tensor-grep cache state from repo-map inventory so session metadata never pollutes
+  repo context.
+
+* feat: add mcp session refresh parity
+
+Expose tg_session_refresh over MCP so harness clients can recover cached sessions after file changes
+  without dropping down to the CLI.
+
+Update the public harness docs and validator-backed tests to keep the session refresh contract
+  aligned across CLI and MCP surfaces.
+
+* feat: add import-graph context ranking
+
+Boost context and impact file ranking with import-derived dependency edges so importer files outrank
+  filename-only noise when a query matches real symbol definitions.
+
+This follows the repo-map graph direction used by current agent editing tools while keeping the
+  payload contracts unchanged.
+
+* feat: add exact symbol source retrieval
+
+Expose repo-map-backed source extraction over the CLI and MCP so agents can fetch exact symbol
+  bodies instead of only definition locations or ranked file guesses.
+
+Keep the contract honest with Python AST extraction plus heuristic JS/TS/Rust block extraction, and
+  sync the docs, examples, and schema validators to the new source.json shape.
+
+* feat: rank related tests through import graph
+
+Extend repo-map context and impact ranking to walk the reverse import graph so tests reached through
+  intermediate modules can outrank filename-only matches.
+
+Update the declared coverage contract to filename+import+graph-heuristic and sync the examples,
+  docs, and schema-backed tests to that stronger heuristic layer.
+
+* feat: use parser-backed javascript navigation
+
+Replace the JavaScript refs/callers path with tree-sitter-backed traversal so string and comment
+  noise stop appearing as executable call sites.
+
+Keep TypeScript and Rust on the existing heuristic path for now, and update the public coverage
+  contract to python-ast+parser-js+heuristic-ts-rust so agent consumers can reason about the
+  remaining limits.
+
+* feat: use parser-backed typescript navigation
+
+Add tree-sitter-typescript to the declared AST tooling dependencies and route TypeScript
+  refs/callers through parser-backed traversal instead of regex heuristics.
+
+Update the public coverage contract to python-ast+parser-js-ts+heuristic-rust and sync the docs,
+  examples, lockfile, and validator-backed tests to that new capability boundary.
+
+* feat: use parser-backed rust navigation
+
+Add tree-sitter-rust to the declared AST and dev dependency surfaces and route Rust refs/callers
+  through parser-backed traversal instead of heuristic regex matching.
+
+Update the public coverage contract to python-ast+parser-js-ts-rust and sync the docs, examples,
+  lockfile, and validator-backed tests to the fully parser-backed non-Python navigation surface.
+
+* feat: unify parser-backed symbol source inventory
+
+Route JS, TypeScript, and Rust symbol inventory and source-block extraction through the same
+  parser-backed layer used by refs and callers so defs/source no longer depend on comment-prone
+  regex detection.
+
+This keeps import extraction unchanged, but makes the non-Python symbol surfaces internally
+  consistent and removes commented-out definition noise from source retrieval.
+
+* feat: expose context ranking provenance
+
+Add file and test match metadata to repo-map-derived context and impact payloads so agent consumers
+  can see why paths were selected.\n\nKeep the existing files/tests arrays stable, wire the new
+  reasons through the actual ranking logic, and update the docs/examples/schema validators to lock
+  the contract down.
+
+* feat: add ranked file summaries
+
+Add compact top-level symbol skeletons to context and impact payloads so agents can inspect the
+  shape of ranked files without reading full sources.\n\nKeep the new summaries aligned with the
+  parser-backed repo-map inventory and update the docs/examples/schema validators to preserve the
+  contract.
+
+* feat: boost graph-central context files
+
+Add a lightweight reverse-import centrality bonus to the repo-map ranker so files with more
+  downstream dependents surface ahead of otherwise tied leaf importers.\n\nExpose the new
+  graph-centrality provenance label through the existing ranking metadata and lock it down with
+  focused MCP coverage.
+
+* feat: add pagerank-style graph scores
+
+Replace the opaque graph-centrality bonus with a small personalized reverse-import PageRank pass and
+  surface the resulting graph_score in ranked file matches.\n\nKeep the existing reasons contract,
+  document the new field, and validate it through MCP coverage plus the docs/schema tests.
+
+* feat: propagate graph scores into test ranking
+
+Use the ranked file graph signal when scoring related tests so validation targets inherit the
+  importance of the files they cover.\n\nKeep the test-match contract additive and validate the new
+  ordering with focused MCP coverage.
+
+* feat: add prompt-ready context rendering
+
+Add a deterministic context-render surface that combines ranked repo context, compact file
+  summaries, selected source blocks, and a prompt-ready rendered_context string.\n\nExpose it
+  through both the CLI and MCP, and lock the new contract down with docs examples plus the existing
+  schema and harness validator suites.
+
+* feat: add session and bounded context rendering
+
+Extend the prompt-ready context render surface with session-backed reuse and deterministic render
+  budgets for files, sources, symbols, and output characters.\n\nExpose the new controls through the
+  CLI and MCP, and update the docs/example/schema validators so external agent integrations can rely
+  on the contract.
+
+* feat: add render sections and edit targets
+
+Extend context-render with machine-readable section spans and candidate edit targets so external
+  agents can trim, reorder, and plan edits without reparsing the rendered text.\n\nKeep the render
+  surface deterministic and validator-backed through the existing docs examples, harness checks, and
+  schema tests.
+
+* feat: add render provenance and plan seeds
+
+Link render sections back to ranked file and test provenance, and add a compact edit plan seed so
+  downstream agents get a default first edit target and validation test set.\n\nSync the public
+  context-render contract, example payload, and schema/doc tests so the new metadata stays
+  validator-backed.
+
+* feat: enrich edit plan seeds
+
+Add validation command seeds and normalized confidence scores to context-render plan outputs, and
+  keep the public example and schema contract aligned.\n\nAlso add an enterprise acceleration
+  roadmap that turns the latest AI, compliance, blast-radius, and GPUDirect feedback into concrete
+  workstreams for the repo.
+
+* feat: add compact context render profiles
+
+Add optimize-context and render-profile controls to one-shot and session-backed context rendering,
+  including compacted source blocks with line maps and render diagnostics for downstream agent
+  workflows.\n\nSync the MCP, CLI, example JSON, and Rust schema contracts so token-optimized render
+  output stays validator-backed.
+
+* feat: strip python boilerplate in llm renders
+
+Use Python AST structure to remove leading docstrings and pure pass-only boilerplate from compact
+  and llm render profiles while preserving line maps and diagnostics for downstream agent
+  workflows.\n\nSync the render example, MCP contract tests, and Rust schema validation so the
+  richer diagnostics stay part of the public contract.
+
+* feat: add rewrite audit manifests
+
+Add deterministic rewrite audit manifests with file hashes, applied edit ids, checkpoint linkage,
+  and validation results for native apply flows, plus MCP passthrough support for the new manifest
+  flag.\n\nSync the public apply+verify example, schema validation, and MCP contract tests so the
+  audit surface stays validator-backed.
+
+* feat: chain rewrite audit manifests
+
+Add manifest self-digests and previous-manifest hash chaining so rewrite audit artifacts become
+  tamper-evident across repeated writes to the same manifest path.\n\nDocument the on-disk digest
+  behavior and keep the focused audit-manifest CLI test aligned with the canonical serialization
+  used for hashing.
+
+* feat: sign rewrite audit manifests
+
+Add optional HMAC-SHA256 signing for rewrite audit manifests via --audit-signing-key, expose signing
+  status in the apply JSON summary, and forward the flag through the MCP rewrite-apply
+  surface.\n\nSync the public apply+verify example, schema validation, and focused Rust/MCP tests so
+  signed manifests remain part of the validated contract.
+
+* feat: add blast radius symbol analysis
+
+Add a first-class blast-radius surface over the existing symbol and reverse-import graph with
+  explicit max-depth controls, ranked file/test metadata, and a rendered caller tree for agent
+  consumers.
+
+Wire the new contract through the CLI, MCP server, docs, example payloads, and schema/help tests so
+  the repo keeps treating edit-context behavior as validator-backed public API.
+
+* feat: add session blast radius support
+
+Add cached-session blast-radius support across the CLI session subcommands, session stream dispatch,
+  and MCP tool surface so agents can reuse the repo-map cache for transitive impact analysis.
+
+Also stabilize the CPU throughput e2e guard by turning it into a bounded sanity floor with warmup
+  and retries, which keeps the full suite green on loaded developer machines without pretending to
+  be a benchmark.
+
+* feat: add blast radius render workflows
+
+Add prompt-ready blast-radius render surfaces across the CLI, cached-session commands, MCP tools,
+  and session stream dispatch so downstream agents can request sectioned transitive impact bundles
+  instead of reconstructing them from raw graph payloads.
+
+Publish the new contract through docs, example JSON, and schema/help tests so the render surface
+  stays validator-backed like the rest of the harness API.
+
+* feat: verify rewrite audit manifests
+
+Add a first-class audit-manifest verifier for the CLI and MCP surfaces so signed rewrite manifests
+  can be checked for digest, chain, and HMAC validity.
+
+Also document the new contract, add a committed example payload, and extend the Python and Rust
+  validator suites so the verification surface stays aligned with the native rewrite audit format.
+
+* feat: add native audit manifest verification
+
+Add a native Rust audit-verify subcommand that validates rewrite audit manifest digests,
+  previous-manifest chaining, and optional HMAC signatures using the same canonicalization rules as
+  manifest emission.
+
+Also cover the new control-plane path with direct tg CLI tests and update the older audit-manifest
+  digest assertions to match the canonical manifest format that excludes signature fields from the
+  self-digest.
+
+* feat: add built-in security rule packs
+
+Add a built-in ruleset registry plus scan --ruleset support so tensor-grep can run preview
+  security/compliance AST packs without requiring an sgconfig project.
+
+This lands the first crypto-safe pack, a rulesets discovery command, and CLI tests that lock the
+  built-in scan path to the existing AST scan control plane.
+
+* feat: add structured ruleset scan surfaces
+
+Add JSON output for built-in CLI ruleset scans and expose matching MCP tools for ruleset discovery
+  and execution. Keep the AST scan behavior shared between CLI and MCP, then cover the new
+  structured payloads with focused unit tests and the full required repo gates.
+
+* feat: add secrets ruleset pack
+
+Add a second built-in security ruleset for obvious hardcoded secret assignments so the new discovery
+  and scan surfaces cover more than one preview pack. Keep the patterns intentionally simple and
+  validator-backed with focused ruleset tests, then rerun the required repo gates before landing.
+
+* feat: include ruleset finding metadata
+
+Preserve built-in ruleset severity and remediation text in the structured scan findings so CLI and
+  MCP consumers can act on scan output directly. Cover the richer payload shape with focused JSON
+  assertions and rerun the full required repo gates before landing.
+
+* docs: cover ruleset JSON contracts
+
+Document the new ruleset discovery and built-in ruleset scan JSON shapes, add committed examples,
+  and extend the validator-backed doc and Rust schema tests to enforce them. Also format the touched
+  Rust tests so the contract line stays green under cargo fmt and the required repo gates.
+
+* feat: fingerprint ruleset findings
+
+Add deterministic SHA-256 fingerprints to structured ruleset scan findings so downstream agents can
+  dedupe and track findings across runs. Prove the exact hash shape in focused CLI and MCP JSON
+  tests, then rerun the full required repo gates before landing.
+
+* feat: add ruleset finding evidence
+
+Extend structured ruleset scan findings with per-file evidence rows and keep the public contract
+  aligned through docs, examples, and schema validation. Prove the richer payload in focused CLI and
+  MCP tests, then rerun cargo fmt, the Rust schema validator, and the full required repo gates
+  before landing.
+
+* feat: add ruleset scan baselines
+
+Add baseline compare and write support to structured ruleset scans so CLI and MCP consumers can
+  classify findings as new, existing, clear, or resolved across runs. Keep the additive payload
+  documented and validator-backed, then rerun cargo fmt, the Rust schema validator, and the full
+  required repo gates before landing.
+
+* feat: add tls-safe ruleset pack
+
+Add a third built-in preview security ruleset focused on obvious TLS certificate verification bypass
+  patterns so the structured scan, evidence, fingerprint, and baseline surfaces cover another
+  high-value security class. Validate it with focused ruleset tests plus the full required repo
+  gates before landing.
+
+* feat: add ruleset scan suppressions
+
+Add suppression fingerprint support on top of the ruleset scan baseline model so CLI and MCP
+  consumers can mark accepted findings as suppressed without reimplementing lifecycle logic. Keep
+  the additive payload documented and validator-backed, then rerun cargo fmt, the Rust schema
+  validator, and the full required repo gates before landing.
+
+* feat: export ruleset suppressions
+
+Add write-suppressions support to CLI and MCP ruleset scans, emit structured suppressions_written
+  metadata, and extend the public JSON/schema contract to cover the new export path.
+
+* feat: add ruleset evidence snippets
+
+Add opt-in bounded evidence snippets for structured ruleset scans, expose the controls through CLI
+  and MCP, and extend the public JSON/schema contract for the new snippet payloads.
+
+* feat: expand secrets ruleset coverage
+
+Broaden the built-in secrets-basic pack with API key and token literals across the supported
+  languages, update the committed ruleset metadata example, and add focused scan coverage for the
+  new JavaScript API key rule.
+
+* feat: expand tls ruleset coverage
+
+Broaden the built-in tls-safe pack with an explicit requests.post verify=False rule, sync the
+  committed ruleset metadata example, and add focused scan coverage for the new Python TLS bypass
+  pattern.
+
+* chore: update worker skill and user-testing library for editor mission
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
+
+* feat: tighten repo map span and import resolution
+
+Preserve precise edit-planning context across Python, JS/TS, and Rust by recording symbol spans and
+  resolving alias/import graph links more accurately.
+
+* feat: synthesize multi-language validation commands
+
+* feat: enrich edit plan seed metadata
+
+Add span, dependency, ordering, and rollback-risk enrichment to repo_map edit plan seeds so editor
+  surfaces get deterministic change scope guidance without breaking existing fields.
+
+* test: cover edit plan seed parity surfaces
+
+* feat: strip compact render boilerplate across JS/TS/Rust
+
+* feat: pack context renders to token budgets
+
+* feat: incrementally refresh cached repo maps
+
+Keep session refreshes on the delta path so unchanged files reuse their cached repo-map entries
+  while refresh metadata reports the exact filesystem changeset.
+
+* feat: cache multi-root session serve payloads
+
+* feat: benchmark editor-plane runtime paths
+
+Add editor-plane benchmark suites so context rendering, blast-radius rendering, and session refresh
+  paths can be measured and regression-checked with stable JSON artifacts.
+
+* feat: track audit manifest history
+
+* feat: add semantic audit manifest diffs
+
+* feat: add preview security rule packs
+
+Add auth-safe, deserialization-safe, and subprocess-safe built-in packs with multi-language scan
+  coverage and regression tests for ruleset listing, findings, baselines, suppressions, and evidence
+  snippets.
+
+* feat: improve ruleset suppressions
+
+* feat: guard rewrite apply with policy checks
+
+* feat: add enterprise review bundle workflows
+
+Bundle audit, scan, checkpoint, and diff artifacts into a verifiable JSON package so regulated
+  review flows can ship one integrity-checked handoff.
+
+* feat: align trust cli and mcp parity
+
+Wrap audit history and diff JSON outputs in the standard envelope so the new trust surfaces match
+  existing harness contracts. Add parity regression coverage for help listings, MCP discoverability,
+  dispatch routing, and unchanged scan output.
+
+* chore: add scrutiny synthesis report for trust-enterprise
+
+* feat: add machine-readable edit planning surfaces
+
+Add dedicated edit-plan and blast-radius-plan CLI, session, and MCP surfaces on top of the existing
+  repo-map planning logic. Also sync the public harness docs, committed JSON examples, and
+  schema-backed validators so the new planning contracts remain explicit and stable for external
+  agent backends.
+
+* feat: rank edit spans and validation plans
+
+Add ranked span anchors to edit-planning payloads and emit structured validation plans with narrower
+  JS/TS/Python/Rust test commands. Also sync the committed JSON examples, harness docs, and
+  schema-backed validators to the richer planning contract.
+
+* feat: resolve aliased js and rust definitions
+
+* feat: rank caller-linked tests by import graph
+
+* feat: auto-refresh stale one-shot sessions
+
+* feat: expose session serve health and stats
+
+* feat: add serve cache provenance
+
+* feat: add warm session daemon routing
+
+* feat: add plan provenance and suggested edits
+
+* feat: add blast graph provenance
+
+* feat: standardize session mcp errors
+
+* feat: extend symbol graph provenance
+
+* feat: add import edge provenance
+
+* feat: add test association trust metadata
+
+* feat: add query evidence coverage counts
+
+* feat: add evidence coverage ratios
+
+* feat: summarize blast radius edge trust
+
+* feat: surface blast radius graph trust summary
+
+* feat: surface trust metadata on symbol navigation
+
+* feat: surface trust metadata on planning surfaces
+
+* feat: target exact import edits in plans
+
+Surface import-update suggested edits with parser-backed or heuristic line spans so edit plans can
+  point at the dependent import statement that must change.
+
+* feat: target exact caller update lines
+
+* feat: resolve advanced js/ts import chains
+
+Improve JS/TS symbol resolution so default imports, barrel re-exports, and tsconfig aliases still
+  map callers and import updates back to original definitions.
+
+* feat: resolve rust workspace module imports
+
+* feat: recognize framework-specific validation test targets
+
+* feat: add repo map profiling phases
+
+* feat: wire editor profiling surfaces
+
+* feat: add bakeoff scenario runner
+
+* feat: add bakeoff scenario fixtures
+
+Add deterministic Python, JS/TS, and Rust fixture repos plus scenario manifests for bakeoff
+  coverage.
+
+* feat: add bakeoff miss analysis tooling
+
+* feat: add external evaluation orchestration
+
+* feat: expand external evaluation coverage
+
+* feat: improve python dependent-file precision
+
+* feat: add world class evaluation report
+
+* feat: add codex and copilot competitor runners
+
+* feat: harden competitor eval runners
+
+* feat: add codex retry fallback
+
+* feat: add gemini competitor runner
+
+* feat: harden gemini competitor runner
+
+* feat: harden copilot competitor runner
+
+* feat: add semantic lsp navigation
+
+* feat: add lsp rename support
+
+* feat: add external lsp provider mode
+
+* feat: add semantic provider navigation
+
+* feat: extend semantic provider planning
+
+* test: cover semantic provider public surfaces
+
+* feat: extend semantic provider source navigation
+
+* feat: add semantic provider health reporting
+
+* feat: add provider-aware benchmark harnesses
+
+* perf: fail fast after lsp startup timeout
+
+* docs: refresh paper and world class roadmap
+
+* feat: add patch benchmark harness
+
+* feat: harden gemini patch runner
+
+* perf: kill hung gemini patch runs
+
+* feat: add copilot patch runner
+
+* feat: improve rust test targeting
+
+* feat: add patch scorecard renderer
+
+* feat: add real patch benchmark fixtures
+
+* feat: add claude patch runner
+
+* feat: expand real patch benchmark pack
+
+* feat: isolate patch benchmark runners
+
+* feat: improve patch driver contract
+
+* feat: expand click patch scenarios
+
+* feat: normalize model patch output
+
+* feat: repair truncated model patch hunks
+
+* feat: normalize patch bakeoff inputs
+
+* feat: strengthen patch driver diff contract
+
+* feat: prefer direct edits in claude patch runner
+
+* test: expand real patch benchmark pack
+
+* feat: add claude skill ab benchmark
+
+* feat: add claude ab trace artifacts
+
+* feat: trace tg usage in claude ab benchmark
+
+* docs: record claude ab findings and observability plan
+
+* docs: record rejected claude latency shortcut
+
+* feat: classify claude ab response shapes
+
+* docs: extend agent observability roadmap
+
+* feat: add first action timing to claude ab traces
+
+* feat: track post edit deliberation in claude traces
+
+* feat: add claude output contract experiment mode
+
+* feat: add claude task contract experiment mode
+
+* feat: add claude contract matrix benchmark
+
+* feat: add claude matrix scorecard renderer
+
+* feat: add resumable claude matrix runs
+
+* docs: record 3 task claude matrix result
+
+* feat: checkpoint claude matrix experiments
+
+* feat: add record level matrix resume
+
+* feat: add standard engage probe profile
+
+* feat: add resumable claude ab runs
+
+* docs: record rejected standard engage promotion
+
+* test: expand real patch corpus to 12 scenarios
+
+* docs: record 12-scenario claude ab result
+
+* feat: tighten claude ab task engagement
+
+* feat: add resumable competitor patch runners
+
+* docs: record copilot same pack rerun
+
+* fix: bound gemini timeout cleanup on windows
+
+* fix: isolate gemini benchmark home
+
+* feat: add gemini project skill setup
+
+* feat: add gemini skill ab benchmark
+
+* docs: record same pack system scorecard
+
+* feat: stabilize AI handoff and validation pipeline
+
+* fix: address PR8 review findings
+
+* fix: stabilize CI policy and bakeoff tests
+
+* fix: harden CI search and policy fallbacks
+
+* fix: unblock CI policy and native search checks
+
+* test: stabilize CI-specific policy and routing checks
+
+* test: fix cross-platform audit and schema contracts
+
+* test: make benchmark launcher assertions deterministic
+
+* test: fix benchmark launcher source assertion
+
+* test: normalize provider bakeoff windows paths
+
+* test: fix gemini timeout cleanup coverage
+
+* test: normalize cli help and preview formatting
+
+* test: stub lsp provider binaries in unit tests
+
+* test: stub lsp provider command in status test
+
+---------
+
+
 ## v0.32.0 (2026-03-20)
 
 ### Bug Fixes
