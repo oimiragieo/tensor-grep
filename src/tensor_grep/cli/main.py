@@ -38,10 +38,19 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg scan --config sgconfig.yml`
 - `tg mcp`
 
+**AI workflows**
+- `tg map PATH`
+- `tg context-render PATH --query "invoice flow"`
+- `tg edit-plan PATH --query "add retry with tests"`
+- `tg blast-radius-render PATH --symbol create_invoice`
+- `tg session open PATH`
+- `tg session daemon start PATH`
+
 **Notes**
 - Bare patterns are treated as `tg search`.
 - Use `tg search --help` for ripgrep-compatible flags.
-- Use `tg run --help` for AST rewrite flags.""",
+- Use `tg run --help` for AST rewrite flags.
+- Use `tg session --help` for cached edit-loop and daemon commands.""",
     no_args_is_help=True,
     add_completion=False,
     rich_markup_mode="markdown",

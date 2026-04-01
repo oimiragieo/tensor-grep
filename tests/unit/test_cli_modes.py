@@ -3386,6 +3386,13 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "Fast text, AST, indexed, and GPU-aware search CLI" in result.stdout
     assert "Common usage" in result.stdout
     assert "tg PATTERN [PATH ...]" in result.stdout
+    assert "AI workflows" in result.stdout
+    assert "tg map PATH" in result.stdout
+    assert "tg context-render PATH --query" in result.stdout
+    assert "tg edit-plan PATH --query" in result.stdout
+    assert "tg blast-radius-render PATH --symbol" in result.stdout
+    assert "tg session open PATH" in result.stdout
+    assert "tg session daemon start PATH" in result.stdout
     assert "upgrade" in result.stdout
     assert "update" in result.stdout
     assert "checkpoint" in result.stdout
