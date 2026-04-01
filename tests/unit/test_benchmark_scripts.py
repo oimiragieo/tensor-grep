@@ -5413,6 +5413,7 @@ def test_run_gemini_patch_predictions_should_terminate_process_tree_on_timeout(
             return 0
 
     monkeypatch.setattr(module, "resolve_gemini_binary", lambda: "gemini")
+    monkeypatch.setattr(module.platform, "system", lambda: "Windows")
     monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
     monkeypatch.setattr(
         module.subprocess,
