@@ -306,9 +306,9 @@ def _run_ruleset_scan_policy(
         ruleset_name=ruleset_meta["name"],
         baseline_path=policy.baseline,
     )
-    backend_names = [
-        str(item) for item in payload.get("backends", []) if isinstance(item, str) and item.strip()
-    ]
+    raw_backends = payload.get("backends")
+    backend_items = raw_backends if isinstance(raw_backends, list) else []
+    backend_names = [item for item in backend_items if isinstance(item, str) and item.strip()]
     if backend_names and not {
         "AstBackend",
         "AstGrepWrapperBackend",

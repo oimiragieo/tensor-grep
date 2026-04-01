@@ -1195,7 +1195,7 @@ fn native_search_config_for_positional(
         json: cli.json,
         ndjson: cli.ndjson,
         verbose: cli.verbose,
-        line_number: false,
+        line_number: !cli.count,
         ..NativeSearchConfig::default()
     }
 }

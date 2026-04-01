@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -64,6 +65,10 @@ def _write_baseline(path: Path, scan_root: Path) -> None:
         ),
         encoding="utf-8",
     )
+
+
+def _has_ast_grep_binary() -> bool:
+    return any(shutil.which(name) is not None for name in ("ast-grep", "ast-grep.exe", "sg"))
 
 
 @pytest.mark.parametrize(
@@ -524,6 +529,7 @@ def test_evaluate_apply_policy_rollback_restores_checkpointed_files(tmp_path: Pa
     assert payload["policy_result"]["action_taken"] == "rollback"
 
 
+@pytest.mark.skipif(not _has_ast_grep_binary(), reason="requires ast-grep binary")
 def test_evaluate_apply_policy_real_ruleset_scan_fails_without_baseline(tmp_path: Path) -> None:
     from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
 
@@ -558,6 +564,7 @@ def test_evaluate_apply_policy_real_ruleset_scan_fails_without_baseline(tmp_path
     ]
 
 
+@pytest.mark.skipif(not _has_ast_grep_binary(), reason="requires ast-grep binary")
 def test_evaluate_apply_policy_real_ruleset_scan_honors_baseline(tmp_path: Path) -> None:
     from tensor_grep.cli.apply_policy import evaluate_apply_policy, load_apply_policy
 
