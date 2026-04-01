@@ -32,7 +32,7 @@ class Argument {
 function humanReadableArgName(arg) {
   const nameOutput = arg.name() + (arg.variadic === true ? '...' : '');
 
-  return arg.required ? '[' + nameOutput + ']' : '<' + nameOutput + '>';
+  return arg.required ? '<' + nameOutput + '>' : '[' + nameOutput + ']';
 }
 
 exports.Argument = Argument;

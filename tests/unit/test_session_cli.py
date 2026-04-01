@@ -136,6 +136,23 @@ def test_session_list_returns_newest_first(tmp_path: Path) -> None:
     assert payload["sessions"][1]["session_id"] == first["session_id"]
 
 
+def test_session_open_generates_unique_ids_within_same_second(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "sample.py").write_text("value = 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    first = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    second = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    assert first["session_id"] != second["session_id"]
+
+    listing = json.loads(runner.invoke(app, ["session", "list", str(project), "--json"]).stdout)
+    listed_ids = [entry["session_id"] for entry in listing["sessions"]]
+    assert listed_ids.count(first["session_id"]) == 1
+    assert listed_ids.count(second["session_id"]) == 1
+
+
 def test_session_serve_streams_jsonl_requests_from_cached_session(
     tmp_path: Path, monkeypatch
 ) -> None:

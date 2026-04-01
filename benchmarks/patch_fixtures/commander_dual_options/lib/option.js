@@ -22,7 +22,7 @@ class DualOptions {
       }
     });
     this.negativeOptions.forEach((value, key) => {
-      if (!this.positiveOptions.has(key)) {
+      if (this.positiveOptions.has(key)) {
         this.dualOptions.add(key);
       }
     });

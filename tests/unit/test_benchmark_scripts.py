@@ -3668,6 +3668,8 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     assert len(driver_scenarios) == 12
     assert len(bakeoff_scenarios) == 12
 
+    scenario_by_id = {scenario["instance_id"]: scenario for scenario in bakeoff_scenarios}
+
     def _build_git_patch(repo_root: Path, relative_path: str, updated_text: str) -> str:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_root = Path(temp_dir)
@@ -3692,6 +3694,18 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
             patch = patch.replace(f"+++ b/b/{relative_path}", f"+++ b/{relative_path}")
             return patch
 
+    def _materialize_broken_fixture_copy(
+        repo_root: Path,
+        relative_path: str,
+        broken_text: str,
+        instance_id: str,
+    ) -> Path:
+        broken_root = tmp_path / f"{instance_id}-broken"
+        shutil.copytree(repo_root, broken_root)
+        (broken_root / relative_path).write_text(broken_text, encoding="utf-8")
+        scenario_by_id[instance_id]["repo_fixture"] = str(broken_root)
+        return broken_root
+
     click_repo = Path("benchmarks/patch_fixtures/click_format_filename")
     click_source = click_repo / "src/click/utils.py"
     click_original = click_source.read_text(encoding="utf-8")
@@ -3710,13 +3724,19 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     }
     commander_repo = Path("benchmarks/patch_fixtures/commander_human_readable_arg_name")
     commander_source = commander_repo / "lib/argument.js"
-    commander_original = commander_source.read_text(encoding="utf-8")
-    commander_fixed = commander_original.replace(
-        "  return arg.required ? '[' + nameOutput + ']' : '<' + nameOutput + '>';\n",
+    commander_fixed = commander_source.read_text(encoding="utf-8")
+    commander_broken = commander_fixed.replace(
         "  return arg.required ? '<' + nameOutput + '>' : '[' + nameOutput + ']';\n",
+        "  return arg.required ? '[' + nameOutput + ']' : '<' + nameOutput + '>';\n",
         1,
     )
-    commander_patch = _build_git_patch(commander_repo, "lib/argument.js", commander_fixed)
+    commander_broken_repo = _materialize_broken_fixture_copy(
+        commander_repo,
+        "lib/argument.js",
+        commander_broken,
+        "commander-human-readable-arg-name",
+    )
+    commander_patch = _build_git_patch(commander_broken_repo, "lib/argument.js", commander_fixed)
     commander_prediction = {
         "instance_id": "commander-human-readable-arg-name",
         "system": "oracle",
@@ -3744,14 +3764,20 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     }
     commander_error_repo = Path("benchmarks/patch_fixtures/commander_invalid_argument_error")
     commander_error_source = commander_error_repo / "lib/error.js"
-    commander_error_original = commander_error_source.read_text(encoding="utf-8")
-    commander_error_fixed = commander_error_original.replace(
-        "    super(1, 'commander.invalidOptionArgument', message);\n",
+    commander_error_fixed = commander_error_source.read_text(encoding="utf-8")
+    commander_error_broken = commander_error_fixed.replace(
         "    super(1, 'commander.invalidArgument', message);\n",
+        "    super(1, 'commander.invalidOptionArgument', message);\n",
         1,
     )
+    commander_error_broken_repo = _materialize_broken_fixture_copy(
+        commander_error_repo,
+        "lib/error.js",
+        commander_error_broken,
+        "commander-invalid-argument-error-code",
+    )
     commander_error_patch = _build_git_patch(
-        commander_error_repo, "lib/error.js", commander_error_fixed
+        commander_error_broken_repo, "lib/error.js", commander_error_fixed
     )
     commander_error_prediction = {
         "instance_id": "commander-invalid-argument-error-code",
@@ -3798,13 +3824,21 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     }
     click_abort_repo = Path("benchmarks/patch_fixtures/click_abort")
     click_abort_source = click_abort_repo / "src/click/core.py"
-    click_abort_original = click_abort_source.read_text(encoding="utf-8")
-    click_abort_fixed = click_abort_original.replace(
-        '        raise RuntimeError("aborted")\n',
+    click_abort_fixed = click_abort_source.read_text(encoding="utf-8")
+    click_abort_broken = click_abort_fixed.replace(
         "        raise Abort()\n",
+        '        raise RuntimeError("aborted")\n',
         1,
     )
-    click_abort_patch = _build_git_patch(click_abort_repo, "src/click/core.py", click_abort_fixed)
+    click_abort_broken_repo = _materialize_broken_fixture_copy(
+        click_abort_repo,
+        "src/click/core.py",
+        click_abort_broken,
+        "click-abort-raises-abort",
+    )
+    click_abort_patch = _build_git_patch(
+        click_abort_broken_repo, "src/click/core.py", click_abort_fixed
+    )
     click_abort_prediction = {
         "instance_id": "click-abort-raises-abort",
         "system": "oracle",
@@ -3832,14 +3866,20 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     }
     commander_strip_repo = Path("benchmarks/patch_fixtures/commander_strip_color")
     commander_strip_source = commander_strip_repo / "lib/help.js"
-    commander_strip_original = commander_strip_source.read_text(encoding="utf-8")
-    commander_strip_fixed = commander_strip_original.replace(
+    commander_strip_fixed = commander_strip_source.read_text(encoding="utf-8")
+    commander_strip_broken = commander_strip_fixed.replace(
+        r"  const sgrPattern = /\x1b\[[0-9;]*m/g;",
         r"  const sgrPattern = /\x1b\[\d+(;\d+)*m/g;",
-        r"  const sgrPattern = /\x1b\[(\d+(;\d+)*)?m/g;",
         1,
     )
+    commander_strip_broken_repo = _materialize_broken_fixture_copy(
+        commander_strip_repo,
+        "lib/help.js",
+        commander_strip_broken,
+        "commander-strip-color-implicit-reset",
+    )
     commander_strip_patch = _build_git_patch(
-        commander_strip_repo, "lib/help.js", commander_strip_fixed
+        commander_strip_broken_repo, "lib/help.js", commander_strip_fixed
     )
     commander_strip_prediction = {
         "instance_id": "commander-strip-color-implicit-reset",
@@ -3850,14 +3890,20 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     }
     commander_dual_repo = Path("benchmarks/patch_fixtures/commander_dual_options")
     commander_dual_source = commander_dual_repo / "lib/option.js"
-    commander_dual_original = commander_dual_source.read_text(encoding="utf-8")
-    commander_dual_fixed = commander_dual_original.replace(
-        "      if (!this.positiveOptions.has(key)) {\n",
+    commander_dual_fixed = commander_dual_source.read_text(encoding="utf-8")
+    commander_dual_broken = commander_dual_fixed.replace(
         "      if (this.positiveOptions.has(key)) {\n",
+        "      if (!this.positiveOptions.has(key)) {\n",
         1,
     )
+    commander_dual_broken_repo = _materialize_broken_fixture_copy(
+        commander_dual_repo,
+        "lib/option.js",
+        commander_dual_broken,
+        "commander-dual-options-unrelated-flags",
+    )
     commander_dual_patch = _build_git_patch(
-        commander_dual_repo, "lib/option.js", commander_dual_fixed
+        commander_dual_broken_repo, "lib/option.js", commander_dual_fixed
     )
     commander_dual_prediction = {
         "instance_id": "commander-dual-options-unrelated-flags",
@@ -3890,23 +3936,42 @@ def test_real_patch_fixture_scenarios_should_load_and_score_oracle_predictions(t
     }
     commander_color_repo = Path("benchmarks/patch_fixtures/commander_use_color")
     commander_color_source = commander_color_repo / "lib/command.js"
-    commander_color_original = commander_color_source.read_text(encoding="utf-8")
-    commander_color_fixed = commander_color_original.replace(
+    commander_color_fixed = commander_color_source.read_text(encoding="utf-8")
+    commander_color_broken = commander_color_fixed.replace(
+        "function useColor() {\n"
+        "  const noColor = process.env.NO_COLOR;\n"
+        "  if (noColor !== undefined && noColor !== '') return false;\n"
+        "\n"
+        "  const forceColor = process.env.FORCE_COLOR;\n"
+        "  const cliColorForce = process.env.CLICOLOR_FORCE;\n"
+        "\n"
+        "  if (forceColor !== undefined) {\n"
+        "    if (forceColor === '0') return false;\n"
+        "    return true;\n"
+        "  }\n"
+        "\n"
+        "  if (cliColorForce !== undefined) {\n"
+        "    if (cliColorForce === '0') return false;\n"
+        "    return true;\n"
+        "  }\n"
+        "\n"
+        "  return undefined;\n"
+        "}\n",
         "function useColor() {\n"
         "  if (process.env.NO_COLOR !== undefined) return false;\n"
         "  if (process.env.FORCE_COLOR || process.env.CLICOLOR_FORCE) return true;\n"
         "  return undefined;\n"
         "}\n",
-        "function useColor() {\n"
-        "  if (process.env.NO_COLOR) return false;\n"
-        "  if (process.env.FORCE_COLOR === '0' || process.env.FORCE_COLOR === 'false') return false;\n"
-        "  if (process.env.FORCE_COLOR || process.env.CLICOLOR_FORCE !== undefined) return true;\n"
-        "  return undefined;\n"
-        "}\n",
         1,
     )
+    commander_color_broken_repo = _materialize_broken_fixture_copy(
+        commander_color_repo,
+        "lib/command.js",
+        commander_color_broken,
+        "commander-use-color-env-conventions",
+    )
     commander_color_patch = _build_git_patch(
-        commander_color_repo, "lib/command.js", commander_color_fixed
+        commander_color_broken_repo, "lib/command.js", commander_color_fixed
     )
     commander_color_prediction = {
         "instance_id": "commander-use-color-env-conventions",

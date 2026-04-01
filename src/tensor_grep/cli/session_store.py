@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
 from typing import Any, TextIO, cast
+from uuid import uuid4
 
 from tensor_grep.cli.repo_map import (
     _iter_repo_files,
@@ -282,11 +283,16 @@ def _resolve_request_session_target(
     return requested_session_id, resolved_path or path
 
 
+def _new_session_id(root: Path) -> str:
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S%f")
+    return f"session-{timestamp}-{root.name}-{uuid4().hex[:8]}"
+
+
 def open_session(path: str = ".") -> SessionOpenResult:
     root = _resolve_root(Path(path))
     repo_map = build_repo_map(root)
     created_at = datetime.now(UTC).isoformat()
-    session_id = f"session-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{root.name}"
+    session_id = _new_session_id(root)
     changeset = _empty_changeset()
     payload = {
         "version": _SESSION_VERSION,
@@ -310,7 +316,7 @@ def open_session(path: str = ".") -> SessionOpenResult:
         file_count=len(repo_map["files"]),
         symbol_count=len(repo_map["symbols"]),
     )
-    records = _load_index(root)
+    records = [existing for existing in _load_index(root) if existing.session_id != session_id]
     records.insert(0, record)
     _write_index(root, records)
     return SessionOpenResult(

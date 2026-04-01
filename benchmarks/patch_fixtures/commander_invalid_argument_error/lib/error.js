@@ -11,7 +11,7 @@ class CommanderError extends Error {
 
 class InvalidArgumentError extends CommanderError {
   constructor(message) {
-    super(1, 'commander.invalidOptionArgument', message);
+    super(1, 'commander.invalidArgument', message);
     Error.captureStackTrace(this, this.constructor);
     this.name = this.constructor.name;
   }

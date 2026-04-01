@@ -230,32 +230,35 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
         line = self.rfile.readline().decode("utf-8").strip()
         if not line:
             return
-        request = cast(dict[str, Any], json.loads(line))
         response: dict[str, Any]
         with server._request_lock:
             server.request_count += 1
-        session_id = str(request.get("session_id", "")).strip()
-        request_path = str(
-            request.get("path", request.get("root", str(server.root)))
-        ).strip() or str(server.root)
-        request_session_id, request_path = _resolve_request_session_target(
-            request, session_id, request_path
-        )
-        command = str(request.get("command", "")).strip().lower()
-
-        if command == "stop":
-            response = {"version": _SESSION_VERSION, "ok": True, "stopping": True}
-            self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-            self.wfile.flush()
-            threading.Thread(target=server.shutdown, daemon=True).start()
-            return
-        if command == "ping":
-            response = {"version": _SESSION_VERSION, "ok": True}
-            self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
-            self.wfile.flush()
-            return
+        request_session_id = ""
+        request_path = str(server.root)
 
         try:
+            request = cast(dict[str, Any], json.loads(line))
+            session_id = str(request.get("session_id", "")).strip()
+            request_path = str(
+                request.get("path", request.get("root", str(server.root)))
+            ).strip() or str(server.root)
+            request_session_id, request_path = _resolve_request_session_target(
+                request, session_id, request_path
+            )
+            command = str(request.get("command", "")).strip().lower()
+
+            if command == "stop":
+                response = {"version": _SESSION_VERSION, "ok": True, "stopping": True}
+                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
+                self.wfile.flush()
+                threading.Thread(target=server.shutdown, daemon=True).start()
+                return
+            if command == "ping":
+                response = {"version": _SESSION_VERSION, "ok": True}
+                self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
+                self.wfile.flush()
+                return
+
             if command == "stats":
                 response = {
                     "version": _SESSION_VERSION,

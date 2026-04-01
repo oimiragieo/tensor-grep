@@ -1,8 +1,9 @@
 import json
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 from tensor_grep.cli import session_store
+from tensor_grep.cli.session_daemon import _SessionDaemonHandler, _ThreadedSessionDaemon
 
 
 def _write_python_file(path: Path, content: str) -> None:
@@ -187,3 +188,20 @@ def test_session_serve_refresh_updates_in_memory_cache_entry(tmp_path: Path, mon
     assert responses[1]["definitions"][0]["name"] == "settle_invoice"
     assert responses[2]["definitions"][0]["name"] == "settle_invoice"
     assert len(calls) == 2
+
+
+def test_session_daemon_returns_invalid_request_for_malformed_json(tmp_path: Path) -> None:
+    project = _build_project(tmp_path / "project", "payments", "create_invoice")
+    server = _ThreadedSessionDaemon(project, ("127.0.0.1", 0))
+    try:
+        handler = _SessionDaemonHandler.__new__(_SessionDaemonHandler)
+        handler.server = server
+        handler.rfile = BytesIO(b'{"command":"context"\n')
+        handler.wfile = BytesIO()
+
+        _SessionDaemonHandler.handle(handler)
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8").strip())
+        assert payload["error"]["code"] == "invalid_request"
+    finally:
+        server.server_close()
