@@ -20,7 +20,15 @@ def test_provider_status_reports_missing_binary(tmp_path: Path) -> None:
     assert status["last_error"]
 
 
-def test_provider_status_reports_cached_client_state(tmp_path: Path) -> None:
+def test_provider_status_reports_cached_client_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
     manager = ExternalLSPProviderManager()
     client = manager.get_client(language="python", workspace_root=tmp_path)
     client.capabilities = {"definitionProvider": True}
@@ -45,6 +53,11 @@ def test_provider_manager_uses_configured_timeouts(
 ) -> None:
     monkeypatch.setenv("TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS", "7.5")
     monkeypatch.setenv("TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS", "18")
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
 
     manager = ExternalLSPProviderManager()
     client = manager.get_client(language="python", workspace_root=tmp_path)
@@ -71,6 +84,11 @@ def test_provider_status_reports_configured_timeouts_without_cached_client(
 def test_external_provider_client_respects_retry_cooldown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
     client = ExternalLSPClient(language="python", workspace_root=tmp_path)
     client.last_error = "timeout waiting for LSP response: initialize"
     client.disabled_until_monotonic = time.monotonic() + 30.0
