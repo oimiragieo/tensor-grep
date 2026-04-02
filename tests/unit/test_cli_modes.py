@@ -1737,6 +1737,57 @@ def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatc
     assert "network timeout while contacting package index" in result.output
 
 
+def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+    popen_calls: list[list[str]] = []
+
+    locked_error = (
+        "failed to remove file `C:\\Users\\oimir\\.tensor-grep\\.venv\\Scripts\\tg.exe`: "
+        "The process cannot access the file because it is being used by another process. "
+        "(os error 32)"
+    )
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        command = list(cmd)
+        calls.append(command)
+        if command[0] == "uv":
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        if command[:3] == ["python", "-m", "pip"]:
+            raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
+        raise AssertionError(f"unexpected command: {command}")
+
+    class _FakePopen:
+        def __init__(
+            self,
+            cmd,
+            stdout=None,
+            stderr=None,
+            stdin=None,
+            close_fds=None,
+            creationflags=0,
+        ):
+            popen_calls.append(list(cmd))
+
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][0] == "uv"
+    assert any(cmd[:3] == ["python", "-m", "pip"] for cmd in calls)
+    assert popen_calls
+    assert popen_calls[0][0] == "python"
+    assert popen_calls[0][1] == "-c"
+    assert "Windows is still using tg.exe" in result.output
+    assert "Wait a few seconds, then run `tg --version` again." in result.output
+    assert "Upgrade log:" in result.output
+
+
 def test_cli_debug_prints_pipeline_routing_reason(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.log"]}

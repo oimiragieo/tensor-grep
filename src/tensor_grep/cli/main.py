@@ -3830,16 +3830,21 @@ def upgrade() -> None:
     import subprocess
     import sys
 
-    def _run_upgrade() -> tuple[subprocess.CompletedProcess[str], str]:
-        errors: list[str] = []
-        pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"]
-        attempts: list[tuple[str, list[str]]] = [
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"]
+
+    def _upgrade_attempts() -> list[tuple[str, list[str]]]:
+        return [
             (
                 "uv",
                 ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "tensor-grep"],
             ),
             ("pip", pip_cmd),
         ]
+
+    def _run_upgrade(
+        attempts: list[tuple[str, list[str]]],
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        errors: list[str] = []
         for label, cmd in attempts:
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -3869,6 +3874,138 @@ def upgrade() -> None:
                         errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
         raise RuntimeError("; ".join(errors))
 
+    def _looks_like_windows_self_update_lock(message: str) -> bool:
+        lowered = message.lower()
+        return (
+            "winerror 32" in lowered
+            or "os error 32" in lowered
+            or "being used by another process" in lowered
+        )
+
+    def _schedule_windows_self_upgrade(attempts: list[tuple[str, list[str]]]) -> Path:
+        import textwrap
+
+        helper_code = textwrap.dedent(
+            """
+            import json
+            import subprocess
+            import sys
+            import time
+            from pathlib import Path
+
+            parent_pid = int(sys.argv[1])
+            log_path = Path(sys.argv[2])
+            attempts = json.loads(sys.argv[3])
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            for _ in range(300):
+                try:
+                    subprocess.run(
+                        [
+                            "powershell",
+                            "-NoProfile",
+                            "-Command",
+                            f"Get-Process -Id {parent_pid} -ErrorAction Stop | Out-Null",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                except subprocess.CalledProcessError:
+                    break
+                time.sleep(0.1)
+
+            def _run_attempts() -> tuple[bool, str, str]:
+                errors: list[str] = []
+                for label, cmd in attempts:
+                    try:
+                        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                        output = "\\n".join(
+                            part
+                            for part in (
+                                (result.stdout or "").strip(),
+                                (result.stderr or "").strip(),
+                            )
+                            if part
+                        )
+                        return True, label, output
+                    except FileNotFoundError as exc:
+                        errors.append(f"{label}: {exc}")
+                    except subprocess.CalledProcessError as exc:
+                        stderr = (exc.stderr or "").strip()
+                        stdout = (exc.stdout or "").strip()
+                        combined = stderr or stdout or str(exc)
+                        errors.append(f"{label}: {combined}")
+                        if label == "pip" and "No module named pip" in combined:
+                            try:
+                                subprocess.run(
+                                    [sys.executable, "-m", "ensurepip", "--upgrade"],
+                                    capture_output=True,
+                                    text=True,
+                                    check=True,
+                                )
+                                result = subprocess.run(
+                                    cmd,
+                                    capture_output=True,
+                                    text=True,
+                                    check=True,
+                                )
+                                output = "\\n".join(
+                                    part
+                                    for part in (
+                                        (result.stdout or "").strip(),
+                                        (result.stderr or "").strip(),
+                                    )
+                                    if part
+                                )
+                                return True, "pip+ensurepip", output
+                            except FileNotFoundError as ensurepip_exc:
+                                errors.append(f"ensurepip: {ensurepip_exc}")
+                            except subprocess.CalledProcessError as ensurepip_exc:
+                                ensure_stderr = (ensurepip_exc.stderr or "").strip()
+                                ensure_stdout = (ensurepip_exc.stdout or "").strip()
+                                errors.append(
+                                    f"ensurepip: {ensure_stderr or ensure_stdout or str(ensurepip_exc)}"
+                                )
+                return False, "", "; ".join(errors)
+
+            ok, method, payload = _run_attempts()
+            if ok:
+                text = "Scheduled tensor-grep upgrade completed via " + method + "."
+                if payload:
+                    text += "\\n" + payload
+                log_path.write_text(text, encoding="utf-8")
+                raise SystemExit(0)
+
+            log_path.write_text(
+                "Scheduled tensor-grep upgrade failed.\\n" + payload,
+                encoding="utf-8",
+            )
+            raise SystemExit(1)
+            """
+        ).strip()
+
+        log_path = Path.home() / ".tensor-grep" / "logs" / f"upgrade-{uuid4().hex}.log"
+        creationflags = 0
+        for flag_name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+            creationflags |= int(getattr(subprocess, flag_name, 0))
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                helper_code,
+                str(os.getpid()),
+                str(log_path),
+                json.dumps(attempts),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=creationflags,
+        )
+        return log_path
+
     def _installed_version() -> str | None:
         try:
             return importlib.metadata.version("tensor-grep")
@@ -3878,8 +4015,9 @@ def upgrade() -> None:
     typer.echo("Upgrading tensor-grep to the latest version...")
 
     try:
+        attempts = _upgrade_attempts()
         previous_version = _installed_version()
-        result, method = _run_upgrade()
+        result, method = _run_upgrade(attempts)
         current_version = _installed_version()
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
@@ -3894,6 +4032,14 @@ def upgrade() -> None:
                 typer.echo(output)
 
     except RuntimeError as e:
+        if _looks_like_windows_self_update_lock(str(e)):
+            log_path = _schedule_windows_self_upgrade(_upgrade_attempts())
+            typer.echo(
+                "Windows is still using tg.exe, so the upgrade was scheduled in the background."
+            )
+            typer.echo("Wait a few seconds, then run `tg --version` again.")
+            typer.echo(f"Upgrade log: {log_path}")
+            return
         typer.echo("Error occurred while upgrading tensor-grep.", err=True)
         typer.echo(str(e), err=True)
         sys.exit(1)
