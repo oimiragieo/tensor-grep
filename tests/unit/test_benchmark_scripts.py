@@ -559,6 +559,29 @@ def test_run_benchmarks_should_use_positional_early_rg_launcher_for_supported_pl
     assert env == {"TG_RUST_EARLY_POSITIONAL_RG": "1"}
 
 
+def test_run_benchmarks_should_use_positional_early_rg_launcher_for_max_count(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_benchmarks_script_launcher_mode_forced_positional_early_rg_max_count",
+        "benchmarks/run_benchmarks.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
+
+    cmd, mode, env = module.build_tg_benchmark_cmd_with_mode(
+        ["-m", "1", "ERROR", "bench_data"],
+        return_mode=True,
+        return_env=True,
+        launcher_mode="explicit_binary_positional_early_rg",
+    )
+
+    assert cmd == [str(tg_binary), "-m", "1", "ERROR", "bench_data"]
+    assert mode == "explicit_binary_positional_early_rg"
+    assert env == {"TG_RUST_EARLY_POSITIONAL_RG": "1"}
+
+
 def test_run_benchmarks_should_fallback_from_positional_launcher_for_unsupported_shapes(
     monkeypatch, tmp_path
 ):

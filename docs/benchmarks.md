@@ -315,6 +315,18 @@ This is an accepted startup reduction, not a new “beats `rg`” claim. The nex
 remain the positional early-rg extension for `-m/-w/--glob`, then the remaining default `-c`
 count-path overhead.
 
+The first accepted positional follow-up is narrower than a new global launcher recommendation.
+Using the clean `origin/main` benchmark script plus the same current binary as the baseline lane,
+`artifacts/bench_run_benchmarks_positional_m_baseline_lane.json` versus
+`artifacts/bench_run_benchmarks_positional_m_candidate.json` shows that enabling positional
+`-m/--max-count` support improved the experimental `explicit_binary_positional_early_rg` `Max Count
+Limit` row from `0.163646s` to `0.158791s` (`-2.97%`). That same batch also fixed the product
+contract so positional `tg -m <n> PATTERN PATH` now preserves `max_count` through the positional
+ripgrep args and native routing config instead of dropping it. The accepted read is still narrow:
+this is a positional capability win with a small measured benefit on the experimental lane, not a
+new accepted global cold-path mode. The next two targets therefore tighten to positional `--glob`
+first, then the separate default `-c` count-path overhead.
+
 ### Native CPU large-file / many-file (`run_native_cpu_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep native CPU | Ratio | Result |

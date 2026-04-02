@@ -73,6 +73,10 @@ pub struct PositionalCli {
     #[arg(short = 'c', long)]
     pub count: bool,
 
+    /// Stop after NUM matching lines per file
+    #[arg(short = 'm', long)]
+    pub max_count: Option<usize>,
+
     /// Fixed string matching (disable regex)
     #[arg(short = 'F', long)]
     pub fixed_strings: bool,
@@ -671,6 +675,21 @@ mod tests {
     }
 
     #[test]
+    fn early_positional_ripgrep_args_parse_max_count_shape() {
+        let raw_args = ["tg", "-m", "1", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let parsed = parse_early_positional_ripgrep_args(&raw_args)
+            .expect("expected early positional rg max-count args to parse");
+
+        assert_eq!(parsed.max_count, Some(1));
+        assert_eq!(parsed.patterns, vec!["warning".to_string()]);
+        assert_eq!(parsed.path, "bench_data".to_string());
+    }
+
+    #[test]
     fn early_positional_ripgrep_args_reject_structured_and_force_cpu_shapes() {
         let structured = ["tg", "--json", "warning", "bench_data"]
             .into_iter()
@@ -823,7 +842,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
         invert_match: cli.invert_match,
         count: cli.count,
         context: None,
-        max_count: None,
+        max_count: cli.max_count,
         word_regexp: false,
         globs: Vec::new(),
         no_ignore: true,
@@ -882,7 +901,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 invert_match: cli.invert_match,
                 count: cli.count,
                 context: None,
-                max_count: None,
+                max_count: cli.max_count,
                 word_regexp: false,
                 globs: Vec::new(),
                 no_ignore: true,
@@ -1149,7 +1168,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         count: cli.count,
         line_number: false,
         context: None,
-        max_count: None,
+        max_count: cli.max_count,
         word_regexp: false,
         globs: Vec::new(),
         no_ignore: true,
@@ -1191,6 +1210,7 @@ fn native_search_config_for_positional(
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
         count: cli.count,
+        max_count: cli.max_count.map(|value| value as u64),
         no_ignore: true,
         json: cli.json,
         ndjson: cli.ndjson,

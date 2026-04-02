@@ -1,0 +1,178 @@
+{
+  "artifact": "bench_run_benchmarks",
+  "environment": {
+    "machine": "amd64",
+    "platform": "windows",
+    "python_version": "3.14.0",
+    "tg_binary_source": "explicit_arg",
+    "tg_launcher_mode": "explicit_binary_positional_early_rg"
+  },
+  "generated_at_epoch_s": 1775096121.2173884,
+  "native_cpu_forced": false,
+  "native_cpu_mode": "default_binary",
+  "parity_failures": 4,
+  "rows": [
+    {
+      "name": "1. Simple String Match",
+      "parity": "PASS",
+      "rg_samples_s": [
+        0.109843,
+        0.122047,
+        0.128947
+      ],
+      "rg_time_s": 0.122047,
+      "tg_samples_s": [
+        0.298775,
+        0.294158,
+        0.27632
+      ],
+      "tg_time_s": 0.294158
+    },
+    {
+      "name": "2. Case-Insensitive Match",
+      "parity": "FAIL",
+      "rg_samples_s": [
+        0.140538,
+        0.159365,
+        0.152667
+      ],
+      "rg_time_s": 0.152667,
+      "tg_samples_s": [
+        0.17109,
+        0.15415,
+        0.153386
+      ],
+      "tg_time_s": 0.15415
+    },
+    {
+      "name": "3. Regex Match",
+      "parity": "PASS",
+      "rg_samples_s": [
+        0.139992,
+        0.138773,
+        0.151215
+      ],
+      "rg_time_s": 0.139992,
+      "tg_samples_s": [
+        0.325183,
+        0.358132,
+        0.330008
+      ],
+      "tg_time_s": 0.330008
+    },
+    {
+      "name": "4. Invert Match",
+      "parity": "FAIL",
+      "rg_samples_s": [
+        0.25021,
+        0.27656,
+        0.268993
+      ],
+      "rg_time_s": 0.268993,
+      "tg_samples_s": [
+        0.18196,
+        0.160716,
+        0.151961
+      ],
+      "tg_time_s": 0.160716
+    },
+    {
+      "name": "5. Count Matches",
+      "parity": "FAIL",
+      "rg_samples_s": [
+        0.061512,
+        0.06268,
+        0.075643
+      ],
+      "rg_time_s": 0.06268,
+      "tg_samples_s": [
+        0.180859,
+        0.176226,
+        0.159329
+      ],
+      "tg_time_s": 0.176226
+    },
+    {
+      "name": "6. Context Lines (Before & After)",
+      "parity": "PASS",
+      "rg_samples_s": [
+        0.32958,
+        0.336108,
+        0.356551
+      ],
+      "rg_time_s": 0.336108,
+      "tg_samples_s": [
+        0.518613,
+        0.509715,
+        0.509476
+      ],
+      "tg_time_s": 0.509715
+    },
+    {
+      "name": "7. Max Count Limit",
+      "parity": "PASS",
+      "rg_samples_s": [
+        0.020572,
+        0.018195,
+        0.024739
+      ],
+      "rg_time_s": 0.020572,
+      "tg_samples_s": [
+        0.158791,
+        0.159074,
+        0.152725
+      ],
+      "tg_time_s": 0.158791
+    },
+    {
+      "name": "8. File Glob Filtering",
+      "parity": "PASS",
+      "rg_samples_s": [
+        0.106603,
+        0.115048,
+        0.118482
+      ],
+      "rg_time_s": 0.115048,
+      "tg_samples_s": [
+        0.283535,
+        0.234386,
+        0.233215
+      ],
+      "tg_time_s": 0.234386
+    },
+    {
+      "name": "9. Word Boundary",
+      "parity": "PASS",
+      "rg_samples_s": [
+        0.180599,
+        0.173437,
+        0.242349
+      ],
+      "rg_time_s": 0.180599,
+      "tg_samples_s": [
+        0.753449,
+        0.842233,
+        0.711689
+      ],
+      "tg_time_s": 0.753449
+    },
+    {
+      "name": "10. Fixed Strings",
+      "parity": "FAIL",
+      "rg_samples_s": [
+        0.250879,
+        0.241078,
+        0.26417
+      ],
+      "rg_time_s": 0.250879,
+      "tg_samples_s": [
+        0.320452,
+        0.338523,
+        0.279629
+      ],
+      "tg_time_s": 0.320452
+    }
+  ],
+  "suite": "run_benchmarks",
+  "timing_samples_per_scenario": 3
+}

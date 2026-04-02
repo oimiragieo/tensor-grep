@@ -457,6 +457,33 @@ fn test_routing_early_positional_rg_env_preserves_plain_search_contract() {
 }
 
 #[test]
+fn test_routing_early_positional_rg_env_preserves_max_count_contract() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("-m")
+        .arg("1")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RUST_EARLY_POSITIONAL_RG", "1")
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
 fn test_routing_early_positional_rg_env_falls_back_for_unsupported_shapes() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());

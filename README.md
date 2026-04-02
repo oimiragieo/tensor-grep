@@ -104,7 +104,16 @@ Current cold-path startup refresh:
 - same-host back-to-back delta on the default `tg search` path:
   `Max Count Limit` `-46.34%`, `Count Matches` `-17.09%`, `Word Boundary` `-14.01%`, `File Glob Filtering` `-4.33%`
 - accepted read: caching ripgrep resolution helps the small passthrough-style searches, but cold generic search still trails `rg` overall
-- next two narrow targets: positional early-rg support for `-m/-w/--glob`, then the remaining default `-c` count-path overhead
+- next two narrow targets: positional early-rg support for `--glob`, then the remaining default `-c` count-path overhead
+
+Current positional `-m` snapshot:
+
+- artifacts:
+  [`artifacts/bench_run_benchmarks_positional_m_baseline_lane.json`](artifacts/bench_run_benchmarks_positional_m_baseline_lane.json)
+  and [`artifacts/bench_run_benchmarks_positional_m_candidate.json`](artifacts/bench_run_benchmarks_positional_m_candidate.json)
+- positional `tg -m <n> PATTERN PATH` now preserves `max_count` through the positional ripgrep and native routing path
+- on the experimental `explicit_binary_positional_early_rg` lane, `Max Count Limit` improved from `0.163646s` to `0.158791s` (`-2.97%`)
+- accepted read: this is a narrow positional capability win, not a new accepted global cold-path mode
 
 Important constraint:
 

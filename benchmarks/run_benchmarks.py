@@ -422,16 +422,27 @@ def can_use_positional_launcher(tg_args: list[str]) -> bool:
     )
 
     positional_count = 0
-    for arg in tg_args:
+    index = 0
+    while index < len(tg_args):
+        arg = tg_args[index]
         if arg == "--no-ignore":
+            index += 1
             continue
         if arg.startswith("-"):
+            if arg in {"-m", "--max-count"}:
+                index += 1
+                if index >= len(tg_args):
+                    return False
+                index += 1
+                continue
             if arg in supported_flags:
+                index += 1
                 continue
             if arg.startswith(unsupported_prefixes):
                 return False
             return False
         positional_count += 1
+        index += 1
 
     return positional_count == 2
 

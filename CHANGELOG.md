@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## Unreleased
+
+### Features
+
+- Add positional `-m/--max-count` support and narrow positional-lane speedup
+
+  Positional `tg -m <n> PATTERN PATH` now preserves `max_count` through the ripgrep passthrough
+  args and native routing config instead of silently dropping it outside `tg search`. On the
+  experimental `explicit_binary_positional_early_rg` lane, the `Max Count Limit` row improved from
+  `0.163646s` to `0.158791s` (`-2.97%`) when compared against the clean `origin/main` benchmark
+  script using the same binary. This is a narrow positional capability/result, not a new global
+  cold-path claim. The next two cold-path targets are positional `--glob`, then the separate
+  default `-c` count-path overhead.
+
 
 ## v0.35.1 (2026-04-02)
 
