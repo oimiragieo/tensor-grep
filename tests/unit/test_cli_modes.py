@@ -1757,8 +1757,13 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
         raise AssertionError("pip fallback should not be used when uv succeeds")
 
+    monkeypatch.setattr("sys.executable", "python")
     versions = iter(["0.31.0", "0.32.0"])
 
     monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
@@ -1769,6 +1774,7 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
 
     assert result.exit_code == 0
     assert calls[0][0] == "uv"
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
 
 
@@ -1779,8 +1785,13 @@ def test_upgrade_reports_latest_pypi_version_when_installed_version_does_not_cha
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
         raise AssertionError("pip fallback should not be used when uv succeeds")
 
+    monkeypatch.setattr("sys.executable", "python")
     versions = iter(["0.32.0", "0.32.0"])
 
     monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
@@ -1791,7 +1802,38 @@ def test_upgrade_reports_latest_pypi_version_when_installed_version_does_not_cha
 
     assert result.exit_code == 0
     assert calls[0][0] == "uv"
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
     assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
+
+
+def test_upgrade_warns_when_managed_lsp_refresh_fails(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                stderr="managed provider bootstrap failed",
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    versions = iter(["0.31.0", "0.32.0"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
+    assert "Managed LSP provider refresh failed after upgrade." in result.stdout
+    assert "managed provider bootstrap failed" in result.stdout
 
 
 def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
@@ -1811,6 +1853,10 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
                     returncode=1, cmd=cmd, stderr="No module named pip"
                 )
             return subprocess.CompletedProcess(cmd, 0, stdout="Successfully installed", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr("sys.executable", "python")
@@ -1825,6 +1871,7 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
     assert result.exit_code == 0
     assert any(cmd[:3] == ["python", "-m", "ensurepip"] for cmd in calls)
     assert pip_attempts["count"] == 2
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
     assert "Successfully upgraded tensor-grep via pip+ensurepip!" in result.stdout
 
 
@@ -1904,6 +1951,8 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     assert popen_calls
     assert popen_calls[0][0] == "python"
     assert popen_calls[0][1] == "-c"
+    assert "tensor_grep" in popen_calls[0][2]
+    assert "lsp-setup" in popen_calls[0][2]
     assert "Windows is still using tg.exe" in result.output
     assert "Wait a few seconds, then run `tg --version` again." in result.output
     assert "Upgrade log:" in result.output

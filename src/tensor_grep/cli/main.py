@@ -3983,6 +3983,7 @@ def upgrade() -> None:
     import sys
 
     pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"]
+    lsp_refresh_cmd = [sys.executable, "-m", "tensor_grep", "lsp-setup", "--json"]
 
     def _upgrade_attempts() -> list[tuple[str, list[str]]]:
         return [
@@ -4025,6 +4026,27 @@ def upgrade() -> None:
                         ee_stdout = (ee.stdout or "").strip()
                         errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
         raise RuntimeError("; ".join(errors))
+
+    def _refresh_managed_lsp_providers() -> tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                lsp_refresh_cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            output = "\n".join(
+                part
+                for part in ((result.stdout or "").strip(), (result.stderr or "").strip())
+                if part
+            )
+            return True, output
+        except FileNotFoundError as exc:
+            return False, str(exc)
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            return False, stderr or stdout or str(exc)
 
     def _looks_like_windows_self_update_lock(message: str) -> bool:
         lowered = message.lower()
@@ -4123,9 +4145,41 @@ def upgrade() -> None:
 
             ok, method, payload = _run_attempts()
             if ok:
+                try:
+                    refresh = subprocess.run(
+                        [sys.executable, "-m", "tensor_grep", "lsp-setup", "--json"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    refresh_ok = True
+                    refresh_payload = "\\n".join(
+                        part
+                        for part in (
+                            (refresh.stdout or "").strip(),
+                            (refresh.stderr or "").strip(),
+                        )
+                        if part
+                    )
+                except FileNotFoundError as exc:
+                    refresh_ok = False
+                    refresh_payload = str(exc)
+                except subprocess.CalledProcessError as exc:
+                    refresh_ok = False
+                    refresh_stderr = (exc.stderr or "").strip()
+                    refresh_stdout = (exc.stdout or "").strip()
+                    refresh_payload = refresh_stderr or refresh_stdout or str(exc)
                 text = "Scheduled tensor-grep upgrade completed via " + method + "."
                 if payload:
                     text += "\\n" + payload
+                if refresh_ok:
+                    text += "\\nManaged LSP providers refreshed."
+                    if refresh_payload:
+                        text += "\\n" + refresh_payload
+                else:
+                    text += "\\nManaged LSP provider refresh failed after upgrade."
+                    if refresh_payload:
+                        text += "\\n" + refresh_payload
                 log_path.write_text(text, encoding="utf-8")
                 raise SystemExit(0)
 
@@ -4174,6 +4228,7 @@ def upgrade() -> None:
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )
+        refresh_ok, refresh_payload = _refresh_managed_lsp_providers()
         if current_version is not None and current_version == previous_version:
             typer.echo(f"tensor-grep is already at the latest PyPI version ({current_version}).")
         elif "Requirement already satisfied" in output:
@@ -4182,6 +4237,14 @@ def upgrade() -> None:
             typer.echo(f"Successfully upgraded tensor-grep via {method}!")
             if output:
                 typer.echo(output)
+        if refresh_ok:
+            typer.echo("Managed LSP providers refreshed.")
+            if refresh_payload:
+                typer.echo(refresh_payload)
+        else:
+            typer.echo("Managed LSP provider refresh failed after upgrade.")
+            if refresh_payload:
+                typer.echo(refresh_payload)
 
     except RuntimeError as e:
         if _looks_like_windows_self_update_lock(str(e)):
