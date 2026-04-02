@@ -188,6 +188,8 @@ Installer defaults and channels:
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
+- The script-managed install now provisions external LSP providers into `~/.tensor-grep/providers` so `tg doctor --with-lsp` and provider-backed semantics do not depend on global `pyright-langserver`, `typescript-language-server`, or `rust-analyzer` binaries.
+- Re-run `tg lsp-setup` if you need to repair or refresh that managed LSP toolchain after install.
 
 If `tg --version` still reports an older version, check command resolution:
 ```powershell

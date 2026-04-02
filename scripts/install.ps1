@@ -90,6 +90,9 @@ try {
     # Ensure AST runtime grammars are present explicitly across environments.
     & $uvPath pip install tree-sitter tree-sitter-python tree-sitter-javascript --python "$installDir\.venv\Scripts\python.exe"
 
+    Write-Host "      Installing managed external LSP providers..."
+    & "$installDir\.venv\Scripts\tg.exe" lsp-setup --json | Out-Null
+
     # 5. Install PATH shims for profile-independent command resolution.
     $shimDirs = @(
         "$env:USERPROFILE\.local\bin",

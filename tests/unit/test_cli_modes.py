@@ -371,6 +371,16 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     assert "AI troubleshooting" in result.stdout
 
 
+def test_lsp_setup_help_mentions_managed_provider_install() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lsp-setup", "--help"])
+
+    assert result.exit_code == 0
+    assert "--json" in result.stdout
+    assert "managed external LSP providers" in result.stdout
+
+
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
     monkeypatch.setattr(
@@ -389,6 +399,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
                 "available": True,
                 "running": False,
                 "command": ["pyright-langserver", "--stdio"],
+                "command_source": "managed",
+                "managed_provider_root": str(tmp_path / "providers"),
                 "last_error": None,
             }
         ],
@@ -407,6 +419,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["session_daemon"]["running"] is True
     assert payload["lsp"]["enabled"] is True
     assert payload["lsp"]["providers"][0]["language"] == "python"
+    assert payload["lsp"]["providers"][0]["command_source"] == "managed"
+    assert payload["lsp"]["providers"][0]["managed_provider_root"] == str(tmp_path / "providers")
 
 
 def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_path: Path) -> None:
@@ -426,6 +440,45 @@ def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_pa
     assert "native_tg_binary: missing" in result.stdout
     assert "session_daemon: stopped" in result.stdout
     assert "lsp_providers: disabled" in result.stdout
+
+
+def test_lsp_setup_runs_managed_provider_installer(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_install(*, python_executable: str, managed_root: Path | None) -> dict[str, object]:
+        seen["python_executable"] = python_executable
+        seen["managed_root"] = managed_root
+        return {
+            "managed_provider_root": str(tmp_path / "providers"),
+            "node": {"installed": True},
+            "providers": {
+                "python": {
+                    "command": [str(tmp_path / "providers" / "pyright-langserver"), "--stdio"]
+                },
+                "typescript": {
+                    "command": [
+                        str(tmp_path / "providers" / "typescript-language-server"),
+                        "--stdio",
+                    ]
+                },
+                "rust": {"command": [str(tmp_path / "providers" / "rust-analyzer")]},
+            },
+        }
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.install_managed_lsp_providers",
+        _fake_install,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["lsp-setup", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["managed_provider_root"] == str(tmp_path / "providers")
+    assert payload["providers"]["python"]["command"][0].endswith("pyright-langserver")
+    assert seen["python_executable"] == sys.executable
+    assert seen["managed_root"] is None
 
 
 def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):

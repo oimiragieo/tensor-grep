@@ -36,6 +36,10 @@ tg --help
 
 *Note: The pip version requires a configured Python environment and may require additional setup for GPU acceleration (like installing `cudf` and `torch`).*
 
+Installer note:
+- The script-driven install now provisions managed external LSP providers under `~/.tensor-grep/providers`.
+- Use `tg lsp-setup` to refresh that managed provider toolchain if `tg doctor --with-lsp` reports a missing or stale provider binary.
+
 ## Maintainer Notes: Package Manager Publish Flow
 
 The repository includes package-manager manifests:

@@ -10,6 +10,13 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from tensor_grep.cli.lsp_provider_setup import (
+    managed_provider_command,
+)
+from tensor_grep.cli.lsp_provider_setup import (
+    managed_provider_root as _managed_provider_root,
+)
+
 
 class LSPTransportError(RuntimeError):
     pass
@@ -65,6 +72,9 @@ def _write_message(stream: Any, payload: dict[str, Any]) -> None:
 
 def _provider_command(language: str) -> list[str]:
     normalized = language.lower()
+    managed_command = managed_provider_command(normalized, managed_root=_managed_provider_root())
+    if managed_command is not None:
+        return managed_command
     if normalized == "python":
         binary = shutil.which("pyright-langserver")
         if not binary:
@@ -262,6 +272,8 @@ class ExternalLSPClient:
             "language": self.language,
             "workspace_root": str(self.workspace_root),
             "command": list(self.command),
+            "command_source": _command_source(self.command),
+            "managed_provider_root": str(_managed_provider_root()),
             "running": self.process is not None and self.process.poll() is None,
             "capabilities": dict(self.capabilities),
             "last_error": self.last_error,
@@ -332,6 +344,8 @@ class ExternalLSPProviderManager:
                 "available": False,
                 "running": False,
                 "command": [],
+                "command_source": "missing",
+                "managed_provider_root": str(_managed_provider_root()),
                 "capabilities": {},
                 "last_error": str(exc),
                 "opened_documents": 0,
@@ -350,6 +364,8 @@ class ExternalLSPProviderManager:
             "available": True,
             "running": False,
             "command": command,
+            "command_source": _command_source(command),
+            "managed_provider_root": str(_managed_provider_root()),
             "capabilities": {},
             "last_error": None,
             "opened_documents": 0,
@@ -368,3 +384,18 @@ class ExternalLSPProviderManager:
         for current in self._clients.values():
             current.stop()
         self._clients.clear()
+
+
+def _command_source(command: list[str]) -> str:
+    if not command:
+        return "missing"
+    managed_root = _managed_provider_root()
+    try:
+        command_path = Path(command[0]).resolve()
+    except OSError:
+        return "path"
+    try:
+        command_path.relative_to(managed_root)
+    except ValueError:
+        return "path"
+    return "managed"

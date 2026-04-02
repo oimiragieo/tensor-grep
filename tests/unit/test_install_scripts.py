@@ -12,6 +12,7 @@ def test_install_ps1_should_restore_original_directory_in_finally_block():
     assert "$originalPath = (Get-Location).Path" in content
     assert "finally {" in content
     assert "Set-Location -Path $originalPath" in content
+    assert "lsp-setup --json" in content
 
 
 def test_install_sh_should_capture_original_directory_and_restore_on_exit():
@@ -20,3 +21,4 @@ def test_install_sh_should_capture_original_directory_and_restore_on_exit():
     assert "trap restore_original_dir EXIT" in content
     assert 'cd "$ORIGINAL_DIR"' in content
     assert 'echo "Returned to original directory: $ORIGINAL_DIR"' in content
+    assert "lsp-setup --json" in content

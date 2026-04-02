@@ -96,6 +96,9 @@ fi
 # Ensure AST runtime grammars are present explicitly across environments.
 uv pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .venv/bin/python
 
+echo "      Installing managed external LSP providers..."
+./.venv/bin/tg lsp-setup --json > /dev/null
+
 # 5. Install PATH shims for profile-independent command resolution.
 SHIM_DIRS=("$HOME/.local/bin" "$HOME/bin")
 INSTALLED_SHIMS=()

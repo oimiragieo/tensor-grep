@@ -17,6 +17,7 @@ import typer
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.cli.lsp_provider_setup import install_managed_lsp_providers
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
@@ -254,6 +255,7 @@ def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
         "TG_RUST_FIRST_SEARCH",
         "TG_RUST_EARLY_RG",
         "TG_RUST_EARLY_POSITIONAL_RG",
+        "TENSOR_GREP_LSP_PROVIDER_HOME",
         "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS",
         "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS",
     ]
@@ -314,10 +316,14 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
             command_str = " ".join(str(part) for part in command) if command else "missing"
             status = "running" if current.get("running") else "idle"
             availability = "available" if current.get("available") else "unavailable"
+            source = current.get("command_source", "path")
             last_error = current.get("last_error")
+            managed_root = current.get("managed_provider_root")
             suffix = f" last_error={last_error}" if last_error else ""
+            if managed_root:
+                suffix = f" managed_root={managed_root}{suffix}"
             lines.append(
-                f"  {current['language']}: {availability}/{status} command={command_str}{suffix}"
+                f"  {current['language']}: {availability}/{status} source={source} command={command_str}{suffix}"
             )
     else:
         lines.append("lsp_providers: disabled")
@@ -3920,6 +3926,24 @@ def lsp(
     run_lsp()
 
 
+@app.command(name="lsp-setup")
+def lsp_setup(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Install managed external LSP providers under the tensor-grep install root."""
+    payload = install_managed_lsp_providers(python_executable=sys.executable, managed_root=None)
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(f"Installed managed external LSP providers under {payload['managed_provider_root']}")
+    providers = cast(dict[str, dict[str, Any]], payload["providers"])
+    for language in ("python", "javascript", "typescript", "rust"):
+        command = providers.get(language, {}).get("command") or []
+        typer.echo(
+            f"  {language}: {' '.join(str(part) for part in command) if command else 'missing'}"
+        )
+
+
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(session_app, name="session")
 app.add_typer(review_bundle_app, name="review-bundle")
@@ -4641,6 +4665,7 @@ def main_entry() -> None:
         "review-bundle",
         "new",
         "lsp",
+        "lsp-setup",
         "doctor",
         "mcp",
         "upgrade",
