@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.35.1 (2026-04-02)
+
+### Bug Fixes
+
+- Cut ripgrep passthrough startup overhead
+  ([`7b53749`](https://github.com/oimiragieo/tensor-grep/commit/7b537497cfcfae9c7517a7b71600830890f64c83))
+
+
 ## v0.35.0 (2026-04-02)
 
 ### Bug Fixes
@@ -20,21 +28,6 @@ Make the repeated-query benchmark runnable and honest across local and CI flows.
 - Improve ai handoff prefetch and cached postings
   ([`f7ebbfb`](https://github.com/oimiragieo/tensor-grep/commit/f7ebbfbe834410f990fa760b605f91eef2cecdda))
 
-
-- Cut repeated ripgrep-resolution overhead on the default cold CLI path
-
-Cache ripgrep binary resolution inside the Rust passthrough layer so repeated default
-  `tg search` runs stop redoing the same runtime-path probe work for every scenario.
-
-In a same-host back-to-back refresh, the default cold CLI artifact
-  `artifacts/bench_run_benchmarks_passthrough_startup_refresh.json` improved the worst small-search
-  rows relative to the immediately preceding local baseline: `Max Count Limit` improved by
-  `46.34%`, `Count Matches` by `17.09%`, `Word Boundary` by `14.01%`, and `File Glob Filtering`
-  by `4.33%`.
-
-This is an accepted startup reduction, not a claim that cold generic search now beats `rg`
-  broadly. The next two explicit targets remain the positional early-rg extension for
-  `-m/-w/--glob` and then the remaining default `-c` count-path overhead.
 
 ## v0.34.0 (2026-04-01)
 
