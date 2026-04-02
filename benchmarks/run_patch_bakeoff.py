@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -227,6 +228,12 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
     predicted_validation_commands = [
         str(command) for command in list(prediction.get("actual_validation_commands", []))
     ]
+    validation_env = dict(os.environ)
+    python_dir = str(Path(sys.executable).resolve().parent)
+    existing_path = validation_env.get("PATH", "")
+    validation_env["PATH"] = (
+        python_dir if not existing_path else os.pathsep.join([python_dir, existing_path])
+    )
 
     patch_applied = False
     validation_passed = False
@@ -266,6 +273,7 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
                         command,
                         cwd=worktree,
                         shell=True,
+                        env=validation_env,
                         capture_output=True,
                         text=True,
                         check=False,
