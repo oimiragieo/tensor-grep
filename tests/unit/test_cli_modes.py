@@ -329,7 +329,7 @@ def test_files_mode_lists_candidates(monkeypatch):
 def test_session_daemon_help_lists_lifecycle_commands() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["session", "daemon", "--help"])
+    result = runner.invoke(app, ["session", "daemon", "--help"], color=False)
 
     assert result.exit_code == 0
     assert "start" in result.stdout
@@ -340,7 +340,7 @@ def test_session_daemon_help_lists_lifecycle_commands() -> None:
 def test_session_context_help_mentions_daemon_flag() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["session", "context", "--help"])
+    result = runner.invoke(app, ["session", "context", "--help"], color=False)
 
     assert result.exit_code == 0
     normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
@@ -351,34 +351,37 @@ def test_session_context_help_mentions_daemon_flag() -> None:
 def test_lsp_help_mentions_provider_modes() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["lsp", "--help"])
+    result = runner.invoke(app, ["lsp", "--help"], color=False)
 
     assert result.exit_code == 0
-    assert "--provider" in result.stdout
-    assert "native=repo-map only" in result.stdout
-    assert "Examples:" in result.stdout
-    assert "--provider hybrid" in result.stdout
+    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "-provider" in normalized_output
+    assert "native=repo-map only" in normalized_output
+    assert "Examples:" in normalized_output
+    assert "provider hybrid" in normalized_output
 
 
 def test_doctor_help_mentions_lsp_and_json() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["doctor", "--help"])
+    result = runner.invoke(app, ["doctor", "--help"], color=False)
 
     assert result.exit_code == 0
-    assert "--with-lsp" in result.stdout
-    assert "--json" in result.stdout
-    assert "AI troubleshooting" in result.stdout
+    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "-with-lsp" in normalized_output
+    assert "-json" in normalized_output
+    assert "AI troubleshooting" in normalized_output
 
 
 def test_lsp_setup_help_mentions_managed_provider_install() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["lsp-setup", "--help"])
+    result = runner.invoke(app, ["lsp-setup", "--help"], color=False)
 
     assert result.exit_code == 0
-    assert "--json" in result.stdout
-    assert "managed external LSP providers" in result.stdout
+    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "-json" in normalized_output
+    assert "managed external LSP providers" in normalized_output
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
