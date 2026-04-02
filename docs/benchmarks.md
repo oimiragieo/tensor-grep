@@ -297,6 +297,24 @@ The current broader Gemini A/B artifact is `artifacts/patch_eval_demo/gemini_ski
 | Word Boundary | 0.269s | 0.228s | Regression check PASS |
 | Fixed Strings (`-F`) | 0.206s | 0.219s | Regression check PASS |
 
+The next accepted cold-path step is narrower than another front-door widening. A same-host
+back-to-back startup refresh at
+`artifacts/bench_run_benchmarks_passthrough_startup_refresh.json` kept the default `explicit_binary`
+launcher mode but cached ripgrep binary resolution inside the Rust passthrough layer. Relative to
+the immediately preceding local baseline artifact, that refresh improved the worst small-search
+rows by:
+
+| Scenario | Baseline `tg` | Refresh `tg` | Delta |
+| --- | --- | --- | --- |
+| Count Matches | 0.691659s | 0.573465s | -17.09% |
+| Max Count (`-m 5`) | 0.720478s | 0.386605s | -46.34% |
+| File Glob Filtering | 0.830538s | 0.794537s | -4.33% |
+| Word Boundary | 0.971472s | 0.835348s | -14.01% |
+
+This is an accepted startup reduction, not a new “beats `rg`” claim. The next two explicit targets
+remain the positional early-rg extension for `-m/-w/--glob`, then the remaining default `-c`
+count-path overhead.
+
 ### Native CPU large-file / many-file (`run_native_cpu_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep native CPU | Ratio | Result |

@@ -5,11 +5,13 @@ use anyhow::{anyhow, Context};
 use std::env;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 const WINDOWS_RG_DIRNAME: &str = "ripgrep-14.1.0-x86_64-pc-windows-msvc";
 const TG_RG_PATH_ENV: &str = "TG_RG_PATH";
 const LEGACY_TG_RG_BINARY_ENV: &str = "TG_RG_BINARY";
 const TG_DISABLE_RG_ENV: &str = "TG_DISABLE_RG";
+static RG_BINARY_CACHE: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct RipgrepSearchArgs {
@@ -87,6 +89,17 @@ pub fn ripgrep_is_available() -> bool {
 }
 
 fn resolve_ripgrep_binary() -> Option<PathBuf> {
+    resolve_ripgrep_binary_with_cache(&RG_BINARY_CACHE, resolve_ripgrep_binary_uncached)
+}
+
+fn resolve_ripgrep_binary_with_cache(
+    cache: &OnceLock<Option<PathBuf>>,
+    resolver: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    cache.get_or_init(resolver).clone()
+}
+
+fn resolve_ripgrep_binary_uncached() -> Option<PathBuf> {
     if env_flag_enabled(TG_DISABLE_RG_ENV) {
         return None;
     }
@@ -117,6 +130,32 @@ fn resolve_ripgrep_binary() -> Option<PathBuf> {
     rg_path_candidates()
         .into_iter()
         .find(|candidate| candidate.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn resolve_ripgrep_binary_uses_cached_value_after_first_lookup() {
+        let cache = OnceLock::new();
+        let calls = AtomicUsize::new(0);
+        let expected = PathBuf::from("rg-a.exe");
+
+        let first = resolve_ripgrep_binary_with_cache(&cache, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Some(expected.clone())
+        });
+        let second = resolve_ripgrep_binary_with_cache(&cache, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Some(PathBuf::from("rg-b.exe"))
+        });
+
+        assert_eq!(first, Some(expected.clone()));
+        assert_eq!(second, Some(expected));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 }
 
 fn env_flag_enabled(name: &str) -> bool {

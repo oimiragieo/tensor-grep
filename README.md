@@ -98,6 +98,14 @@ Current AI handoff comparison snapshot:
 - mean overall score: `0.972222`
 - current read-group heuristic: same-directory related/test reads are prefetched into the primary phase when they stay local to the edit slice
 
+Current cold-path startup refresh:
+
+- artifact: [`artifacts/bench_run_benchmarks_passthrough_startup_refresh.json`](artifacts/bench_run_benchmarks_passthrough_startup_refresh.json)
+- same-host back-to-back delta on the default `tg search` path:
+  `Max Count Limit` `-46.34%`, `Count Matches` `-17.09%`, `Word Boundary` `-14.01%`, `File Glob Filtering` `-4.33%`
+- accepted read: caching ripgrep resolution helps the small passthrough-style searches, but cold generic search still trails `rg` overall
+- next two narrow targets: positional early-rg support for `-m/-w/--glob`, then the remaining default `-c` count-path overhead
+
 Important constraint:
 
 - do not treat internal GPU pipeline throughput as the same thing as end-to-end CLI crossover
