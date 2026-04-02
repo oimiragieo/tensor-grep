@@ -409,16 +409,16 @@ This is a narrower win than direct `rg` passthrough, but it matters in the exact
 
 ### Scripted Hot-Query Snapshot (`run_hot_query_benchmarks.py`)
 
-The scripted hot-query benchmark now measures both the fixed-string and regex-prefilter rows via fresh subprocess probes and writes a JSON artifact at `artifacts/bench_hot_query_benchmarks.json`. On the current local Windows host, the refreshed accepted rerun at `artifacts/bench_hot_query_benchmarks_post_bench_fix.json` measured:
+The scripted hot-query benchmark now measures both the fixed-string and regex-prefilter rows via fresh subprocess probes and writes a JSON artifact at `artifacts/bench_hot_query_benchmarks.json`. On the current local Windows host, the refreshed accepted rerun at `artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json` measured:
 
 | Scenario | First | Second | Result |
 | --- | --- | --- | --- |
-| repeated_fixed_string | 0.6514s | 0.2149s | cache win |
-| repeated_regex_prefilter | 0.7269s | 0.2137s | cache win |
+| repeated_fixed_string | 0.6271s | 0.2164s | cache win |
+| repeated_regex_prefilter | 0.8776s | 0.2263s | cache win |
 
 This is a more honest benchmark than the older mixed-process snapshot because both rows now include fresh-process overhead. The literal path is still the strongest repeated-query line, but the claim is narrower than “warm queries are free”: on this host the cached second literal query is about **66.6%** faster than the first, and the cached second regex-prefilter query is about **72.9%** faster than the first.
 
-Operational note: the fixed-string row depends on the benchmark extras (`stringzilla`). The CI `benchmark-regression` job now installs `.[bench,dev]` and runs `run_hot_query_benchmarks.py`, while local one-off runs may record an explicit `SKIP` row with an install hint instead of crashing when that dependency is absent.
+Operational note: the fixed-string row depends on the benchmark extras (`stringzilla`). The CI `benchmark-regression` job still installs `.[bench,dev]` and runs `run_hot_query_benchmarks.py`, while local one-off runs can now use the smaller `.[bench]` contract directly (`uv pip install -e ".[bench]"` or `uv run --extra bench python benchmarks/run_hot_query_benchmarks.py`). When that dependency is absent, the benchmark records an explicit `SKIP` row with an install hint instead of crashing.
 
 For the cold-path roadmap, the next two targets stay narrow and evidence-first:
 

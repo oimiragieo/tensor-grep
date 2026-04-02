@@ -115,3 +115,43 @@ def test_stringzilla_invalidates_persistent_trigram_index_when_file_changes(tmp_
     assert second.matches[0].line_number == 2
     assert second.routing_reason == "stringzilla_fixed_strings_index"
     assert build_calls["count"] == 1
+
+
+def test_stringzilla_cache_hit_search_uses_sorted_posting_intersection(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "sz-cache"
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_DIR", str(cache_dir))
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", "1")
+    StringZillaBackend._clear_shared_caches()
+
+    log_file = tmp_path / "sys.log"
+    log_file.write_text(
+        "INFO ok\nERROR alpha timeout\nDEBUG trace\nERROR alpha critical timeout\n",
+        encoding="utf-8",
+    )
+
+    first = StringZillaBackend().search(
+        str(log_file),
+        "alpha timeout",
+        config=SearchConfig(fixed_strings=True),
+    )
+    assert first.total_matches == 1
+
+    backend_two = StringZillaBackend()
+    calls = {"count": 0}
+    original = backend_two._intersect_sorted_line_indexes
+
+    def wrapped(postings):
+        calls["count"] += 1
+        return original(postings)
+
+    backend_two._intersect_sorted_line_indexes = wrapped  # type: ignore[method-assign]
+    second = backend_two.search(
+        str(log_file),
+        "critical timeout",
+        config=SearchConfig(fixed_strings=True),
+    )
+
+    assert second.total_matches == 1
+    assert second.matches[0].line_number == 4
+    assert second.routing_reason == "stringzilla_fixed_strings_index_cache"
+    assert calls["count"] == 1

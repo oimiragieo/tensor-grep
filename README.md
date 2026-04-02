@@ -83,11 +83,20 @@ The canonical benchmark matrix lives in [docs/benchmarks.md](docs/benchmarks.md)
 
 Current repeated-query snapshot:
 
-- artifact: [`artifacts/bench_hot_query_benchmarks_post_hotfix.json`](artifacts/bench_hot_query_benchmarks_post_hotfix.json)
-- repeated fixed string: `0.7119s -> 0.2379s`
-- repeated regex prefilter: `0.7188s -> 0.1951s`
+- artifact: [`artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json`](artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json)
+- repeated fixed string: `0.6271s -> 0.2164s`
+- repeated regex prefilter: `0.8776s -> 0.2263s`
 - both rows now include fresh-process overhead
-- local benchmark note: run `uv run --extra dev python benchmarks/run_hot_query_benchmarks.py` for the fully provisioned path; without the benchmark extras, the fixed-string row records `SKIP` with an install hint instead of crashing
+- local benchmark note: run `uv run --extra bench python benchmarks/run_hot_query_benchmarks.py` for the fully provisioned path; without the benchmark extras, the fixed-string row records `SKIP` with an install hint instead of crashing
+
+Current AI handoff comparison snapshot:
+
+- artifact: [`artifacts/external_validation/external_agent_patch_driver_scorecard.json`](artifacts/external_validation/external_agent_patch_driver_scorecard.json)
+- mean compactness score: `1.0`
+- mean validation-fit score: `1.0`
+- mean parallel-read reduction score: `0.916667`
+- mean overall score: `0.972222`
+- current read-group heuristic: same-directory related/test reads are prefetched into the primary phase when they stay local to the edit slice
 
 Important constraint:
 

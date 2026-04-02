@@ -102,12 +102,26 @@ class StringZillaBackend(ComputeBackend):
     def _intersect_sorted_line_indexes(postings: list[list[int]]) -> list[int]:
         if not postings:
             return []
-        shared = set(postings[0])
+        shared = postings[0]
         for posting in postings[1:]:
-            shared.intersection_update(posting)
-            if not shared:
+            left_index = 0
+            right_index = 0
+            intersection: list[int] = []
+            while left_index < len(shared) and right_index < len(posting):
+                left = shared[left_index]
+                right = posting[right_index]
+                if left == right:
+                    intersection.append(left)
+                    left_index += 1
+                    right_index += 1
+                elif left < right:
+                    left_index += 1
+                else:
+                    right_index += 1
+            if not intersection:
                 return []
-        return sorted(shared)
+            shared = intersection
+        return shared
 
     def _extract_trigrams(self, pattern: str) -> list[str]:
         return [pattern[i : i + 3] for i in range(len(pattern) - 2)]
@@ -195,7 +209,7 @@ class StringZillaBackend(ComputeBackend):
         else:
             source_lines, trigram_index = cached
 
-        candidate_sets = []
+        postings: list[list[int]] = []
         normalized_pattern = pattern.lower() if ignore_case else pattern
         for trigram in self._extract_trigrams(normalized_pattern):
             line_numbers = trigram_index.get(trigram)
@@ -209,9 +223,9 @@ class StringZillaBackend(ComputeBackend):
                     routing_distributed=False,
                     routing_worker_count=1,
                 )
-            candidate_sets.append(set(line_numbers))
+            postings.append(line_numbers)
 
-        candidate_line_indexes = sorted(set.intersection(*candidate_sets)) if candidate_sets else []
+        candidate_line_indexes = self._intersect_sorted_line_indexes(postings)
         matches = []
         for line_idx in candidate_line_indexes:
             line = source_lines[line_idx]

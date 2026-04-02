@@ -4,14 +4,19 @@
 
 ### Features
 
-- Make the hot-query benchmark line first-class and honest
+- Improve AI read-phase prefetch and hot-query benchmark ergonomics
 
-Run the fixed-string hot-query row through a fresh subprocess probe, install `stringzilla` in the
-  benchmark extra, and treat missing local benchmark extras as an explicit `SKIP` with an install
-  hint instead of a crash.
+Broaden `navigation_pack` prefetch from the old single-sibling heuristic to same-directory related
+  and test reads, which improves the external agent scorecard to
+  `mean_overall_score = 0.972222` and `mean_parallel_read_reduction_score = 0.916667` on the
+  refreshed Gemini/Claude/Codex comparison.
 
-This keeps the repeated-query line measurable in CI, reproducible locally, and aligned with the
-  current accepted benchmark artifact at `artifacts/bench_hot_query_benchmarks_post_bench_fix.json`.
+Also keep the hot-query line runnable under the standalone benchmark extra by installing
+  `stringzilla` in `.[bench]`, updating the install hint to `uv pip install -e ".[bench]"`, and
+  keeping the cached fixed-string path on the sorted-postings intersection path.
+
+The current accepted hot-query artifact is
+  `artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json`.
 
 ## v0.34.0 (2026-04-01)
 

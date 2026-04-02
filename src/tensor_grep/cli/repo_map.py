@@ -5742,35 +5742,40 @@ def _navigation_pack(
             grouped_reads["test"].append(current)
 
     parallel_read_groups: list[dict[str, Any]] = []
-    prefetched_related: list[dict[str, Any]] = []
-    if primary_file and len(grouped_reads["related"]) == 1 and not grouped_reads["test"]:
-        related_entry = grouped_reads["related"][0]
-        related_file = str(related_entry.get("file", "") or "")
+    prefetched_reads: list[dict[str, Any]] = []
+    if primary_file:
         try:
             primary_parent = Path(primary_file).resolve().parent
-            related_parent = Path(related_file).resolve().parent
         except (OSError, ValueError):
             primary_parent = None
-            related_parent = None
-        if (
-            primary_parent is not None
-            and related_parent is not None
-            and primary_parent == related_parent
-        ):
-            prefetched_related = grouped_reads["related"]
-            grouped_reads["related"] = []
+        if primary_parent is not None:
+            for role in ("related", "test"):
+                remaining_reads: list[dict[str, Any]] = []
+                for current in grouped_reads[role]:
+                    current_file = str(current.get("file", "") or "")
+                    try:
+                        current_parent = Path(current_file).resolve().parent
+                    except (OSError, ValueError):
+                        current_parent = None
+                    if current_parent is not None and current_parent == primary_parent:
+                        prefetched_reads.append(current)
+                    else:
+                        remaining_reads.append(current)
+                grouped_reads[role] = remaining_reads
     if primary_target["mention_ref"]:
         primary_mentions = [str(primary_target["mention_ref"])]
         primary_files = [primary_file] if primary_file else []
         primary_roles = ["primary"]
-        for current in prefetched_related:
+        for current in prefetched_reads:
             mention = str(current.get("mention_ref", "") or "")
             file_path = str(current.get("file", "") or "")
+            role = str(current.get("role", "") or "")
             if mention:
                 primary_mentions.append(mention)
             if file_path:
                 primary_files.append(file_path)
-            primary_roles.append("related")
+            if role:
+                primary_roles.append(role)
         parallel_read_groups.append({
             "phase": len(parallel_read_groups),
             "label": "primary",

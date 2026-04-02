@@ -1316,6 +1316,94 @@ def test_navigation_pack_prefetches_single_same_directory_related_read_into_prim
     assert str(sibling_path.resolve()) in groups[0]["files"]
 
 
+def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_primary_phase(
+    tmp_path,
+):
+    from tensor_grep.cli import repo_map
+
+    src_dir = tmp_path / "src" / "tools"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "glob.ts"
+    sibling_a = src_dir / "grep.ts"
+    sibling_b = src_dir / "read-many-files.ts"
+    test_path = src_dir / "glob.test.ts"
+    for path, text in (
+        (module_path, "export function globTool(): string { return 'glob'; }\n"),
+        (sibling_a, "export function grepTool(): string { return 'grep'; }\n"),
+        (sibling_b, "export function readManyFiles(): string { return 'read'; }\n"),
+        (test_path, "export function testGlobTool(): string { return 'test'; }\n"),
+    ):
+        path.write_text(text, encoding="utf-8")
+
+    repo_fixture = {
+        "symbols": [
+            {
+                "name": "testGlobTool",
+                "file": str(test_path.resolve()),
+                "path": str(test_path.resolve()),
+                "start_line": 1,
+                "end_line": 1,
+                "kind": "function",
+            }
+        ]
+    }
+    payload = {
+        "edit_plan_seed": {
+            "primary_file": str(module_path.resolve()),
+            "primary_symbol": {"name": "globTool"},
+            "primary_span": {"start_line": 1, "end_line": 1},
+            "reasons": ["primary-symbol"],
+            "confidence": {"overall": 0.95},
+            "validation_tests": [str(test_path.resolve())],
+            "validation_commands": ["npx vitest run"],
+            "edit_ordering": [
+                str(module_path.resolve()),
+                str(sibling_a.resolve()),
+                str(sibling_b.resolve()),
+            ],
+            "rollback_risk": 0.15,
+        },
+        "candidate_edit_targets": {
+            "spans": [
+                {
+                    "file": str(module_path.resolve()),
+                    "symbol": "globTool",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "rationale": "primary",
+                },
+                {
+                    "file": str(sibling_a.resolve()),
+                    "symbol": "grepTool",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "rationale": "related",
+                },
+                {
+                    "file": str(sibling_b.resolve()),
+                    "symbol": "readManyFiles",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "rationale": "related",
+                },
+            ]
+        },
+    }
+
+    navigation_pack = repo_map._navigation_pack(repo_fixture, payload, max_reads=5)
+
+    groups = navigation_pack["parallel_read_groups"]
+    assert len(groups) == 1
+    assert groups[0]["label"] == "primary"
+    assert sorted(groups[0]["roles"]) == ["primary", "related", "related", "test"]
+    assert sorted(groups[0]["files"]) == sorted([
+        str(module_path.resolve()),
+        str(sibling_a.resolve()),
+        str(sibling_b.resolve()),
+        str(test_path.resolve()),
+    ])
+
+
 def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):
     from tensor_grep.cli import main as cli_main
 
