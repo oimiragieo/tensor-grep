@@ -225,14 +225,34 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             if isinstance(benchmark_job, dict):
                 benchmark_steps = benchmark_job.get("steps", [])
                 benchmark_run_by_name: dict[str, str] = {}
+                benchmark_step_names: set[str] = set()
                 if isinstance(benchmark_steps, list):
                     for step in benchmark_steps:
                         if not isinstance(step, dict):
                             continue
                         name = step.get("name")
+                        if isinstance(name, str):
+                            benchmark_step_names.add(name)
                         run = step.get("run")
                         if isinstance(name, str) and isinstance(run, str):
                             benchmark_run_by_name[name] = run
+                install_benchmark_run = benchmark_run_by_name.get("Install benchmark dependencies")
+                if install_benchmark_run is None:
+                    errors.append(
+                        "CI workflow benchmark-regression job must include step "
+                        "`Install benchmark dependencies`"
+                    )
+                elif '".[bench,dev]"' not in install_benchmark_run:
+                    errors.append(
+                        "CI workflow benchmark-regression `Install benchmark dependencies` step "
+                        "must install `.[bench,dev]`"
+                    )
+                required_benchmark_step_names = {"Run hot-query benchmark suite"}
+                for step_name in required_benchmark_step_names:
+                    if step_name not in benchmark_step_names:
+                        errors.append(
+                            f"CI workflow benchmark-regression job must include step `{step_name}`"
+                        )
                 required_benchmark_steps = {
                     "Enforce benchmark regression gate": "benchmarks/check_regression.py",
                     "Build benchmark markdown summary": "benchmarks/summarize_benchmarks.py",

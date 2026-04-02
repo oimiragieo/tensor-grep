@@ -409,9 +409,18 @@ This is a narrower win than direct `rg` passthrough, but it matters in the exact
 
 ### Scripted Hot-Query Snapshot (`run_hot_query_benchmarks.py`)
 
-The scripted hot-query benchmark includes fresh-process overhead and writes a JSON artifact at `artifacts/bench_hot_query_benchmarks.json`. On the current local host it measured:
+The scripted hot-query benchmark now measures both the fixed-string and regex-prefilter rows via fresh subprocess probes and writes a JSON artifact at `artifacts/bench_hot_query_benchmarks.json`. On the current local Windows host, the refreshed accepted rerun at `artifacts/bench_hot_query_benchmarks_post_bench_fix.json` measured:
 
 | Scenario | First | Second | Result |
 | --- | --- | --- | --- |
-| repeated_fixed_string | 0.4061s | 0.0090s | cache win |
-| repeated_regex_prefilter | 0.6136s | 0.2571s | cache win |
+| repeated_fixed_string | 0.6514s | 0.2149s | cache win |
+| repeated_regex_prefilter | 0.7269s | 0.2137s | cache win |
+
+This is a more honest benchmark than the older mixed-process snapshot because both rows now include fresh-process overhead. The literal path is still the strongest repeated-query line, but the claim is narrower than “warm queries are free”: on this host the cached second literal query is about **66.6%** faster than the first, and the cached second regex-prefilter query is about **72.9%** faster than the first.
+
+Operational note: the fixed-string row depends on the benchmark extras (`stringzilla`). The CI `benchmark-regression` job now installs `.[bench,dev]` and runs `run_hot_query_benchmarks.py`, while local one-off runs may record an explicit `SKIP` row with an install hint instead of crashing when that dependency is absent.
+
+For the cold-path roadmap, the next two targets stay narrow and evidence-first:
+
+- first, reduce `--max-count` startup overhead without reopening the broader launcher rewrite
+- second, investigate the remaining `Case-Insensitive`, `Regex`, `File Glob Filtering`, and `Word Boundary` cold-path gaps without retrying the already-rejected broader default-front-door widening

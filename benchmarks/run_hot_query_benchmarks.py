@@ -24,6 +24,7 @@ def resolve_hot_bench_data_dir() -> Path:
 
 def write_cpu_probe_script(path: Path) -> None:
     src_dir = str(SRC_DIR).replace("\\", "\\\\")
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         textwrap.dedent(
             f"""
@@ -68,6 +69,64 @@ def write_cpu_probe_script(path: Path) -> None:
     )
 
 
+def write_stringzilla_probe_script(path: Path) -> None:
+    src_dir = str(SRC_DIR).replace("\\", "\\\\")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        textwrap.dedent(
+            f"""
+            import json
+            import os
+            import sys
+            import time
+            from pathlib import Path
+
+            SRC_DIR = Path(r"{src_dir}")
+            if str(SRC_DIR) not in sys.path:
+                sys.path.insert(0, str(SRC_DIR))
+
+            target_path = sys.argv[1]
+            pattern = sys.argv[2]
+
+            try:
+                from tensor_grep.backends.stringzilla_backend import StringZillaBackend
+                from tensor_grep.core.config import SearchConfig
+            except ModuleNotFoundError as exc:
+                print(
+                    json.dumps(
+                        {{
+                            "available": False,
+                            "missing_dependency": getattr(exc, "name", "stringzilla"),
+                        }}
+                    )
+                )
+                raise SystemExit(0)
+
+            os.environ["TENSOR_GREP_STRING_INDEX"] = "1"
+            t0 = time.perf_counter()
+            result = StringZillaBackend().search(
+                target_path,
+                pattern,
+                SearchConfig(fixed_strings=True),
+            )
+            t1 = time.perf_counter()
+            print(
+                json.dumps(
+                    {{
+                        "available": True,
+                        "matches": result.total_matches,
+                        "routing_reason": result.routing_reason,
+                        "seconds": t1 - t0,
+                    }}
+                )
+            )
+            """
+        ).strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _prepare_corpus(data_dir: Path) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     corpus_path = data_dir / "hot_corpus.log"
@@ -77,29 +136,46 @@ def _prepare_corpus(data_dir: Path) -> Path:
     return corpus_path
 
 
-def _run_stringzilla_hot_query(corpus_path: Path, cache_dir: Path) -> dict[str, object]:
-    from tensor_grep.backends.stringzilla_backend import StringZillaBackend
-    from tensor_grep.core.config import SearchConfig
+def _run_probe(
+    script_path: Path, corpus_path: Path, pattern: str, env: dict[str, str]
+) -> dict[str, object]:
+    raw = subprocess.check_output(
+        [sys.executable, str(script_path), str(corpus_path), pattern],
+        text=True,
+        env=env,
+    )
+    return json.loads(raw)
 
+
+def _run_stringzilla_hot_query(
+    corpus_path: Path, cache_dir: Path, probe_script: Path
+) -> dict[str, object]:
     shutil.rmtree(cache_dir, ignore_errors=True)
-    os.environ["TENSOR_GREP_STRING_INDEX"] = "1"
-    os.environ["TENSOR_GREP_STRING_INDEX_DIR"] = str(cache_dir)
-    StringZillaBackend._clear_shared_caches()
-    cfg = SearchConfig(fixed_strings=True)
+    env = os.environ.copy()
+    env["TENSOR_GREP_STRING_INDEX"] = "1"
+    env["TENSOR_GREP_STRING_INDEX_DIR"] = str(cache_dir)
 
-    t0 = time.perf_counter()
-    first = StringZillaBackend().search(str(corpus_path), "ERROR timeout", config=cfg)
-    t1 = time.perf_counter()
-    second = StringZillaBackend().search(str(corpus_path), "critical path", config=cfg)
-    t2 = time.perf_counter()
+    first_payload = _run_probe(probe_script, corpus_path, "ERROR timeout", env)
+    if not first_payload.get("available", False):
+        missing_dependency = str(first_payload.get("missing_dependency", "stringzilla"))
+        return {
+            "name": "repeated_fixed_string",
+            "status": "SKIP",
+            "skip_reason": (
+                f"missing benchmark dependency: {missing_dependency}; "
+                'install with `uv pip install -e ".[bench]"` or run via '
+                "`uv run --extra bench python benchmarks/run_hot_query_benchmarks.py`"
+            ),
+        }
+    second_payload = _run_probe(probe_script, corpus_path, "critical path", env)
 
     return {
         "name": "repeated_fixed_string",
-        "first_s": t1 - t0,
-        "second_s": t2 - t1,
-        "first_reason": first.routing_reason,
-        "second_reason": second.routing_reason,
-        "matches": second.total_matches,
+        "first_s": float(first_payload["seconds"]),
+        "second_s": float(second_payload["seconds"]),
+        "first_reason": str(first_payload["routing_reason"]),
+        "second_reason": str(second_payload["routing_reason"]),
+        "matches": int(second_payload["matches"]),
     }
 
 
@@ -132,6 +208,8 @@ def _run_cpu_hot_query(corpus_path: Path, cache_dir: Path, probe_script: Path) -
 
 
 def evaluate_hot_query_row(row: dict[str, object], max_regression_pct: float) -> dict[str, object]:
+    if row.get("status") == "SKIP":
+        return row
     first_s = row.get("first_s")
     second_s = row.get("second_s")
     if (
@@ -167,10 +245,14 @@ def main() -> int:
     data_dir = resolve_hot_bench_data_dir()
     corpus_path = _prepare_corpus(data_dir)
     probe_script = data_dir / "cpu_hot_probe.py"
+    stringzilla_probe_script = data_dir / "stringzilla_hot_probe.py"
     write_cpu_probe_script(probe_script)
+    write_stringzilla_probe_script(stringzilla_probe_script)
 
     rows = [
-        _run_stringzilla_hot_query(corpus_path, data_dir / "stringzilla-cache"),
+        _run_stringzilla_hot_query(
+            corpus_path, data_dir / "stringzilla-cache", stringzilla_probe_script
+        ),
         _run_cpu_hot_query(corpus_path, data_dir / "cpu-prefilter-cache", probe_script),
     ]
     evaluated_rows = [evaluate_hot_query_row(row, args.max_regression_pct) for row in rows]
@@ -198,9 +280,20 @@ def main() -> int:
     print(f"{'Scenario':35} | {'First':>9} | {'Second':>9} | {'Status':>6} | Reason")
     print("-" * 75)
     for row in evaluated_rows:
+        first_value = (
+            f"{row['first_s']:>8.4f}s"
+            if isinstance(row.get("first_s"), (float, int))
+            else "   n/a  "
+        )
+        second_value = (
+            f"{row['second_s']:>8.4f}s"
+            if isinstance(row.get("second_s"), (float, int))
+            else "   n/a  "
+        )
+        reason = str(row.get("second_reason") or row.get("skip_reason") or "n/a")
         print(
-            f"{row['name']:35} | {row['first_s']:>8.4f}s | {row['second_s']:>8.4f}s | "
-            f"{row['status']:>6} | {row['second_reason']}"
+            f"{row['name']:35} | {first_value:>9} | {second_value:>9} | "
+            f"{row['status']:>6} | {reason}"
         )
     return 0 if no_regressions else 1
 

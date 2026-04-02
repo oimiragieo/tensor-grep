@@ -78,8 +78,16 @@ The canonical benchmark matrix lives in [docs/benchmarks.md](docs/benchmarks.md)
 - cold generic text search stays near `rg`
 - native CPU large-file search is the main measured win over `rg`
 - native AST search/rewrite is benchmarked separately from plain text search
-- indexed repeated-query paths are benchmarked separately from cold scans
+- indexed repeated-query paths are benchmarked separately from cold scans and now run under the CI benchmark job with the `bench` extra installed
 - native GPU remains benchmark-governed and hardware-specific
+
+Current repeated-query snapshot:
+
+- artifact: [`artifacts/bench_hot_query_benchmarks_post_hotfix.json`](artifacts/bench_hot_query_benchmarks_post_hotfix.json)
+- repeated fixed string: `0.7119s -> 0.2379s`
+- repeated regex prefilter: `0.7188s -> 0.1951s`
+- both rows now include fresh-process overhead
+- local benchmark note: run `uv run --extra dev python benchmarks/run_hot_query_benchmarks.py` for the fully provisioned path; without the benchmark extras, the fixed-string row records `SKIP` with an install hint instead of crashing
 
 Important constraint:
 

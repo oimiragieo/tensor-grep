@@ -2923,6 +2923,21 @@ def test_run_hot_query_benchmarks_should_build_cpu_probe_script(tmp_path):
     assert "sys.path.insert" in text
 
 
+def test_run_hot_query_benchmarks_should_build_stringzilla_probe_script(tmp_path):
+    module = _load_script_module(
+        "run_hot_query_benchmarks_script_stringzilla_probe",
+        "benchmarks/run_hot_query_benchmarks.py",
+    )
+    script_path = tmp_path / "stringzilla_probe.py"
+
+    module.write_stringzilla_probe_script(script_path)
+
+    text = script_path.read_text(encoding="utf-8")
+    assert "StringZillaBackend" in text
+    assert "missing_dependency" in text
+    assert "SearchConfig(fixed_strings=True)" in text
+
+
 def test_run_hot_query_benchmarks_should_run_directly_without_site_packages(tmp_path):
     root = Path(__file__).resolve().parents[2]
 
@@ -2941,6 +2956,94 @@ def test_run_hot_query_benchmarks_should_run_directly_without_site_packages(tmp_
 
     assert result.returncode == 0, result.stderr
     assert "Benchmark hot repeated-query cache paths." in result.stdout
+
+
+def test_run_hot_query_benchmarks_should_skip_with_install_hint_when_stringzilla_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    module = _load_script_module(
+        "run_hot_query_benchmarks_script_missing_stringzilla",
+        "benchmarks/run_hot_query_benchmarks.py",
+    )
+    monkeypatch.setattr(module, "resolve_hot_bench_data_dir", lambda: tmp_path / "hot")
+    monkeypatch.setattr(module, "_prepare_corpus", lambda data_dir: data_dir / "hot_corpus.log")
+    monkeypatch.setattr(module, "write_cpu_probe_script", lambda _path: None)
+    monkeypatch.setattr(module, "write_stringzilla_probe_script", lambda _path: None)
+
+    monkeypatch.setattr(
+        module,
+        "_run_stringzilla_hot_query",
+        lambda *_args, **_kwargs: {
+            "name": "repeated_fixed_string",
+            "status": "SKIP",
+            "skip_reason": 'install with `uv pip install -e ".[bench]"`',
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_cpu_hot_query",
+        lambda *_args, **_kwargs: {
+            "name": "repeated_regex_prefilter",
+            "first_s": 0.8,
+            "second_s": 0.3,
+            "first_reason": "regex_scan",
+            "second_reason": "regex_prefilter_hit",
+            "matches": 2000,
+        },
+    )
+    output_path = tmp_path / "bench_hot.json"
+    monkeypatch.setattr("sys.argv", ["run_hot_query_benchmarks.py", "--output", str(output_path)])
+
+    exit_code = module.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "repeated_fixed_string" in captured.out
+    assert "SKIP" in captured.out
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["no_regressions"] is True
+    assert payload["rows"][0]["status"] == "SKIP"
+    assert 'uv pip install -e ".[bench]"' in payload["rows"][0]["skip_reason"]
+
+
+def test_run_hot_query_benchmarks_should_run_stringzilla_probe_in_subprocess(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_hot_query_benchmarks_script_stringzilla_subprocess",
+        "benchmarks/run_hot_query_benchmarks.py",
+    )
+    probe_script = tmp_path / "stringzilla_probe.py"
+    corpus_path = tmp_path / "corpus.log"
+    cache_dir = tmp_path / "cache"
+    captured: dict[str, object] = {}
+
+    def _fake_check_output(cmd, *, text, env):
+        captured.setdefault("calls", []).append((cmd, env))
+        pattern = cmd[-1]
+        if pattern == "ERROR timeout":
+            return json.dumps({
+                "available": True,
+                "seconds": 0.4,
+                "routing_reason": "stringzilla_fixed_strings_index",
+                "matches": 2000,
+            })
+        return json.dumps({
+            "available": True,
+            "seconds": 0.01,
+            "routing_reason": "stringzilla_fixed_strings_index_cache",
+            "matches": 2000,
+        })
+
+    monkeypatch.setattr(module.subprocess, "check_output", _fake_check_output)
+
+    payload = module._run_stringzilla_hot_query(corpus_path, cache_dir, probe_script)
+
+    assert payload["first_s"] == 0.4
+    assert payload["second_s"] == 0.01
+    assert payload["second_reason"] == "stringzilla_fixed_strings_index_cache"
+    calls = captured["calls"]
+    assert len(calls) == 2
+    assert calls[0][0][1] == str(probe_script)
+    assert calls[0][1]["TENSOR_GREP_STRING_INDEX_DIR"] == str(cache_dir)
 
 
 def test_run_gpu_benchmarks_should_skip_cybert_when_triton_is_unreachable():

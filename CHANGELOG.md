@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Unreleased
+
+### Features
+
+- Make the hot-query benchmark line first-class and honest
+
+Run the fixed-string hot-query row through a fresh subprocess probe, install `stringzilla` in the
+  benchmark extra, and treat missing local benchmark extras as an explicit `SKIP` with an install
+  hint instead of a crash.
+
+This keeps the repeated-query line measurable in CI, reproducible locally, and aligned with the
+  current accepted benchmark artifact at `artifacts/bench_hot_query_benchmarks_post_bench_fix.json`.
 
 ## v0.34.0 (2026-04-01)
 

@@ -463,6 +463,70 @@ def test_should_require_structural_benchmark_regression_steps_with_auto_baseline
     )
 
 
+def test_should_require_benchmark_regression_to_run_hot_query_benchmark():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      benchmark-regression:
+        steps:
+          - name: Install benchmark dependencies
+            run: |
+              uv venv --python 3.12
+              uv pip install -e ".[dev]"
+          - name: Run core benchmark suite
+            run: uv run python benchmarks/run_benchmarks.py
+          - name: Enforce benchmark regression gate
+            run: uv run python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json
+          - name: Build benchmark markdown summary
+            run: uv run python benchmarks/summarize_benchmarks.py --baseline auto --current artifacts/bench_run_benchmarks.json
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "CI workflow benchmark-regression job must include step `Run hot-query benchmark suite`"
+        in err
+        for err in errors
+    )
+
+
+def test_should_require_benchmark_regression_to_install_bench_and_dev_extras():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      benchmark-regression:
+        steps:
+          - name: Install benchmark dependencies
+            run: |
+              uv venv --python 3.12
+              uv pip install -e ".[dev]"
+          - name: Run core benchmark suite
+            run: uv run python benchmarks/run_benchmarks.py
+          - name: Run hot-query benchmark suite
+            run: uv run python benchmarks/run_hot_query_benchmarks.py
+          - name: Enforce benchmark regression gate
+            run: uv run python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json
+          - name: Build benchmark markdown summary
+            run: uv run python benchmarks/summarize_benchmarks.py --baseline auto --current artifacts/bench_run_benchmarks.json
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "Install benchmark dependencies` step must install `.[bench,dev]`" in err for err in errors
+    )
+
+
 def test_should_require_ci_ruff_preview_formatter_contract():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

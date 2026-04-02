@@ -21,6 +21,12 @@ def test_nlp_extra_should_use_http_triton_client_not_all() -> None:
     assert "tritonclient[all]" not in deps
 
 
+def test_bench_extra_should_include_stringzilla_for_hot_query_benchmarks() -> None:
+    deps = _optional_dependencies()["bench"]
+
+    assert "stringzilla>=4.0" in deps
+
+
 def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> None:
     ruff_config = _pyproject_payload()["tool"]["ruff"]
 
@@ -32,4 +38,5 @@ def test_ruff_should_extend_default_excludes_for_repo_specific_bench_dirs() -> N
         "benchmarks/bench_data",
         "benchmarks/bench_ast_data",
         "benchmarks/gpu_bench_data",
+        "benchmarks/external_repos",
     ]

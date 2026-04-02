@@ -446,7 +446,7 @@ jobs:
       - name: Install benchmark dependencies
         run: |
           uv venv --python 3.12
-          uv pip install -e ".[dev]"
+          uv pip install -e ".[bench,dev]"
 
       - name: Run core benchmark suite
         shell: bash
@@ -454,6 +454,12 @@ jobs:
           set -o pipefail
           mkdir -p artifacts
           uv run python benchmarks/run_benchmarks.py | tee artifacts/bench_run_benchmarks.txt
+
+      - name: Run hot-query benchmark suite
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run python benchmarks/run_hot_query_benchmarks.py | tee artifacts/bench_hot_query_benchmarks.txt
 
       - name: Enforce benchmark regression gate
         run: |
