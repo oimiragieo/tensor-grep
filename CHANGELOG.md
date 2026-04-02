@@ -1,22 +1,25 @@
 # CHANGELOG
 
-## Unreleased
+
+## v0.35.0 (2026-04-02)
+
+### Bug Fixes
+
+- Harden hot-query benchmark contract
+  ([`0224ddc`](https://github.com/oimiragieo/tensor-grep/commit/0224ddc47ecc10046698ac3f690ea1c0e0b12ffd))
+
+Make the repeated-query benchmark runnable and honest across local and CI flows.
+
+- install stringzilla in the bench extra - require CI benchmark jobs to use .[bench,dev] and run the
+  hot-query suite - measure the fixed-string row through a fresh subprocess probe - record SKIP with
+  an install hint instead of crashing when benchmark extras are missing locally - update benchmark
+  docs, paper, README, and changelog with the refreshed artifact and narrower next cold-path targets
 
 ### Features
 
-- Improve AI read-phase prefetch and hot-query benchmark ergonomics
+- Improve ai handoff prefetch and cached postings
+  ([`f7ebbfb`](https://github.com/oimiragieo/tensor-grep/commit/f7ebbfbe834410f990fa760b605f91eef2cecdda))
 
-Broaden `navigation_pack` prefetch from the old single-sibling heuristic to same-directory related
-  and test reads, which improves the external agent scorecard to
-  `mean_overall_score = 0.972222` and `mean_parallel_read_reduction_score = 0.916667` on the
-  refreshed Gemini/Claude/Codex comparison.
-
-Also keep the hot-query line runnable under the standalone benchmark extra by installing
-  `stringzilla` in `.[bench]`, updating the install hint to `uv pip install -e ".[bench]"`, and
-  keeping the cached fixed-string path on the sorted-postings intersection path.
-
-The current accepted hot-query artifact is
-  `artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json`.
 
 ## v0.34.0 (2026-04-01)
 
