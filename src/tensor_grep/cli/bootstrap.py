@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tensor_grep.cli.install_channel import format_display_version
+
 _KNOWN_COMMANDS = {
     "search",
     "calibrate",
@@ -74,6 +76,7 @@ def _print_version() -> None:
         pkg_version = version("tensor-grep")
     except Exception:
         pkg_version = _read_project_version_fallback()
+    pkg_version = format_display_version(pkg_version)
 
     print(f"tensor-grep {pkg_version}")
     print()

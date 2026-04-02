@@ -386,6 +386,16 @@ def test_lsp_setup_help_mentions_managed_provider_install() -> None:
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "main")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.get_install_provenance",
+        lambda: {
+            "channel": "main",
+            "source": "https://github.com/oimiragieo/tensor-grep.git",
+            "requested_revision": "main",
+            "commit": "abcdef1234567890",
+        },
+    )
     monkeypatch.setattr(
         "tensor_grep.cli.main._resolve_native_tg_binary",
         lambda: tmp_path / "rust_core" / "target" / "debug" / "tg.exe",
@@ -416,6 +426,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["version"] == "9.9.9"
+    assert payload["install_channel"] == "main"
+    assert payload["install_provenance"]["commit"] == "abcdef1234567890"
     assert payload["root"] == str(tmp_path.resolve())
     assert payload["native_tg_binary_exists"] is True
     assert payload["env"]["TG_RUST_EARLY_RG"] == "1"
@@ -428,6 +440,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
 
 def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.2.3")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "stable")
+    monkeypatch.setattr("tensor_grep.cli.main.get_install_provenance", lambda: None)
     monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(
         "tensor_grep.cli.main._doctor_session_daemon_status",
@@ -440,6 +454,7 @@ def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_pa
     assert result.exit_code == 0
     assert "tensor-grep doctor" in result.stdout
     assert "version: 1.2.3" in result.stdout
+    assert "install_channel: stable" in result.stdout
     assert "native_tg_binary: missing" in result.stdout
     assert "session_daemon: stopped" in result.stdout
     assert "lsp_providers: disabled" in result.stdout
@@ -1807,6 +1822,66 @@ def test_upgrade_reports_latest_pypi_version_when_installed_version_does_not_cha
     assert calls[0][0] == "uv"
     assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
     assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
+
+
+def test_upgrade_main_channel_uses_git_preview_build(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Updated from git", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "stable")
+    versions = iter(["0.35.1+main.abc1234", "0.35.1+main.def5678"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("tensor_grep.cli.main.format_display_version", lambda version: version)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade", "--channel", "main"])
+
+    assert result.exit_code == 0
+    assert calls[0][:6] == ["uv", "pip", "install", "--python", "python", "--upgrade"]
+    assert calls[0][-1] == "git+https://github.com/oimiragieo/tensor-grep.git@main"
+    assert "Upgrading tensor-grep to the latest main preview build..." in result.stdout
+    assert "Successfully upgraded tensor-grep via uv!" in result.stdout
+
+
+def test_upgrade_defaults_to_current_main_preview_channel(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Updated from git", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "main")
+    versions = iter(["0.35.1+main.abc1234", "0.35.1+main.abc1234"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("tensor_grep.cli.main.format_display_version", lambda version: version)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][-1] == "git+https://github.com/oimiragieo/tensor-grep.git@main"
+    assert "tensor-grep is already at the latest main preview build" in result.stdout
 
 
 def test_upgrade_warns_when_managed_lsp_refresh_fails(monkeypatch):

@@ -17,6 +17,11 @@ import typer
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.cli.install_channel import (
+    format_display_version,
+    get_install_provenance,
+    infer_install_channel,
+)
 from tensor_grep.cli.lsp_provider_setup import install_managed_lsp_providers
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
@@ -221,9 +226,9 @@ def _doctor_installed_version() -> str:
     try:
         from importlib.metadata import version
 
-        return version("tensor-grep")
+        return format_display_version(version("tensor-grep"))
     except Exception:
-        return _read_project_version_fallback()
+        return format_display_version(_read_project_version_fallback())
 
 
 def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
@@ -261,6 +266,8 @@ def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
     ]
     payload: dict[str, Any] = {
         "version": _doctor_installed_version(),
+        "install_channel": infer_install_channel(),
+        "install_provenance": get_install_provenance(),
         "platform": sys.platform,
         "python_executable": sys.executable,
         "invoked_as": sys.argv[0] if sys.argv else "tg",
@@ -284,11 +291,23 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     lines = [
         "tensor-grep doctor",
         f"version: {payload['version']}",
+        f"install_channel: {payload['install_channel']}",
         f"platform: {payload['platform']}",
         f"python: {payload['python_executable']}",
         f"invoked_as: {payload['invoked_as']}",
         f"root: {payload['root']}",
     ]
+    provenance = cast(dict[str, str] | None, payload.get("install_provenance"))
+    if provenance:
+        details = []
+        if provenance.get("source"):
+            details.append(f"source={provenance['source']}")
+        if provenance.get("requested_revision"):
+            details.append(f"revision={provenance['requested_revision']}")
+        if provenance.get("commit"):
+            details.append(f"commit={provenance['commit']}")
+        if details:
+            lines.append("install_provenance: " + " ".join(details))
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
 
@@ -3976,20 +3995,39 @@ def doctor(
 
 
 @app.command()
-def upgrade() -> None:
-    """Upgrade tensor-grep to the latest version published on PyPI."""
+def upgrade(
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Upgrade from the `stable` PyPI release line or the `main` preview branch.",
+    ),
+) -> None:
+    """Upgrade tensor-grep from the stable release line or the main preview branch."""
     import importlib.metadata
     import subprocess
     import sys
 
-    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"]
+    resolved_channel = (channel or os.environ.get("TENSOR_GREP_CHANNEL") or "").strip().lower()
+    if not resolved_channel:
+        resolved_channel = infer_install_channel()
+    if resolved_channel not in {"stable", "main"}:
+        raise typer.BadParameter(
+            f"Unsupported upgrade channel `{resolved_channel}`. Use `stable` or `main`."
+        )
+
+    package_spec = (
+        "git+https://github.com/oimiragieo/tensor-grep.git@main"
+        if resolved_channel == "main"
+        else "tensor-grep"
+    )
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", package_spec]
     lsp_refresh_cmd = [sys.executable, "-m", "tensor_grep", "lsp-setup", "--json"]
 
     def _upgrade_attempts() -> list[tuple[str, list[str]]]:
         return [
             (
                 "uv",
-                ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "tensor-grep"],
+                ["uv", "pip", "install", "--python", sys.executable, "--upgrade", package_spec],
             ),
             ("pip", pip_cmd),
         ]
@@ -4214,11 +4252,14 @@ def upgrade() -> None:
 
     def _installed_version() -> str | None:
         try:
-            return importlib.metadata.version("tensor-grep")
+            return format_display_version(importlib.metadata.version("tensor-grep"))
         except importlib.metadata.PackageNotFoundError:
             return None
 
-    typer.echo("Upgrading tensor-grep to the latest version...")
+    typer.echo(
+        "Upgrading tensor-grep to the latest "
+        + ("main preview build..." if resolved_channel == "main" else "PyPI release...")
+    )
 
     try:
         attempts = _upgrade_attempts()
@@ -4230,7 +4271,14 @@ def upgrade() -> None:
         )
         refresh_ok, refresh_payload = _refresh_managed_lsp_providers()
         if current_version is not None and current_version == previous_version:
-            typer.echo(f"tensor-grep is already at the latest PyPI version ({current_version}).")
+            if resolved_channel == "main":
+                typer.echo(
+                    f"tensor-grep is already at the latest main preview build ({current_version})."
+                )
+            else:
+                typer.echo(
+                    f"tensor-grep is already at the latest PyPI version ({current_version})."
+                )
         elif "Requirement already satisfied" in output:
             typer.echo("tensor-grep is already up to date!")
         else:
@@ -4674,9 +4722,15 @@ def review_bundle_verify(
 
 
 @app.command("update")
-def update() -> None:
+def update(
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Upgrade from the `stable` PyPI release line or the `main` preview branch.",
+    ),
+) -> None:
     """Alias for upgrade."""
-    upgrade()
+    upgrade(channel=channel)
 
 
 def main_entry() -> None:
@@ -4696,7 +4750,7 @@ def main_entry() -> None:
         except Exception:
             pkg_version = _read_project_version_fallback()
 
-        print(f"tensor-grep {pkg_version}")
+        print(f"tensor-grep {format_display_version(pkg_version)}")
         print()
         print("features:+gpu-cudf,+gpu-torch,+rust-core")
         print("simd(compile):+SSE2,-SSSE3,-AVX2")

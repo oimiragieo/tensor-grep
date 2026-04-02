@@ -186,6 +186,8 @@ Installer defaults and channels:
 - Default behavior installs the latest stable PyPI release.
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=0.2.1`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
+- `tg upgrade --channel main` upgrades an existing install to the latest `main` preview build.
+- Preview installs surface a version suffix like `0.35.1+main.abcdef0` in `tg --version` and `tg doctor`.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
 - The script-managed install now provisions external LSP providers into `~/.tensor-grep/providers` so `tg doctor --with-lsp` and provider-backed semantics do not depend on global `pyright-langserver`, `typescript-language-server`, or `rust-analyzer` binaries.
