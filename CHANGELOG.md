@@ -11,8 +11,8 @@
   experimental `explicit_binary_positional_early_rg` lane, the `Max Count Limit` row improved from
   `0.163646s` to `0.158791s` (`-2.97%`) when compared against the clean `origin/main` benchmark
   script using the same binary. This is a narrow positional capability/result, not a new global
-  cold-path claim. The next two cold-path targets are positional `--glob`, then the separate
-  default `-c` count-path overhead.
+  cold-path claim. The next two cold-path targets are the separate default `-c` count-path
+  overhead, then positional `-w`.
 
 
 ## v0.35.1 (2026-04-02)
@@ -21,7 +21,6 @@
 
 - Cut ripgrep passthrough startup overhead
   ([`7b53749`](https://github.com/oimiragieo/tensor-grep/commit/7b537497cfcfae9c7517a7b71600830890f64c83))
-
 
 ## v0.35.0 (2026-04-02)
 

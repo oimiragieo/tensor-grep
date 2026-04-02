@@ -327,6 +327,18 @@ this is a positional capability win with a small measured benefit on the experim
 new accepted global cold-path mode. The next two targets therefore tighten to positional `--glob`
 first, then the separate default `-c` count-path overhead.
 
+The next positional follow-up was measured and rejected rather than left as a placeholder.
+`artifacts/bench_run_benchmarks_positional_glob_baseline_lane.json` versus
+`artifacts/bench_run_benchmarks_positional_glob_candidate.json` shows that widening the
+experimental `explicit_binary_positional_early_rg` lane to accept positional `--glob` moved `File
+Glob Filtering` from `0.149999s` with parity `PASS` to `0.285383s` with parity `FAIL`. The failure
+mode is product-significant rather than cosmetic: the candidate positional `tg --glob=*.log
+PATTERN PATH` path returned zero matches on the benchmark corpus while the baseline lane still
+preserved the expected glob-filtered contract. The accepted read is therefore narrow and final for
+this attempt: do not land positional `--glob` on this line until the routing contract is fixed and
+remeasured. The next two explicit targets now tighten to the remaining default `-c` count-path
+overhead first, then positional `-w`.
+
 ### Native CPU large-file / many-file (`run_native_cpu_benchmarks.py`)
 
 | Scenario | ripgrep | tensor-grep native CPU | Ratio | Result |
