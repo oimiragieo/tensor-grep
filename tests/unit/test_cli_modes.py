@@ -360,6 +360,74 @@ def test_lsp_help_mentions_provider_modes() -> None:
     assert "--provider hybrid" in result.stdout
 
 
+def test_doctor_help_mentions_lsp_and_json() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["doctor", "--help"])
+
+    assert result.exit_code == 0
+    assert "--with-lsp" in result.stdout
+    assert "--json" in result.stdout
+    assert "AI troubleshooting" in result.stdout
+
+
+def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._resolve_native_tg_binary",
+        lambda: tmp_path / "rust_core" / "target" / "debug" / "tg.exe",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": True, "host": "127.0.0.1", "port": 43123, "pid": 9001},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_lsp_provider_statuses",
+        lambda path: [
+            {
+                "language": "python",
+                "available": True,
+                "running": False,
+                "command": ["pyright-langserver", "--stdio"],
+                "last_error": None,
+            }
+        ],
+    )
+    monkeypatch.setenv("TG_RUST_EARLY_RG", "1")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["version"] == "9.9.9"
+    assert payload["root"] == str(tmp_path.resolve())
+    assert payload["native_tg_binary_exists"] is True
+    assert payload["env"]["TG_RUST_EARLY_RG"] == "1"
+    assert payload["session_daemon"]["running"] is True
+    assert payload["lsp"]["enabled"] is True
+    assert payload["lsp"]["providers"][0]["language"] == "python"
+
+
+def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.2.3")
+    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", str(tmp_path), "--no-lsp"])
+
+    assert result.exit_code == 0
+    assert "tensor-grep doctor" in result.stdout
+    assert "version: 1.2.3" in result.stdout
+    assert "native_tg_binary: missing" in result.stdout
+    assert "session_daemon: stopped" in result.stdout
+    assert "lsp_providers: disabled" in result.stdout
+
+
 def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
     _FAKE_WALK = {".": ["a.log"]}
@@ -3532,7 +3600,9 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "tg blast-radius-render PATH --symbol" in result.stdout
     assert "tg session open PATH" in result.stdout
     assert "tg session daemon start PATH" in result.stdout
+    assert "tg doctor --with-lsp" in result.stdout
     assert "upgrade" in result.stdout
+    assert "doctor" in result.stdout
     assert "update" in result.stdout
     assert "checkpoint" in result.stdout
     assert "session" in result.stdout

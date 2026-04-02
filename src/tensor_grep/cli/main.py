@@ -36,6 +36,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg search [OPTIONS] PATTERN [PATH ...]`
 - `tg run PATTERN [PATH]`
 - `tg scan --config sgconfig.yml`
+- `tg doctor --with-lsp`
 - `tg mcp`
 
 **AI workflows**
@@ -50,6 +51,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - Bare patterns are treated as `tg search`.
 - Use `tg search --help` for ripgrep-compatible flags.
 - Use `tg run --help` for AST rewrite flags.
+- Use `tg doctor --json` for install, daemon, and LSP diagnostics.
 - Use `tg session --help` for cached edit-loop and daemon commands.""",
     no_args_is_help=True,
     add_completion=False,
@@ -212,6 +214,114 @@ def _resolve_native_tg_binary() -> Path | None:
         return None
 
     return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
+
+
+def _doctor_installed_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("tensor-grep")
+    except Exception:
+        return _read_project_version_fallback()
+
+
+def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
+    from tensor_grep.cli.session_daemon import get_session_daemon_status
+
+    return get_session_daemon_status(path)
+
+
+def _doctor_lsp_languages() -> list[str]:
+    return ["python", "javascript", "typescript", "rust"]
+
+
+def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
+    from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager
+
+    manager = ExternalLSPProviderManager()
+    workspace_root = Path(path).resolve()
+    return [
+        manager.provider_status(language=language, workspace_root=workspace_root)
+        for language in _doctor_lsp_languages()
+    ]
+
+
+def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
+    root = Path(path).resolve()
+    native_tg_binary = _resolve_native_tg_binary()
+    env_keys = [
+        "TG_NATIVE_TG_BINARY",
+        "TG_RUST_FIRST_SEARCH",
+        "TG_RUST_EARLY_RG",
+        "TG_RUST_EARLY_POSITIONAL_RG",
+        "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS",
+        "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS",
+    ]
+    payload: dict[str, Any] = {
+        "version": _doctor_installed_version(),
+        "platform": sys.platform,
+        "python_executable": sys.executable,
+        "invoked_as": sys.argv[0] if sys.argv else "tg",
+        "root": str(root),
+        "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
+        "native_tg_binary_exists": native_tg_binary is not None,
+        "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
+        "session_daemon": _doctor_session_daemon_status(str(root)),
+    }
+    if with_lsp:
+        payload["lsp"] = {
+            "enabled": True,
+            "providers": _doctor_lsp_provider_statuses(str(root)),
+        }
+    else:
+        payload["lsp"] = {"enabled": False, "providers": []}
+    return payload
+
+
+def _render_doctor_payload(payload: dict[str, Any]) -> str:
+    lines = [
+        "tensor-grep doctor",
+        f"version: {payload['version']}",
+        f"platform: {payload['platform']}",
+        f"python: {payload['python_executable']}",
+        f"invoked_as: {payload['invoked_as']}",
+        f"root: {payload['root']}",
+    ]
+    native_tg_binary = payload.get("native_tg_binary")
+    lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
+
+    env_payload = cast(dict[str, str], payload.get("env", {}))
+    if env_payload:
+        lines.append("env:")
+        for key in sorted(env_payload):
+            lines.append(f"  {key}={env_payload[key]}")
+
+    session_payload = cast(dict[str, Any], payload["session_daemon"])
+    if session_payload.get("running"):
+        lines.append(
+            "session_daemon: "
+            f"running host={session_payload['host']} port={session_payload['port']} pid={session_payload['pid']}"
+        )
+    else:
+        state = "stale-metadata" if session_payload.get("stale_metadata") else "stopped"
+        lines.append(f"session_daemon: {state}")
+
+    lsp_payload = cast(dict[str, Any], payload.get("lsp", {}))
+    if lsp_payload.get("enabled"):
+        lines.append("lsp_providers:")
+        for current in cast(list[dict[str, Any]], lsp_payload.get("providers", [])):
+            command = current.get("command") or []
+            command_str = " ".join(str(part) for part in command) if command else "missing"
+            status = "running" if current.get("running") else "idle"
+            availability = "available" if current.get("available") else "unavailable"
+            last_error = current.get("last_error")
+            suffix = f" last_error={last_error}" if last_error else ""
+            lines.append(
+                f"  {current['language']}: {availability}/{status} command={command_str}{suffix}"
+            )
+    else:
+        lines.append("lsp_providers: disabled")
+    return "\n".join(lines)
 
 
 def _can_delegate_to_native_tg_search(
@@ -3824,6 +3934,24 @@ def mcp_server() -> None:
 
 
 @app.command()
+def doctor(
+    path: str = typer.Argument(".", help="Workspace root to inspect."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    with_lsp: bool = typer.Option(
+        True,
+        "--with-lsp/--no-lsp",
+        help="Include external LSP provider diagnostics.",
+    ),
+) -> None:
+    """Print runtime, daemon, and optional LSP diagnostics for AI troubleshooting."""
+    payload = _build_doctor_payload(path, with_lsp=with_lsp)
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(_render_doctor_payload(payload))
+
+
+@app.command()
 def upgrade() -> None:
     """Upgrade tensor-grep to the latest version published on PyPI."""
     import importlib.metadata
@@ -4513,6 +4641,7 @@ def main_entry() -> None:
         "review-bundle",
         "new",
         "lsp",
+        "doctor",
         "mcp",
         "upgrade",
         "update",
