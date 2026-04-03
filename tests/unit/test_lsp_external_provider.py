@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
@@ -18,6 +19,7 @@ def test_provider_status_reports_missing_binary(tmp_path: Path) -> None:
     assert status["running"] is False
     assert status["capabilities"] == {}
     assert status["last_error"]
+    assert status["managed_provider_root"] == str(provider_module._managed_provider_root())
 
 
 def test_provider_status_reports_cached_client_state(
@@ -45,6 +47,77 @@ def test_provider_status_reports_cached_client_state(
         status["initialize_timeout_seconds"]
         == provider_module._DEFAULT_LSP_INITIALIZE_TIMEOUT_SECONDS
     )
+
+
+def test_provider_command_prefers_managed_binary_over_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    managed_root = tmp_path / "providers"
+    suffix = ".cmd" if sys.platform.startswith("win") else ""
+    managed_binary = (
+        managed_root / "node-packages" / "node_modules" / ".bin" / f"pyright-langserver{suffix}"
+    )
+    managed_binary.parent.mkdir(parents=True)
+    managed_binary.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: managed_root)
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
+        lambda language, managed_root=None: (
+            [str(managed_binary), "--stdio"] if language == "python" else None
+        ),
+    )
+
+    command = provider_module._provider_command("python")
+
+    assert command == [str(managed_binary), "--stdio"]
+
+
+def test_provider_status_reports_managed_command_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    managed_root = tmp_path / "providers"
+    suffix = ".cmd" if sys.platform.startswith("win") else ""
+    managed_binary = (
+        managed_root
+        / "node-packages"
+        / "node_modules"
+        / ".bin"
+        / f"typescript-language-server{suffix}"
+    )
+    managed_binary.parent.mkdir(parents=True)
+    managed_binary.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: managed_root)
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
+        lambda language, managed_root=None: (
+            [str(managed_binary), "--stdio"] if language == "typescript" else None
+        ),
+    )
+
+    manager = ExternalLSPProviderManager()
+    status = manager.provider_status(language="typescript", workspace_root=tmp_path)
+
+    assert status["available"] is True
+    assert status["command"] == [str(managed_binary), "--stdio"]
+    assert status["command_source"] == "managed"
+
+
+def test_provider_command_supports_java_from_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: Path("/tmp/providers"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
+        lambda language, managed_root=None: ["/usr/bin/jdtls"] if language == "java" else None,
+    )
+
+    command = provider_module._provider_command("java")
+
+    assert command == ["/usr/bin/jdtls"]
 
 
 def test_provider_manager_uses_configured_timeouts(

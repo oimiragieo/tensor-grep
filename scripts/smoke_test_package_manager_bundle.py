@@ -45,11 +45,17 @@ def smoke_test_package_manager_bundle(*, bundle_dir: Path, expected_version: str
     )
     summary_path = bundle_dir / "PUBLISH_INSTRUCTIONS.md"
     checksums_path = bundle_dir / "BUNDLE_CHECKSUMS.txt"
+    install_ps1_path = bundle_dir / "install.ps1"
+    install_sh_path = bundle_dir / "install.sh"
 
     if not brew_path.exists():
         errors.append(f"Missing Homebrew formula in bundle: {brew_path}")
     if not winget_path.exists():
         errors.append(f"Missing winget manifest in bundle for {expected_version}: {winget_path}")
+    if not install_ps1_path.exists():
+        errors.append(f"Missing Windows installer script in bundle: {install_ps1_path}")
+    if not install_sh_path.exists():
+        errors.append(f"Missing Unix installer script in bundle: {install_sh_path}")
     if not summary_path.exists():
         errors.append(f"Missing bundle publish summary: {summary_path}")
     if not checksums_path.exists():

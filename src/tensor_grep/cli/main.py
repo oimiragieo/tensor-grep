@@ -17,6 +17,15 @@ import typer
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.cli.install_channel import (
+    format_display_version,
+    get_install_provenance,
+    infer_install_channel,
+)
+from tensor_grep.cli.lsp_provider_setup import (
+    install_managed_lsp_providers,
+    supported_lsp_languages,
+)
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
@@ -220,9 +229,9 @@ def _doctor_installed_version() -> str:
     try:
         from importlib.metadata import version
 
-        return version("tensor-grep")
+        return format_display_version(version("tensor-grep"))
     except Exception:
-        return _read_project_version_fallback()
+        return format_display_version(_read_project_version_fallback())
 
 
 def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
@@ -232,7 +241,7 @@ def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
 
 
 def _doctor_lsp_languages() -> list[str]:
-    return ["python", "javascript", "typescript", "rust"]
+    return supported_lsp_languages()
 
 
 def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
@@ -254,11 +263,14 @@ def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
         "TG_RUST_FIRST_SEARCH",
         "TG_RUST_EARLY_RG",
         "TG_RUST_EARLY_POSITIONAL_RG",
+        "TENSOR_GREP_LSP_PROVIDER_HOME",
         "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS",
         "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS",
     ]
     payload: dict[str, Any] = {
         "version": _doctor_installed_version(),
+        "install_channel": infer_install_channel(),
+        "install_provenance": get_install_provenance(),
         "platform": sys.platform,
         "python_executable": sys.executable,
         "invoked_as": sys.argv[0] if sys.argv else "tg",
@@ -282,11 +294,23 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     lines = [
         "tensor-grep doctor",
         f"version: {payload['version']}",
+        f"install_channel: {payload['install_channel']}",
         f"platform: {payload['platform']}",
         f"python: {payload['python_executable']}",
         f"invoked_as: {payload['invoked_as']}",
         f"root: {payload['root']}",
     ]
+    provenance = cast(dict[str, str] | None, payload.get("install_provenance"))
+    if provenance:
+        details = []
+        if provenance.get("source"):
+            details.append(f"source={provenance['source']}")
+        if provenance.get("requested_revision"):
+            details.append(f"revision={provenance['requested_revision']}")
+        if provenance.get("commit"):
+            details.append(f"commit={provenance['commit']}")
+        if details:
+            lines.append("install_provenance: " + " ".join(details))
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
 
@@ -314,10 +338,14 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
             command_str = " ".join(str(part) for part in command) if command else "missing"
             status = "running" if current.get("running") else "idle"
             availability = "available" if current.get("available") else "unavailable"
+            source = current.get("command_source", "path")
             last_error = current.get("last_error")
+            managed_root = current.get("managed_provider_root")
             suffix = f" last_error={last_error}" if last_error else ""
+            if managed_root:
+                suffix = f" managed_root={managed_root}{suffix}"
             lines.append(
-                f"  {current['language']}: {availability}/{status} command={command_str}{suffix}"
+                f"  {current['language']}: {availability}/{status} source={source} command={command_str}{suffix}"
             )
     else:
         lines.append("lsp_providers: disabled")
@@ -3920,6 +3948,28 @@ def lsp(
     run_lsp()
 
 
+@app.command(name="lsp-setup")
+def lsp_setup(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Install managed external LSP providers under the tensor-grep install root."""
+    payload = install_managed_lsp_providers(python_executable=sys.executable, managed_root=None)
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+    typer.echo(f"Installed managed external LSP providers under {payload['managed_provider_root']}")
+    providers = cast(dict[str, dict[str, Any]], payload["providers"])
+    for language in supported_lsp_languages():
+        provider = providers.get(language, {})
+        command = provider.get("command") or []
+        source = provider.get("command_source", "missing")
+        availability = "available" if provider.get("available") else "missing"
+        typer.echo(
+            f"  {language}: {' '.join(str(part) for part in command) if command else 'missing'}"
+            f" [{source}, {availability}]"
+        )
+
+
 app.add_typer(checkpoint_app, name="checkpoint")
 app.add_typer(session_app, name="session")
 app.add_typer(review_bundle_app, name="review-bundle")
@@ -3952,19 +4002,39 @@ def doctor(
 
 
 @app.command()
-def upgrade() -> None:
-    """Upgrade tensor-grep to the latest version published on PyPI."""
+def upgrade(
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Upgrade from the `stable` PyPI release line or the `main` preview branch.",
+    ),
+) -> None:
+    """Upgrade tensor-grep from the stable release line or the main preview branch."""
     import importlib.metadata
     import subprocess
     import sys
 
-    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "tensor-grep"]
+    resolved_channel = (channel or os.environ.get("TENSOR_GREP_CHANNEL") or "").strip().lower()
+    if not resolved_channel:
+        resolved_channel = infer_install_channel()
+    if resolved_channel not in {"stable", "main"}:
+        raise typer.BadParameter(
+            f"Unsupported upgrade channel `{resolved_channel}`. Use `stable` or `main`."
+        )
+
+    package_spec = (
+        "git+https://github.com/oimiragieo/tensor-grep.git@main"
+        if resolved_channel == "main"
+        else "tensor-grep"
+    )
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade", package_spec]
+    lsp_refresh_cmd = [sys.executable, "-m", "tensor_grep", "lsp-setup", "--json"]
 
     def _upgrade_attempts() -> list[tuple[str, list[str]]]:
         return [
             (
                 "uv",
-                ["uv", "pip", "install", "--python", sys.executable, "--upgrade", "tensor-grep"],
+                ["uv", "pip", "install", "--python", sys.executable, "--upgrade", package_spec],
             ),
             ("pip", pip_cmd),
         ]
@@ -4001,6 +4071,27 @@ def upgrade() -> None:
                         ee_stdout = (ee.stdout or "").strip()
                         errors.append(f"ensurepip: {ee_stderr or ee_stdout or str(ee)}")
         raise RuntimeError("; ".join(errors))
+
+    def _refresh_managed_lsp_providers() -> tuple[bool, str]:
+        try:
+            result = subprocess.run(
+                lsp_refresh_cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            output = "\n".join(
+                part
+                for part in ((result.stdout or "").strip(), (result.stderr or "").strip())
+                if part
+            )
+            return True, output
+        except FileNotFoundError as exc:
+            return False, str(exc)
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            stdout = (exc.stdout or "").strip()
+            return False, stderr or stdout or str(exc)
 
     def _looks_like_windows_self_update_lock(message: str) -> bool:
         lowered = message.lower()
@@ -4099,9 +4190,41 @@ def upgrade() -> None:
 
             ok, method, payload = _run_attempts()
             if ok:
+                try:
+                    refresh = subprocess.run(
+                        [sys.executable, "-m", "tensor_grep", "lsp-setup", "--json"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    refresh_ok = True
+                    refresh_payload = "\\n".join(
+                        part
+                        for part in (
+                            (refresh.stdout or "").strip(),
+                            (refresh.stderr or "").strip(),
+                        )
+                        if part
+                    )
+                except FileNotFoundError as exc:
+                    refresh_ok = False
+                    refresh_payload = str(exc)
+                except subprocess.CalledProcessError as exc:
+                    refresh_ok = False
+                    refresh_stderr = (exc.stderr or "").strip()
+                    refresh_stdout = (exc.stdout or "").strip()
+                    refresh_payload = refresh_stderr or refresh_stdout or str(exc)
                 text = "Scheduled tensor-grep upgrade completed via " + method + "."
                 if payload:
                     text += "\\n" + payload
+                if refresh_ok:
+                    text += "\\nManaged LSP providers refreshed."
+                    if refresh_payload:
+                        text += "\\n" + refresh_payload
+                else:
+                    text += "\\nManaged LSP provider refresh failed after upgrade."
+                    if refresh_payload:
+                        text += "\\n" + refresh_payload
                 log_path.write_text(text, encoding="utf-8")
                 raise SystemExit(0)
 
@@ -4136,11 +4259,14 @@ def upgrade() -> None:
 
     def _installed_version() -> str | None:
         try:
-            return importlib.metadata.version("tensor-grep")
+            return format_display_version(importlib.metadata.version("tensor-grep"))
         except importlib.metadata.PackageNotFoundError:
             return None
 
-    typer.echo("Upgrading tensor-grep to the latest version...")
+    typer.echo(
+        "Upgrading tensor-grep to the latest "
+        + ("main preview build..." if resolved_channel == "main" else "PyPI release...")
+    )
 
     try:
         attempts = _upgrade_attempts()
@@ -4150,14 +4276,30 @@ def upgrade() -> None:
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )
+        refresh_ok, refresh_payload = _refresh_managed_lsp_providers()
         if current_version is not None and current_version == previous_version:
-            typer.echo(f"tensor-grep is already at the latest PyPI version ({current_version}).")
+            if resolved_channel == "main":
+                typer.echo(
+                    f"tensor-grep is already at the latest main preview build ({current_version})."
+                )
+            else:
+                typer.echo(
+                    f"tensor-grep is already at the latest PyPI version ({current_version})."
+                )
         elif "Requirement already satisfied" in output:
             typer.echo("tensor-grep is already up to date!")
         else:
             typer.echo(f"Successfully upgraded tensor-grep via {method}!")
             if output:
                 typer.echo(output)
+        if refresh_ok:
+            typer.echo("Managed LSP providers refreshed.")
+            if refresh_payload:
+                typer.echo(refresh_payload)
+        else:
+            typer.echo("Managed LSP provider refresh failed after upgrade.")
+            if refresh_payload:
+                typer.echo(refresh_payload)
 
     except RuntimeError as e:
         if _looks_like_windows_self_update_lock(str(e)):
@@ -4587,9 +4729,15 @@ def review_bundle_verify(
 
 
 @app.command("update")
-def update() -> None:
+def update(
+    channel: str | None = typer.Option(
+        None,
+        "--channel",
+        help="Upgrade from the `stable` PyPI release line or the `main` preview branch.",
+    ),
+) -> None:
     """Alias for upgrade."""
-    upgrade()
+    upgrade(channel=channel)
 
 
 def main_entry() -> None:
@@ -4609,7 +4757,7 @@ def main_entry() -> None:
         except Exception:
             pkg_version = _read_project_version_fallback()
 
-        print(f"tensor-grep {pkg_version}")
+        print(f"tensor-grep {format_display_version(pkg_version)}")
         print()
         print("features:+gpu-cudf,+gpu-torch,+rust-core")
         print("simd(compile):+SSE2,-SSSE3,-AVX2")
@@ -4641,6 +4789,7 @@ def main_entry() -> None:
         "review-bundle",
         "new",
         "lsp",
+        "lsp-setup",
         "doctor",
         "mcp",
         "upgrade",

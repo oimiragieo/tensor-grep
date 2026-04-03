@@ -174,20 +174,24 @@ To ensure PyTorch bindings and CUDA/ROCm versions exactly match your hardware wi
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+irm https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1 | iex
 ```
 
 **Linux & macOS (Bash):**
 ```bash
-curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+curl -LsSf https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh | bash
 ```
 
 Installer defaults and channels:
 - Default behavior installs the latest stable PyPI release.
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=0.2.1`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
+- `tg upgrade --channel main` upgrades an existing install to the latest `main` preview build.
+- Preview installs surface a version suffix like `0.35.1+main.abcdef0` in `tg --version` and `tg doctor`.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
+- The script-managed install now provisions external LSP providers into `~/.tensor-grep/providers` so `tg doctor --with-lsp` and provider-backed semantics do not depend on global `pyright-langserver`, `typescript-language-server`, or `rust-analyzer` binaries.
+- Re-run `tg lsp-setup` if you need to repair or refresh that managed LSP toolchain after install.
 
 If `tg --version` still reports an older version, check command resolution:
 ```powershell
@@ -199,12 +203,12 @@ Examples:
 ```powershell
 # Windows PowerShell: install from main
 $env:TENSOR_GREP_CHANNEL = "main"
-irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+irm https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1 | iex
 ```
 
 ```bash
 # Linux/macOS: install a specific stable release
-TENSOR_GREP_VERSION=0.2.1 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+TENSOR_GREP_VERSION=0.2.1 curl -LsSf https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh | bash
 ```
 
 ### Python Package Managers (pip/uv)

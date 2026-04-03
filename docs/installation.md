@@ -36,6 +36,10 @@ tg --help
 
 *Note: The pip version requires a configured Python environment and may require additional setup for GPU acceleration (like installing `cudf` and `torch`).*
 
+Installer note:
+- The script-driven install now provisions managed external LSP providers under `~/.tensor-grep/providers`.
+- Use `tg lsp-setup` to refresh that managed provider toolchain if `tg doctor --with-lsp` reports a missing or stale provider binary.
+
 ## Maintainer Notes: Package Manager Publish Flow
 
 The repository includes package-manager manifests:
@@ -114,6 +118,13 @@ Release automation notes:
 2. Confirm semantic-release created tag `vX.Y.Z` and matching GitHub release.
 3. Confirm CI `validate-pypi-artifacts` is green before `publish-pypi`.
 4. Confirm PyPI latest version is exactly `X.Y.Z`.
+
+## Upgrade Channels
+
+- `tg upgrade` tracks the stable PyPI release line.
+- `tg upgrade --channel main` upgrades to the current preview build from GitHub `main`.
+- `TENSOR_GREP_CHANNEL=main` on the install scripts provisions the same preview channel for fresh installs.
+- Preview installs surface a version suffix like `0.35.1+main.abcdef0` in `tg --version` and `tg doctor` so operators can distinguish them from stable PyPI releases.
 5. Confirm `scripts/tensor-grep.rb` and `scripts/oimiragieo.tensor-grep.yaml` reference `vX.Y.Z` assets.
 6. Confirm the uploaded GitHub release assets and checksum coverage:
 

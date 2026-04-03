@@ -636,6 +636,25 @@ def validate_readme_contract(*, readme_content: str) -> list[str]:
     if "public contracts in [docs/harness_api.md](docs/harness_api.md)" not in readme_content:
         errors.append("README must direct harness consumers to docs/harness_api.md")
 
+    stable_install_urls = (
+        "https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1",
+        "https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh",
+    )
+    for url in stable_install_urls:
+        if url not in readme_content:
+            errors.append(f"README must install stable scripts from GitHub release assets: {url}")
+
+    mutable_branch_install_urls = (
+        "https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1",
+        "https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh",
+    )
+    for url in mutable_branch_install_urls:
+        if url in readme_content:
+            errors.append(
+                "README must not use mutable main-branch installer URLs for the stable install path: "
+                f"{url}"
+            )
+
     return errors
 
 

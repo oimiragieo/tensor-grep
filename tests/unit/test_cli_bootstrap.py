@@ -365,10 +365,13 @@ def test_main_entry_should_print_version_without_loading_full_cli(monkeypatch, c
     monkeypatch.setattr(sys, "argv", ["tg", "--version"])
     monkeypatch.setattr(importlib_metadata, "version", _raise_version)
     monkeypatch.setattr(bootstrap, "_read_project_version_fallback", lambda: "9.9.9")
+    monkeypatch.setattr(
+        bootstrap, "format_display_version", lambda version: f"{version}+main.abc1234"
+    )
     monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
 
     with pytest.raises(SystemExit) as excinfo:
         bootstrap.main_entry()
 
     assert excinfo.value.code == 0
-    assert "tensor-grep 9.9.9" in capsys.readouterr().out
+    assert "tensor-grep 9.9.9+main.abc1234" in capsys.readouterr().out

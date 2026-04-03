@@ -46,7 +46,7 @@ def _validate_sources(version: str) -> list[str]:
     return errors
 
 
-def _bundle_paths(output_dir: Path, version: str) -> tuple[Path, Path, Path, Path]:
+def _bundle_paths(output_dir: Path, version: str) -> tuple[Path, Path, Path, Path, Path, Path]:
     brew_dest = output_dir / "homebrew-tap" / "Formula" / "tensor-grep.rb"
     winget_dest = (
         output_dir
@@ -58,9 +58,11 @@ def _bundle_paths(output_dir: Path, version: str) -> tuple[Path, Path, Path, Pat
         / version
         / "oimiragieo.tensor-grep.yaml"
     )
+    install_ps1 = output_dir / "install.ps1"
+    install_sh = output_dir / "install.sh"
     summary = output_dir / "PUBLISH_INSTRUCTIONS.md"
     checksums = output_dir / "BUNDLE_CHECKSUMS.txt"
-    return brew_dest, winget_dest, summary, checksums
+    return brew_dest, winget_dest, install_ps1, install_sh, summary, checksums
 
 
 def _write_summary(summary: Path, version: str) -> None:
@@ -126,7 +128,7 @@ def prepare_bundle(*, output_dir: Path, check_only: bool) -> int:
 
     brew_src = ROOT / "scripts" / "tensor-grep.rb"
     winget_src = ROOT / "scripts" / "oimiragieo.tensor-grep.yaml"
-    brew_dest, winget_dest, summary, checksums = _bundle_paths(
+    brew_dest, winget_dest, install_ps1, install_sh, summary, checksums = _bundle_paths(
         output_dir=output_dir, version=version
     )
 
@@ -137,6 +139,8 @@ def prepare_bundle(*, output_dir: Path, check_only: bool) -> int:
     winget_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(brew_src, brew_dest)
     shutil.copy2(winget_src, winget_dest)
+    shutil.copy2(ROOT / "scripts" / "install.ps1", install_ps1)
+    shutil.copy2(ROOT / "scripts" / "install.sh", install_sh)
     _write_summary(summary=summary, version=version)
     _write_bundle_checksums(output_dir=output_dir, checksums_path=checksums)
 

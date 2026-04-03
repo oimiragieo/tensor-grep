@@ -329,7 +329,7 @@ def test_files_mode_lists_candidates(monkeypatch):
 def test_session_daemon_help_lists_lifecycle_commands() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["session", "daemon", "--help"])
+    result = runner.invoke(app, ["session", "daemon", "--help"], color=False)
 
     assert result.exit_code == 0
     assert "start" in result.stdout
@@ -340,7 +340,7 @@ def test_session_daemon_help_lists_lifecycle_commands() -> None:
 def test_session_context_help_mentions_daemon_flag() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["session", "context", "--help"])
+    result = runner.invoke(app, ["session", "context", "--help"], color=False)
 
     assert result.exit_code == 0
     normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
@@ -351,28 +351,51 @@ def test_session_context_help_mentions_daemon_flag() -> None:
 def test_lsp_help_mentions_provider_modes() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["lsp", "--help"])
+    result = runner.invoke(app, ["lsp", "--help"], color=False)
 
     assert result.exit_code == 0
-    assert "--provider" in result.stdout
-    assert "native=repo-map only" in result.stdout
-    assert "Examples:" in result.stdout
-    assert "--provider hybrid" in result.stdout
+    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "-provider" in normalized_output
+    assert "native=repo-map only" in normalized_output
+    assert "Examples:" in normalized_output
+    assert "provider hybrid" in normalized_output
 
 
 def test_doctor_help_mentions_lsp_and_json() -> None:
     runner = CliRunner()
 
-    result = runner.invoke(app, ["doctor", "--help"])
+    result = runner.invoke(app, ["doctor", "--help"], color=False)
 
     assert result.exit_code == 0
-    assert "--with-lsp" in result.stdout
-    assert "--json" in result.stdout
-    assert "AI troubleshooting" in result.stdout
+    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "-with-lsp" in normalized_output
+    assert "-json" in normalized_output
+    assert "AI troubleshooting" in normalized_output
+
+
+def test_lsp_setup_help_mentions_managed_provider_install() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lsp-setup", "--help"], color=False)
+
+    assert result.exit_code == 0
+    normalized_output = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    assert "-json" in normalized_output
+    assert "managed external LSP providers" in normalized_output
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "main")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.get_install_provenance",
+        lambda: {
+            "channel": "main",
+            "source": "https://github.com/oimiragieo/tensor-grep.git",
+            "requested_revision": "main",
+            "commit": "abcdef1234567890",
+        },
+    )
     monkeypatch.setattr(
         "tensor_grep.cli.main._resolve_native_tg_binary",
         lambda: tmp_path / "rust_core" / "target" / "debug" / "tg.exe",
@@ -389,6 +412,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
                 "available": True,
                 "running": False,
                 "command": ["pyright-langserver", "--stdio"],
+                "command_source": "managed",
+                "managed_provider_root": str(tmp_path / "providers"),
                 "last_error": None,
             }
         ],
@@ -401,16 +426,22 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["version"] == "9.9.9"
+    assert payload["install_channel"] == "main"
+    assert payload["install_provenance"]["commit"] == "abcdef1234567890"
     assert payload["root"] == str(tmp_path.resolve())
     assert payload["native_tg_binary_exists"] is True
     assert payload["env"]["TG_RUST_EARLY_RG"] == "1"
     assert payload["session_daemon"]["running"] is True
     assert payload["lsp"]["enabled"] is True
     assert payload["lsp"]["providers"][0]["language"] == "python"
+    assert payload["lsp"]["providers"][0]["command_source"] == "managed"
+    assert payload["lsp"]["providers"][0]["managed_provider_root"] == str(tmp_path / "providers")
 
 
 def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.2.3")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "stable")
+    monkeypatch.setattr("tensor_grep.cli.main.get_install_provenance", lambda: None)
     monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(
         "tensor_grep.cli.main._doctor_session_daemon_status",
@@ -423,9 +454,98 @@ def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_pa
     assert result.exit_code == 0
     assert "tensor-grep doctor" in result.stdout
     assert "version: 1.2.3" in result.stdout
+    assert "install_channel: stable" in result.stdout
     assert "native_tg_binary: missing" in result.stdout
     assert "session_daemon: stopped" in result.stdout
     assert "lsp_providers: disabled" in result.stdout
+
+
+def test_lsp_setup_runs_managed_provider_installer(monkeypatch, tmp_path: Path) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_install(*, python_executable: str, managed_root: Path | None) -> dict[str, object]:
+        seen["python_executable"] = python_executable
+        seen["managed_root"] = managed_root
+        return {
+            "managed_provider_root": str(tmp_path / "providers"),
+            "node": {"installed": True},
+            "providers": {
+                "python": {
+                    "command": [str(tmp_path / "providers" / "pyright-langserver"), "--stdio"],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "javascript": {
+                    "command": [
+                        str(tmp_path / "providers" / "typescript-language-server"),
+                        "--stdio",
+                    ],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "typescript": {
+                    "command": [
+                        str(tmp_path / "providers" / "typescript-language-server"),
+                        "--stdio",
+                    ]
+                },
+                "rust": {"command": [str(tmp_path / "providers" / "rust-analyzer")]},
+                "go": {"command": [str(tmp_path / "providers" / "gopls")], "available": True},
+                "java": {
+                    "command": ["/usr/bin/jdtls"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "c": {"command": ["/usr/bin/clangd"], "available": True, "command_source": "path"},
+                "cpp": {
+                    "command": ["/usr/bin/clangd"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "csharp": {
+                    "command": [str(tmp_path / "providers" / "csharp-ls")],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "php": {
+                    "command": [str(tmp_path / "providers" / "intelephense"), "--stdio"],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "kotlin": {
+                    "command": ["/usr/bin/kotlin-lsp"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "swift": {
+                    "command": ["/usr/bin/sourcekit-lsp"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "lua": {
+                    "command": ["/usr/bin/lua-language-server"],
+                    "available": True,
+                    "command_source": "path",
+                },
+            },
+        }
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.install_managed_lsp_providers",
+        _fake_install,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["lsp-setup", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["managed_provider_root"] == str(tmp_path / "providers")
+    assert payload["providers"]["python"]["command"][0].endswith("pyright-langserver")
+    assert payload["providers"]["php"]["command"][0].endswith("intelephense")
+    assert payload["providers"]["go"]["command"][0].endswith("gopls")
+    assert seen["python_executable"] == sys.executable
+    assert seen["managed_root"] is None
 
 
 def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
@@ -1704,8 +1824,13 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
         raise AssertionError("pip fallback should not be used when uv succeeds")
 
+    monkeypatch.setattr("sys.executable", "python")
     versions = iter(["0.31.0", "0.32.0"])
 
     monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
@@ -1716,6 +1841,7 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
 
     assert result.exit_code == 0
     assert calls[0][0] == "uv"
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
     assert "Successfully upgraded tensor-grep via uv!" in result.stdout
 
 
@@ -1726,8 +1852,13 @@ def test_upgrade_reports_latest_pypi_version_when_installed_version_does_not_cha
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
         raise AssertionError("pip fallback should not be used when uv succeeds")
 
+    monkeypatch.setattr("sys.executable", "python")
     versions = iter(["0.32.0", "0.32.0"])
 
     monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
@@ -1738,7 +1869,98 @@ def test_upgrade_reports_latest_pypi_version_when_installed_version_does_not_cha
 
     assert result.exit_code == 0
     assert calls[0][0] == "uv"
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
     assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
+
+
+def test_upgrade_main_channel_uses_git_preview_build(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Updated from git", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "stable")
+    versions = iter(["0.35.1+main.abc1234", "0.35.1+main.def5678"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("tensor_grep.cli.main.format_display_version", lambda version: version)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade", "--channel", "main"])
+
+    assert result.exit_code == 0
+    assert calls[0][:6] == ["uv", "pip", "install", "--python", "python", "--upgrade"]
+    assert calls[0][-1] == "git+https://github.com/oimiragieo/tensor-grep.git@main"
+    assert "Upgrading tensor-grep to the latest main preview build..." in result.stdout
+    assert "Successfully upgraded tensor-grep via uv!" in result.stdout
+
+
+def test_upgrade_defaults_to_current_main_preview_channel(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Updated from git", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    monkeypatch.setattr("tensor_grep.cli.main.infer_install_channel", lambda: "main")
+    versions = iter(["0.35.1+main.abc1234", "0.35.1+main.abc1234"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("tensor_grep.cli.main.format_display_version", lambda version: version)
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert calls[0][-1] == "git+https://github.com/oimiragieo/tensor-grep.git@main"
+    assert "tensor-grep is already at the latest main preview build" in result.stdout
+
+
+def test_upgrade_warns_when_managed_lsp_refresh_fails(monkeypatch):
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True):
+        calls.append(list(cmd))
+        if cmd[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=cmd,
+                stderr="managed provider bootstrap failed",
+            )
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr("sys.executable", "python")
+    versions = iter(["0.31.0", "0.32.0"])
+
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: next(versions))
+    monkeypatch.setattr("subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
+    assert "Managed LSP provider refresh failed after upgrade." in result.stdout
+    assert "managed provider bootstrap failed" in result.stdout
 
 
 def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
@@ -1758,6 +1980,10 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
                     returncode=1, cmd=cmd, stderr="No module named pip"
                 )
             return subprocess.CompletedProcess(cmd, 0, stdout="Successfully installed", stderr="")
+        if cmd[:3] == ["python", "-m", "tensor_grep"]:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout='{"managed_provider_root":"ok"}', stderr=""
+            )
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr("sys.executable", "python")
@@ -1772,6 +1998,7 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
     assert result.exit_code == 0
     assert any(cmd[:3] == ["python", "-m", "ensurepip"] for cmd in calls)
     assert pip_attempts["count"] == 2
+    assert any(cmd[:3] == ["python", "-m", "tensor_grep"] for cmd in calls)
     assert "Successfully upgraded tensor-grep via pip+ensurepip!" in result.stdout
 
 
@@ -1851,6 +2078,8 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
     assert popen_calls
     assert popen_calls[0][0] == "python"
     assert popen_calls[0][1] == "-c"
+    assert "tensor_grep" in popen_calls[0][2]
+    assert "lsp-setup" in popen_calls[0][2]
     assert "Windows is still using tg.exe" in result.output
     assert "Wait a few seconds, then run `tg --version` again." in result.output
     assert "Upgrade log:" in result.output

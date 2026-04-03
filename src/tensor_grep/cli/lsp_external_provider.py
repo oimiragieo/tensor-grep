@@ -3,12 +3,19 @@ from __future__ import annotations
 import json
 import os
 import queue
-import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any, cast
+
+from tensor_grep.cli.lsp_provider_setup import (
+    canonical_language,
+    resolved_provider_command,
+)
+from tensor_grep.cli.lsp_provider_setup import (
+    managed_provider_root as _managed_provider_root,
+)
 
 
 class LSPTransportError(RuntimeError):
@@ -64,25 +71,32 @@ def _write_message(stream: Any, payload: dict[str, Any]) -> None:
 
 
 def _provider_command(language: str) -> list[str]:
-    normalized = language.lower()
+    normalized = canonical_language(language)
+    command = resolved_provider_command(normalized, managed_root=_managed_provider_root())
+    if command is not None:
+        return command
     if normalized == "python":
-        binary = shutil.which("pyright-langserver")
-        if not binary:
-            raise FileNotFoundError("pyright-langserver binary not found on PATH")
-        return [binary, "--stdio"]
+        raise FileNotFoundError("pyright-langserver binary not found on PATH")
     if normalized in {"javascript", "typescript"}:
-        binary = shutil.which("typescript-language-server")
-        if not binary:
-            raise FileNotFoundError("typescript-language-server binary not found on PATH")
-        return [binary, "--stdio"]
+        raise FileNotFoundError("typescript-language-server binary not found on PATH")
     if normalized == "rust":
-        binary = shutil.which("rust-analyzer")
-        if not binary:
-            cargo_bin = Path.home() / ".cargo" / "bin" / "rust-analyzer.exe"
-            if cargo_bin.exists():
-                return [str(cargo_bin)]
-            raise FileNotFoundError("rust-analyzer binary not found on PATH")
-        return [binary]
+        raise FileNotFoundError("rust-analyzer binary not found on PATH")
+    if normalized == "go":
+        raise FileNotFoundError("gopls binary not found on PATH")
+    if normalized == "java":
+        raise FileNotFoundError("jdtls binary not found on PATH")
+    if normalized in {"c", "cpp"}:
+        raise FileNotFoundError("clangd binary not found on PATH")
+    if normalized == "csharp":
+        raise FileNotFoundError("csharp-ls binary not found on PATH")
+    if normalized == "php":
+        raise FileNotFoundError("intelephense binary not found on PATH")
+    if normalized == "kotlin":
+        raise FileNotFoundError("kotlin-lsp binary not found on PATH")
+    if normalized == "swift":
+        raise FileNotFoundError("sourcekit-lsp binary not found on PATH")
+    if normalized == "lua":
+        raise FileNotFoundError("lua-language-server binary not found on PATH")
     raise ValueError(f"Unsupported LSP language: {language}")
 
 
@@ -262,6 +276,8 @@ class ExternalLSPClient:
             "language": self.language,
             "workspace_root": str(self.workspace_root),
             "command": list(self.command),
+            "command_source": _command_source(self.command),
+            "managed_provider_root": str(_managed_provider_root()),
             "running": self.process is not None and self.process.poll() is None,
             "capabilities": dict(self.capabilities),
             "last_error": self.last_error,
@@ -332,6 +348,8 @@ class ExternalLSPProviderManager:
                 "available": False,
                 "running": False,
                 "command": [],
+                "command_source": "missing",
+                "managed_provider_root": str(_managed_provider_root()),
                 "capabilities": {},
                 "last_error": str(exc),
                 "opened_documents": 0,
@@ -350,6 +368,8 @@ class ExternalLSPProviderManager:
             "available": True,
             "running": False,
             "command": command,
+            "command_source": _command_source(command),
+            "managed_provider_root": str(_managed_provider_root()),
             "capabilities": {},
             "last_error": None,
             "opened_documents": 0,
@@ -368,3 +388,18 @@ class ExternalLSPProviderManager:
         for current in self._clients.values():
             current.stop()
         self._clients.clear()
+
+
+def _command_source(command: list[str]) -> str:
+    if not command:
+        return "missing"
+    managed_root = _managed_provider_root()
+    try:
+        command_path = Path(command[0]).resolve()
+    except OSError:
+        return "path"
+    try:
+        command_path.relative_to(managed_root)
+    except ValueError:
+        return "path"
+    return "managed"

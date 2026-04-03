@@ -212,6 +212,8 @@ def verify_release_assets(*, repo: str, tag: str, token: str | None = None) -> l
         "tg-macos-amd64-cpu",
         "tg-windows-amd64-cpu.exe",
         "tg-windows-amd64-nvidia.exe",
+        "install.ps1",
+        "install.sh",
         "tensor-grep.rb",
         "oimiragieo.tensor-grep.yaml",
         "PUBLISH_INSTRUCTIONS.md",
@@ -227,6 +229,8 @@ def verify_release_assets(*, repo: str, tag: str, token: str | None = None) -> l
         "CHECKSUMS.txt",
     ]
     bundle_checksum_required_assets = [
+        "install.ps1",
+        "install.sh",
         "tensor-grep.rb",
         "oimiragieo.tensor-grep.yaml",
         "PUBLISH_INSTRUCTIONS.md",
