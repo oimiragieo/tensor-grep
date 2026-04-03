@@ -471,7 +471,17 @@ def test_lsp_setup_runs_managed_provider_installer(monkeypatch, tmp_path: Path) 
             "node": {"installed": True},
             "providers": {
                 "python": {
-                    "command": [str(tmp_path / "providers" / "pyright-langserver"), "--stdio"]
+                    "command": [str(tmp_path / "providers" / "pyright-langserver"), "--stdio"],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "javascript": {
+                    "command": [
+                        str(tmp_path / "providers" / "typescript-language-server"),
+                        "--stdio",
+                    ],
+                    "available": True,
+                    "command_source": "managed",
                 },
                 "typescript": {
                     "command": [
@@ -480,6 +490,43 @@ def test_lsp_setup_runs_managed_provider_installer(monkeypatch, tmp_path: Path) 
                     ]
                 },
                 "rust": {"command": [str(tmp_path / "providers" / "rust-analyzer")]},
+                "go": {"command": [str(tmp_path / "providers" / "gopls")], "available": True},
+                "java": {
+                    "command": ["/usr/bin/jdtls"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "c": {"command": ["/usr/bin/clangd"], "available": True, "command_source": "path"},
+                "cpp": {
+                    "command": ["/usr/bin/clangd"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "csharp": {
+                    "command": [str(tmp_path / "providers" / "csharp-ls")],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "php": {
+                    "command": [str(tmp_path / "providers" / "intelephense"), "--stdio"],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "kotlin": {
+                    "command": ["/usr/bin/kotlin-lsp"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "swift": {
+                    "command": ["/usr/bin/sourcekit-lsp"],
+                    "available": True,
+                    "command_source": "path",
+                },
+                "lua": {
+                    "command": ["/usr/bin/lua-language-server"],
+                    "available": True,
+                    "command_source": "path",
+                },
             },
         }
 
@@ -495,6 +542,8 @@ def test_lsp_setup_runs_managed_provider_installer(monkeypatch, tmp_path: Path) 
     payload = json.loads(result.stdout)
     assert payload["managed_provider_root"] == str(tmp_path / "providers")
     assert payload["providers"]["python"]["command"][0].endswith("pyright-langserver")
+    assert payload["providers"]["php"]["command"][0].endswith("intelephense")
+    assert payload["providers"]["go"]["command"][0].endswith("gopls")
     assert seen["python_executable"] == sys.executable
     assert seen["managed_root"] is None
 

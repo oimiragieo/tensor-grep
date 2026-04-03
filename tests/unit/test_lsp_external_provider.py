@@ -62,7 +62,12 @@ def test_provider_command_prefers_managed_binary_over_path(
     managed_binary.write_text("", encoding="utf-8")
 
     monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: managed_root)
-    monkeypatch.setattr(provider_module.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
+        lambda language, managed_root=None: [str(managed_binary), "--stdio"]
+        if language == "python"
+        else None,
+    )
 
     command = provider_module._provider_command("python")
 
@@ -86,7 +91,12 @@ def test_provider_status_reports_managed_command_source(
     managed_binary.write_text("", encoding="utf-8")
 
     monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: managed_root)
-    monkeypatch.setattr(provider_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
+        lambda language, managed_root=None: [str(managed_binary), "--stdio"]
+        if language == "typescript"
+        else None,
+    )
 
     manager = ExternalLSPProviderManager()
     status = manager.provider_status(language="typescript", workspace_root=tmp_path)
@@ -94,6 +104,20 @@ def test_provider_status_reports_managed_command_source(
     assert status["available"] is True
     assert status["command"] == [str(managed_binary), "--stdio"]
     assert status["command_source"] == "managed"
+
+
+def test_provider_command_supports_java_from_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: Path("/tmp/providers"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
+        lambda language, managed_root=None: ["/usr/bin/jdtls"] if language == "java" else None,
+    )
+
+    command = provider_module._provider_command("java")
+
+    assert command == ["/usr/bin/jdtls"]
 
 
 def test_provider_manager_uses_configured_timeouts(

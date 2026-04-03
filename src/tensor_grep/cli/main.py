@@ -22,7 +22,10 @@ from tensor_grep.cli.install_channel import (
     get_install_provenance,
     infer_install_channel,
 )
-from tensor_grep.cli.lsp_provider_setup import install_managed_lsp_providers
+from tensor_grep.cli.lsp_provider_setup import (
+    install_managed_lsp_providers,
+    supported_lsp_languages,
+)
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
@@ -238,7 +241,7 @@ def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
 
 
 def _doctor_lsp_languages() -> list[str]:
-    return ["python", "javascript", "typescript", "rust"]
+    return supported_lsp_languages()
 
 
 def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
@@ -3956,10 +3959,14 @@ def lsp_setup(
         return
     typer.echo(f"Installed managed external LSP providers under {payload['managed_provider_root']}")
     providers = cast(dict[str, dict[str, Any]], payload["providers"])
-    for language in ("python", "javascript", "typescript", "rust"):
-        command = providers.get(language, {}).get("command") or []
+    for language in supported_lsp_languages():
+        provider = providers.get(language, {})
+        command = provider.get("command") or []
+        source = provider.get("command_source", "missing")
+        availability = "available" if provider.get("available") else "missing"
         typer.echo(
             f"  {language}: {' '.join(str(part) for part in command) if command else 'missing'}"
+            f" [{source}, {availability}]"
         )
 
 

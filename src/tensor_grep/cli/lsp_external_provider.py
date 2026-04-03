@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import queue
-import shutil
 import subprocess
 import threading
 import time
@@ -11,7 +10,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from tensor_grep.cli.lsp_provider_setup import (
-    managed_provider_command,
+    canonical_language,
+    resolved_provider_command,
 )
 from tensor_grep.cli.lsp_provider_setup import (
     managed_provider_root as _managed_provider_root,
@@ -71,28 +71,32 @@ def _write_message(stream: Any, payload: dict[str, Any]) -> None:
 
 
 def _provider_command(language: str) -> list[str]:
-    normalized = language.lower()
-    managed_command = managed_provider_command(normalized, managed_root=_managed_provider_root())
-    if managed_command is not None:
-        return managed_command
+    normalized = canonical_language(language)
+    command = resolved_provider_command(normalized, managed_root=_managed_provider_root())
+    if command is not None:
+        return command
     if normalized == "python":
-        binary = shutil.which("pyright-langserver")
-        if not binary:
-            raise FileNotFoundError("pyright-langserver binary not found on PATH")
-        return [binary, "--stdio"]
+        raise FileNotFoundError("pyright-langserver binary not found on PATH")
     if normalized in {"javascript", "typescript"}:
-        binary = shutil.which("typescript-language-server")
-        if not binary:
-            raise FileNotFoundError("typescript-language-server binary not found on PATH")
-        return [binary, "--stdio"]
+        raise FileNotFoundError("typescript-language-server binary not found on PATH")
     if normalized == "rust":
-        binary = shutil.which("rust-analyzer")
-        if not binary:
-            cargo_bin = Path.home() / ".cargo" / "bin" / "rust-analyzer.exe"
-            if cargo_bin.exists():
-                return [str(cargo_bin)]
-            raise FileNotFoundError("rust-analyzer binary not found on PATH")
-        return [binary]
+        raise FileNotFoundError("rust-analyzer binary not found on PATH")
+    if normalized == "go":
+        raise FileNotFoundError("gopls binary not found on PATH")
+    if normalized == "java":
+        raise FileNotFoundError("jdtls binary not found on PATH")
+    if normalized in {"c", "cpp"}:
+        raise FileNotFoundError("clangd binary not found on PATH")
+    if normalized == "csharp":
+        raise FileNotFoundError("csharp-ls binary not found on PATH")
+    if normalized == "php":
+        raise FileNotFoundError("intelephense binary not found on PATH")
+    if normalized == "kotlin":
+        raise FileNotFoundError("kotlin-lsp binary not found on PATH")
+    if normalized == "swift":
+        raise FileNotFoundError("sourcekit-lsp binary not found on PATH")
+    if normalized == "lua":
+        raise FileNotFoundError("lua-language-server binary not found on PATH")
     raise ValueError(f"Unsupported LSP language: {language}")
 
 

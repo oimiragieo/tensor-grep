@@ -16,7 +16,50 @@ from typing import Any
 
 _MANAGED_PROVIDER_HOME_ENV_VAR = "TENSOR_GREP_LSP_PROVIDER_HOME"
 _NODE_VERSION = "22.14.0"
-_NODE_PACKAGES = ("pyright", "typescript", "typescript-language-server")
+_NODE_PACKAGES = (
+    "pyright",
+    "typescript",
+    "typescript-language-server",
+    "intelephense",
+)
+
+_LANGUAGE_ALIASES = {
+    "python": "python",
+    "javascript": "javascript",
+    "js": "javascript",
+    "typescript": "typescript",
+    "ts": "typescript",
+    "go": "go",
+    "golang": "go",
+    "rust": "rust",
+    "java": "java",
+    "c": "c",
+    "cpp": "cpp",
+    "c++": "cpp",
+    "csharp": "csharp",
+    "c#": "csharp",
+    "cs": "csharp",
+    "php": "php",
+    "kotlin": "kotlin",
+    "swift": "swift",
+    "lua": "lua",
+}
+
+_DOCTOR_LANGUAGE_ORDER = [
+    "python",
+    "javascript",
+    "typescript",
+    "go",
+    "rust",
+    "java",
+    "c",
+    "cpp",
+    "csharp",
+    "php",
+    "kotlin",
+    "swift",
+    "lua",
+]
 
 
 def managed_provider_root(root_override: Path | None = None) -> Path:
@@ -26,6 +69,15 @@ def managed_provider_root(root_override: Path | None = None) -> Path:
     if configured:
         return Path(configured).expanduser().resolve()
     return (Path.home() / ".tensor-grep" / "providers").resolve()
+
+
+def supported_lsp_languages() -> list[str]:
+    return list(_DOCTOR_LANGUAGE_ORDER)
+
+
+def canonical_language(language: str) -> str:
+    normalized = language.lower().strip()
+    return _LANGUAGE_ALIASES.get(normalized, normalized)
 
 
 def _node_runtime_dir(root: Path) -> Path:
@@ -132,49 +184,16 @@ def _managed_node_binary(root: Path, binary_name: str) -> Path:
     return _node_packages_dir(root) / "node_modules" / ".bin" / f"{binary_name}{suffix}"
 
 
-def _managed_rust_analyzer_binary(root: Path) -> Path:
+def _managed_bin_binary(root: Path, binary_name: str) -> Path:
     suffix = ".exe" if _is_windows() else ""
-    return _managed_bin_dir(root) / f"rust-analyzer{suffix}"
+    return _managed_bin_dir(root) / f"{binary_name}{suffix}"
 
 
-def managed_provider_command(
-    language: str, *, managed_root: Path | None = None
-) -> list[str] | None:
-    root = managed_provider_root(managed_root)
-    normalized = language.lower()
-    if normalized == "python":
-        binary = _managed_node_binary(root, "pyright-langserver")
-        if binary.is_file():
-            return [str(binary), "--stdio"]
-        return None
-    if normalized in {"javascript", "typescript"}:
-        binary = _managed_node_binary(root, "typescript-language-server")
-        if binary.is_file():
-            return [str(binary), "--stdio"]
-        return None
-    if normalized == "rust":
-        binary = _managed_rust_analyzer_binary(root)
-        if binary.is_file():
-            return [str(binary)]
-        return None
-    return None
-
-
-def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd) if cwd is not None else None,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if completed.returncode == 0:
-        return
-    raise RuntimeError(
-        f"Command failed ({completed.returncode}): {' '.join(command)}\n"
-        f"stdout: {completed.stdout}\n"
-        f"stderr: {completed.stderr}"
-    )
+def _provider_args(binary: str, language: str) -> list[str]:
+    canonical = canonical_language(language)
+    if canonical in {"python", "javascript", "typescript", "php"}:
+        return [binary, "--stdio"]
+    return [binary]
 
 
 def _write_package_json(root: Path) -> None:
@@ -190,9 +209,12 @@ def _write_package_json(root: Path) -> None:
 
 
 def _ensure_node_packages(root: Path) -> None:
-    pyright_binary = _managed_node_binary(root, "pyright-langserver")
-    ts_binary = _managed_node_binary(root, "typescript-language-server")
-    if pyright_binary.is_file() and ts_binary.is_file():
+    required_binaries = [
+        _managed_node_binary(root, "pyright-langserver"),
+        _managed_node_binary(root, "typescript-language-server"),
+        _managed_node_binary(root, "intelephense"),
+    ]
+    if all(binary.is_file() for binary in required_binaries):
         return
     _ensure_node_runtime(root)
     _write_package_json(root)
@@ -206,7 +228,7 @@ def _ensure_node_packages(root: Path) -> None:
         ],
         cwd=_node_packages_dir(root),
     )
-    if not pyright_binary.is_file() or not ts_binary.is_file():
+    if not all(binary.is_file() for binary in required_binaries):
         raise RuntimeError("Managed Node package install completed without expected LSP binaries")
 
 
@@ -264,7 +286,7 @@ def _download_rust_analyzer(destination: Path) -> None:
 
 
 def _ensure_rust_analyzer(root: Path) -> Path:
-    destination = _managed_rust_analyzer_binary(root)
+    destination = _managed_bin_binary(root, "rust-analyzer")
     if destination.is_file():
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -275,6 +297,201 @@ def _ensure_rust_analyzer(root: Path) -> Path:
     return destination
 
 
+def _run_checked(command: list[str], *, cwd: Path | None = None) -> None:
+    completed = subprocess.run(
+        command,
+        cwd=str(cwd) if cwd is not None else None,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0:
+        return
+    raise RuntimeError(
+        f"Command failed ({completed.returncode}): {' '.join(command)}\n"
+        f"stdout: {completed.stdout}\n"
+        f"stderr: {completed.stderr}"
+    )
+
+
+def _copy_binary_to_managed(binary: str, destination: Path) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(binary, destination)
+    if not _is_windows():
+        _mark_executable(destination)
+    return destination
+
+
+def _find_go_binary_name(root: Path, binary_name: str) -> Path | None:
+    go_env = shutil.which("go")
+    if not go_env:
+        return None
+    completed = subprocess.run(
+        [go_env, "env", "GOBIN"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    gobin = completed.stdout.strip()
+    if gobin:
+        candidate = Path(gobin) / _managed_bin_binary(root, binary_name).name
+        if candidate.is_file():
+            return candidate
+    completed = subprocess.run(
+        [go_env, "env", "GOPATH"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    gopath = completed.stdout.strip()
+    if gopath:
+        candidate = Path(gopath) / "bin" / _managed_bin_binary(root, binary_name).name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _ensure_gopls(root: Path) -> Path:
+    destination = _managed_bin_binary(root, "gopls")
+    if destination.is_file():
+        return destination
+    existing = shutil.which("gopls")
+    if existing:
+        return _copy_binary_to_managed(existing, destination)
+    go_binary = shutil.which("go")
+    if not go_binary:
+        raise RuntimeError("Go toolchain not found; unable to install gopls")
+    _run_checked([go_binary, "install", "golang.org/x/tools/gopls@latest"])
+    built = _find_go_binary_name(root, "gopls")
+    if built is None:
+        raise RuntimeError("Go install completed without a discoverable gopls binary")
+    return _copy_binary_to_managed(str(built), destination)
+
+
+def _ensure_csharp_ls(root: Path) -> Path:
+    destination = _managed_bin_binary(root, "csharp-ls")
+    if destination.is_file():
+        return destination
+    existing = shutil.which("csharp-ls")
+    if existing:
+        return _copy_binary_to_managed(existing, destination)
+    dotnet = shutil.which("dotnet")
+    if not dotnet:
+        raise RuntimeError("dotnet not found; unable to install csharp-ls")
+    tool_dir = _managed_bin_dir(root)
+    tool_dir.mkdir(parents=True, exist_ok=True)
+    install_cmd = [dotnet, "tool", "install", "--tool-path", str(tool_dir), "csharp-ls"]
+    completed = subprocess.run(install_cmd, check=False, capture_output=True, text=True)
+    if completed.returncode != 0 and "already installed" not in completed.stderr.lower():
+        update_cmd = [dotnet, "tool", "update", "--tool-path", str(tool_dir), "csharp-ls"]
+        _run_checked(update_cmd)
+    if not destination.is_file():
+        raise RuntimeError(f"dotnet tool install completed without {destination.name}")
+    return destination
+
+
+def _find_on_path(candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def _swift_command() -> list[str] | None:
+    resolved = _find_on_path(["sourcekit-lsp"])
+    if resolved:
+        return [resolved]
+    if sys_platform() != "darwin":
+        return None
+    xcrun = shutil.which("xcrun")
+    if not xcrun:
+        return None
+    completed = subprocess.run(
+        [xcrun, "--find", "sourcekit-lsp"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    candidate = completed.stdout.strip()
+    if completed.returncode == 0 and candidate:
+        return [candidate]
+    return None
+
+
+def managed_provider_command(
+    language: str, *, managed_root: Path | None = None
+) -> list[str] | None:
+    root = managed_provider_root(managed_root)
+    normalized = canonical_language(language)
+    if normalized == "python":
+        binary = _managed_node_binary(root, "pyright-langserver")
+    elif normalized in {"javascript", "typescript"}:
+        binary = _managed_node_binary(root, "typescript-language-server")
+    elif normalized == "php":
+        binary = _managed_node_binary(root, "intelephense")
+    elif normalized == "rust":
+        binary = _managed_bin_binary(root, "rust-analyzer")
+    elif normalized == "go":
+        binary = _managed_bin_binary(root, "gopls")
+    elif normalized == "csharp":
+        binary = _managed_bin_binary(root, "csharp-ls")
+    else:
+        return None
+    if not binary.is_file():
+        return None
+    return _provider_args(str(binary), normalized)
+
+
+def path_provider_command(language: str) -> list[str] | None:
+    normalized = canonical_language(language)
+    if normalized == "python":
+        resolved = _find_on_path(["pyright-langserver"])
+    elif normalized in {"javascript", "typescript"}:
+        resolved = _find_on_path(["typescript-language-server"])
+    elif normalized == "go":
+        resolved = _find_on_path(["gopls"])
+    elif normalized == "rust":
+        resolved = _find_on_path(["rust-analyzer"])
+        if not resolved:
+            cargo_bin = (
+                Path.home()
+                / ".cargo"
+                / "bin"
+                / _managed_bin_binary(Path("."), "rust-analyzer").name
+            )
+            if cargo_bin.is_file():
+                resolved = str(cargo_bin)
+    elif normalized == "java":
+        resolved = _find_on_path(["jdtls"])
+    elif normalized in {"c", "cpp"}:
+        resolved = _find_on_path(["clangd"])
+    elif normalized == "csharp":
+        resolved = _find_on_path(["csharp-ls"])
+    elif normalized == "php":
+        resolved = _find_on_path(["intelephense"])
+    elif normalized == "kotlin":
+        resolved = _find_on_path(["kotlin-lsp"])
+    elif normalized == "swift":
+        return _swift_command()
+    elif normalized == "lua":
+        resolved = _find_on_path(["lua-language-server", "lua-language-server.exe"])
+    else:
+        return None
+    if not resolved:
+        return None
+    return _provider_args(resolved, normalized)
+
+
+def resolved_provider_command(
+    language: str, *, managed_root: Path | None = None
+) -> list[str] | None:
+    managed = managed_provider_command(language, managed_root=managed_root)
+    if managed is not None:
+        return managed
+    return path_provider_command(language)
+
+
 def install_managed_lsp_providers(
     *,
     python_executable: str,
@@ -282,21 +499,63 @@ def install_managed_lsp_providers(
 ) -> dict[str, Any]:
     root = managed_provider_root(managed_root)
     root.mkdir(parents=True, exist_ok=True)
-    _ensure_node_packages(root)
-    rust_binary = _ensure_rust_analyzer(root)
+
+    node_payload: dict[str, Any] = {
+        "runtime": str(_node_executable(root)),
+        "packages_dir": str(_node_packages_dir(root)),
+        "installed": False,
+    }
+
+    provider_errors: dict[str, str] = {}
+    try:
+        _ensure_node_packages(root)
+        node_payload["installed"] = True
+    except Exception as exc:
+        provider_errors["node"] = str(exc)
+
+    try:
+        _ensure_rust_analyzer(root)
+    except Exception as exc:
+        provider_errors["rust"] = str(exc)
+
+    for language, installer in (
+        ("go", _ensure_gopls),
+        ("csharp", _ensure_csharp_ls),
+    ):
+        try:
+            installer(root)
+        except Exception as exc:
+            provider_errors[language] = str(exc)
+
+    providers: dict[str, dict[str, Any]] = {}
+    for language in supported_lsp_languages():
+        command = resolved_provider_command(language, managed_root=root)
+        command_source = "missing"
+        available = command is not None
+        if command:
+            try:
+                command_path = Path(command[0]).resolve()
+                try:
+                    command_path.relative_to(root)
+                except ValueError:
+                    command_source = "path"
+                else:
+                    command_source = "managed"
+            except OSError:
+                command_source = "path"
+        providers[language] = {
+            "command": command,
+            "available": available,
+            "command_source": command_source,
+            "install_error": provider_errors.get(language),
+        }
+
     payload: dict[str, Any] = {
         "python_executable": python_executable,
         "managed_provider_root": str(root),
-        "node": {
-            "runtime": str(_node_executable(root)),
-            "packages_dir": str(_node_packages_dir(root)),
-            "installed": True,
-        },
-        "providers": {
-            "python": {"command": managed_provider_command("python", managed_root=root)},
-            "javascript": {"command": managed_provider_command("javascript", managed_root=root)},
-            "typescript": {"command": managed_provider_command("typescript", managed_root=root)},
-            "rust": {"command": [str(rust_binary)]},
-        },
+        "node": node_payload,
+        "providers": providers,
     }
+    if provider_errors:
+        payload["install_errors"] = provider_errors
     return payload
