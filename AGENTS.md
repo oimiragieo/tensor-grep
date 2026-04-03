@@ -139,6 +139,35 @@ Important test surface:
 - `tests/unit/test_release_assets_validation.py`
 - workflow/package-manager/release validator suites
 
+Follow the real ship path, not an imagined one:
+
+1. Push feature work to a branch and open/update a PR first.
+2. Use `gh` to inspect live PR and Actions state. Do not rely on stale browser state.
+3. Treat a green PR as a validated candidate, not a published release.
+4. Stable package publication happens only after the semantic-release path runs on `main`.
+5. If you change installer, release, package-manager, or versioning behavior, update the validator-backed tests in the same batch.
+
+Use these commands for live CI status:
+
+```powershell
+gh pr view <PR_NUMBER> --json headRefOid,statusCheckRollup,url
+gh run list --repo oimiragieo/tensor-grep --branch <BRANCH> --limit 5 --json databaseId,headSha,workflowName,status,conclusion,url
+gh run view <RUN_ID> --log
+```
+
+Stable install contract:
+
+- README stable install commands must point at GitHub release assets, not mutable `main` raw URLs.
+- Use:
+  - `https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1`
+  - `https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh`
+- If you change that contract, update:
+  - `scripts/prepare_package_manager_release.py`
+  - `scripts/smoke_test_package_manager_bundle.py`
+  - `scripts/verify_github_release_assets.py`
+  - `scripts/validate_release_assets.py`
+  - related unit tests
+
 ## Routing / Architecture Guidance
 
 Be honest about workload classes.
