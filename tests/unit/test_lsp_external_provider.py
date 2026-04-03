@@ -64,9 +64,9 @@ def test_provider_command_prefers_managed_binary_over_path(
     monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: managed_root)
     monkeypatch.setattr(
         "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
-        lambda language, managed_root=None: [str(managed_binary), "--stdio"]
-        if language == "python"
-        else None,
+        lambda language, managed_root=None: (
+            [str(managed_binary), "--stdio"] if language == "python" else None
+        ),
     )
 
     command = provider_module._provider_command("python")
@@ -93,9 +93,9 @@ def test_provider_status_reports_managed_command_source(
     monkeypatch.setattr(provider_module, "_managed_provider_root", lambda: managed_root)
     monkeypatch.setattr(
         "tensor_grep.cli.lsp_external_provider.resolved_provider_command",
-        lambda language, managed_root=None: [str(managed_binary), "--stdio"]
-        if language == "typescript"
-        else None,
+        lambda language, managed_root=None: (
+            [str(managed_binary), "--stdio"] if language == "typescript" else None
+        ),
     )
 
     manager = ExternalLSPProviderManager()
