@@ -309,6 +309,8 @@ def test_validate_release_assets_payload_should_validate_bundle_checksums_agains
     module = _load_module()
     release_data = {
         "assets": [
+            {"name": "install.ps1", "size": 10, "digest": f"sha256:{'d' * 64}"},
+            {"name": "install.sh", "size": 10, "digest": f"sha256:{'e' * 64}"},
             {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'a' * 64}"},
             {"name": "oimiragieo.tensor-grep.yaml", "size": 10, "digest": f"sha256:{'b' * 64}"},
             {"name": "PUBLISH_INSTRUCTIONS.md", "size": 10, "digest": f"sha256:{'c' * 64}"},
@@ -317,6 +319,8 @@ def test_validate_release_assets_payload_should_validate_bundle_checksums_agains
         ]
     }
     bundle_checksums_content = "\n".join([
+        f"{'d' * 64}  install.ps1",
+        f"{'e' * 64}  install.sh",
         f"{'a' * 64}  tensor-grep.rb",
         f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
         f"{'0' * 64}  PUBLISH_INSTRUCTIONS.md",
@@ -326,6 +330,8 @@ def test_validate_release_assets_payload_should_validate_bundle_checksums_agains
         checksums_content="",
         bundle_checksums_content=bundle_checksums_content,
         expected_assets=[
+            "install.ps1",
+            "install.sh",
             "tensor-grep.rb",
             "oimiragieo.tensor-grep.yaml",
             "PUBLISH_INSTRUCTIONS.md",
@@ -334,6 +340,8 @@ def test_validate_release_assets_payload_should_validate_bundle_checksums_agains
         ],
         checksum_required_assets=["CHECKSUMS.txt"],
         bundle_checksum_required_assets=[
+            "install.ps1",
+            "install.sh",
             "tensor-grep.rb",
             "oimiragieo.tensor-grep.yaml",
             "PUBLISH_INSTRUCTIONS.md",
@@ -347,6 +355,8 @@ def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksu
     module = _load_module()
     release_data = {
         "assets": [
+            {"name": "install.ps1", "size": 10, "digest": f"sha256:{'d' * 64}"},
+            {"name": "install.sh", "size": 10, "digest": f"sha256:{'e' * 64}"},
             {"name": "tensor-grep.rb", "size": 10, "digest": f"sha256:{'a' * 64}"},
             {"name": "oimiragieo.tensor-grep.yaml", "size": 10, "digest": f"sha256:{'b' * 64}"},
             {"name": "PUBLISH_INSTRUCTIONS.md", "size": 10, "digest": f"sha256:{'c' * 64}"},
@@ -355,6 +365,8 @@ def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksu
         ]
     }
     bundle_checksums_content = "\n".join([
+        f"{'d' * 64}  install.ps1",
+        f"{'e' * 64}  install.sh",
         f"{'a' * 64}  tensor-grep.rb",
         f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
         f"{'c' * 64}  PUBLISH_INSTRUCTIONS.md",
@@ -365,6 +377,8 @@ def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksu
         checksums_content="",
         bundle_checksums_content=bundle_checksums_content,
         expected_assets=[
+            "install.ps1",
+            "install.sh",
             "tensor-grep.rb",
             "oimiragieo.tensor-grep.yaml",
             "PUBLISH_INSTRUCTIONS.md",
@@ -373,6 +387,8 @@ def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksu
         ],
         checksum_required_assets=["CHECKSUMS.txt"],
         bundle_checksum_required_assets=[
+            "install.ps1",
+            "install.sh",
             "tensor-grep.rb",
             "oimiragieo.tensor-grep.yaml",
             "PUBLISH_INSTRUCTIONS.md",

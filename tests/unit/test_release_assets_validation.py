@@ -65,6 +65,9 @@ def test_should_accept_readme_when_public_contract_markers_exist():
     - [docs/harness_cookbook.md](docs/harness_cookbook.md)
     - [docs/installation.md](docs/installation.md)
     - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
+
+    https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1
+    https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh
     """
     errors = module.validate_readme_contract(readme_content=readme)
     assert errors == []
@@ -1082,6 +1085,8 @@ def test_should_validate_readme_canonical_docs_and_installation_contract():
             "- [docs/installation.md](docs/installation.md)\n"
             "- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)\n"
             "## Installation\n"
+            "https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1\n"
+            "https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh\n"
             "pip install tensor-grep\n"
             'uv pip install "tensor-grep[ast,nlp]"\n'
             'npx tensor-grep search "ERROR" .\n'
@@ -1115,6 +1120,42 @@ def test_should_require_readme_canonical_docs_and_installation_surfaces():
     assert "README must link release checklist" in joined_errors
     assert "README must state current first-class platform support explicitly" in joined_errors
     assert "README must direct harness consumers to docs/harness_api.md" in joined_errors
+    assert "README must install stable scripts from GitHub release assets" in joined_errors
+
+
+def test_should_reject_readme_using_mutable_main_branch_installer_urls():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_readme_contract(
+        readme_content=(
+            "# tensor-grep\n"
+            "`tensor-grep` has first class support on Windows, macOS and Linux.\n"
+            "Harness consumers should use the documented public contracts in [docs/harness_api.md](docs/harness_api.md)\n"
+            "and the workflow guide in [docs/harness_cookbook.md](docs/harness_cookbook.md).\n"
+            "## Canonical Docs\n"
+            "- [docs/benchmarks.md](docs/benchmarks.md)\n"
+            "- [docs/gpu_crossover.md](docs/gpu_crossover.md)\n"
+            "- [docs/routing_policy.md](docs/routing_policy.md)\n"
+            "- [docs/harness_api.md](docs/harness_api.md)\n"
+            "- [docs/harness_cookbook.md](docs/harness_cookbook.md)\n"
+            "- [docs/installation.md](docs/installation.md)\n"
+            "- [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)\n"
+            "## Installation\n"
+            "https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1\n"
+            "https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh\n"
+            "pip install tensor-grep\n"
+            'uv pip install "tensor-grep[ast,nlp]"\n'
+            'npx tensor-grep search "ERROR" .\n'
+            "GitHub Releases page\n"
+        )
+    )
+    assert any("README must not use mutable main-branch installer URLs" in err for err in errors)
 
 
 def test_should_require_smoke_test_package_manager_bundle_command_in_runbook():

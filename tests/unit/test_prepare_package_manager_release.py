@@ -11,7 +11,7 @@ def _load_module(root: Path):
     return module
 
 
-def test_prepare_bundle_generates_homebrew_winget_and_summary(tmp_path):
+def test_prepare_bundle_generates_homebrew_winget_installers_and_summary(tmp_path):
     root = tmp_path
     (root / "scripts").mkdir()
     (root / "pyproject.toml").write_text(
@@ -36,6 +36,8 @@ def test_prepare_bundle_generates_homebrew_winget_and_summary(tmp_path):
         "https://github.com/oimiragieo/tensor-grep/releases/download/v1.2.3/tg-windows-amd64-cpu.exe\n",
         encoding="utf-8",
     )
+    (root / "scripts" / "install.ps1").write_text("Write-Host stable\n", encoding="utf-8")
+    (root / "scripts" / "install.sh").write_text("echo stable\n", encoding="utf-8")
 
     module = _load_module(Path(__file__).resolve().parents[2])
     module.ROOT = root
@@ -55,10 +57,14 @@ def test_prepare_bundle_generates_homebrew_winget_and_summary(tmp_path):
         / "1.2.3"
         / "oimiragieo.tensor-grep.yaml"
     ).exists()
+    assert (out / "install.ps1").exists()
+    assert (out / "install.sh").exists()
     assert (out / "PUBLISH_INSTRUCTIONS.md").exists()
     checksums = out / "BUNDLE_CHECKSUMS.txt"
     assert checksums.exists()
     checksum_text = checksums.read_text(encoding="utf-8")
+    assert "install.ps1" in checksum_text
+    assert "install.sh" in checksum_text
     assert "homebrew-tap/Formula/tensor-grep.rb" in checksum_text
     assert (
         "winget-pkgs/manifests/o/oimiragieo/tensor-grep/1.2.3/oimiragieo.tensor-grep.yaml"

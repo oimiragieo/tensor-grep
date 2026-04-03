@@ -29,6 +29,8 @@ def _write_bundle(tmp_path: Path, version: str) -> Path:
     )
     summary = bundle / "PUBLISH_INSTRUCTIONS.md"
     checksums = bundle / "BUNDLE_CHECKSUMS.txt"
+    install_ps1 = bundle / "install.ps1"
+    install_sh = bundle / "install.sh"
 
     brew.parent.mkdir(parents=True, exist_ok=True)
     winget.parent.mkdir(parents=True, exist_ok=True)
@@ -68,6 +70,8 @@ def _write_bundle(tmp_path: Path, version: str) -> Path:
         ),
         encoding="utf-8",
     )
+    install_ps1.write_text("Write-Host stable\n", encoding="utf-8")
+    install_sh.write_text("echo stable\n", encoding="utf-8")
     checksums.write_text("placeholder\n", encoding="utf-8")
     return bundle
 
@@ -119,3 +123,13 @@ def test_should_fail_when_summary_missing_required_paths(tmp_path: Path):
     assert any(
         "Bundle summary must include tg --version smoke verification" in err for err in errors
     )
+
+
+def test_should_fail_when_bundle_installer_scripts_are_missing(tmp_path: Path):
+    module = _load_module()
+    bundle = _write_bundle(tmp_path, "1.2.3")
+    (bundle / "install.ps1").unlink()
+    (bundle / "install.sh").unlink()
+    errors = module.smoke_test_package_manager_bundle(bundle_dir=bundle, expected_version="1.2.3")
+    assert any("Missing Windows installer script in bundle" in err for err in errors)
+    assert any("Missing Unix installer script in bundle" in err for err in errors)

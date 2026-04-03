@@ -174,12 +174,12 @@ To ensure PyTorch bindings and CUDA/ROCm versions exactly match your hardware wi
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+irm https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1 | iex
 ```
 
 **Linux & macOS (Bash):**
 ```bash
-curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+curl -LsSf https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh | bash
 ```
 
 Installer defaults and channels:
@@ -203,12 +203,12 @@ Examples:
 ```powershell
 # Windows PowerShell: install from main
 $env:TENSOR_GREP_CHANNEL = "main"
-irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+irm https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.ps1 | iex
 ```
 
 ```bash
 # Linux/macOS: install a specific stable release
-TENSOR_GREP_VERSION=0.2.1 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+TENSOR_GREP_VERSION=0.2.1 curl -LsSf https://github.com/oimiragieo/tensor-grep/releases/latest/download/install.sh | bash
 ```
 
 ### Python Package Managers (pip/uv)
