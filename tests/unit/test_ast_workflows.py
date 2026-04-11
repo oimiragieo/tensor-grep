@@ -1,29 +1,51 @@
+from pathlib import Path
+
+import pytest
+
 from tensor_grep.core.result import SearchResult
 
 
-class _FakeUnavailableAstBackend:
+class AstBackend:
     def is_available(self):
         return False
 
 
-class _FakeWrapperBackend:
+class AstGrepWrapperBackend:
     search_project_calls = 0
     search_many_calls = 0
 
     def is_available(self):
         return True
 
+    def search(self, file_path, pattern, config=None) -> SearchResult:
+        _ = file_path
+        _ = pattern
+        _ = config
+        return SearchResult(
+            matches=[],
+            matched_file_paths=["a.py"],
+            total_files=1,
+            total_matches=1,
+            routing_backend="AstGrepWrapperBackend",
+        )
+
     def search_many(self, file_paths, pattern, config=None) -> SearchResult:
         _ = file_paths
         _ = pattern
         _ = config
-        _FakeWrapperBackend.search_many_calls += 1
-        return SearchResult(matches=[], total_files=0, total_matches=0)
+        type(self).search_many_calls += 1
+        return SearchResult(
+            matches=[],
+            matched_file_paths=["a.py"],
+            total_files=1,
+            total_matches=1,
+            routing_backend="AstGrepWrapperBackend",
+        )
 
     def search_project(self, root_path: str, config_path: str) -> dict[str, SearchResult]:
         _ = root_path
         _ = config_path
-        _FakeWrapperBackend.search_project_calls += 1
+        type(self).search_project_calls += 1
         return {
             "error-rule": SearchResult(
                 matches=[],
@@ -36,11 +58,22 @@ class _FakeWrapperBackend:
         }
 
 
-class _CountingWrapperBackend(_FakeWrapperBackend):
+class _CountingWrapperBackend(AstGrepWrapperBackend):
     init_count = 0
 
     def __init__(self):
         type(self).init_count += 1
+
+
+@pytest.fixture(autouse=True)
+def clear_ast_caches():
+    from tensor_grep.cli import ast_workflows
+
+    ast_workflows._BACKEND_AVAILABILITY.clear()
+    ast_workflows._CACHED_BACKENDS.clear()
+    yield
+    ast_workflows._BACKEND_AVAILABILITY.clear()
+    ast_workflows._CACHED_BACKENDS.clear()
 
 
 def test_scan_command_should_reuse_backend_selection_per_rule(monkeypatch, tmp_path, capsys):
@@ -48,15 +81,15 @@ def test_scan_command_should_reuse_backend_selection_per_rule(monkeypatch, tmp_p
 
     monkeypatch.setattr(
         "tensor_grep.backends.ast_backend.AstBackend",
-        _FakeUnavailableAstBackend,
+        AstBackend,
     )
     monkeypatch.setattr(
         "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
         _CountingWrapperBackend,
     )
     _CountingWrapperBackend.init_count = 0
-    _CountingWrapperBackend.search_project_calls = 0
-    _CountingWrapperBackend.search_many_calls = 0
+    AstGrepWrapperBackend.search_project_calls = 0
+    AstGrepWrapperBackend.search_many_calls = 0
 
     (tmp_path / "sgconfig.yml").write_text(
         "ruleDirs:\n  - rules\nlanguage: python\n",
@@ -85,14 +118,14 @@ def test_scan_command_should_use_wrapper_project_fast_path(monkeypatch, tmp_path
 
     monkeypatch.setattr(
         "tensor_grep.backends.ast_backend.AstBackend",
-        _FakeUnavailableAstBackend,
+        AstBackend,
     )
     monkeypatch.setattr(
         "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
-        _FakeWrapperBackend,
+        AstGrepWrapperBackend,
     )
-    _FakeWrapperBackend.search_project_calls = 0
-    _FakeWrapperBackend.search_many_calls = 0
+    AstGrepWrapperBackend.search_project_calls = 0
+    AstGrepWrapperBackend.search_many_calls = 0
 
     (tmp_path / "sgconfig.yml").write_text(
         "ruleDirs:\n  - rules\nlanguage: python\n",
@@ -110,5 +143,96 @@ def test_scan_command_should_use_wrapper_project_fast_path(monkeypatch, tmp_path
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "[scan] rule=error-rule lang=python matches=1 files=1" in captured.out
-    assert _FakeWrapperBackend.search_project_calls == 1
-    assert _FakeWrapperBackend.search_many_calls == 0
+    assert AstGrepWrapperBackend.search_project_calls == 1
+    assert AstGrepWrapperBackend.search_many_calls == 0
+
+
+def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):
+    import time
+
+    from tensor_grep.cli.ast_workflows import _load_ast_project_data
+
+    # Setup mock project
+    config_path = tmp_path / "sgconfig.yml"
+    config_path.write_text(
+        "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+    )
+
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+    rule_file = rules_dir / "rule.yml"
+    rule_file.write_text("id: rule1\npattern: OLD_PATTERN\n", encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test.yml"
+    test_file.write_text(
+        'id: test1\nruleId: rule1\nvalid: ["valid"]\ninvalid: ["invalid"]\n', encoding="utf-8"
+    )
+
+    src_file = tmp_path / "a.py"
+    src_file.write_text("OLD_PATTERN\n", encoding="utf-8")
+
+    # Ensure mtimes are distinct if needed, though most OS have sub-second precision now
+    time.sleep(0.1)
+
+    # 1. Initial load (Cache Miss)
+    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+    assert rule_specs[0]["pattern"] == "OLD_PATTERN"
+    assert "a.py" in [Path(f).name for f in candidate_files]
+    assert test_data[0]["cases"][0]["id"] == "test1"
+
+    # 2. Modify rule file -> should invalidate
+    time.sleep(0.1)
+    rule_file.write_text("id: rule1\npattern: NEW_PATTERN\n", encoding="utf-8")
+    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+    assert rule_specs[0]["pattern"] == "NEW_PATTERN"
+
+    # 3. Modify test file -> should invalidate
+    time.sleep(0.1)
+    test_file.write_text('id: test_updated\nruleId: rule1\nvalid: ["v2"]\n', encoding="utf-8")
+    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+    assert test_data[0]["cases"][0]["id"] == "test_updated"
+
+    # 4. Add source file -> should invalidate (via root_dir mtime)
+    time.sleep(0.1)
+    (tmp_path / "b.py").write_text("content\n", encoding="utf-8")
+    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+    assert "b.py" in [Path(f).name for f in candidate_files]
+
+    # 4.5 Add source file in nested directory -> should invalidate (via sub-dir mtime)
+    time.sleep(0.1)
+    sub_dir = tmp_path / "pkg" / "sub"
+    sub_dir.mkdir(parents=True)
+    nested_file = sub_dir / "c.py"
+    nested_file.write_text("pattern\n", encoding="utf-8")
+    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+    assert "c.py" in [Path(f).name for f in candidate_files]
+
+    # 4.6 Remove nested source file -> should invalidate
+    time.sleep(0.1)
+    nested_file.unlink()
+    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+    assert "c.py" not in [Path(f).name for f in candidate_files]
+
+    # 5. Modify config file -> should invalidate
+    time.sleep(0.1)
+    config_path.write_text(
+        "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: javascript\n", encoding="utf-8"
+    )
+    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+    assert project_cfg["language"] == "javascript"

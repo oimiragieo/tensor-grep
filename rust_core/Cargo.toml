@@ -31,6 +31,8 @@ ast-grep-language = { version = "0.41.1", default-features = false, features = [
 tree-sitter = "0.26.6"
 tree-sitter-python = "0.25.0"
 walkdir = "2.5.0"
+tempfile = "3.26.0"
+serde_yaml = "0.9.34"
 pyo3 = { version = "0.24.1", features = ["anyhow", "abi3-py311"] }
 memchr = "2.7.1"
 arrow = "55.0.0"

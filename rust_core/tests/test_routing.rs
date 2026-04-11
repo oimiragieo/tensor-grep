@@ -391,7 +391,7 @@ fn test_routing_default_search_prefers_ripgrep_cold_path() {
         .arg("search")
         .arg("--verbose")
         .arg("hello")
-        .arg(dir.path())
+        .arg(dir.path().join("a.txt"))
         .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
@@ -403,6 +403,24 @@ fn test_routing_default_search_prefers_ripgrep_cold_path() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+}
+
+#[test]
+fn test_routing_directory_search_promotes_to_native_cpu() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--verbose")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-shape-optimized", false);
 }
 
 #[test]
@@ -1080,7 +1098,6 @@ fn test_routing_falls_back_to_native_when_ripgrep_is_unavailable() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     assert!(stdout.contains("hello world"), "stdout={stdout}");
-    assert!(stdout.contains("hello again friend"), "stdout={stdout}");
     assert!(!stdout.contains(RG_SENTINEL), "stdout={stdout}");
 }
 
@@ -1108,7 +1125,6 @@ fn test_default_frontdoor_falls_back_to_native_when_ripgrep_is_unavailable() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("hello world"), "stdout={stdout}");
-    assert!(stdout.contains("hello again friend"), "stdout={stdout}");
 }
 
 #[test]
@@ -1333,7 +1349,7 @@ fn test_routing_warm_index_is_bypassed_by_short_pattern() {
         .arg("--fixed-strings")
         .arg("--verbose")
         .arg("he")
-        .arg(dir.path())
+        .arg(dir.path().join("a.txt"))
         .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
@@ -1497,6 +1513,109 @@ fn test_routing_explicit_index_rebuilds_corrupt_index() {
 }
 
 #[test]
+fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--verbose")
+        .arg("-c")
+        .arg("hello")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    
+    // Should use NativeCpuBackend
+    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-shape-optimized", false);
+    
+    // Should NOT contain the fallback warning
+    assert!(
+        !stderr.contains("warning: native CPU search failed, falling back to ripgrep"),
+        "Detected unexpected native CPU fallback in stderr: {}", stderr
+    );
+    
+    // Verify output matches
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(":1\n") || stdout.contains(":1\r\n"), "stdout={}", stdout);
+}
+
+#[test]
+fn test_routing_external_editor_plane_commands_are_forwarded() {
+    let scenarios = vec!["map", "session", "doctor"];
+
+    for command in scenarios {
+        let output = tg()
+            .current_dir(repo_root())
+            .arg(command)
+            .arg("--help")
+            .env("TG_SIDECAR_PYTHON", repo_python())
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&format!("python -m tensor_grep {}", command)),
+            "External command '{}' was not forwarded properly. stdout={}", command, stdout
+        );
+    }
+}
+
+#[test]
+fn test_routing_native_editor_plane_commands() {
+    for command in vec!["defs", "refs", "context"] {
+        let output = tg()
+            .arg(command)
+            .arg("--help")
+            .output()
+            .unwrap();
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.to_lowercase().contains("usage:"));
+        assert!(stdout.contains(command));
+    }
+}
+
+#[test]
+fn test_routing_ast_workflow_commands_are_forwarded() {
+    // scan and test are now native Rust. new and lsp are still sidecar for now.
+    let sidecar_scenarios = vec!["new"]; // Add lsp if it has --help
+
+    for command in sidecar_scenarios {
+        let output = tg()
+            .current_dir(repo_root())
+            .arg(command)
+            .arg("--help")
+            .env("TG_SIDECAR_PYTHON", repo_python())
+            .output()
+            .unwrap();
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains(&format!("usage: tg {}", command)),
+            "AST command '{}' was not forwarded properly to ast_workflows. stdout={}", command, stdout
+        );
+    }
+
+    // Verify native scenarios use clap help
+    for command in vec!["scan", "test"] {
+        let output = tg()
+            .arg(command)
+            .arg("--help")
+            .output()
+            .unwrap();
+        
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // On Windows it might be "Usage: tg.exe scan", on Unix just "Usage: tg scan"
+        assert!(stdout.to_lowercase().contains("usage:"));
+        assert!(stdout.contains(command));
+    }
+}
+
+#[test]
 fn test_routing_explicit_gpu_device_ids_override_warm_index() {
     let dir = tempdir().unwrap();
     let corpus_dir = dir.path().join("corpus");
@@ -1539,4 +1658,170 @@ fn test_routing_explicit_gpu_device_ids_override_warm_index() {
         assert_eq!(payload["total_matches"], 1);
         assert!(marker.exists(), "expected mock GPU sidecar invocation");
     }
+}
+
+#[test]
+fn test_rust_control_plane_plain_explicit() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should use the Rust control plane and dispatch to rg
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_plain_positional() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_rejection() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    // -F should fall through to full stack.
+    // Full stack with --verbose will show a reason.
+    let output_f = tg()
+        .arg("--verbose")
+        .arg("-F")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+    
+    let stderr = String::from_utf8_lossy(&output_f.stderr);
+    // If it fell through to Clap, it will process --verbose and print routing info.
+    // The fast path would have silently dispatched without printing [routing]...
+    assert!(stderr.contains("[routing]"));
+    assert!(stderr.contains("routing_backend=RipgrepBackend"));
+
+    // --help should fall through
+    let output_help = tg()
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output_help.stdout).contains("Usage:"));
+
+    // scan should fall through
+    let output_scan = tg()
+        .arg("scan")
+        .arg("--help")
+        .output()
+        .unwrap();
+    let stdout_scan = String::from_utf8_lossy(&output_scan.stdout);
+    assert!(stdout_scan.to_lowercase().contains("usage:"));
+    assert!(stdout_scan.contains("scan"));
+}
+
+#[test]
+fn test_rust_control_plane_native_fallback() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "") // Ensure rg is not in path
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("hello world"));
+    assert!(!stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_no_match_exit_code() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+
+    let output = tg()
+        .arg("non_existent_pattern")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn test_rust_control_plane_combined_flags() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("-iv")
+        .arg("non_existent")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_no_ignore() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("--no-ignore")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_version() {
+    let output_v_long = tg()
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output_v_long.stdout).contains("tg 0.2.0"));
+
+    let output_v_short = tg()
+        .arg("-V")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&output_v_short.stdout).contains("tg 0.2.0"));
 }

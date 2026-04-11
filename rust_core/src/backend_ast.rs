@@ -339,6 +339,41 @@ impl AstBackend {
         search_path_for_cli(&compiled_pattern, language, Path::new(path), true)
     }
 
+    pub fn search_many_for_cli(
+        &self,
+        pattern: &str,
+        lang: &str,
+        files: &[PathBuf],
+    ) -> Result<Vec<AstCliFileMatches>> {
+        let language = resolve_language(lang)?;
+        let compiled_pattern = compile_ast_pattern(pattern, language)?;
+        
+        let prefilter_literal = extract_prefilter_literal(&compiled_pattern);
+
+        let per_file_matches: Result<Vec<Vec<AstCliMatch>>> = files
+            .par_iter()
+            .map(|file| {
+                AstBackend::search_file_for_cli_static(
+                    &compiled_pattern,
+                    language,
+                    prefilter_literal.as_deref(),
+                    file,
+                )
+            })
+            .collect();
+
+        Ok(files
+            .iter()
+            .zip(per_file_matches?)
+            .filter_map(|(file, matches)| {
+                (!matches.is_empty()).then_some(AstCliFileMatches {
+                    file: file.clone(),
+                    matches,
+                })
+            })
+            .collect())
+    }
+
     pub fn plan_rewrites(
         &self,
         pattern: &str,
@@ -1594,7 +1629,7 @@ fn validate_batch_no_overlaps(
     (valid, rejected)
 }
 
-fn resolve_language(lang: &str) -> Result<SupportLang> {
+pub fn resolve_language(lang: &str) -> Result<SupportLang> {
     let language = lang
         .parse::<SupportLang>()
         .map_err(|_| anyhow::anyhow!("Unsupported language: {lang}"))?;
