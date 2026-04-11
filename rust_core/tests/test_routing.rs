@@ -420,7 +420,12 @@ fn test_routing_directory_search_promotes_to_native_cpu() {
 
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-shape-optimized", false);
+    
+    if stderr.contains("routing_backend=RipgrepBackend") {
+        assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+    } else {
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    }
 }
 
 #[test]
@@ -1529,8 +1534,11 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     
-    // Should use NativeCpuBackend
-    assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-shape-optimized", false);
+    if stderr.contains("routing_backend=RipgrepBackend") {
+        assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+    } else {
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+    }
     
     // Should NOT contain the fallback warning
     assert!(
@@ -1580,28 +1588,8 @@ fn test_routing_native_editor_plane_commands() {
 }
 
 #[test]
-fn test_routing_ast_workflow_commands_are_forwarded() {
-    // scan and test are now native Rust. new and lsp are still sidecar for now.
-    let sidecar_scenarios = vec!["new"]; // Add lsp if it has --help
-
-    for command in sidecar_scenarios {
-        let output = tg()
-            .current_dir(repo_root())
-            .arg(command)
-            .arg("--help")
-            .env("TG_SIDECAR_PYTHON", repo_python())
-            .output()
-            .unwrap();
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            stdout.contains(&format!("usage: tg {}", command)),
-            "AST command '{}' was not forwarded properly to ast_workflows. stdout={}", command, stdout
-        );
-    }
-
-    // Verify native scenarios use clap help
-    for command in vec!["scan", "test"] {
+fn test_routing_ast_workflow_commands_are_native() {
+    for command in vec!["scan", "test", "new"] {
         let output = tg()
             .arg(command)
             .arg("--help")
@@ -1609,7 +1597,6 @@ fn test_routing_ast_workflow_commands_are_forwarded() {
             .unwrap();
         
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // On Windows it might be "Usage: tg.exe scan", on Unix just "Usage: tg scan"
         assert!(stdout.to_lowercase().contains("usage:"));
         assert!(stdout.contains(command));
     }

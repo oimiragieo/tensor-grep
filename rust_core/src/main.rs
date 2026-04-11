@@ -305,12 +305,70 @@ pub enum Commands {
     /// Run GPU-accelerated AST structural queries (ast-grep parity)
     Run(RunArgs),
     /// Scan code by configuration
-    Scan,
+    Scan {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Test AST rules
-    Test,
-    /// Create new ast-grep project
-    New,
-    /// Start Language Server
+    Test {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Create a new AST project configuration
+    #[command(disable_help_flag = true)]
+    New {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Return exact definition locations for a symbol
+    Defs {
+        /// File or directory to inventory
+        path: PathBuf,
+        /// Exact symbol name to resolve
+        #[arg(long)]
+        symbol: String,
+        /// Semantic provider: native, lsp, or hybrid
+        #[arg(long, default_value = "native")]
+        provider: String,
+        /// Emit machine-readable JSON output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Return symbol references across the inventory root
+    Refs {
+        /// File or directory to inventory
+        path: PathBuf,
+        /// Exact symbol name to resolve
+        #[arg(long)]
+        symbol: String,
+        /// Semantic provider: native, lsp, or hybrid
+        #[arg(long, default_value = "native")]
+        provider: String,
+        /// Emit machine-readable JSON output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Return a ranked repository context pack for edit planning
+    Context {
+        /// File or directory to inventory
+        path: PathBuf,
+        /// Search query (symbol name or related text)
+        #[arg(long)]
+        query: String,
+        /// Emit machine-readable JSON output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Start a resident AST worker
+    Worker {
+        /// TCP port to listen on
+        #[arg(long, default_value = "9999")]
+        port: u16,
+        /// Stop the running worker
+        #[arg(long)]
+        stop: bool,
+    },
+    /// Start the Language Server Protocol (LSP) server
     Lsp,
     #[cfg(feature = "cuda")]
     #[command(hide = true, name = "__gpu-native-stats")]
@@ -324,6 +382,9 @@ pub enum Commands {
     #[cfg(feature = "cuda")]
     #[command(hide = true, name = "__gpu-oom-probe")]
     GpuOomProbe(GpuOomProbeArgs),
+
+    #[command(external_subcommand)]
+    PythonPassthrough(Vec<String>),
 }
 
 #[cfg(feature = "cuda")]
@@ -744,9 +805,83 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
         Commands::Run(args) => handle_ast_run(args),
-        Commands::Scan => handle_sidecar_command("scan", vec![]),
-        Commands::Test => handle_sidecar_command("test", vec![]),
-        Commands::New => handle_sidecar_command("new", vec![]),
+        Commands::Scan { args } => {
+            use tensor_grep_rs::backend_ast_workflow::{handle_ast_scan, SessionRequest};
+            let config_path = if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1 {
+                Some(args[1].clone())
+            } else {
+                None
+            };
+            
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Scan { config_path: config_path.clone() })? {
+                std::process::exit(exit_code);
+            }
+            handle_ast_scan(config_path.as_deref())
+        }
+        Commands::Test { args } => {
+            use tensor_grep_rs::backend_ast_workflow::{handle_ast_test, SessionRequest};
+            let config_path = if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1 {
+                Some(args[1].clone())
+            } else {
+                None
+            };
+
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Test { config_path: config_path.clone() })? {
+                std::process::exit(exit_code);
+            }
+            handle_ast_test(config_path.as_deref())
+        }
+        Commands::New { args } => {
+            use tensor_grep_rs::backend_ast_workflow::handle_ast_new;
+            handle_ast_new(args)
+        }
+        Commands::Defs { path, symbol, provider, json } => {
+            use tensor_grep_rs::backend_ast_workflow::SessionRequest;
+            use tensor_grep_rs::editor_plane::handle_defs;
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Defs { 
+                path: path.to_string_lossy().to_string(), 
+                symbol: symbol.clone(), 
+                provider: provider.clone() 
+            })? {
+                std::process::exit(exit_code);
+            }
+            handle_defs(path, symbol, provider, json)
+        }
+        Commands::Refs { path, symbol, provider, json } => {
+            use tensor_grep_rs::backend_ast_workflow::SessionRequest;
+            use tensor_grep_rs::editor_plane::handle_refs;
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Refs { 
+                path: path.to_string_lossy().to_string(), 
+                symbol: symbol.clone(), 
+                provider: provider.clone() 
+            })? {
+                std::process::exit(exit_code);
+            }
+            handle_refs(path, symbol, provider, json)
+        }
+        Commands::Context { path, query, json } => {
+            use tensor_grep_rs::backend_ast_workflow::SessionRequest;
+            use tensor_grep_rs::editor_plane::handle_context;
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Context { 
+                path: path.to_string_lossy().to_string(), 
+                query: query.clone() 
+            })? {
+                std::process::exit(exit_code);
+            }
+            handle_context(path, query, json)
+        }
+        Commands::Worker { port, stop } => {
+            use tensor_grep_rs::backend_ast_workflow::{handle_ast_worker_tcp, SessionRequest};
+            if stop {
+                match try_resident_execution(SessionRequest::Stop)? {
+                    Some(0) => println!("Stopped resident worker."),
+                    _ => println!("No resident worker found or failed to stop."),
+                }
+                Ok(())
+            } else {
+                handle_ast_worker_tcp(port)
+            }
+        }
         Commands::Lsp => handle_python_passthrough("lsp", vec![]),
         #[cfg(feature = "cuda")]
         Commands::GpuNativeStats(args) => handle_gpu_native_stats_command(args),
@@ -756,6 +891,75 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::GpuCudaGraphs(args) => handle_gpu_cuda_graph_benchmark_command(args),
         #[cfg(feature = "cuda")]
         Commands::GpuOomProbe(args) => handle_gpu_oom_probe_command(args),
+        Commands::PythonPassthrough(args) => {
+            let command = args[0].clone();
+            let command_args = args[1..].to_vec();
+            handle_python_passthrough(&command, command_args)
+        }
+    }
+}
+
+fn try_resident_execution(req: tensor_grep_rs::backend_ast_workflow::SessionRequest) -> anyhow::Result<Option<i32>> {
+    use std::net::TcpStream;
+    use std::io::{BufRead, BufReader, Read, Write};
+    
+    // Check if worker is requested or if we are stopping it
+    let is_stop = matches!(req, tensor_grep_rs::backend_ast_workflow::SessionRequest::Stop);
+    if !is_stop && std::env::var("TG_RESIDENT_AST").unwrap_or_default() != "1" {
+        return Ok(None);
+    }
+
+    // Try to find the port
+    let port_file = std::env::current_dir()?.join(".tg_cache").join("ast").join("worker_port.txt");
+    if !port_file.exists() {
+        return Ok(None);
+    }
+    
+    let port_str = std::fs::read_to_string(&port_file)?;
+    let port: u16 = port_str.trim().parse()?;
+
+    // Connect
+    let mut stream = match TcpStream::connect(format!("127.0.0.1:{}", port)) {
+        Ok(s) => s,
+        Err(_) => return Ok(None),
+    };
+
+    // Send request
+    let req_json = serde_json::to_string(&req)?;
+    stream.write_all(req_json.as_bytes())?;
+    stream.flush()?;
+
+    // Read response header
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    
+    use tensor_grep_rs::backend_ast_workflow::SessionResponse;
+    let resp: SessionResponse = match serde_json::from_str(&line) {
+        Ok(r) => r,
+        Err(_) => return Ok(None), // Protocol mismatch, fallback to cold
+    };
+
+    if !resp.success && resp.error.is_some() {
+        if let Some(err) = resp.error {
+            eprintln!("Worker error: {}", err);
+        }
+        return Ok(None); // Fallback to cold path for infrastructure/project errors
+    }
+
+    // Stream the rest of the output
+    loop {
+        let mut buf = [0; 4096];
+        let n = reader.read(&mut buf)?;
+        if n == 0 { break; }
+        std::io::stdout().write_all(&buf[..n])?;
+    }
+    std::io::stdout().flush()?;
+
+    if !resp.success {
+        Ok(Some(1))
+    } else {
+        Ok(Some(0))
     }
 }
 
@@ -989,6 +1193,10 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         "__gpu-transfer-bench",
         "__gpu-cuda-graphs",
         "__gpu-oom-probe",
+        // Editor-plane and Python passthrough commands:
+        "map",
+        "session",
+        "doctor",
     ];
 
     for arg in raw_args.iter().skip(1) {
