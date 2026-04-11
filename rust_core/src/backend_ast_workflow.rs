@@ -1,11 +1,11 @@
+use crate::backend_ast::AstBackend;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use crate::backend_ast::AstBackend;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AstProjectConfig {
@@ -85,10 +85,7 @@ pub enum SessionRequest {
         provider: String,
     },
     #[serde(rename = "context")]
-    Context {
-        path: String,
-        query: String,
-    },
+    Context { path: String, query: String },
     #[serde(rename = "stop")]
     Stop,
 }
@@ -120,7 +117,7 @@ impl ResidentAstWorker {
 
     pub fn ensure_project(&mut self, config_path: Option<&str>) -> Result<()> {
         let orchestrator = AstWorkflowOrchestrator::new(config_path)?;
-        
+
         let reload = match &self.orchestrator {
             Some(existing) => existing.config_path != orchestrator.config_path,
             None => true,
@@ -147,7 +144,10 @@ impl ResidentAstWorker {
             let path = PathBuf::from(path_str);
             for lang in &["python", "javascript", "typescript", "rust"] {
                 if file_matches_language(&path, lang) {
-                    self.lang_to_files.entry(lang.to_string()).or_default().push(path.clone());
+                    self.lang_to_files
+                        .entry(lang.to_string())
+                        .or_default()
+                        .push(path.clone());
                 }
             }
         }
@@ -163,13 +163,16 @@ pub fn handle_ast_scan(config_path: Option<&str>) -> Result<()> {
     let orchestrator = AstWorkflowOrchestrator::new(config_path)?;
     let data = orchestrator.load_project_data()?;
     let backend = AstBackend::new();
-    
+
     let mut lang_to_files: HashMap<String, Vec<PathBuf>> = HashMap::new();
     for path_str in &data.candidate_files {
         let path = PathBuf::from(path_str);
         for lang in &["python", "javascript", "typescript", "rust"] {
             if file_matches_language(&path, lang) {
-                lang_to_files.entry(lang.to_string()).or_default().push(path.clone());
+                lang_to_files
+                    .entry(lang.to_string())
+                    .or_default()
+                    .push(path.clone());
             }
         }
     }
@@ -186,20 +189,29 @@ pub fn execute_ast_scan_core(
     data: &ProjectDataV6,
     backend: &AstBackend,
     lang_to_files: &HashMap<String, Vec<PathBuf>>,
-    writer: &mut dyn Write
+    writer: &mut dyn Write,
 ) -> Result<bool> {
-    writeln!(writer, "Scanning project using adaptive AST routing based on {}...", orchestrator.config_path.display())?;
+    writeln!(
+        writer,
+        "Scanning project using adaptive AST routing based on {}...",
+        orchestrator.config_path.display()
+    )?;
 
     if data.rule_specs.is_empty() {
-        writeln!(writer, "Error: No valid rules found in configured rule directories.")?;
+        writeln!(
+            writer,
+            "Error: No valid rules found in configured rule directories."
+        )?;
         return Ok(false);
     }
-    
+
     let mut total_matches = 0;
     let mut matched_rules_count = 0;
     let mut backends_used = BTreeSet::new();
 
-    let backend_hints = data.orchestration_hints.get("backend_hints")
+    let backend_hints = data
+        .orchestration_hints
+        .get("backend_hints")
         .and_then(|v| v.as_object());
 
     for rule in &data.rule_specs {
@@ -207,7 +219,7 @@ pub fn execute_ast_scan_core(
             .and_then(|h| h.get(&rule.id))
             .and_then(|v| v.as_str())
             .unwrap_or("AstBackend");
-        
+
         backends_used.insert(backend_name.to_string());
 
         let mut rule_matches_count = 0;
@@ -223,7 +235,7 @@ pub fn execute_ast_scan_core(
             let root_dir_str = orchestrator.root_dir.to_string_lossy().into_owned();
             backend.search_for_cli(&rule.pattern, &rule.language, &root_dir_str)?
         };
-        
+
         for file_match in file_matches {
             rule_matches_count += file_match.matches.len();
             if !file_match.matches.is_empty() {
@@ -250,14 +262,22 @@ pub fn execute_ast_scan_core(
         data.rule_specs.len(),
         matched_rules_count,
         total_matches,
-        if backends_str.is_empty() { "none".to_string() } else { backends_str }
+        if backends_str.is_empty() {
+            "none".to_string()
+        } else {
+            backends_str
+        }
     )?;
 
     Ok(true)
 }
 
 fn file_matches_language(path: &Path, lang: &str) -> bool {
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
     match lang.to_lowercase().as_str() {
         "python" | "py" => matches!(extension.as_str(), "py" | "py3" | "pyi" | "pyw" | "bzl"),
         "javascript" | "js" => matches!(extension.as_str(), "js" | "jsx" | "cjs" | "mjs"),
@@ -282,28 +302,35 @@ pub fn execute_ast_test_core(
     orchestrator: &AstWorkflowOrchestrator,
     data: &ProjectDataV6,
     backend: &AstBackend,
-    writer: &mut dyn Write
+    writer: &mut dyn Write,
 ) -> Result<bool> {
     let mut total_cases = 0;
     let mut failures = Vec::new();
     let mut backends_used = BTreeSet::new();
 
-    let backend_hints = data.orchestration_hints.get("backend_hints")
+    let backend_hints = data
+        .orchestration_hints
+        .get("backend_hints")
         .and_then(|v| v.as_object());
 
     let mut rule_case_groups: HashMap<(String, String), Vec<BatchTestSnippet>> = HashMap::new();
 
     for test_file_entry in &data.test_data {
-        let test_file_path = test_file_entry.get("file").and_then(|v| v.as_str()).unwrap_or("test");
+        let test_file_path = test_file_entry
+            .get("file")
+            .and_then(|v| v.as_str())
+            .unwrap_or("test");
         let cases = test_file_entry.get("cases").and_then(|v| v.as_array());
-        
+
         if let Some(cases) = cases {
             for case in cases {
                 let case_id = case.get("id").and_then(|v| v.as_str()).unwrap_or("test");
                 let linked_rule_id = case.get("ruleId").and_then(|v| v.as_str());
-                
+
                 let mut pattern = orchestrator.extract_rule_pattern_json(case);
-                let mut language = case.get("language").and_then(|v| v.as_str())
+                let mut language = case
+                    .get("language")
+                    .and_then(|v| v.as_str())
                     .unwrap_or(&data.project_cfg["language"].as_str().unwrap_or("python"))
                     .to_string();
 
@@ -319,7 +346,10 @@ pub fn execute_ast_test_core(
                 let pattern = match pattern {
                     Some(p) => p,
                     None => {
-                        failures.push(format!("{}:{}: missing pattern or ruleId", test_file_path, case_id));
+                        failures.push(format!(
+                            "{}:{}: missing pattern or ruleId",
+                            test_file_path, case_id
+                        ));
                         continue;
                     }
                 };
@@ -334,13 +364,18 @@ pub fn execute_ast_test_core(
                 };
 
                 if valid_snippets.is_empty() && invalid_snippets.is_empty() {
-                    failures.push(format!("{}:{}: empty valid/invalid test lists", test_file_path, case_id));
+                    failures.push(format!(
+                        "{}:{}: empty valid/invalid test lists",
+                        test_file_path, case_id
+                    ));
                     continue;
                 }
 
                 total_cases += valid_snippets.len() + invalid_snippets.len();
-                
-                let group = rule_case_groups.entry((pattern.clone(), language.clone())).or_insert_with(Vec::new);
+
+                let group = rule_case_groups
+                    .entry((pattern.clone(), language.clone()))
+                    .or_insert_with(Vec::new);
                 let case_key = format!("{}:{}", test_file_path, case_id);
 
                 for snip in valid_snippets {
@@ -371,17 +406,26 @@ pub fn execute_ast_test_core(
         .tempdir_in(&orchestrator.root_dir)?;
 
     for ((pattern, language), snippets) in rule_case_groups {
-        let results = execute_batched_tests(backend, &session_temp, &pattern, &language, &snippets)?;
+        let results =
+            execute_batched_tests(backend, &session_temp, &pattern, &language, &snippets)?;
         for (snippet_info, has_match) in snippets.iter().zip(results) {
             if has_match != snippet_info.expected_match {
-                let expectation = if snippet_info.expected_match { "match" } else { "no match" };
+                let expectation = if snippet_info.expected_match {
+                    "match"
+                } else {
+                    "no match"
+                };
                 let actual = if has_match { "match" } else { "no match" };
-                failures.push(format!("{}: expected {}, got {} for snippet {:?}", snippet_info.case_key, expectation, actual, snippet_info.snippet));
+                failures.push(format!(
+                    "{}: expected {}, got {} for snippet {:?}",
+                    snippet_info.case_key, expectation, actual, snippet_info.snippet
+                ));
             }
         }
-        
+
         let backend_name = if let Some(hints) = backend_hints {
-            data.rule_specs.iter()
+            data.rule_specs
+                .iter()
                 .find(|r| r.pattern == pattern)
                 .and_then(|r| hints.get(&r.id))
                 .and_then(|v| v.as_str())
@@ -396,7 +440,11 @@ pub fn execute_ast_test_core(
     writeln!(
         writer,
         "Testing AST rules using {} from {}...",
-        if backends_str.is_empty() { "adaptive AST routing".to_string() } else { backends_str },
+        if backends_str.is_empty() {
+            "adaptive AST routing".to_string()
+        } else {
+            backends_str
+        },
         orchestrator.config_path.display()
     )?;
 
@@ -404,7 +452,12 @@ pub fn execute_ast_test_core(
         for fail in &failures {
             writeln!(writer, "[test] FAIL {}", fail)?;
         }
-        writeln!(writer, "Rule tests failed. cases={} failures={}", total_cases, failures.len())?;
+        writeln!(
+            writer,
+            "Rule tests failed. cases={} failures={}",
+            total_cases,
+            failures.len()
+        )?;
         return Ok(false);
     }
 
@@ -434,7 +487,8 @@ fn execute_batched_tests(
     }
 
     let file_matches = backend.search_many_for_cli(pattern, language, &snippet_paths)?;
-    let matched_paths: HashSet<String> = file_matches.into_iter()
+    let matched_paths: HashSet<String> = file_matches
+        .into_iter()
         .filter(|m| !m.matches.is_empty())
         .map(|m| m.file.to_string_lossy().to_string())
         .collect();
@@ -455,11 +509,12 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    let config_path = if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1 {
-        PathBuf::from(&args[1])
-    } else {
-        PathBuf::from("sgconfig.yml")
-    };
+    let config_path =
+        if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1 {
+            PathBuf::from(&args[1])
+        } else {
+            PathBuf::from("sgconfig.yml")
+        };
 
     if config_path.exists() {
         anyhow::bail!("Config file {:?} already exists.", config_path);
@@ -472,7 +527,7 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
 
     let rules_dir = config_path.parent().unwrap_or(Path::new(".")).join("rules");
     fs::create_dir_all(&rules_dir)?;
-    
+
     fs::write(
         rules_dir.join("sample-rule.yml"),
         "id: sample-rule\nlanguage: python\nrule:\n  pattern: 'print($$$ARGS)'\n",
@@ -480,13 +535,16 @@ pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
 
     let tests_dir = config_path.parent().unwrap_or(Path::new(".")).join("tests");
     fs::create_dir_all(&tests_dir)?;
-    
+
     fs::write(
         tests_dir.join("sample-test.yml"),
         "id: sample-test\nruleId: sample-rule\nvalid:\n  - 'pass'\ninvalid:\n  - 'print(\"hello\")'\n",
     )?;
 
-    println!("Initialized new structural search project in {:?}", config_path);
+    println!(
+        "Initialized new structural search project in {:?}",
+        config_path
+    );
     Ok(())
 }
 
@@ -500,10 +558,14 @@ impl AstWorkflowOrchestrator {
         };
 
         if !resolved_config.exists() {
-            anyhow::bail!("Config file {:?} not found. Use `tg new` to create one.", resolved_config);
+            anyhow::bail!(
+                "Config file {:?} not found. Use `tg new` to create one.",
+                resolved_config
+            );
         }
-        
-        let root_dir = resolved_config.parent()
+
+        let root_dir = resolved_config
+            .parent()
             .context("Config file must have a parent directory")?
             .to_path_buf();
 
@@ -514,10 +576,10 @@ impl AstWorkflowOrchestrator {
     }
 
     pub fn load_config(&self) -> Result<AstProjectConfig> {
-        let content = fs::read_to_string(&self.config_path)
-            .context("Failed to read sgconfig.yml")?;
-        let config: AstProjectConfig = serde_yaml::from_str(&content)
-            .context("Failed to parse sgconfig.yml")?;
+        let content =
+            fs::read_to_string(&self.config_path).context("Failed to read sgconfig.yml")?;
+        let config: AstProjectConfig =
+            serde_yaml::from_str(&content).context("Failed to parse sgconfig.yml")?;
         Ok(config)
     }
 
@@ -537,19 +599,23 @@ impl AstWorkflowOrchestrator {
 
         let content = fs::read_to_string(&cache_file)?;
         let data: ProjectDataV6 = serde_json::from_str(&content)?;
-        
+
         let cache_mtime = fs::metadata(&cache_file)?.modified()?;
         let config_mtime = fs::metadata(&self.config_path)?.modified()?;
-        
+
         if config_mtime > cache_mtime {
             return Ok(None);
         }
 
         for (path_str, recorded_mtime_ns) in &data.validation_metadata.rule_files {
             let path = Path::new(path_str);
-            if !path.exists() { return Ok(None); }
+            if !path.exists() {
+                return Ok(None);
+            }
             let actual_mtime = fs::metadata(path)?.modified()?;
-            let actual_ns = actual_mtime.duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() as u64;
+            let actual_ns = actual_mtime
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_nanos() as u64;
             if actual_ns > *recorded_mtime_ns {
                 return Ok(None);
             }
@@ -557,9 +623,13 @@ impl AstWorkflowOrchestrator {
 
         for (path_str, recorded_mtime_ns) in &data.validation_metadata.test_files {
             let path = Path::new(path_str);
-            if !path.exists() { return Ok(None); }
+            if !path.exists() {
+                return Ok(None);
+            }
             let actual_mtime = fs::metadata(path)?.modified()?;
-            let actual_ns = actual_mtime.duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() as u64;
+            let actual_ns = actual_mtime
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_nanos() as u64;
             if actual_ns > *recorded_mtime_ns {
                 return Ok(None);
             }
@@ -567,9 +637,13 @@ impl AstWorkflowOrchestrator {
 
         for (path_str, recorded_mtime_ns) in &data.validation_metadata.tree_dirs {
             let path = Path::new(path_str);
-            if !path.exists() { return Ok(None); }
+            if !path.exists() {
+                return Ok(None);
+            }
             let actual_mtime = fs::metadata(path)?.modified()?;
-            let actual_ns = actual_mtime.duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() as u64;
+            let actual_ns = actual_mtime
+                .duration_since(SystemTime::UNIX_EPOCH)?
+                .as_nanos() as u64;
             if actual_ns > *recorded_mtime_ns {
                 return Ok(None);
             }
@@ -578,13 +652,18 @@ impl AstWorkflowOrchestrator {
         Ok(Some(data))
     }
 
-    pub fn discover_rules(&self, config: &AstProjectConfig) -> Result<(Vec<AstRuleSpec>, HashMap<String, u64>)> {
+    pub fn discover_rules(
+        &self,
+        config: &AstProjectConfig,
+    ) -> Result<(Vec<AstRuleSpec>, HashMap<String, u64>)> {
         let mut specs = Vec::new();
         let mut meta = HashMap::new();
 
         for rule_dir_rel in &config.rule_dirs {
             let rule_dir = self.root_dir.join(rule_dir_rel);
-            if !rule_dir.exists() { continue; }
+            if !rule_dir.exists() {
+                continue;
+            }
 
             for entry in walkdir::WalkDir::new(rule_dir)
                 .into_iter()
@@ -593,7 +672,9 @@ impl AstWorkflowOrchestrator {
             {
                 let path = entry.path();
                 let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                if ext != "yml" && ext != "yaml" { continue; }
+                if ext != "yml" && ext != "yaml" {
+                    continue;
+                }
 
                 let mtime = entry.metadata()?.modified()?;
                 let ns = mtime.duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() as u64;
@@ -604,11 +685,15 @@ impl AstWorkflowOrchestrator {
 
                 if let Some(rules) = payload.get("rules").and_then(|v| v.as_sequence()) {
                     for (idx, item) in rules.iter().enumerate() {
-                        if let Some(spec) = self.parse_rule_item(item, &payload, config, path, Some(idx)) {
+                        if let Some(spec) =
+                            self.parse_rule_item(item, &payload, config, path, Some(idx))
+                        {
                             specs.push(spec);
                         }
                     }
-                } else if let Some(spec) = self.parse_rule_item(&payload, &payload, config, path, None) {
+                } else if let Some(spec) =
+                    self.parse_rule_item(&payload, &payload, config, path, None)
+                {
                     specs.push(spec);
                 }
             }
@@ -618,15 +703,16 @@ impl AstWorkflowOrchestrator {
     }
 
     fn parse_rule_item(
-        &self, 
-        item: &serde_yaml::Value, 
+        &self,
+        item: &serde_yaml::Value,
         payload: &serde_yaml::Value,
         config: &AstProjectConfig,
         path: &Path,
-        idx: Option<usize>
+        idx: Option<usize>,
     ) -> Option<AstRuleSpec> {
         let pattern = self.extract_rule_pattern(item)?;
-        let id = item.get("id")
+        let id = item
+            .get("id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
@@ -636,17 +722,25 @@ impl AstWorkflowOrchestrator {
                     None => stem.to_string(),
                 }
             });
-        
-        let language = item.get("language")
+
+        let language = item
+            .get("language")
             .and_then(|v| v.as_str())
             .or_else(|| payload.get("language").and_then(|v| v.as_str()))
             .map(|s| s.to_string())
             .unwrap_or_else(|| config.language.clone());
 
-        Some(AstRuleSpec { id, pattern, language })
+        Some(AstRuleSpec {
+            id,
+            pattern,
+            language,
+        })
     }
 
-    pub fn discover_files(&self, _config: &AstProjectConfig) -> Result<(Vec<String>, HashMap<String, u64>)> {
+    pub fn discover_files(
+        &self,
+        _config: &AstProjectConfig,
+    ) -> Result<(Vec<String>, HashMap<String, u64>)> {
         use ignore::WalkBuilder;
         let mut files = Vec::new();
         let mut dir_meta = HashMap::new();
@@ -656,9 +750,7 @@ impl AstWorkflowOrchestrator {
             .git_ignore(true)
             .parents(true)
             .ignore(true)
-            .filter_entry(|e| {
-                e.file_name() != ".tg_cache"
-            })
+            .filter_entry(|e| e.file_name() != ".tg_cache")
             .build();
 
         for entry in walker.filter_map(|e| e.ok()) {
@@ -696,13 +788,18 @@ impl AstWorkflowOrchestrator {
         })
     }
 
-    pub fn discover_tests(&self, config: &AstProjectConfig) -> Result<(Vec<serde_json::Value>, HashMap<String, u64>)> {
+    pub fn discover_tests(
+        &self,
+        config: &AstProjectConfig,
+    ) -> Result<(Vec<serde_json::Value>, HashMap<String, u64>)> {
         let mut test_data = Vec::new();
         let mut meta = HashMap::new();
 
         for test_dir_rel in &config.test_dirs {
             let test_dir = self.root_dir.join(test_dir_rel);
-            if !test_dir.exists() { continue; }
+            if !test_dir.exists() {
+                continue;
+            }
 
             for entry in walkdir::WalkDir::new(test_dir)
                 .into_iter()
@@ -711,7 +808,9 @@ impl AstWorkflowOrchestrator {
             {
                 let path = entry.path();
                 let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-                if ext != "yml" && ext != "yaml" { continue; }
+                if ext != "yml" && ext != "yaml" {
+                    continue;
+                }
 
                 let mtime = entry.metadata()?.modified()?;
                 let ns = mtime.duration_since(SystemTime::UNIX_EPOCH)?.as_nanos() as u64;
@@ -719,8 +818,9 @@ impl AstWorkflowOrchestrator {
 
                 let content = fs::read_to_string(path)?;
                 let payload: serde_yaml::Value = serde_yaml::from_str(&content)?;
-                
-                let raw_cases = payload.get("tests")
+
+                let raw_cases = payload
+                    .get("tests")
                     .and_then(|v| v.as_sequence())
                     .cloned()
                     .unwrap_or_else(|| {
@@ -731,7 +831,8 @@ impl AstWorkflowOrchestrator {
                         }
                     });
 
-                let cases: Vec<serde_json::Value> = raw_cases.iter()
+                let cases: Vec<serde_json::Value> = raw_cases
+                    .iter()
                     .filter_map(|v| serde_json::to_value(v).ok())
                     .filter(|v| v.is_object())
                     .collect();
@@ -778,7 +879,9 @@ impl AstWorkflowOrchestrator {
 
     pub fn select_ast_backend_name_for_pattern(&self, pattern: &str) -> &str {
         let stripped = pattern.trim();
-        if stripped.is_empty() { return "AstGrepWrapperBackend"; }
+        if stripped.is_empty() {
+            return "AstGrepWrapperBackend";
+        }
 
         let is_native = if stripped.starts_with('(') {
             true
@@ -795,7 +898,11 @@ impl AstWorkflowOrchestrator {
             }
         };
 
-        if is_native { "AstBackend" } else { "AstGrepWrapperBackend" }
+        if is_native {
+            "AstBackend"
+        } else {
+            "AstGrepWrapperBackend"
+        }
     }
 
     pub fn extract_rule_pattern(&self, item: &serde_yaml::Value) -> Option<String> {
@@ -803,7 +910,10 @@ impl AstWorkflowOrchestrator {
             return Some(p.trim().to_string());
         }
         if let Some(rule) = item.get("rule").and_then(|v| v.as_mapping()) {
-            if let Some(p) = rule.get(&serde_yaml::Value::String("pattern".to_string())).and_then(|v| v.as_str()) {
+            if let Some(p) = rule
+                .get(&serde_yaml::Value::String("pattern".to_string()))
+                .and_then(|v| v.as_str())
+            {
                 return Some(p.trim().to_string());
             }
         }
@@ -825,9 +935,10 @@ impl AstWorkflowOrchestrator {
     pub fn normalize_string_list(&self, val: Option<&serde_json::Value>) -> Vec<String> {
         match val {
             Some(serde_json::Value::String(s)) => vec![s.clone()],
-            Some(serde_json::Value::Array(arr)) => {
-                arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
-            }
+            Some(serde_json::Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -835,14 +946,20 @@ impl AstWorkflowOrchestrator {
 
 pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
     use std::net::{TcpListener, TcpStream};
-    
-    let port_file = std::env::current_dir()?.join(".tg_cache").join("ast").join("worker_port.txt");
-    
+
+    let port_file = std::env::current_dir()?
+        .join(".tg_cache")
+        .join("ast")
+        .join("worker_port.txt");
+
     if port_file.exists() {
         if let Ok(existing_port_str) = fs::read_to_string(&port_file) {
             if let Ok(existing_port) = existing_port_str.trim().parse::<u16>() {
                 if TcpStream::connect(format!("127.0.0.1:{}", existing_port)).is_ok() {
-                    anyhow::bail!("A resident AST worker is already running on port {} for this repository.", existing_port);
+                    anyhow::bail!(
+                        "A resident AST worker is already running on port {} for this repository.",
+                        existing_port
+                    );
                 }
             }
         }
@@ -860,14 +977,17 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
 
     for stream in listener.incoming() {
         let mut stream = stream?;
-        
+
         let mut de = serde_json::Deserializer::from_reader(&stream);
         let request: Result<SessionRequest, _> = SessionRequest::deserialize(&mut de);
-        
+
         match request {
             Ok(SessionRequest::Scan { config_path }) => {
                 if let Err(err) = worker.ensure_project(config_path.as_deref()) {
-                    let resp = SessionResponse { success: false, error: Some(err.to_string()) };
+                    let resp = SessionResponse {
+                        success: false,
+                        error: Some(err.to_string()),
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
                 } else {
@@ -877,7 +997,7 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                         worker.data.as_ref().unwrap(),
                         &worker.backend,
                         &worker.lang_to_files,
-                        &mut output
+                        &mut output,
                     ) {
                         Ok(s) => s,
                         Err(err) => {
@@ -886,7 +1006,10 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                         }
                     };
 
-                    let resp = SessionResponse { success, error: None };
+                    let resp = SessionResponse {
+                        success,
+                        error: None,
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
                     let _ = stream.write_all(&output);
@@ -894,7 +1017,10 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
             }
             Ok(SessionRequest::Test { config_path }) => {
                 if let Err(err) = worker.ensure_project(config_path.as_deref()) {
-                    let resp = SessionResponse { success: false, error: Some(err.to_string()) };
+                    let resp = SessionResponse {
+                        success: false,
+                        error: Some(err.to_string()),
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
                 } else {
@@ -903,7 +1029,7 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                         worker.orchestrator.as_ref().unwrap(),
                         worker.data.as_ref().unwrap(),
                         &worker.backend,
-                        &mut output
+                        &mut output,
                     ) {
                         Ok(s) => s,
                         Err(err) => {
@@ -912,23 +1038,36 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                         }
                     };
 
-                    let resp = SessionResponse { success, error: None };
+                    let resp = SessionResponse {
+                        success,
+                        error: None,
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
                     let _ = stream.write_all(&output);
                 }
             }
-            Ok(SessionRequest::Defs { path, symbol, provider: _provider }) => {
+            Ok(SessionRequest::Defs {
+                path,
+                symbol,
+                provider: _provider,
+            }) => {
                 let p = PathBuf::from(path);
                 if let Err(err) = worker.ensure_project(p.parent().and_then(|p| p.to_str())) {
-                    let resp = SessionResponse { success: false, error: Some(err.to_string()) };
+                    let resp = SessionResponse {
+                        success: false,
+                        error: Some(err.to_string()),
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
                 } else {
-                    let resp = SessionResponse { success: true, error: None };
+                    let resp = SessionResponse {
+                        success: true,
+                        error: None,
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
-                    
+
                     use crate::editor_plane::execute_defs_core;
                     if let Err(err) = execute_defs_core(
                         &p,
@@ -936,23 +1075,33 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                         worker.data.as_ref().unwrap(),
                         &worker.backend,
                         true,
-                        &mut stream
+                        &mut stream,
                     ) {
                         let _ = writeln!(&mut stream, "Error: {}", err);
                     }
                 }
             }
-            Ok(SessionRequest::Refs { path, symbol, provider: _provider }) => {
+            Ok(SessionRequest::Refs {
+                path,
+                symbol,
+                provider: _provider,
+            }) => {
                 let p = PathBuf::from(path);
                 if let Err(err) = worker.ensure_project(p.parent().and_then(|p| p.to_str())) {
-                    let resp = SessionResponse { success: false, error: Some(err.to_string()) };
+                    let resp = SessionResponse {
+                        success: false,
+                        error: Some(err.to_string()),
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
                 } else {
-                    let resp = SessionResponse { success: true, error: None };
+                    let resp = SessionResponse {
+                        success: true,
+                        error: None,
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
-                    
+
                     use crate::editor_plane::execute_refs_core;
                     if let Err(err) = execute_refs_core(
                         &p,
@@ -960,7 +1109,7 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                         worker.data.as_ref().unwrap(),
                         &worker.backend,
                         true,
-                        &mut stream
+                        &mut stream,
                     ) {
                         let _ = writeln!(&mut stream, "Error: {}", err);
                     }
@@ -969,14 +1118,20 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
             Ok(SessionRequest::Context { path, query }) => {
                 let p = PathBuf::from(path);
                 if let Err(err) = worker.ensure_project(p.parent().and_then(|p| p.to_str())) {
-                    let resp = SessionResponse { success: false, error: Some(err.to_string()) };
+                    let resp = SessionResponse {
+                        success: false,
+                        error: Some(err.to_string()),
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
                 } else {
-                    let resp = SessionResponse { success: true, error: None };
+                    let resp = SessionResponse {
+                        success: true,
+                        error: None,
+                    };
                     let _ = serde_json::to_writer(&mut stream, &resp);
                     let _ = writeln!(&mut stream);
-                    
+
                     use crate::editor_plane::execute_context_core;
                     if let Err(err) = execute_context_core(
                         &p,
@@ -984,14 +1139,17 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                         worker.data.as_ref().unwrap(),
                         &worker.backend,
                         true,
-                        &mut stream
+                        &mut stream,
                     ) {
                         let _ = writeln!(&mut stream, "Error: {}", err);
                     }
                 }
             }
             Ok(SessionRequest::Stop) => {
-                let resp = SessionResponse { success: true, error: None };
+                let resp = SessionResponse {
+                    success: true,
+                    error: None,
+                };
                 let _ = serde_json::to_writer(&mut stream, &resp);
                 let _ = writeln!(&mut stream);
                 let _ = writeln!(&mut stream, "Stopping");
@@ -1000,7 +1158,10 @@ pub fn handle_ast_worker_tcp(port: u16) -> Result<()> {
                 break;
             }
             Err(err) => {
-                let resp = SessionResponse { success: false, error: Some(err.to_string()) };
+                let resp = SessionResponse {
+                    success: false,
+                    error: Some(err.to_string()),
+                };
                 let _ = serde_json::to_writer(&mut stream, &resp);
                 let _ = writeln!(&mut stream);
             }

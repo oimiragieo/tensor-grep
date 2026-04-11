@@ -1,12 +1,12 @@
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use crate::backend_ast::{resolve_language, AstBackend};
 use crate::backend_ast_workflow::{AstWorkflowOrchestrator, ProjectDataV6};
-use crate::backend_ast::{AstBackend, resolve_language};
-use std::collections::HashSet;
+use anyhow::Result;
 use ast_grep_core::tree_sitter::LanguageExt;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SymbolDefinition {
@@ -61,7 +61,7 @@ pub fn handle_defs(path: PathBuf, symbol: String, _provider: String, json: bool)
     let orchestrator = AstWorkflowOrchestrator::new(config_path.as_ref().and_then(|p| p.to_str()))?;
     let data = orchestrator.load_project_data()?;
     let backend = AstBackend::new();
-    
+
     let mut stdout = std::io::stdout();
     execute_defs_core(&path, &symbol, &data, &backend, json, &mut stdout)
 }
@@ -72,15 +72,15 @@ pub fn execute_defs_core(
     data: &ProjectDataV6,
     backend: &AstBackend,
     json: bool,
-    writer: &mut dyn Write
+    writer: &mut dyn Write,
 ) -> Result<()> {
     let definitions = find_definitions(backend, data, symbol)?;
-    
+
     let mut definition_files = HashSet::new();
     for d in &definitions {
         definition_files.insert(d.file.clone());
     }
-    
+
     let mut files: Vec<PathBuf> = definition_files.into_iter().collect();
     files.sort();
 
@@ -92,7 +92,7 @@ pub fn execute_defs_core(
         related_paths: files,
         graph_completeness: "strong".to_string(),
     };
-    
+
     if json {
         writeln!(writer, "{}", serde_json::to_string_pretty(&response)?)?;
     } else {
@@ -100,9 +100,14 @@ pub fn execute_defs_core(
         for d in &response.definitions {
             writeln!(writer, "{}:{}: {}", d.file.display(), d.line, d.name)?;
         }
-        writeln!(writer, "definitions={} files={}", response.definitions.len(), response.files.len())?;
+        writeln!(
+            writer,
+            "definitions={} files={}",
+            response.definitions.len(),
+            response.files.len()
+        )?;
     }
-    
+
     Ok(())
 }
 
@@ -111,7 +116,7 @@ pub fn handle_refs(path: PathBuf, symbol: String, _provider: String, json: bool)
     let orchestrator = AstWorkflowOrchestrator::new(config_path.as_ref().and_then(|p| p.to_str()))?;
     let data = orchestrator.load_project_data()?;
     let backend = AstBackend::new();
-    
+
     let mut stdout = std::io::stdout();
     execute_refs_core(&path, &symbol, &data, &backend, json, &mut stdout)
 }
@@ -122,15 +127,15 @@ pub fn execute_refs_core(
     data: &ProjectDataV6,
     backend: &AstBackend,
     json: bool,
-    writer: &mut dyn Write
+    writer: &mut dyn Write,
 ) -> Result<()> {
     let references = find_references(backend, data, symbol)?;
-    
+
     let mut reference_files = HashSet::new();
     for r in &references {
         reference_files.insert(r.file.clone());
     }
-    
+
     let mut files: Vec<PathBuf> = reference_files.into_iter().collect();
     files.sort();
 
@@ -141,7 +146,7 @@ pub fn execute_refs_core(
         files: files.clone(),
         related_paths: files,
     };
-    
+
     if json {
         writeln!(writer, "{}", serde_json::to_string_pretty(&response)?)?;
     } else {
@@ -149,9 +154,14 @@ pub fn execute_refs_core(
         for r in &response.references {
             writeln!(writer, "{}:{}: {}", r.file.display(), r.line, r.text.trim())?;
         }
-        writeln!(writer, "references={} files={}", response.references.len(), response.files.len())?;
+        writeln!(
+            writer,
+            "references={} files={}",
+            response.references.len(),
+            response.files.len()
+        )?;
     }
-    
+
     Ok(())
 }
 
@@ -160,7 +170,7 @@ pub fn handle_context(path: PathBuf, query: String, json: bool) -> Result<()> {
     let orchestrator = AstWorkflowOrchestrator::new(config_path.as_ref().and_then(|p| p.to_str()))?;
     let data = orchestrator.load_project_data()?;
     let backend = AstBackend::new();
-    
+
     let mut stdout = std::io::stdout();
     execute_context_core(&path, &query, &data, &backend, json, &mut stdout)
 }
@@ -171,11 +181,11 @@ pub fn execute_context_core(
     data: &ProjectDataV6,
     backend: &AstBackend,
     json: bool,
-    writer: &mut dyn Write
+    writer: &mut dyn Write,
 ) -> Result<()> {
     let definitions = find_definitions(backend, data, query)?;
     let references = find_references(backend, data, query)?;
-    
+
     let mut all_files = HashSet::new();
     for d in &definitions {
         all_files.insert(d.file.clone());
@@ -183,7 +193,7 @@ pub fn execute_context_core(
     for r in &references {
         all_files.insert(r.file.clone());
     }
-    
+
     let mut files: Vec<PathBuf> = all_files.into_iter().collect();
     files.sort();
 
@@ -196,22 +206,36 @@ pub fn execute_context_core(
         files: files.clone(),
         related_paths: files,
     };
-    
+
     if json {
         writeln!(writer, "{}", serde_json::to_string_pretty(&response)?)?;
     } else {
         writeln!(writer, "Context for {} in {:?}", query, path)?;
-        writeln!(writer, "definitions={} references={} files={}", response.definitions.len(), response.references.len(), response.files.len())?;
+        writeln!(
+            writer,
+            "definitions={} references={} files={}",
+            response.definitions.len(),
+            response.references.len(),
+            response.files.len()
+        )?;
     }
-    
+
     Ok(())
 }
 
-fn find_definitions(backend: &AstBackend, data: &ProjectDataV6, symbol: &str) -> Result<Vec<SymbolDefinition>> {
+fn find_definitions(
+    backend: &AstBackend,
+    data: &ProjectDataV6,
+    symbol: &str,
+) -> Result<Vec<SymbolDefinition>> {
     let mut definitions = Vec::new();
-    let lang_str = data.project_cfg.get("language").and_then(|v| v.as_str()).unwrap_or("python");
+    let lang_str = data
+        .project_cfg
+        .get("language")
+        .and_then(|v| v.as_str())
+        .unwrap_or("python");
     let language = resolve_language(lang_str)?;
-    
+
     let patterns = match lang_str.to_lowercase().as_str() {
         "python" | "py" => vec![
             (format!("def {}($$$ARGS): $$$BODY", symbol), "function"),
@@ -219,7 +243,10 @@ fn find_definitions(backend: &AstBackend, data: &ProjectDataV6, symbol: &str) ->
             (format!("class {}($$$BASE): $$$BODY", symbol), "class"),
         ],
         "javascript" | "js" | "typescript" | "ts" => vec![
-            (format!("function {}($$$ARGS) {{ $$$BODY }}", symbol), "function"),
+            (
+                format!("function {}($$$ARGS) {{ $$$BODY }}", symbol),
+                "function",
+            ),
             (format!("class {} {{ $$$BODY }}", symbol), "class"),
             (format!("const {} = $$$VAL", symbol), "variable"),
             (format!("let {} = $$$VAL", symbol), "variable"),
@@ -237,7 +264,9 @@ fn find_definitions(backend: &AstBackend, data: &ProjectDataV6, symbol: &str) ->
 
     for file_path_str in &data.candidate_files {
         let file_path = Path::new(file_path_str);
-        if !file_matches_language_type(file_path, language) { continue; }
+        if !file_matches_language_type(file_path, language) {
+            continue;
+        }
 
         for (pattern, kind) in &patterns {
             let matches = backend.search_for_cli(pattern, lang_str, file_path_str)?;
@@ -257,31 +286,60 @@ fn find_definitions(backend: &AstBackend, data: &ProjectDataV6, symbol: &str) ->
     Ok(definitions)
 }
 
-fn find_references(_backend: &AstBackend, data: &ProjectDataV6, symbol: &str) -> Result<Vec<SymbolReference>> {
+fn find_references(
+    _backend: &AstBackend,
+    data: &ProjectDataV6,
+    symbol: &str,
+) -> Result<Vec<SymbolReference>> {
     let mut references = Vec::new();
-    let lang_str = data.project_cfg.get("language").and_then(|v| v.as_str()).unwrap_or("python");
+    let lang_str = data
+        .project_cfg
+        .get("language")
+        .and_then(|v| v.as_str())
+        .unwrap_or("python");
     let language = resolve_language(lang_str)?;
-    
+
     let pattern = symbol;
 
     let def_kinds: HashSet<&str> = match lang_str.to_lowercase().as_str() {
-        "python" | "py" => ["function_definition", "class_definition"].iter().cloned().collect(),
-        "javascript" | "js" | "typescript" | "ts" => ["function_declaration", "class_declaration", "variable_declarator"].iter().cloned().collect(),
-        "rust" | "rs" => ["function_item", "struct_item", "enum_item", "trait_item", "type_item"].iter().cloned().collect(),
+        "python" | "py" => ["function_definition", "class_definition"]
+            .iter()
+            .cloned()
+            .collect(),
+        "javascript" | "js" | "typescript" | "ts" => [
+            "function_declaration",
+            "class_declaration",
+            "variable_declarator",
+        ]
+        .iter()
+        .cloned()
+        .collect(),
+        "rust" | "rs" => [
+            "function_item",
+            "struct_item",
+            "enum_item",
+            "trait_item",
+            "type_item",
+        ]
+        .iter()
+        .cloned()
+        .collect(),
         _ => HashSet::new(),
     };
 
     for file_path_str in &data.candidate_files {
         let file_path = Path::new(file_path_str);
-        if !file_matches_language_type(file_path, language) { continue; }
+        if !file_matches_language_type(file_path, language) {
+            continue;
+        }
 
         let source = fs::read_to_string(file_path)?;
         let ast = language.ast_grep(&source);
         let root = ast.root();
-        
+
         for matched in root.find_all(pattern) {
             let mut is_definition = false;
-            
+
             if let Some(parent) = matched.parent() {
                 let kind_owned = parent.kind();
                 let kind: &str = kind_owned.as_ref();
@@ -294,9 +352,13 @@ fn find_references(_backend: &AstBackend, data: &ProjectDataV6, symbol: &str) ->
                         is_definition = true;
                     }
                 }
-                
+
                 if !is_definition {
-                    if kind == "import_from_statement" || kind == "import_statement" || kind == "aliased_import" || kind == "dotted_name" {
+                    if kind == "import_from_statement"
+                        || kind == "import_statement"
+                        || kind == "aliased_import"
+                        || kind == "dotted_name"
+                    {
                         is_definition = true;
                     }
                 }
@@ -305,7 +367,11 @@ fn find_references(_backend: &AstBackend, data: &ProjectDataV6, symbol: &str) ->
             if !is_definition {
                 let range = matched.range();
                 let line = source[..range.start].lines().count();
-                let text = source.lines().nth(line.saturating_sub(1)).unwrap_or("").to_string();
+                let text = source
+                    .lines()
+                    .nth(line.saturating_sub(1))
+                    .unwrap_or("")
+                    .to_string();
 
                 references.push(SymbolReference {
                     name: symbol.to_string(),

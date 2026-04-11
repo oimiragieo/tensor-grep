@@ -420,11 +420,16 @@ fn test_routing_directory_search_promotes_to_native_cpu() {
 
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     if stderr.contains("routing_backend=RipgrepBackend") {
         assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
     } else {
-        assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+        assert_verbose_routing(
+            &stderr,
+            "NativeCpuBackend",
+            "cpu-auto-size-threshold",
+            false,
+        );
     }
 }
 
@@ -1533,22 +1538,32 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
 
     assert!(output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    
+
     if stderr.contains("routing_backend=RipgrepBackend") {
         assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
     } else {
-        assert_verbose_routing(&stderr, "NativeCpuBackend", "cpu-auto-size-threshold", false);
+        assert_verbose_routing(
+            &stderr,
+            "NativeCpuBackend",
+            "cpu-auto-size-threshold",
+            false,
+        );
     }
-    
+
     // Should NOT contain the fallback warning
     assert!(
         !stderr.contains("warning: native CPU search failed, falling back to ripgrep"),
-        "Detected unexpected native CPU fallback in stderr: {}", stderr
+        "Detected unexpected native CPU fallback in stderr: {}",
+        stderr
     );
-    
+
     // Verify output matches
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(":1\n") || stdout.contains(":1\r\n"), "stdout={}", stdout);
+    assert!(
+        stdout.contains(":1\n") || stdout.contains(":1\r\n"),
+        "stdout={}",
+        stdout
+    );
 }
 
 #[test]
@@ -1567,7 +1582,9 @@ fn test_routing_external_editor_plane_commands_are_forwarded() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains(&format!("python -m tensor_grep {}", command)),
-            "External command '{}' was not forwarded properly. stdout={}", command, stdout
+            "External command '{}' was not forwarded properly. stdout={}",
+            command,
+            stdout
         );
     }
 }
@@ -1575,12 +1592,8 @@ fn test_routing_external_editor_plane_commands_are_forwarded() {
 #[test]
 fn test_routing_native_editor_plane_commands() {
     for command in vec!["defs", "refs", "context"] {
-        let output = tg()
-            .arg(command)
-            .arg("--help")
-            .output()
-            .unwrap();
-        
+        let output = tg().arg(command).arg("--help").output().unwrap();
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.to_lowercase().contains("usage:"));
         assert!(stdout.contains(command));
@@ -1590,12 +1603,8 @@ fn test_routing_native_editor_plane_commands() {
 #[test]
 fn test_routing_ast_workflow_commands_are_native() {
     for command in vec!["scan", "test", "new"] {
-        let output = tg()
-            .arg(command)
-            .arg("--help")
-            .output()
-            .unwrap();
-        
+        let output = tg().arg(command).arg("--help").output().unwrap();
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.to_lowercase().contains("usage:"));
         assert!(stdout.contains(command));
@@ -1701,7 +1710,7 @@ fn test_rust_control_plane_rejection() {
         .env("TG_RG_PATH", &rg_wrapper)
         .output()
         .unwrap();
-    
+
     let stderr = String::from_utf8_lossy(&output_f.stderr);
     // If it fell through to Clap, it will process --verbose and print routing info.
     // The fast path would have silently dispatched without printing [routing]...
@@ -1709,18 +1718,11 @@ fn test_rust_control_plane_rejection() {
     assert!(stderr.contains("routing_backend=RipgrepBackend"));
 
     // --help should fall through
-    let output_help = tg()
-        .arg("--help")
-        .output()
-        .unwrap();
+    let output_help = tg().arg("--help").output().unwrap();
     assert!(String::from_utf8_lossy(&output_help.stdout).contains("Usage:"));
 
     // scan should fall through
-    let output_scan = tg()
-        .arg("scan")
-        .arg("--help")
-        .output()
-        .unwrap();
+    let output_scan = tg().arg("scan").arg("--help").output().unwrap();
     let stdout_scan = String::from_utf8_lossy(&output_scan.stdout);
     assert!(stdout_scan.to_lowercase().contains("usage:"));
     assert!(stdout_scan.contains("scan"));
@@ -1800,15 +1802,9 @@ fn test_rust_control_plane_no_ignore() {
 
 #[test]
 fn test_rust_control_plane_version() {
-    let output_v_long = tg()
-        .arg("--version")
-        .output()
-        .unwrap();
+    let output_v_long = tg().arg("--version").output().unwrap();
     assert!(String::from_utf8_lossy(&output_v_long.stdout).contains("tg 0.2.0"));
 
-    let output_v_short = tg()
-        .arg("-V")
-        .output()
-        .unwrap();
+    let output_v_short = tg().arg("-V").output().unwrap();
     assert!(String::from_utf8_lossy(&output_v_short.stdout).contains("tg 0.2.0"));
 }

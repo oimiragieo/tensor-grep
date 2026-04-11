@@ -807,26 +807,34 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Run(args) => handle_ast_run(args),
         Commands::Scan { args } => {
             use tensor_grep_rs::backend_ast_workflow::{handle_ast_scan, SessionRequest};
-            let config_path = if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1 {
-                Some(args[1].clone())
-            } else {
-                None
-            };
-            
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Scan { config_path: config_path.clone() })? {
+            let config_path =
+                if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1
+                {
+                    Some(args[1].clone())
+                } else {
+                    None
+                };
+
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Scan {
+                config_path: config_path.clone(),
+            })? {
                 std::process::exit(exit_code);
             }
             handle_ast_scan(config_path.as_deref())
         }
         Commands::Test { args } => {
             use tensor_grep_rs::backend_ast_workflow::{handle_ast_test, SessionRequest};
-            let config_path = if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1 {
-                Some(args[1].clone())
-            } else {
-                None
-            };
+            let config_path =
+                if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1
+                {
+                    Some(args[1].clone())
+                } else {
+                    None
+                };
 
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Test { config_path: config_path.clone() })? {
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Test {
+                config_path: config_path.clone(),
+            })? {
                 std::process::exit(exit_code);
             }
             handle_ast_test(config_path.as_deref())
@@ -835,25 +843,35 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
             use tensor_grep_rs::backend_ast_workflow::handle_ast_new;
             handle_ast_new(args)
         }
-        Commands::Defs { path, symbol, provider, json } => {
+        Commands::Defs {
+            path,
+            symbol,
+            provider,
+            json,
+        } => {
             use tensor_grep_rs::backend_ast_workflow::SessionRequest;
             use tensor_grep_rs::editor_plane::handle_defs;
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Defs { 
-                path: path.to_string_lossy().to_string(), 
-                symbol: symbol.clone(), 
-                provider: provider.clone() 
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Defs {
+                path: path.to_string_lossy().to_string(),
+                symbol: symbol.clone(),
+                provider: provider.clone(),
             })? {
                 std::process::exit(exit_code);
             }
             handle_defs(path, symbol, provider, json)
         }
-        Commands::Refs { path, symbol, provider, json } => {
+        Commands::Refs {
+            path,
+            symbol,
+            provider,
+            json,
+        } => {
             use tensor_grep_rs::backend_ast_workflow::SessionRequest;
             use tensor_grep_rs::editor_plane::handle_refs;
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Refs { 
-                path: path.to_string_lossy().to_string(), 
-                symbol: symbol.clone(), 
-                provider: provider.clone() 
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Refs {
+                path: path.to_string_lossy().to_string(),
+                symbol: symbol.clone(),
+                provider: provider.clone(),
             })? {
                 std::process::exit(exit_code);
             }
@@ -862,9 +880,9 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Context { path, query, json } => {
             use tensor_grep_rs::backend_ast_workflow::SessionRequest;
             use tensor_grep_rs::editor_plane::handle_context;
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Context { 
-                path: path.to_string_lossy().to_string(), 
-                query: query.clone() 
+            if let Some(exit_code) = try_resident_execution(SessionRequest::Context {
+                path: path.to_string_lossy().to_string(),
+                query: query.clone(),
             })? {
                 std::process::exit(exit_code);
             }
@@ -899,22 +917,30 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     }
 }
 
-fn try_resident_execution(req: tensor_grep_rs::backend_ast_workflow::SessionRequest) -> anyhow::Result<Option<i32>> {
-    use std::net::TcpStream;
+fn try_resident_execution(
+    req: tensor_grep_rs::backend_ast_workflow::SessionRequest,
+) -> anyhow::Result<Option<i32>> {
     use std::io::{BufRead, BufReader, Read, Write};
-    
+    use std::net::TcpStream;
+
     // Check if worker is requested or if we are stopping it
-    let is_stop = matches!(req, tensor_grep_rs::backend_ast_workflow::SessionRequest::Stop);
+    let is_stop = matches!(
+        req,
+        tensor_grep_rs::backend_ast_workflow::SessionRequest::Stop
+    );
     if !is_stop && std::env::var("TG_RESIDENT_AST").unwrap_or_default() != "1" {
         return Ok(None);
     }
 
     // Try to find the port
-    let port_file = std::env::current_dir()?.join(".tg_cache").join("ast").join("worker_port.txt");
+    let port_file = std::env::current_dir()?
+        .join(".tg_cache")
+        .join("ast")
+        .join("worker_port.txt");
     if !port_file.exists() {
         return Ok(None);
     }
-    
+
     let port_str = std::fs::read_to_string(&port_file)?;
     let port: u16 = port_str.trim().parse()?;
 
@@ -933,7 +959,7 @@ fn try_resident_execution(req: tensor_grep_rs::backend_ast_workflow::SessionRequ
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
-    
+
     use tensor_grep_rs::backend_ast_workflow::SessionResponse;
     let resp: SessionResponse = match serde_json::from_str(&line) {
         Ok(r) => r,
@@ -951,7 +977,9 @@ fn try_resident_execution(req: tensor_grep_rs::backend_ast_workflow::SessionRequ
     loop {
         let mut buf = [0; 4096];
         let n = reader.read(&mut buf)?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         std::io::stdout().write_all(&buf[..n])?;
     }
     std::io::stdout().flush()?;

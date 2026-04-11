@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tempfile::tempdir;
 use std::thread::sleep;
 use std::time::Duration;
+use tempfile::tempdir;
 
 fn tg() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg"))
@@ -29,26 +29,26 @@ fn setup_mock_project(dir: &Path) {
     fs::write(
         dir.join("sgconfig.yml"),
         "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let rules_dir = dir.join("rules");
     fs::create_dir(&rules_dir).unwrap();
     fs::write(
         rules_dir.join("rule1.yml"),
         "id: rule1\nlanguage: python\nrule:\n  pattern: 'x = 1'\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let tests_dir = dir.join("tests");
     fs::create_dir(&tests_dir).unwrap();
     fs::write(
         tests_dir.join("test1.yml"),
         "id: test1\nruleId: rule1\ninvalid: ['x = 1']\n",
-    ).unwrap();
+    )
+    .unwrap();
 
-    fs::write(
-        dir.join("src.py"),
-        "x = 1\n",
-    ).unwrap();
+    fs::write(dir.join("src.py"), "x = 1\n").unwrap();
 }
 
 fn run_scan(dir: &Path) -> (i32, String, String) {
@@ -71,7 +71,11 @@ fn test_cache_creation_and_reuse() {
     let dir = tempdir().unwrap();
     setup_mock_project(dir.path());
 
-    let cache_file = dir.path().join(".tg_cache").join("ast").join("project_data_v6.json");
+    let cache_file = dir
+        .path()
+        .join(".tg_cache")
+        .join("ast")
+        .join("project_data_v6.json");
     assert!(!cache_file.exists());
 
     // First scan creates cache. Might change root_dir mtime.
@@ -97,15 +101,20 @@ fn test_cache_invalidation_on_config_change() {
     let dir = tempdir().unwrap();
     setup_mock_project(dir.path());
     run_scan(dir.path());
-    
-    let cache_file = dir.path().join(".tg_cache").join("ast").join("project_data_v6.json");
+
+    let cache_file = dir
+        .path()
+        .join(".tg_cache")
+        .join("ast")
+        .join("project_data_v6.json");
     let mtime1 = fs::metadata(&cache_file).unwrap().modified().unwrap();
 
     sleep(Duration::from_millis(1100)); // Ensure mtime change is detectable
     fs::write(
         dir.path().join("sgconfig.yml"),
         "ruleDirs: [rules]\nlanguage: rust\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     run_scan(dir.path());
     let mtime2 = fs::metadata(&cache_file).unwrap().modified().unwrap();
@@ -117,15 +126,20 @@ fn test_cache_invalidation_on_rule_change() {
     let dir = tempdir().unwrap();
     setup_mock_project(dir.path());
     run_scan(dir.path());
-    
-    let cache_file = dir.path().join(".tg_cache").join("ast").join("project_data_v6.json");
+
+    let cache_file = dir
+        .path()
+        .join(".tg_cache")
+        .join("ast")
+        .join("project_data_v6.json");
     let mtime1 = fs::metadata(&cache_file).unwrap().modified().unwrap();
 
     sleep(Duration::from_millis(1100));
     fs::write(
         dir.path().join("rules").join("rule1.yml"),
         "id: rule1\nlanguage: python\nrule:\n  pattern: 'y = 2'\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     run_scan(dir.path());
     let mtime2 = fs::metadata(&cache_file).unwrap().modified().unwrap();
@@ -137,20 +151,28 @@ fn test_cache_invalidation_on_test_change() {
     let dir = tempdir().unwrap();
     setup_mock_project(dir.path());
     run_scan(dir.path());
-    
-    let cache_file = dir.path().join(".tg_cache").join("ast").join("project_data_v6.json");
+
+    let cache_file = dir
+        .path()
+        .join(".tg_cache")
+        .join("ast")
+        .join("project_data_v6.json");
     let mtime1 = fs::metadata(&cache_file).unwrap().modified().unwrap();
 
     sleep(Duration::from_millis(1100));
     fs::write(
         dir.path().join("tests").join("test1.yml"),
         "id: test1\nruleId: rule1\ninvalid: ['x = 2']\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     run_scan(dir.path());
     let mtime2 = fs::metadata(&cache_file).unwrap().modified().unwrap();
-    
-    assert!(mtime2 > mtime1, "Cache should be invalidated when a test file changes");
+
+    assert!(
+        mtime2 > mtime1,
+        "Cache should be invalidated when a test file changes"
+    );
 }
 
 #[test]
@@ -158,8 +180,12 @@ fn test_cache_invalidation_on_new_file() {
     let dir = tempdir().unwrap();
     setup_mock_project(dir.path());
     run_scan(dir.path());
-    
-    let cache_file = dir.path().join(".tg_cache").join("ast").join("project_data_v6.json");
+
+    let cache_file = dir
+        .path()
+        .join(".tg_cache")
+        .join("ast")
+        .join("project_data_v6.json");
     let mtime1 = fs::metadata(&cache_file).unwrap().modified().unwrap();
 
     sleep(Duration::from_millis(1100));
@@ -167,7 +193,10 @@ fn test_cache_invalidation_on_new_file() {
 
     run_scan(dir.path());
     let mtime2 = fs::metadata(&cache_file).unwrap().modified().unwrap();
-    
+
     // Adding a file to root_dir changes root_dir's mtime, which is in tree_dirs
-    assert!(mtime2 > mtime1, "Cache should be invalidated when a new file is added to a tracked directory");
+    assert!(
+        mtime2 > mtime1,
+        "Cache should be invalidated when a new file is added to a tracked directory"
+    );
 }

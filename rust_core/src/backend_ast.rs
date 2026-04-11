@@ -347,7 +347,7 @@ impl AstBackend {
     ) -> Result<Vec<AstCliFileMatches>> {
         let language = resolve_language(lang)?;
         let compiled_pattern = compile_ast_pattern(pattern, language)?;
-        
+
         let prefilter_literal = extract_prefilter_literal(&compiled_pattern);
 
         let per_file_matches: Result<Vec<Vec<AstCliMatch>>> = files
