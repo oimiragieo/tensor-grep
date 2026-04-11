@@ -353,14 +353,13 @@ fn find_references(
                     }
                 }
 
-                if !is_definition {
-                    if kind == "import_from_statement"
+                if !is_definition
+                    && (kind == "import_from_statement"
                         || kind == "import_statement"
                         || kind == "aliased_import"
-                        || kind == "dotted_name"
-                    {
-                        is_definition = true;
-                    }
+                        || kind == "dotted_name")
+                {
+                    is_definition = true;
                 }
             }
 
@@ -377,7 +376,7 @@ fn find_references(
                     name: symbol.to_string(),
                     kind: "reference".to_string(),
                     file: file_path.to_path_buf(),
-                    line: line,
+                    line,
                     text,
                 });
             }
@@ -388,13 +387,19 @@ fn find_references(
 
 fn file_matches_language_type(path: &Path, lang: ast_grep_language::SupportLang) -> bool {
     let extension = path.extension().and_then(|ext| ext.to_str());
-    match (lang, extension) {
-        (ast_grep_language::SupportLang::Python, Some("py" | "py3" | "pyi" | "bzl")) => true,
-        (ast_grep_language::SupportLang::JavaScript, Some("js" | "jsx" | "cjs" | "mjs")) => true,
-        (ast_grep_language::SupportLang::TypeScript, Some("ts" | "cts" | "mts")) => true,
-        (ast_grep_language::SupportLang::Rust, Some("rs")) => true,
-        _ => false,
-    }
+    matches!(
+        (lang, extension),
+        (
+            ast_grep_language::SupportLang::Python,
+            Some("py" | "py3" | "pyi" | "bzl")
+        ) | (
+            ast_grep_language::SupportLang::JavaScript,
+            Some("js" | "jsx" | "cjs" | "mjs")
+        ) | (
+            ast_grep_language::SupportLang::TypeScript,
+            Some("ts" | "cts" | "mts")
+        ) | (ast_grep_language::SupportLang::Rust, Some("rs"))
+    )
 }
 
 fn find_config_file(path: &Path) -> Result<Option<PathBuf>> {

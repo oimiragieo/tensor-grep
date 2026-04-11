@@ -105,6 +105,12 @@ pub struct ResidentAstWorker {
     pub lang_to_files: HashMap<String, Vec<PathBuf>>,
 }
 
+impl Default for ResidentAstWorker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResidentAstWorker {
     pub fn new() -> Self {
         Self {
@@ -331,7 +337,7 @@ pub fn execute_ast_test_core(
                 let mut language = case
                     .get("language")
                     .and_then(|v| v.as_str())
-                    .unwrap_or(&data.project_cfg["language"].as_str().unwrap_or("python"))
+                    .unwrap_or(data.project_cfg["language"].as_str().unwrap_or("python"))
                     .to_string();
 
                 if pattern.is_none() {
@@ -375,7 +381,7 @@ pub fn execute_ast_test_core(
 
                 let group = rule_case_groups
                     .entry((pattern.clone(), language.clone()))
-                    .or_insert_with(Vec::new);
+                    .or_default();
                 let case_key = format!("{}:{}", test_file_path, case_id);
 
                 for snip in valid_snippets {
@@ -504,7 +510,7 @@ fn execute_batched_tests(
 pub fn handle_ast_new(args: Vec<String>) -> Result<()> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         println!("usage: tg new");
-        println!("");
+        println!();
         println!("Create a new AST project configuration.");
         return Ok(());
     }
@@ -911,7 +917,7 @@ impl AstWorkflowOrchestrator {
         }
         if let Some(rule) = item.get("rule").and_then(|v| v.as_mapping()) {
             if let Some(p) = rule
-                .get(&serde_yaml::Value::String("pattern".to_string()))
+                .get(serde_yaml::Value::String("pattern".to_string()))
                 .and_then(|v| v.as_str())
             {
                 return Some(p.trim().to_string());
