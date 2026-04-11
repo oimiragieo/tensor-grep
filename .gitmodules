@@ -1,0 +1,12 @@
+[submodule "benchmarks/external_repos/chalk"]
+	path = benchmarks/external_repos/chalk
+	url = https://github.com/chalk/chalk.git
+[submodule "benchmarks/external_repos/clap"]
+	path = benchmarks/external_repos/clap
+	url = https://github.com/clap-rs/clap.git
+[submodule "benchmarks/external_repos/click"]
+	path = benchmarks/external_repos/click
+	url = https://github.com/pallets/click.git
+[submodule "benchmarks/external_repos/commander.js"]
+	path = benchmarks/external_repos/commander.js
+	url = https://github.com/tj/commander.js.git
