@@ -1331,7 +1331,7 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 - **validation**: Add misc-1 milestone user-testing synthesis report
   ([`4a402b0`](https://github.com/oimiragieo/tensor-grep/commit/4a402b0665ee8fc49d23e5d59e539d7347fe67b8))
 
-No validation contract assertions to test — both misc-1 features (refresh-python-benchmark-baseline,
+No validation contract assertions to test â€” both misc-1 features (refresh-python-benchmark-baseline,
   benchmark-harness-stability) are infrastructure improvements with empty fulfills fields.
 
 Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
@@ -1533,7 +1533,7 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 - **validation**: Synthesize rewrite-apply-speed user-testing results
   ([`9515a40`](https://github.com/oimiragieo/tensor-grep/commit/9515a40abde4a249df88992c27614a7a7221d06a))
 
-- **validation**: User testing for benchmark-expansion milestone — all 11 assertions passed
+- **validation**: User testing for benchmark-expansion milestone â€” all 11 assertions passed
   ([`6c87c74`](https://github.com/oimiragieo/tensor-grep/commit/6c87c745f5f2edb9c719583278141e6226b6bdf5))
 
 Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
@@ -1559,7 +1559,7 @@ Seven prioritized work items with exact file paths, commands, and invariants to 
 
 Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
 
-- Close Milestone 1 audit — all gaps resolved
+- Close Milestone 1 audit â€” all gaps resolved
   ([`d6e5e82`](https://github.com/oimiragieo/tensor-grep/commit/d6e5e82f33b2c646da24ccecced39754f624fe09))
 
 GPU sidecar routing done (2f8f96b), benchmark surfaces aligned to native binary (d8ce671, 831e765,
