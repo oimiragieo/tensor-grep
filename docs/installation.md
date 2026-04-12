@@ -1,8 +1,29 @@
 # Installation
 
-`tensor-grep` is distributed as a standalone binary, meaning you do not need Python installed to run it.
+`tensor-grep` can be installed through managed binaries, Python packaging, package managers, or the automated install scripts. The right path depends on whether you want self-update behavior, locked-down workstation rollout, or source-level Python integration.
 
-## Option 1: Using npx (Recommended for Frontend Devs)
+## Recommended Channel by Use Case
+
+- **Individual developers who want `tg update` / `tg upgrade`:** use the install scripts or `pip` / `uv`.
+- **Managed workstation rollout:** use GitHub release binaries, Homebrew, or Winget.
+- **Node-centric invocation:** use `npx`.
+- **Experimental features:** review [docs/EXPERIMENTAL.md](EXPERIMENTAL.md) instead of assuming hidden commands are stable/public.
+
+## Option 1: Install Scripts (Recommended)
+
+The install scripts create an isolated environment, print `tg --version` at the end, and keep Python-level dependencies away from your system interpreter.
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
+```
+
+**Linux & macOS (Bash):**
+```bash
+curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+```
+
+## Option 2: Using `npx`
 
 If you have Node.js installed, you can use `npx` to download and run the correct binary for your platform automatically:
 
@@ -17,15 +38,21 @@ npm install -g tensor-grep
 tg search "ERROR" app.log
 ```
 
-## Option 2: Pre-compiled Binaries (Direct Download)
+## Option 3: Pre-compiled Binaries (Direct Download)
 
-We provide pre-compiled binaries for Windows, Linux, and macOS.
+We publish release-validated binaries for Windows, Linux, and macOS via GitHub Releases.
 
 1. Go to the [GitHub Releases](https://github.com/oimiragieo/tensor-grep/releases) page.
-2. Download the binary for your platform (e.g., `tg-windows-amd64.exe`).
+2. Download the binary for your platform:
+   - `tg-windows-amd64-cpu.exe`
+   - `tg-windows-amd64-nvidia.exe`
+   - `tg-linux-amd64-cpu`
+   - `tg-linux-amd64-nvidia`
+   - `tg-macos-amd64-cpu`
 3. Add it to your system PATH.
+4. Verify the binary against `CHECKSUMS.txt` before rollout.
 
-## Option 3: Python (pip)
+## Option 4: Python (`pip` / `uv`)
 
 If you prefer to run the tool from source or within a Python environment:
 
@@ -34,7 +61,13 @@ pip install tensor-grep
 tg --help
 ```
 
-*Note: The pip version requires a configured Python environment and may require additional setup for GPU acceleration (like installing `cudf` and `torch`).*
+*Note: the Python package path is the one that supports `tg update` / `tg upgrade`. It requires a configured Python environment and may need additional GPU dependencies such as `cudf` and `torch`.*
+
+## Option 5: Package Managers
+
+- **Homebrew:** use the published formula for macOS and Linux rollout.
+- **Winget:** use the published manifest for Windows rollout.
+- **PyPI:** use for Python integration or self-managed virtual environments.
 
 ## Maintainer Notes: Package Manager Publish Flow
 
@@ -88,7 +121,7 @@ tg --version
 ```
 
 CI coverage:
-- `ci.yml` now includes `package-manager-readiness` on Linux + Windows.
+- `ci.yml` includes `package-manager-readiness` on Linux + Windows.
 - `release.yml` also validates Homebrew and Winget manifests before building release artifacts.
 - On runners where `winget validate` is unavailable, workflows fall back to `scripts/validate_release_assets.py`.
 - CI/release package-manager jobs also run `scripts/prepare_package_manager_release.py --check` to ensure manifests are ready for tap/winget-pkgs publication.
@@ -98,15 +131,11 @@ Release automation notes:
 - Tag pushes (`v*`) run `release.yml` and require `validate-release-assets` and `validate-package-managers` before binaries are built.
 - `scripts/validate_release_assets.py` verifies cross-file version/URL consistency across PyPI, npm, Homebrew, and Winget release assets.
 - CI and release workflows install `uv` before Windows Winget fallback checks to keep validation deterministic on runner images without `winget validate`.
-- Main CI (`ci.yml`) now validates built PyPI artifacts before publish with `scripts/validate_pypi_artifacts.py`, checking:
-  - expected version in wheel/sdist filenames,
-  - wheel/sdist package metadata version,
-  - platform wheel coverage (linux/macos/windows),
-  - SHA256 hash matrix generation for all built artifacts.
+- Main CI (`ci.yml`) validates built PyPI artifacts before publish with `scripts/validate_pypi_artifacts.py`.
 - Main CI also runs `scripts/smoke_test_pypi_artifacts.py` to install from local `dist/` artifacts in an isolated virtual environment before publish.
-- `publish-pypi` now verifies PyPI's latest version matches the semantic-release tag version before the job is marked successful.
+- `publish-pypi` verifies PyPI's latest version matches the semantic-release tag version before the job is marked successful.
 - `publish-success-gate` in main CI always verifies PyPI latest parity for the semantic-release version, even when publish is skipped.
-- `release.yml` now verifies npm registry latest parity (`--check-npm`) after `npm publish` before release success gate completion.
+- `release.yml` verifies npm registry latest parity (`--check-npm`) after `npm publish` before release success gate completion.
 
 ### Repeatable Release Checklist
 
@@ -125,7 +154,7 @@ python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --t
 
 If a publish is bad or inconsistent:
 
-1. Stop new releases by pushing a hotfix commit that sets `publish_pypi=false` behavior or temporarily disables release gating branch.
+1. Stop new releases by merging a corrective patch or temporarily disabling the release path.
 2. Ship an immediate patch release (`X.Y.(Z+1)`) with corrected artifacts. Do not attempt to overwrite an existing PyPI version.
 3. For package managers:
    - Homebrew: update formula to corrected version and re-run tap tests.

@@ -1,22 +1,55 @@
 # Contributing to tensor-grep
 
-To ensure the high standards and stability of the `tensor-grep` pipeline, all code modifications MUST pass the following strict sequence of checks before committing.
+`tensor-grep` is a benchmark-governed, contract-heavy codebase. Changes should be small, measurable, and aligned with the release automation instead of relying on manual versioning or manual tag management.
 
-## 🛠️ The Developer Checklist
+## Local Validation
 
-Every time you implement a feature, fix a bug, or modify the codebase, you must verify the following steps:
+Run these before proposing a change:
 
-- [ ] **1. Ruff Linting (Auto-fix)**
-      Run `python -m ruff check --fix .` to automatically catch and fix any code-quality or bug-bear violations.
-- [ ] **2. Ruff Formatting**
-      Run `python -m ruff format .` to strictly adhere to the 100-character line-limit standard.
-- [ ] **3. MyPy Strict Type Checking**
-      Run `python -m mypy --strict src/tensor_grep` to ensure all type signatures are intact and robust.
-- [ ] **4. Rust Core Validation (If applicable)**
-      Run `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --check` inside the `rust_core` directory.
-- [ ] **5. Pytest Execution**
-      Run `python -m pytest tests/` to confirm no core logic regressions occurred.
-- [ ] **6. Update `CHANGELOG.md`**
-      Add your changes under the `TBD` or the current unreleased version header. Do not skip this!
-- [ ] **7. Version Bump (If required)**
-      If this is a new release, bump `pyproject.toml` and `npm/package.json`, then commit with `git tag vX.Y.Z`.
+```bash
+uv run ruff check .
+uv run mypy src/tensor_grep
+uv run pytest -q
+```
+
+For release/workflow/package-manager changes, also run:
+
+```bash
+uv run python scripts/validate_release_assets.py
+```
+
+## Performance Discipline
+
+- Start with a failing test when behavior changes.
+- Use the smallest defensible change.
+- Run the relevant benchmark for hot-path changes before claiming a speedup.
+- Reject regressions even if the code is otherwise clean.
+
+## Pull Request and Release Intent
+
+- Use conventional titles so semantic-release can infer the bump:
+  - `feat: ...` => minor release
+  - `fix: ...` or `perf: ...` => patch release
+  - `feat!: ...` or `fix!: ...` => major release
+  - `docs: ...`, `test: ...`, `chore: ...`, `ci: ...`, `build: ...` => no release
+- Use **Squash and merge** for release-bearing PRs so the validated PR title becomes the commit subject on `main`.
+- Do not manually create release tags while semantic-release is active.
+
+## Documentation and Contract Changes
+
+If you change workflow, release behavior, docs contracts, or package-manager assets, update the validator-backed tests too.
+
+Important surfaces include:
+- `tests/unit/test_release_assets_validation.py`
+- `tests/unit/test_public_docs_governance.py`
+- `tests/unit/test_enterprise_docs_governance.py`
+
+## Enterprise Docs
+
+Before calling a release enterprise-ready, keep these documents aligned with the shipped behavior:
+- `README.md`
+- `docs/SUPPORT_MATRIX.md`
+- `docs/CONTRACTS.md`
+- `docs/HOTFIX_PROCEDURE.md`
+- `docs/EXPERIMENTAL.md`
+- `docs/RELEASE_CHECKLIST.md`

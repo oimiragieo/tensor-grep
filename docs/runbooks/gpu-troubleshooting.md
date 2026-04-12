@@ -25,3 +25,9 @@ To bypass GPU acceleration entirely for a session or globally:
 export TG_FORCE_CPU=1
 tg search "pattern"
 ```
+
+Windows PowerShell:
+```powershell
+$env:TG_FORCE_CPU = "1"
+tg search "pattern"
+```

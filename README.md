@@ -24,6 +24,17 @@ Use these documents as the current product contract instead of relying on scatte
 
 The project is benchmark-governed. Public claims should follow the canonical docs above, not historical README snapshots.
 
+## Enterprise Docs
+
+These documents define the operating and governance surface for teams running `tensor-grep` in production:
+
+- [docs/SUPPORT_MATRIX.md](docs/SUPPORT_MATRIX.md) for supported platforms, runtimes, and distribution channels
+- [docs/CONTRACTS.md](docs/CONTRACTS.md) for compatibility guarantees around configs, caches, and machine-readable outputs
+- [docs/HOTFIX_PROCEDURE.md](docs/HOTFIX_PROCEDURE.md) for patch, rollback, and verification process
+- [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md) for hidden and opt-in features that are intentionally outside the stable public CLI surface
+- [SECURITY.md](SECURITY.md) for vulnerability reporting expectations
+- [CONTRIBUTING.md](CONTRIBUTING.md) for contribution, validation, and release-intent rules
+
 ## Stable Windows Test Confirmation
 
 On this Windows host, the most reliable repo-wide confirmation path is the file-backed pytest runner:
@@ -184,7 +195,7 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 
 Installer defaults and channels:
 - Default behavior installs the latest stable PyPI release.
-- Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=0.2.1`).
+- Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.0`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
@@ -204,7 +215,7 @@ irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/instal
 
 ```bash
 # Linux/macOS: install a specific stable release
-TENSOR_GREP_VERSION=0.2.1 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+TENSOR_GREP_VERSION=1.1.0 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
 ```
 
 ### Python Package Managers (pip/uv)
@@ -224,10 +235,19 @@ npx tensor-grep search "ERROR" .
 ```
 
 ### Standalone Binaries (For IT/SecOps)
-If you cannot run scripts or prefer not to use `uv`, download the monolithic standalone executables from the GitHub Releases page. These `~3GB` files are built via Nuitka and contain Python, PyTorch, and the CUDA drivers completely bundled together:
+If you cannot run the install scripts or prefer a managed binary rollout, use the GitHub release assets and checksum manifest from the tagged release.
+
+Current release assets include:
+* `tg-windows-amd64-cpu.exe`
 * `tg-windows-amd64-nvidia.exe`
-* `tg-linux-amd64-nvidia.bin`
-* `tg-macos-amd64-cpu.bin`
+* `tg-linux-amd64-cpu`
+* `tg-linux-amd64-nvidia`
+* `tg-macos-amd64-cpu`
+
+Operational notes:
+- Each tagged release also publishes `CHECKSUMS.txt` and a `package-manager-bundle/` for Homebrew and Winget submission flows.
+- Prefer the Python install path if you want `tg update` / `tg upgrade` to self-update the installed package.
+- Experimental features remain opt-in and are documented in [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md), not surfaced in the top-level help output.
 
 ### Docker
 ```bash
@@ -447,13 +467,14 @@ The native CPU, AST, index, and primary GPU paths live in Rust. Python remains o
 * **Windows Native:** PyTorch with CUDA 12 support for optional NLP and compatibility flows.
 * **All platforms:** `uv pip install "tensor-grep[ast,nlp]"` for optional AST/NLP Python extras where needed.
 
-## Enterprise Roadmap: GPUDirect Storage (GDS)
+## Future Work
 
-The absolute theoretical limit of local hardware parsing is bounded by the PCIe bus. Currently, `tensor-grep` uses Apache Arrow via `memmap2` to achieve end-to-end zero-copy routing:
+The `v1.x` line is feature-complete for the current native search, AST, and editor-plane surface. The remaining work is intentionally narrow:
 
-**NVMe Disk -> OS Page Cache (CPU RAM via mmap) -> PCIe Bus -> GPU VRAM**
-
-For multi-terabyte log repositories, the CPU RAM bounce-buffer becomes the limiting factor. The next frontier for `tensor-grep v2.0` is the integration of **NVIDIA cuFile (GPUDirect Storage)**. By replacing the Rust mmap with a Rust C++ FFI call to `cuFileRead()`, we can instruct the NVMe controller to bypass the CPU entirely and DMA (Direct Memory Access) the bytes straight from the SSD into the GPU VRAM.
+- graduate or retire the experimental resident AST worker based on benchmark-governed evidence, not intuition
+- keep managed provider / editor-plane integrations honest and contract-tested
+- continue supply-chain hardening, package-manager validation, and operational docs for team ownership
+- preserve benchmark history and rejected experiments so future work stays measurable instead of speculative
 
 ## Tips
 

@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Unreleased
+
+### Documentation
+
+- tighten enterprise-facing docs around support tiers, compatibility contracts, rollback guidance, install paths, and experimental feature boundaries
+
+### Testing
+
+- add CLI/help and enterprise docs governance coverage for `doctor`, hidden `worker`, and the new enterprise documentation surface
+
 
 ## v1.1.0 (2026-04-12)
 

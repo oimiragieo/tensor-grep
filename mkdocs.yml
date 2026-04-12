@@ -1,8 +1,8 @@
 site_name: tensor-grep
-site_description: GPU-Accelerated Semantic Log Parsing CLI
+site_description: Native search and rewrite tool for large text corpora and codebases
 site_author: tensor-grep team
-repo_url: https://github.com/tensor-grep/tensor-grep
-repo_name: tensor-grep/tensor-grep
+repo_url: https://github.com/oimiragieo/tensor-grep
+repo_name: oimiragieo/tensor-grep
 
 theme:
   name: material
@@ -31,7 +31,11 @@ nav:
   - Home: index.md
   - Getting Started:
     - Installation: installation.md
+    - Support Matrix: SUPPORT_MATRIX.md
+    - Contracts: CONTRACTS.md
+    - Experimental Features: EXPERIMENTAL.md
     - Release Checklist: RELEASE_CHECKLIST.md
+    - Hotfix Procedure: HOTFIX_PROCEDURE.md
     - Package Manager Publish: package_manager_publish.md
   - Architecture: architecture.md
   - Benchmarks: benchmarks.md

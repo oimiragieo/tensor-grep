@@ -373,9 +373,10 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     assert result.exit_code == 0
     assert "--with-lsp" in help_text
     assert "--json" in help_text
+    assert "--config" in help_text
     # Handle rich text wrapping that may split phrases
     normalized_help = re.sub(r"\s+", " ", help_text)
-    assert "AI troubleshooting" in normalized_help
+    assert "system, GPU, cache, and optional daemon diagnostics" in normalized_help
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
@@ -414,6 +415,32 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["session_daemon"]["running"] is True
     assert payload["lsp"]["enabled"] is True
     assert payload["lsp"]["providers"][0]["language"] == "python"
+
+
+def test_doctor_json_passes_non_default_config_to_payload_builder(
+    monkeypatch, tmp_path: Path
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_build(path: str, *, config: str | None, with_lsp: bool) -> dict[str, object]:
+        seen.update({"path": path, "config": config, "with_lsp": with_lsp})
+        return {"ok": True}
+
+    monkeypatch.setattr("tensor_grep.cli.main._build_doctor_payload", _fake_build)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["doctor", str(tmp_path), "--config", "configs/custom.yml", "--json", "--no-lsp"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"ok": True}
+    assert seen == {
+        "path": str(tmp_path),
+        "config": "configs/custom.yml",
+        "with_lsp": False,
+    }
 
 
 def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_path: Path) -> None:
@@ -3708,6 +3735,34 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "audit-verify" in result.stdout
     assert "rulesets" in result.stdout
     assert "Run semantic log classification" in result.stdout
+    assert "worker" not in result.stdout
+
+
+def test_worker_help_should_render_dedicated_hidden_command_help() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["worker", "--help"])
+    help_text = _strip_ansi(result.stdout)
+
+    assert result.exit_code == 0
+    assert "Resident AST Worker" in help_text
+    assert "--port" in help_text
+    assert "--stop" in help_text
+
+
+def test_update_alias_calls_upgrade(monkeypatch) -> None:
+    seen = {"called": False}
+
+    def _fake_upgrade() -> None:
+        seen["called"] = True
+
+    monkeypatch.setattr("tensor_grep.cli.main.upgrade", _fake_upgrade)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["update"])
+
+    assert result.exit_code == 0
+    assert seen["called"] is True
 
 
 def test_audit_verify_json_reports_valid_signed_manifest(tmp_path):

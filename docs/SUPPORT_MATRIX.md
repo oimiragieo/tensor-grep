@@ -1,26 +1,36 @@
 # Support Matrix
 
-This document defines the officially supported operating systems, runtime environments, and distribution channels for `tensor-grep`.
+This document distinguishes CI-tested environments from best-effort compatibility and operator-managed deployments for `tensor-grep`.
 
-## Operating Systems
-- **Linux:** Ubuntu 20.04+, Debian 11+, RHEL 11+. (glibc 2.31+)
-- **Windows:** Windows 10, Windows 11, Windows Server 2019+. (amd64)
-- **macOS:** macOS 12+ (Apple Silicon and Intel).
+## Platform Tiers
+
+### Tier 1: CI-tested and release-validated
+- **Linux amd64:** `ubuntu-latest` CI, published CPU/NVIDIA release binaries, package-manager bundle validation.
+- **Windows amd64:** `windows-latest` CI, published CPU/NVIDIA release binaries, Winget manifest validation.
+- **macOS amd64:** `macos-latest` CI, published CPU release binary, Homebrew formula validation.
+
+### Best-effort / operator-validated
+- **Other glibc-compatible Linux distributions:** expected to work when they remain compatible with the published release binaries and Python dependency set.
+- **Windows Server variants:** expected to track the supported Windows runner base closely enough for standard CLI use, but not exhaustively CI-covered.
+- **Apple Silicon macOS:** use Rosetta with the published amd64 binary or build from source until a native arm64 release artifact is introduced.
 
 ## Python Versions
-- **Supported:** Python 3.9, 3.10, 3.11, 3.12, 3.13, 3.14.
-- Python < 3.9 is completely unsupported and untested.
+- **CI-tested:** Python 3.11 and 3.12.
+- **Best-effort for source installs:** Python 3.9, 3.10, 3.13, and 3.14 when the dependency set resolves cleanly on the target host.
+- **Unsupported:** Python < 3.9.
 
 ## Rust Toolchain
-- **Supported:** Stable Rust (1.75+).
+- **Maintainer baseline:** stable Rust 1.75+.
+- **Expectation:** use the stable toolchain from CI/release workflows when validating release builds or reproducing artifacts.
 
-## Package Managers
-- **pip:** Official distribution channel for Python integration.
-- **winget:** Official distribution for Windows standalone binaries.
-- **Homebrew:** Official distribution for macOS standalone binaries.
+## Distribution Channels
+- **Official / release-validated:** GitHub Releases, PyPI, Homebrew formula, Winget manifest.
+- **Convenience channel:** `npx` wrapper for lightweight Node-based invocation.
+- **Operational guidance:** prefer PyPI or the install scripts when you need `tg update`; prefer GitHub Releases, Homebrew, or Winget for managed workstation/server rollout.
 
 ## Semantic Versioning & Deprecation
 `tensor-grep` follows Semantic Versioning (SemVer) 2.0.0.
-- **Major versions** may introduce breaking changes to CLI flags, `sgconfig.yml` schemas, or JSON outputs.
+- **Major versions** may introduce breaking changes to CLI flags, `sgconfig.yml` schemas, or machine-readable outputs.
 - **Minor versions** add features in a backward-compatible manner.
-- **Deprecation Policy:** Features, flags, or fields scheduled for removal will be marked as `DEPRECATED` for at least 2 minor versions before removal.
+- **Deprecation Policy:** stable features, flags, or fields scheduled for removal will be marked as `DEPRECATED` for at least 2 minor versions before removal.
+- **Experimental Surface:** items documented in [docs/EXPERIMENTAL.md](EXPERIMENTAL.md) are outside the stable compatibility guarantees and may change in minor releases.

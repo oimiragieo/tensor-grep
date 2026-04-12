@@ -1,22 +1,32 @@
 # tensor-grep (tg)
 
-**The GPU-Accelerated Semantic Log Parsing CLI**
+`tensor-grep` is a native search and rewrite tool for large text corpora and codebases. The product combines:
 
-`tensor-grep` is a next-generation CLI tool that combines the raw speed of traditional regex matching with the semantic understanding of neural networks (cyBERT). It runs up to **3x faster than Ripgrep** when multiplexing complex log classifications.
+- Rust-native CPU text search
+- Rust-native AST search and rewrite
+- indexed repeated-query acceleration
+- optional GPU / NLP paths for the workloads that justify them
+- machine-readable CLI and MCP surfaces for harnesses and editor tooling
 
-## Why tensor-grep?
+## Start Here
 
-* **Dual Path Architecture:** Falls back to pure CPU/Regex when appropriate, but auto-detects NVIDIA GPUs to accelerate complex searches.
-* **Semantic Understanding:** Classify logs by *meaning*, not just characters. Find "connection timeouts" without needing to specify 50 different regex variants.
-* **Direct I/O:** Uses Microsoft DirectStorage on Windows and KvikIO on Linux to bypass the CPU and stream files straight from NVMe to VRAM.
-* **Zero Dependencies:** Distributed as a standalone binary via `npx` or standard package managers.
+- [README.md](../README.md) for the product overview and installation entry points
+- [docs/benchmarks.md](benchmarks.md) for accepted benchmark lines and regression rules
+- [docs/routing_policy.md](routing_policy.md) for backend routing behavior
+- [docs/harness_api.md](harness_api.md) for machine-readable CLI contracts
+- [docs/installation.md](installation.md) for install and package-manager guidance
 
-## Quick Start
+## Enterprise / Operational Docs
 
-```bash
-# Using NPX (No installation required)
-npx tensor-grep classify my_large_log.log
+- [docs/SUPPORT_MATRIX.md](SUPPORT_MATRIX.md)
+- [docs/CONTRACTS.md](CONTRACTS.md)
+- [docs/HOTFIX_PROCEDURE.md](HOTFIX_PROCEDURE.md)
+- [docs/RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+- [docs/EXPERIMENTAL.md](EXPERIMENTAL.md)
+- [docs/runbooks/](runbooks/)
 
-# Standard installation
-tg search --cpu ERROR my_large_log.log
-```
+## Product Positioning
+
+- `rg` remains the cold generic text-search baseline.
+- `tensor-grep` is strongest on native AST workflows, repeated-query acceleration, machine-readable harness flows, and managed enterprise rollout.
+- GPU acceleration is benchmark-governed and hardware-specific, not a universal default.

@@ -7,6 +7,20 @@ This checklist reflects the current enterprise release pipeline:
 - PyPI publish is OIDC-based and runs only when the computed release version is not already on PyPI.
 - Release asset/version consistency is enforced by `scripts/validate_release_assets.py`.
 
+## 0. Enterprise-ready evidence
+
+Before calling a release enterprise-ready, confirm the exact release commit has:
+
+- green CI on the same commit that semantic-release tagged
+- release assets, `CHECKSUMS.txt`, SBOMs, provenance, and signing artifacts present on the GitHub release
+- package-manager bundle validation complete
+- public docs aligned:
+  - `docs/SUPPORT_MATRIX.md`
+  - `docs/CONTRACTS.md`
+  - `docs/HOTFIX_PROCEDURE.md`
+  - `docs/EXPERIMENTAL.md`
+- operator runbooks aligned with the shipped behavior
+
 ## 1. Pre-merge requirements
 
 1. Sync local branch:

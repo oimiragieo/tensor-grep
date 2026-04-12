@@ -16,6 +16,11 @@ To clear all caches and force a full rebuild on the next search:
 rm -rf .tg_cache/
 ```
 
+Windows PowerShell:
+```powershell
+Remove-Item -LiteralPath .tg_cache -Recurse -Force
+```
+
 ## Rebuilding Indexes
 After clearing the cache, you can pre-warm it by running a dummy search or using `tg calibrate`.
 ```bash
