@@ -1,18 +1,57 @@
 # CHANGELOG
 
-## Unreleased
+
+## v1.0.1 (2026-04-12)
+
+### Bug Fixes
+
+- Align tests with CI ruff formatter
+  ([`3b4ea31`](https://github.com/oimiragieo/tensor-grep/commit/3b4ea31f0161591a0c4f69d0be2cd4bb4e2b65fb))
+
+- Apply rustfmt for release pipeline parity
+  ([`2f5c52c`](https://github.com/oimiragieo/tensor-grep/commit/2f5c52cd043d51208a84346e95930d68cf6a2d23))
+
+- Resolve clippy blockers in rust release path
+  ([`0871e08`](https://github.com/oimiragieo/tensor-grep/commit/0871e088fbbed95f95e3ce09058ab0d8f50700c6))
+
+- Resolve remaining CI blockers for release publish
+  ([`d7ae2fa`](https://github.com/oimiragieo/tensor-grep/commit/d7ae2fa6d6d7752b0d060a9c99ac380fa6234834))
+
+- Restore benchmark submodule metadata and repo hygiene
+  ([`fd36e55`](https://github.com/oimiragieo/tensor-grep/commit/fd36e55e12d122b51ee04d32380d03a815188beb))
+
+- Trigger production release pipeline after v1.0.0 cleanup
+  ([`c50dfc8`](https://github.com/oimiragieo/tensor-grep/commit/c50dfc8b870f6179c3bdc2d292974621a680b602))
+
+
+## v1.0.0 (2026-04-11)
+
+### Bug Fixes
+
+- Make Windows tg update defer self-replacement
+  ([`6baaab7`](https://github.com/oimiragieo/tensor-grep/commit/6baaab788f2215f81467b7656e4998fb94828b7c))
+
+- Routing failures for native editor-plane and Python passthrough
+  ([`9c857d7`](https://github.com/oimiragieo/tensor-grep/commit/9c857d78ecee20c54fdf1c919a4bcf8c7f3c5f26))
+
+### Documentation
+
+- Record rejected max-count frontdoor widening
+  ([`f24d626`](https://github.com/oimiragieo/tensor-grep/commit/f24d626aca522688563d1d7a27a9a7ae6f28c18e))
+
+- Record rejected positional glob probe
+  ([`e09a0de`](https://github.com/oimiragieo/tensor-grep/commit/e09a0decb5298e4d5f478ebd6f2af55fc0792be7))
 
 ### Features
 
-- Add positional `-m/--max-count` support and narrow positional-lane speedup
+- Add doctor diagnostics command
+  ([`55f53e0`](https://github.com/oimiragieo/tensor-grep/commit/55f53e0525a3691e86949d7456fc8465f92d50aa))
 
-  Positional `tg -m <n> PATTERN PATH` now preserves `max_count` through the ripgrep passthrough
-  args and native routing config instead of silently dropping it outside `tg search`. On the
-  experimental `explicit_binary_positional_early_rg` lane, the `Max Count Limit` row improved from
-  `0.163646s` to `0.158791s` (`-2.97%`) when compared against the clean `origin/main` benchmark
-  script using the same binary. This is a narrow positional capability/result, not a new global
-  cold-path claim. The next two cold-path targets are the separate default `-c` count-path
-  overhead, then positional `-w`.
+- Native AST orchestration, resident worker, and editor plane
+  ([`6cca612`](https://github.com/oimiragieo/tensor-grep/commit/6cca612814e71eb88a23cf216fbbc22ce2c161d0))
+
+- Support positional max-count routing
+  ([`612548d`](https://github.com/oimiragieo/tensor-grep/commit/612548deec928999c3c86807a96c79dd2bc470e8))
 
 
 ## v0.35.1 (2026-04-02)
@@ -21,6 +60,7 @@
 
 - Cut ripgrep passthrough startup overhead
   ([`7b53749`](https://github.com/oimiragieo/tensor-grep/commit/7b537497cfcfae9c7517a7b71600830890f64c83))
+
 
 ## v0.35.0 (2026-04-02)
 
@@ -1331,7 +1371,7 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 - **validation**: Add misc-1 milestone user-testing synthesis report
   ([`4a402b0`](https://github.com/oimiragieo/tensor-grep/commit/4a402b0665ee8fc49d23e5d59e539d7347fe67b8))
 
-No validation contract assertions to test â€” both misc-1 features (refresh-python-benchmark-baseline,
+No validation contract assertions to test — both misc-1 features (refresh-python-benchmark-baseline,
   benchmark-harness-stability) are infrastructure improvements with empty fulfills fields.
 
 Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
@@ -1533,7 +1573,7 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 - **validation**: Synthesize rewrite-apply-speed user-testing results
   ([`9515a40`](https://github.com/oimiragieo/tensor-grep/commit/9515a40abde4a249df88992c27614a7a7221d06a))
 
-- **validation**: User testing for benchmark-expansion milestone â€” all 11 assertions passed
+- **validation**: User testing for benchmark-expansion milestone — all 11 assertions passed
   ([`6c87c74`](https://github.com/oimiragieo/tensor-grep/commit/6c87c745f5f2edb9c719583278141e6226b6bdf5))
 
 Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
@@ -1559,7 +1599,7 @@ Seven prioritized work items with exact file paths, commands, and invariants to 
 
 Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
 
-- Close Milestone 1 audit â€” all gaps resolved
+- Close Milestone 1 audit — all gaps resolved
   ([`d6e5e82`](https://github.com/oimiragieo/tensor-grep/commit/d6e5e82f33b2c646da24ccecced39754f624fe09))
 
 GPU sidecar routing done (2f8f96b), benchmark surfaces aligned to native binary (d8ce671, 831e765,
