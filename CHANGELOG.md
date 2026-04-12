@@ -1,14 +1,27 @@
 # CHANGELOG
 
-## Unreleased
+
+## v1.1.1 (2026-04-12)
+
+### Bug Fixes
+
+- **docs**: Correct strict docs site links
+  ([`200c98e`](https://github.com/oimiragieo/tensor-grep/commit/200c98eaa7557b4d5614061b7c3d899ae85b2d81))
+
+- **enterprise**: Correct doctor summary text and add missing worker command
+  ([`20df7cb`](https://github.com/oimiragieo/tensor-grep/commit/20df7cb017f6bed2aa72cdaf46a3403b1e87f28d))
+
+- cli: update top-level doctor help string to accurately reflect new GPU and Cache diagnostics -
+  cli: add hidden worker command to python entrypoint, ensuring tg worker correctly delegates to the
+  native binary and renders appropriate help text
 
 ### Documentation
 
-- tighten enterprise-facing docs around support tiers, compatibility contracts, rollback guidance, install paths, and experimental feature boundaries
+- Catalogue experimental features and hidden commands
+  ([`e822fbc`](https://github.com/oimiragieo/tensor-grep/commit/e822fbc5bb87ef5c67036bdfd2dca5c5b36bd68e))
 
-### Testing
-
-- add CLI/help and enterprise docs governance coverage for `doctor`, hidden `worker`, and the new enterprise documentation surface
+- **enterprise**: Tighten public docs and governance checks
+  ([`37ba64f`](https://github.com/oimiragieo/tensor-grep/commit/37ba64f2b5b584e2c794265773e121d8acc7fc82))
 
 
 ## v1.1.0 (2026-04-12)
