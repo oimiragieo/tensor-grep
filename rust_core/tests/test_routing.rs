@@ -14,6 +14,14 @@ fn normalize_newlines(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
+fn combined_output(output: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
 fn tg() -> Command {
     Command::new(env!("CARGO_BIN_EXE_tg"))
 }
@@ -122,6 +130,26 @@ fn write_python_source() -> (TempDir, PathBuf) {
     let file_path = dir.path().join("fixture.py");
     fs::write(&file_path, "def add(a, b):\n    return a + b\n").unwrap();
     (dir, file_path)
+}
+
+fn write_python_wrapper(dir: &Path) -> PathBuf {
+    if cfg!(windows) {
+        let script = dir.join("python-wrapper.cmd");
+        fs::write(&script, "@echo off\r\necho %*\r\n").unwrap();
+        script
+    } else {
+        let script = dir.join("python-wrapper.sh");
+        fs::write(&script, "#!/bin/sh\nprintf '%s\\n' \"$*\"\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mut permissions = fs::metadata(&script).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script, permissions).unwrap();
+        }
+        script
+    }
 }
 
 fn build_index(dir: &Path) {
@@ -423,6 +451,8 @@ fn test_routing_directory_search_promotes_to_native_cpu() {
 
     if stderr.contains("routing_backend=RipgrepBackend") {
         assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+    } else if stderr.contains("routing_reason=rg_unavailable") {
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
         assert_verbose_routing(
             &stderr,
@@ -1541,6 +1571,8 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
 
     if stderr.contains("routing_backend=RipgrepBackend") {
         assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
+    } else if stderr.contains("routing_reason=rg_unavailable") {
+        assert_verbose_routing(&stderr, "NativeCpuBackend", "rg_unavailable", false);
     } else {
         assert_verbose_routing(
             &stderr,
@@ -1569,19 +1601,21 @@ fn test_routing_directory_count_search_uses_native_cpu_without_fallback() {
 #[test]
 fn test_routing_external_editor_plane_commands_are_forwarded() {
     let scenarios = vec!["map", "session", "doctor"];
+    let dir = tempdir().unwrap();
+    let python_wrapper = write_python_wrapper(dir.path());
 
     for command in scenarios {
         let output = tg()
             .current_dir(repo_root())
             .arg(command)
             .arg("--help")
-            .env("TG_SIDECAR_PYTHON", repo_python())
+            .env("TG_SIDECAR_PYTHON", &python_wrapper)
             .output()
             .unwrap();
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = combined_output(&output);
         assert!(
-            stdout.contains(&format!("python -m tensor_grep {}", command)),
+            stdout.contains(&format!("-m tensor_grep {}", command)),
             "External command '{}' was not forwarded properly. stdout={}",
             command,
             stdout

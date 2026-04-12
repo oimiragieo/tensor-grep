@@ -667,6 +667,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
 }
 
 fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
+    if raw_args.get(1).and_then(|arg| arg.to_str()) != Some("search") {
+        return None;
+    }
     let args = parse_early_ripgrep_args(raw_args)?;
     should_use_early_ripgrep_fast_path(&args).then_some(args)
 }
@@ -793,6 +796,21 @@ mod tests {
 
         assert!(parse_default_search_frontdoor_args(&structured).is_none());
         assert!(parse_default_search_frontdoor_args(&glob).is_none());
+    }
+
+    #[test]
+    fn default_search_frontdoor_rejects_positional_cli_shapes() {
+        let positional = ["tg", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let positional_count = ["tg", "-c", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(parse_default_search_frontdoor_args(&positional).is_none());
+        assert!(parse_default_search_frontdoor_args(&positional_count).is_none());
     }
 }
 
@@ -1406,7 +1424,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
         count: cli.count,
-        line_number: false,
+        line_number: !cli.count,
         context: None,
         max_count: cli.max_count,
         word_regexp: false,

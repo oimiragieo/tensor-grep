@@ -2005,9 +2005,12 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
         if path.suffix in _JS_TS_SUFFIXES:
             import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
             export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
-            class_match = re.match(r"^\s*(?:export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)", line)
+            class_match = re.match(
+                r"^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)",
+                line,
+            )
             function_match = re.match(
-                r"^\s*(?:export\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
+                r"^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
                 line,
             )
             if import_match:
@@ -2385,6 +2388,59 @@ def _regex_references_and_calls(
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
+    def _strip_line_string_and_comment_noise(line: str, *, supports_template_strings: bool) -> str:
+        cleaned: list[str] = []
+        in_single = False
+        in_double = False
+        in_template = False
+        escaped = False
+
+        for index, char in enumerate(line):
+            next_char = line[index + 1] if index + 1 < len(line) else ""
+            if in_single:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == "'":
+                    in_single = False
+                cleaned.append(" ")
+                continue
+            if in_double:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_double = False
+                cleaned.append(" ")
+                continue
+            if in_template:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == "`":
+                    in_template = False
+                cleaned.append(" ")
+                continue
+            if char == "/" and next_char == "/":
+                break
+            if char == "'":
+                in_single = True
+                cleaned.append(" ")
+                continue
+            if char == '"':
+                in_double = True
+                cleaned.append(" ")
+                continue
+            if supports_template_strings and char == "`":
+                in_template = True
+                cleaned.append(" ")
+                continue
+            cleaned.append(char)
+        return "".join(cleaned)
+
     for line_number, line in enumerate(lines, start=1):
         if symbol_pattern.search(line):
             references.append({
@@ -2394,7 +2450,11 @@ def _regex_references_and_calls(
                 "line": line_number,
                 "text": line,
             })
-        if call_pattern.search(line):
+        supports_template_strings = path.suffix in _JS_TS_SUFFIXES
+        sanitized_line = _strip_line_string_and_comment_noise(
+            line, supports_template_strings=supports_template_strings
+        )
+        if call_pattern.search(sanitized_line):
             calls.append({
                 "name": symbol,
                 "kind": "call",
@@ -2564,6 +2624,8 @@ def _js_ts_provider_alias_calls(
     path: Path,
     symbol: str,
     repo_root: Path | str | None = None,
+    *,
+    include_assignment_wrappers: bool = False,
 ) -> list[dict[str, Any]]:
     if path.suffix not in _JS_TS_SUFFIXES:
         return []
@@ -2605,30 +2667,86 @@ def _js_ts_provider_alias_calls(
             continue
         alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
     alias_names = {name for name in alias_resolution_by_name if name}
-    assignment_pattern = re.compile(
-        r"\b(?:const|let|var)\s+(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[A-Za-z_][A-Za-z0-9_]*)\b"
-    )
-    changed = True
-    while changed:
-        changed = False
-        for line in lines:
-            match = assignment_pattern.search(line)
-            if match is None:
+
+    def _strip_js_ts_string_and_comment_noise(line: str) -> str:
+        cleaned: list[str] = []
+        in_single = False
+        in_double = False
+        in_template = False
+        escaped = False
+
+        for index, char in enumerate(line):
+            next_char = line[index + 1] if index + 1 < len(line) else ""
+            if in_single:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == "'":
+                    in_single = False
+                cleaned.append(" ")
                 continue
-            value_name = match.group("value")
-            local_name = match.group("local")
-            if value_name not in alias_names or local_name in alias_names:
+            if in_double:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_double = False
+                cleaned.append(" ")
                 continue
-            alias_names.add(local_name)
-            alias_resolution_by_name[local_name] = dict(
-                alias_resolution_by_name.get(value_name, {})
-            )
-            changed = True
+            if in_template:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == "`":
+                    in_template = False
+                cleaned.append(" ")
+                continue
+            if char == "/" and next_char == "/":
+                break
+            if char == "'":
+                in_single = True
+                cleaned.append(" ")
+                continue
+            if char == '"':
+                in_double = True
+                cleaned.append(" ")
+                continue
+            if char == "`":
+                in_template = True
+                cleaned.append(" ")
+                continue
+            cleaned.append(char)
+        return "".join(cleaned)
+
+    if include_assignment_wrappers:
+        assignment_pattern = re.compile(
+            r"\b(?:const|let|var)\s+(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[A-Za-z_][A-Za-z0-9_]*)\b"
+        )
+        changed = True
+        while changed:
+            changed = False
+            for line in lines:
+                match = assignment_pattern.search(line)
+                if match is None:
+                    continue
+                value_name = match.group("value")
+                local_name = match.group("local")
+                if value_name not in alias_names or local_name in alias_names:
+                    continue
+                alias_names.add(local_name)
+                alias_resolution_by_name[local_name] = dict(
+                    alias_resolution_by_name.get(value_name, {})
+                )
+                changed = True
 
     calls: list[dict[str, Any]] = []
     for line_number, line in enumerate(lines, start=1):
+        sanitized_line = _strip_js_ts_string_and_comment_noise(line)
         for alias_name in sorted(alias_names):
-            if not re.search(rf"\b{re.escape(alias_name)}\s*\(", line):
+            if not re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line):
                 continue
             alias_resolution = alias_resolution_by_name.get(alias_name, {})
             calls.append({
@@ -2793,6 +2911,8 @@ def _rust_provider_alias_calls(
     path: Path,
     symbol: str,
     repo_root: Path | str | None = None,
+    *,
+    include_assignment_wrappers: bool = False,
 ) -> list[dict[str, Any]]:
     if path.suffix not in _RUST_SUFFIXES:
         return []
@@ -2815,30 +2935,71 @@ def _rust_provider_alias_calls(
             alias_resolution_by_name.setdefault(symbol, dict(resolved_import))
     alias_names = {name for name in alias_resolution_by_name if name}
 
-    assignment_pattern = re.compile(
-        r"\blet\s+(?:mut\s+)?(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[A-Za-z_][A-Za-z0-9_:]*)\b"
-    )
-    changed = True
-    while changed:
-        changed = False
-        for line in lines:
-            match = assignment_pattern.search(line)
-            if match is None:
+    def _strip_rust_string_and_comment_noise(line: str) -> str:
+        cleaned: list[str] = []
+        in_single = False
+        in_double = False
+        escaped = False
+
+        for index, char in enumerate(line):
+            next_char = line[index + 1] if index + 1 < len(line) else ""
+            if in_single:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == "'":
+                    in_single = False
+                cleaned.append(" ")
                 continue
-            value_name = match.group("value").split("::")[-1]
-            local_name = match.group("local")
-            if value_name not in alias_names or local_name in alias_names:
+            if in_double:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_double = False
+                cleaned.append(" ")
                 continue
-            alias_names.add(local_name)
-            alias_resolution_by_name[local_name] = dict(
-                alias_resolution_by_name.get(value_name, {})
-            )
-            changed = True
+            if char == "/" and next_char == "/":
+                break
+            if char == "'":
+                in_single = True
+                cleaned.append(" ")
+                continue
+            if char == '"':
+                in_double = True
+                cleaned.append(" ")
+                continue
+            cleaned.append(char)
+        return "".join(cleaned)
+
+    if include_assignment_wrappers:
+        assignment_pattern = re.compile(
+            r"\blet\s+(?:mut\s+)?(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[A-Za-z_][A-Za-z0-9_:]*)\b"
+        )
+        changed = True
+        while changed:
+            changed = False
+            for line in lines:
+                match = assignment_pattern.search(line)
+                if match is None:
+                    continue
+                value_name = match.group("value").split("::")[-1]
+                local_name = match.group("local")
+                if value_name not in alias_names or local_name in alias_names:
+                    continue
+                alias_names.add(local_name)
+                alias_resolution_by_name[local_name] = dict(
+                    alias_resolution_by_name.get(value_name, {})
+                )
+                changed = True
 
     calls: list[dict[str, Any]] = []
     for line_number, line in enumerate(lines, start=1):
+        sanitized_line = _strip_rust_string_and_comment_noise(line)
         for alias_name in sorted(alias_names):
-            if not re.search(rf"\b{re.escape(alias_name)}\s*\(", line):
+            if not re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line):
                 continue
             alias_resolution = alias_resolution_by_name.get(alias_name, {})
             calls.append({
@@ -7432,11 +7593,35 @@ def build_symbol_refs_from_map(
         if current.suffix == ".py":
             current_refs, _ = _python_references_and_calls(current, symbol)
         elif current.suffix in _JS_TS_SUFFIXES:
-            current_refs, _ = _js_ts_references_and_calls(current, symbol, repo_root)
-            if not current_refs:
-                current_refs, _ = _regex_references_and_calls(current, symbol)
+            current_refs, current_calls = _js_ts_references_and_calls(current, symbol, repo_root)
+            if not current_refs and not current_calls:
+                current_calls = _js_ts_provider_alias_calls(current, symbol, repo_root)
+            if not current_refs and not current_calls:
+                current_refs, current_calls = _regex_references_and_calls(current, symbol)
+            js_ts_call_refs = [
+                {
+                    "name": str(call["name"]),
+                    "kind": "reference",
+                    "file": str(call["file"]),
+                    "line": int(call["line"]),
+                    "text": str(call["text"]),
+                    "provenance": current_provenance,
+                    **(
+                        {
+                            "resolution_provenance": list(call.get("resolution_provenance", [])),
+                            "resolution_confidence": float(call.get("resolution_confidence", 0.95)),
+                        }
+                        if "resolution_provenance" in call
+                        else {}
+                    ),
+                }
+                for call in current_calls
+            ]
+            current_refs.extend(js_ts_call_refs)
         elif current.suffix in _RUST_SUFFIXES:
             current_refs, current_calls = _rust_references_and_calls(current, symbol, repo_root)
+            if not current_refs and not current_calls:
+                current_calls = _rust_provider_alias_calls(current, symbol, repo_root)
             if not current_refs and not current_calls:
                 current_refs, current_calls = _regex_references_and_calls(current, symbol)
             rust_call_refs = [
@@ -7587,9 +7772,13 @@ def build_symbol_callers_from_map(
             elif current.suffix in _JS_TS_SUFFIXES:
                 _, current_calls = _js_ts_references_and_calls(current, symbol, repo_root)
                 if not current_calls:
+                    current_calls = _js_ts_provider_alias_calls(current, symbol, repo_root)
+                if not current_calls:
                     _, current_calls = _regex_references_and_calls(current, symbol)
             elif current.suffix in _RUST_SUFFIXES:
                 _, current_calls = _rust_references_and_calls(current, symbol, repo_root)
+                if not current_calls:
+                    current_calls = _rust_provider_alias_calls(current, symbol, repo_root)
                 if not current_calls:
                     _, current_calls = _regex_references_and_calls(current, symbol)
             else:
@@ -7662,7 +7851,12 @@ def build_symbol_callers_from_map(
                     ),
                 })
         for js_ts_file in sorted(js_ts_external_files):
-            alias_calls = _js_ts_provider_alias_calls(Path(js_ts_file), symbol, repo_root)
+            alias_calls = _js_ts_provider_alias_calls(
+                Path(js_ts_file),
+                symbol,
+                repo_root,
+                include_assignment_wrappers=True,
+            )
             for alias_call in alias_calls:
                 external_calls.append({
                     **dict(alias_call),
@@ -7672,7 +7866,12 @@ def build_symbol_callers_from_map(
                     ),
                 })
         for rust_file in sorted(rust_external_files):
-            alias_calls = _rust_provider_alias_calls(Path(rust_file), symbol, repo_root)
+            alias_calls = _rust_provider_alias_calls(
+                Path(rust_file),
+                symbol,
+                repo_root,
+                include_assignment_wrappers=True,
+            )
             for alias_call in alias_calls:
                 external_calls.append({
                     **dict(alias_call),
@@ -7699,7 +7898,12 @@ def build_symbol_callers_from_map(
                 if Path(str(current)).suffix in _JS_TS_SUFFIXES
             )
             for js_ts_file in js_ts_files:
-                alias_calls = _js_ts_provider_alias_calls(Path(js_ts_file), symbol, repo_root)
+                alias_calls = _js_ts_provider_alias_calls(
+                    Path(js_ts_file),
+                    symbol,
+                    repo_root,
+                    include_assignment_wrappers=True,
+                )
                 for alias_call in alias_calls:
                     external_calls.append({
                         **dict(alias_call),
@@ -7714,7 +7918,12 @@ def build_symbol_callers_from_map(
                 if Path(str(current)).suffix in _RUST_SUFFIXES
             )
             for rust_file in rust_files:
-                alias_calls = _rust_provider_alias_calls(Path(rust_file), symbol, repo_root)
+                alias_calls = _rust_provider_alias_calls(
+                    Path(rust_file),
+                    symbol,
+                    repo_root,
+                    include_assignment_wrappers=True,
+                )
                 for alias_call in alias_calls:
                     external_calls.append({
                         **dict(alias_call),

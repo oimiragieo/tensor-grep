@@ -292,27 +292,23 @@ def _load_rule_specs_and_meta(
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+        })
 
     return specs, meta
 

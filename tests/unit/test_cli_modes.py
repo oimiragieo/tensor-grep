@@ -19,6 +19,10 @@ from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 @dataclass
 class _FakeBackend:
     results_by_file: dict[str, SearchResult]
@@ -364,11 +368,12 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["doctor", "--help"])
+    help_text = _strip_ansi(result.stdout)
 
     assert result.exit_code == 0
-    assert "--with-lsp" in result.stdout
-    assert "--json" in result.stdout
-    assert "AI troubleshooting" in result.stdout
+    assert "--with-lsp" in help_text
+    assert "--json" in help_text
+    assert "AI troubleshooting" in help_text
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
