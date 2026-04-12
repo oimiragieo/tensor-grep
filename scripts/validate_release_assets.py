@@ -125,7 +125,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
         )
 
-    uv_bootstrap_count = ci_workflow.count("uses: astral-sh/setup-uv@v5") + ci_workflow.count(
+    uv_bootstrap_count = ci_workflow.count("uses: astral-sh/setup-uv@v8") + ci_workflow.count(
         "python -m pip install uv"
     )
     if uv_bootstrap_count < 2:
@@ -718,6 +718,12 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         "Preflight smoke-test package-manager bundle contracts",
         "scripts/prepare_package_manager_release.py --check",
         "Confirm release publication gates",
+        "Generate Rust SBOM",
+        "Generate Python SBOM",
+        "Sign artifacts with Sigstore",
+        "gh-action-sigstore-python",
+        "Generate SLSA Provenance",
+        "attest-build-provenance",
     ):
         if expected not in release_workflow:
             errors.append(f"Release workflow missing expected job block: {expected.rstrip(':')}")
@@ -769,9 +775,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append("Release workflow build-binaries job must include step `Install uv`")
         else:
             uses_value = build_install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v5":
+            if uses_value != "astral-sh/setup-uv@v8":
                 errors.append(
-                    "Release workflow build-binaries `Install uv` step must use `astral-sh/setup-uv@v5`"
+                    "Release workflow build-binaries `Install uv` step must use `astral-sh/setup-uv@v8`"
                 )
         build_setup_python_run = build_run_by_name.get("Set up Python")
         if build_setup_python_run is None:
@@ -819,9 +825,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append("Release workflow build-binaries job must include step `Upload Artifact`")
         else:
             uses_value = upload_step.get("uses")
-            if uses_value != "actions/upload-artifact@v4":
+            if uses_value != "actions/upload-artifact@v7":
                 errors.append(
-                    "Release workflow build-binaries `Upload Artifact` step must use `actions/upload-artifact@v4`"
+                    "Release workflow build-binaries `Upload Artifact` step must use `actions/upload-artifact@v7`"
                 )
             with_block = upload_step.get("with")
             if not isinstance(with_block, dict):
@@ -894,16 +900,16 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     docs_steps_by_name[name] = step
                     if isinstance(run, str):
                         docs_run_by_name[name] = run
-        if "actions/checkout@v4" not in docs_uses_values:
-            errors.append("Release workflow publish-docs job must include `actions/checkout@v4`")
+        if "actions/checkout@v6" not in docs_uses_values:
+            errors.append("Release workflow publish-docs job must include `actions/checkout@v6`")
         setup_python_step = docs_steps_by_name.get("Set up Python")
         if setup_python_step is None:
             errors.append("Release workflow publish-docs job must include step `Set up Python`")
         else:
             uses_value = setup_python_step.get("uses")
-            if uses_value != "actions/setup-python@v5":
+            if uses_value != "actions/setup-python@v6":
                 errors.append(
-                    "Release workflow publish-docs `Set up Python` step must use `actions/setup-python@v5`"
+                    "Release workflow publish-docs `Set up Python` step must use `actions/setup-python@v6`"
                 )
             with_block = setup_python_step.get("with")
             if not isinstance(with_block, dict):
@@ -1057,9 +1063,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append("Release workflow create-release job must include step `Install uv`")
         else:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v5":
+            if uses_value != "astral-sh/setup-uv@v8":
                 errors.append(
-                    "Release workflow create-release `Install uv` step must use `astral-sh/setup-uv@v5`"
+                    "Release workflow create-release `Install uv` step must use `astral-sh/setup-uv@v8`"
                 )
         setup_python_run = create_release_run_by_name.get("Setup Python")
         if setup_python_run is None:
@@ -1075,9 +1081,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             )
         else:
             uses_value = download_artifacts_step.get("uses")
-            if uses_value != "actions/download-artifact@v4":
+            if uses_value != "actions/download-artifact@v8":
                 errors.append(
-                    "Release workflow create-release `Download Artifacts` step must use `actions/download-artifact@v4`"
+                    "Release workflow create-release `Download Artifacts` step must use `actions/download-artifact@v8`"
                 )
             with_block = download_artifacts_step.get("with")
             if not isinstance(with_block, dict):
@@ -1194,9 +1200,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     tag_steps_by_name[name] = step
                     if isinstance(run, str):
                         tag_run_by_name[name] = run
-        if "actions/checkout@v4" not in tag_uses_values:
+        if "actions/checkout@v6" not in tag_uses_values:
             errors.append(
-                "Release workflow validate-tag-version-parity job must include `actions/checkout@v4`"
+                "Release workflow validate-tag-version-parity job must include `actions/checkout@v6`"
             )
         for required_step in ("Install uv", "Setup Python"):
             if required_step not in tag_step_names:
@@ -1207,10 +1213,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         install_uv_step = tag_steps_by_name.get("Install uv")
         if install_uv_step is not None:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v5":
+            if uses_value != "astral-sh/setup-uv@v8":
                 errors.append(
                     "Release workflow validate-tag-version-parity "
-                    "`Install uv` step must use `astral-sh/setup-uv@v5`"
+                    "`Install uv` step must use `astral-sh/setup-uv@v8`"
                 )
         setup_python_run = tag_run_by_name.get("Setup Python")
         if setup_python_run is not None and "uv python install 3.12" not in setup_python_run:
@@ -1275,9 +1281,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 uses_value = step.get("uses")
                 if isinstance(uses_value, str):
                     checkout_uses_values.append(uses_value)
-        if "actions/checkout@v4" not in checkout_uses_values:
+        if "actions/checkout@v6" not in checkout_uses_values:
             errors.append(
-                "Release workflow verify-release-assets job must include `actions/checkout@v4`"
+                "Release workflow verify-release-assets job must include `actions/checkout@v6`"
             )
     verify_assets_step = "Verify uploaded release assets and checksum coverage"
     verify_assets_run = verify_release_assets_runs.get(verify_assets_step)
@@ -1321,16 +1327,16 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     npm_uses_values.append(uses_value)
                 if isinstance(name, str):
                     npm_steps_by_name[name] = step
-        if "actions/checkout@v4" not in npm_uses_values:
-            errors.append("Release workflow publish-npm job must include `actions/checkout@v4`")
+        if "actions/checkout@v6" not in npm_uses_values:
+            errors.append("Release workflow publish-npm job must include `actions/checkout@v6`")
         setup_node_step = npm_steps_by_name.get("Setup Node.js")
         if setup_node_step is None:
             errors.append("Release workflow publish-npm job must include step `Setup Node.js`")
         else:
             uses_value = setup_node_step.get("uses")
-            if uses_value != "actions/setup-node@v4":
+            if uses_value != "actions/setup-node@v6":
                 errors.append(
-                    "Release workflow publish-npm `Setup Node.js` step must use `actions/setup-node@v4`"
+                    "Release workflow publish-npm `Setup Node.js` step must use `actions/setup-node@v6`"
                 )
             with_block = setup_node_step.get("with")
             if not isinstance(with_block, dict):
@@ -1338,9 +1344,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                     "Release workflow publish-npm `Setup Node.js` step must define a `with` mapping"
                 )
             else:
-                if str(with_block.get("node-version")) != "20":
+                if str(with_block.get("node-version")) != "22":
                     errors.append(
-                        "Release workflow publish-npm `Setup Node.js` step must include `node-version: 20`"
+                        "Release workflow publish-npm `Setup Node.js` step must include `node-version: 22`"
                     )
                 if str(with_block.get("registry-url")) != "https://registry.npmjs.org":
                     errors.append(
@@ -1351,9 +1357,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append("Release workflow publish-npm job must include step `Install uv`")
         else:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v5":
+            if uses_value != "astral-sh/setup-uv@v8":
                 errors.append(
-                    "Release workflow publish-npm `Install uv` step must use `astral-sh/setup-uv@v5`"
+                    "Release workflow publish-npm `Install uv` step must use `astral-sh/setup-uv@v8`"
                 )
         setup_python_run = publish_npm_runs.get("Setup Python")
         if setup_python_run is None:
@@ -1467,9 +1473,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 name = step.get("name")
                 if isinstance(name, str):
                     release_gate_steps_by_name[name] = step
-        if "actions/checkout@v4" not in release_gate_uses_values:
+        if "actions/checkout@v6" not in release_gate_uses_values:
             errors.append(
-                "Release workflow release-success-gate job must include `actions/checkout@v4`"
+                "Release workflow release-success-gate job must include `actions/checkout@v6`"
             )
         install_uv_step = release_gate_steps_by_name.get("Install uv")
         if install_uv_step is None:
@@ -1478,9 +1484,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             )
         else:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v5":
+            if uses_value != "astral-sh/setup-uv@v8":
                 errors.append(
-                    "Release workflow release-success-gate `Install uv` step must use `astral-sh/setup-uv@v5`"
+                    "Release workflow release-success-gate `Install uv` step must use `astral-sh/setup-uv@v8`"
                 )
         setup_python_run = release_gate_runs.get("Setup Python")
         if setup_python_run is None:
@@ -1549,7 +1555,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             '`echo "Release publication gates passed: parity, npm, docs."`'
         )
 
-    if "uses: astral-sh/setup-uv@v5" not in release_workflow:
+    if "uses: astral-sh/setup-uv@v8" not in release_workflow:
         errors.append(
             "Release workflow package-manager validation must install uv before fallback checks"
         )
