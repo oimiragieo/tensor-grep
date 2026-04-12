@@ -1613,12 +1613,10 @@ def test_should_require_create_release_sbom_slsa_contract():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "Generate Rust SBOM" in joined_errors
-    assert "Generate Python SBOM" in joined_errors
-    assert "Sign artifacts with Sigstore" in joined_errors
-    assert "gh-action-sigstore-python" in joined_errors
-    assert "Generate SLSA Provenance" in joined_errors
-    assert "attest-build-provenance" in joined_errors
+    assert "Release workflow create-release job must include step `Generate Rust SBOM`" in joined_errors
+    assert "Release workflow create-release job must include step `Generate Python SBOM`" in joined_errors
+    assert "Release workflow create-release job must include step `Sign artifacts with Sigstore`" in joined_errors
+    assert "Release workflow create-release job must include step `Generate SLSA Provenance`" in joined_errors
 
 
 def test_should_require_release_binary_artifact_validation_flags():

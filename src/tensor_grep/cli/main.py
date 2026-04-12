@@ -297,9 +297,9 @@ def _doctor_ast_cache_status(path: str) -> dict[str, Any]:
                     data = json.load(f)
                 val_meta = data.get("validation_metadata", {})
                 for field in ("rule_files", "test_files", "tree_dirs"):
-                    for file_path_str in val_meta.get(field, {}):
+                    for file_path_str, recorded_mtime_ns in val_meta.get(field, {}).items():
                         p = Path(file_path_str)
-                        if not p.exists() or p.stat().st_mtime > cache_mtime:
+                        if not p.exists() or p.stat().st_mtime_ns > recorded_mtime_ns:
                             stale = True
                             break
                     if stale:

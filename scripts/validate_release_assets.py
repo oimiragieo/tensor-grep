@@ -108,6 +108,10 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "Skip publish parity gate when semantic-release produced no version",
         "Verify release version parity across tag/assets/PyPI",
         "scripts/validate_release_version_parity.py",
+        "uses: actions/checkout@v6",
+        "uses: actions/setup-python@v6",
+        "uses: actions/upload-artifact@v7",
+        "uses: actions/download-artifact@v8",
     ):
         if expected not in ci_workflow:
             errors.append(
@@ -1100,6 +1104,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             "Verify package-manager bundle checksums",
             "Smoke-test package-manager bundle contracts",
             "Smoke-verify Linux release binary version",
+            "Generate Rust SBOM",
+            "Generate Python SBOM",
+            "Sign artifacts with Sigstore",
+            "Generate SLSA Provenance",
         ):
             if required_step not in create_release_step_names:
                 errors.append(
@@ -1128,6 +1136,15 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 "--artifacts-dir",
                 "--expected-version",
             ),
+            "Generate Rust SBOM": (
+                "cargo cyclonedx",
+                "--format json",
+                "--all-features",
+            ),
+            "Generate Python SBOM": (
+                "cyclonedx-py environment",
+                "--outfile artifacts/sbom-python.json",
+            ),
         }
         for step_name, required_contract_tokens in create_release_step_contracts.items():
             run_script = create_release_run_by_name.get(step_name)
@@ -1145,6 +1162,22 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                         "Release workflow create-release "
                         f"`{step_name}` step must pass `{required_flag}`"
                     )
+        
+        sigstore_step = create_release_steps_by_name.get("Sign artifacts with Sigstore")
+        if sigstore_step is not None:
+            uses_value = sigstore_step.get("uses", "")
+            if "sigstore/gh-action-sigstore-python" not in str(uses_value):
+                errors.append(
+                    "Release workflow create-release `Sign artifacts with Sigstore` step must use `sigstore/gh-action-sigstore-python`"
+                )
+                
+        slsa_step = create_release_steps_by_name.get("Generate SLSA Provenance")
+        if slsa_step is not None:
+            uses_value = slsa_step.get("uses", "")
+            if "actions/attest-build-provenance" not in str(uses_value):
+                errors.append(
+                    "Release workflow create-release `Generate SLSA Provenance` step must use `actions/attest-build-provenance`"
+                )
         github_release_step = create_release_steps_by_name.get("Create GitHub Release")
         if github_release_step is None:
             errors.append(
