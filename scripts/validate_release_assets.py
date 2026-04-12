@@ -562,7 +562,11 @@ def validate_dependabot_config(*, dependabot_content: str) -> list[str]:
             )
 
         labels = update.get("labels")
-        if not isinstance(labels, list) or "dependencies" not in labels or "supply-chain" not in labels:
+        if (
+            not isinstance(labels, list)
+            or "dependencies" not in labels
+            or "supply-chain" not in labels
+        ):
             errors.append(
                 f"Dependabot config `{ecosystem}` `{directory}` update must include `dependencies` and `supply-chain` labels"
             )
@@ -597,9 +601,9 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
         "github.actor == 'dependabot[bot]'",
         "dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7",
         "gh label create dependencies",
-        "gh pr edit \"$PR_URL\" --add-label \"dependencies\"",
-        "gh pr review \"$PR_URL\" --approve",
-        "gh pr merge --auto --squash \"$PR_URL\"",
+        'gh pr edit "$PR_URL" --add-label "dependencies"',
+        'gh pr review "$PR_URL" --approve',
+        'gh pr merge --auto --squash "$PR_URL"',
         "automerge:eligible",
         "manual-review",
     ):
@@ -619,9 +623,7 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
         return [*errors, "Dependabot automation workflow must define top-level permissions"]
     for key in ("contents", "pull-requests", "issues"):
         if permissions.get(key) != "write":
-            errors.append(
-                f"Dependabot automation workflow must grant `{key}: write` permissions"
-            )
+            errors.append(f"Dependabot automation workflow must grant `{key}: write` permissions")
 
     jobs = parsed.get("jobs")
     if not isinstance(jobs, dict):
@@ -678,20 +680,18 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
             errors.append(f"Dependabot automation workflow must include step `{name}`")
             continue
         if required_use is not None and uses_by_name.get(name) != required_use:
-            errors.append(
-                f"Dependabot automation workflow `{name}` step must use `{required_use}`"
-            )
+            errors.append(f"Dependabot automation workflow `{name}` step must use `{required_use}`")
 
     enable_merge_run = runs_by_name.get("Enable auto-merge for safe updates")
     if enable_merge_run is None or 'gh pr merge --auto --squash "$PR_URL"' not in enable_merge_run:
         errors.append(
-            "Dependabot automation workflow `Enable auto-merge for safe updates` must invoke `gh pr merge --auto --squash \"$PR_URL\"`"
+            'Dependabot automation workflow `Enable auto-merge for safe updates` must invoke `gh pr merge --auto --squash "$PR_URL"`'
         )
 
     approve_run = runs_by_name.get("Approve safe updates")
     if approve_run is None or 'gh pr review "$PR_URL" --approve' not in approve_run:
         errors.append(
-            "Dependabot automation workflow `Approve safe updates` must invoke `gh pr review \"$PR_URL\" --approve`"
+            'Dependabot automation workflow `Approve safe updates` must invoke `gh pr review "$PR_URL" --approve`'
         )
 
     return errors
@@ -789,9 +789,7 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
         "Close scheduled audit issue on success",
     ):
         if uses_by_name.get(step_name) != "actions/github-script@v8":
-            errors.append(
-                f"Audit workflow `{step_name}` step must use `actions/github-script@v8`"
-            )
+            errors.append(f"Audit workflow `{step_name}` step must use `actions/github-script@v8`")
 
     create_run = scripts_by_name.get("Create or update scheduled audit issue on failure")
     if create_run is not None:
