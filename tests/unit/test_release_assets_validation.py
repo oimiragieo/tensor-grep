@@ -1613,10 +1613,22 @@ def test_should_require_create_release_sbom_slsa_contract():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "Release workflow create-release job must include step `Generate Rust SBOM`" in joined_errors
-    assert "Release workflow create-release job must include step `Generate Python SBOM`" in joined_errors
-    assert "Release workflow create-release job must include step `Sign artifacts with Sigstore`" in joined_errors
-    assert "Release workflow create-release job must include step `Generate SLSA Provenance`" in joined_errors
+    assert (
+        "Release workflow create-release job must include step `Generate Rust SBOM`"
+        in joined_errors
+    )
+    assert (
+        "Release workflow create-release job must include step `Generate Python SBOM`"
+        in joined_errors
+    )
+    assert (
+        "Release workflow create-release job must include step `Sign artifacts with Sigstore`"
+        in joined_errors
+    )
+    assert (
+        "Release workflow create-release job must include step `Generate SLSA Provenance`"
+        in joined_errors
+    )
 
 
 def test_should_require_release_binary_artifact_validation_flags():
@@ -3157,7 +3169,8 @@ def test_should_require_release_success_gate_setup_contract():
     joined_errors = "\n".join(errors)
     assert "release-success-gate job must include `actions/checkout@v6`" in joined_errors
     assert (
-        "release-success-gate `Install uv` step must use `astral-sh/setup-uv@v8.0.0`" in joined_errors
+        "release-success-gate `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
+        in joined_errors
     )
     assert (
         "release-success-gate `Setup Python` step must invoke `uv python install 3.12`"

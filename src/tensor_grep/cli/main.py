@@ -251,30 +251,36 @@ def _doctor_rust_binary_version(native_tg_binary: Path | None) -> str | None:
         return None
     try:
         import subprocess
-        res = subprocess.run([str(native_tg_binary), "--version"], capture_output=True, text=True, timeout=2)
+
+        res = subprocess.run(
+            [str(native_tg_binary), "--version"], capture_output=True, text=True, timeout=2
+        )
         if res.returncode == 0:
             return res.stdout.strip()
         return None
     except Exception:
         return None
 
+
 def _doctor_gpu_status() -> dict[str, Any]:
     status: dict[str, Any] = {"available": False, "devices": [], "error": None}
     try:
         from tensor_grep.core.hardware.device_detect import DeviceDetector
+
         detector = DeviceDetector()
         status["available"] = detector.has_gpu()
         status["device_count"] = detector.get_device_count()
         for device in detector.list_devices():
             status["devices"].append({
                 "id": device.device_id,
-                "vram_total_mb": device.vram_capacity_mb
+                "vram_total_mb": device.vram_capacity_mb,
             })
     except ImportError:
         status["error"] = "PyTorch/cuDF not installed"
     except Exception as e:
         status["error"] = str(e)
     return status
+
 
 def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]:
     root = Path(root_path).resolve()
@@ -294,6 +300,7 @@ def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]
             if not stale:
                 with cache_file.open("r", encoding="utf-8") as f:
                     import json
+
                     data = json.load(f)
                 val_meta = data.get("validation_metadata", {})
                 for field in ("rule_files", "test_files", "tree_dirs"):
@@ -312,6 +319,7 @@ def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]
 
 def _doctor_resident_worker_status(path: str) -> dict[str, Any]:
     import socket
+
     root = Path(path).resolve()
     port_file = root / ".tg_cache" / "ast" / "worker_port.txt"
     status: dict[str, Any] = {"port_file_exists": False, "port": None, "responding": False}
@@ -329,7 +337,9 @@ def _doctor_resident_worker_status(path: str) -> dict[str, Any]:
     return status
 
 
-def _build_doctor_payload(path: str, config: str | None = None, *, with_lsp: bool) -> dict[str, Any]:
+def _build_doctor_payload(
+    path: str, config: str | None = None, *, with_lsp: bool
+) -> dict[str, Any]:
     root = Path(path).resolve()
     if config:
         config_p = Path(config)

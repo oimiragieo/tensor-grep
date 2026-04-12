@@ -507,9 +507,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         if action in action_versions:
             expected_version = action_versions[action]
             if version != expected_version:
-                errors.append(
-                    f"CI workflow must use {action}@{expected_version}, found @{version}"
-                )
+                errors.append(f"CI workflow must use {action}@{expected_version}, found @{version}")
 
     return errors
 
