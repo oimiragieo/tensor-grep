@@ -199,6 +199,67 @@ def test_should_require_ci_pypi_parity_retry_arguments():
     assert any("--pypi-poll-interval-seconds" in err for err in errors)
 
 
+def test_should_require_dependabot_config_targets_and_branch_separator():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    dependabot = """
+    version: 2
+    updates:
+      - package-ecosystem: "uv"
+        directory: "/"
+        schedule:
+          interval: "daily"
+    """
+    errors = module.validate_dependabot_config(dependabot_content=textwrap.dedent(dependabot))
+    joined_errors = "\n".join(errors)
+    assert "pull-request-branch-name.separator" in joined_errors
+    assert "missing required update target `github-actions`" in joined_errors
+    assert "schedule weekly checks" in joined_errors
+
+
+def test_should_require_dependabot_automation_automerge_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = """
+    name: Dependabot Automation
+    on:
+      pull_request_target:
+        types: [opened]
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    jobs:
+      dependabot-triage:
+        if: github.actor == 'dependabot[bot]'
+        runs-on: ubuntu-latest
+        steps:
+          - name: Fetch Dependabot metadata
+            uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7
+          - name: Enable auto-merge for safe updates
+            run: gh pr merge --squash "$PR_URL"
+    """
+    errors = module.validate_dependabot_automation_workflow_content(
+        workflow_content=textwrap.dedent(workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "Ensure dependency labels exist" in joined_errors
+    assert "Approve safe updates" in joined_errors
+    assert "gh pr merge --auto --squash" in joined_errors
+
+
 def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

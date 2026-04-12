@@ -512,6 +512,191 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     return errors
 
 
+def validate_dependabot_config(*, dependabot_content: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        parsed = yaml.safe_load(dependabot_content) or {}
+    except yaml.YAMLError as exc:
+        return [f"Dependabot config is not valid YAML: {exc}"]
+
+    if not isinstance(parsed, dict):
+        return ["Dependabot config must deserialize to a mapping"]
+
+    if parsed.get("version") != 2:
+        errors.append("Dependabot config must set `version: 2`")
+
+    branch_name = parsed.get("pull-request-branch-name")
+    if not isinstance(branch_name, dict) or branch_name.get("separator") != "-":
+        errors.append("Dependabot config must set pull-request-branch-name.separator to `-`")
+
+    updates = parsed.get("updates")
+    if not isinstance(updates, list) or not updates:
+        return [*errors, "Dependabot config must define a non-empty `updates` list"]
+
+    required_targets = {
+        ("github-actions", "/"): {"labels": {"github-actions"}},
+        ("uv", "/"): {"labels": {"python"}},
+        ("cargo", "/rust_core"): {"labels": {"rust"}},
+        ("npm", "/npm"): {"labels": {"npm"}},
+    }
+
+    seen_targets: set[tuple[str, str]] = set()
+    for update in updates:
+        if not isinstance(update, dict):
+            errors.append("Dependabot config `updates` entries must be mappings")
+            continue
+        ecosystem = str(update.get("package-ecosystem") or "")
+        directory = str(update.get("directory") or "")
+        seen_targets.add((ecosystem, directory))
+
+        schedule = update.get("schedule")
+        if not isinstance(schedule, dict) or schedule.get("interval") != "weekly":
+            errors.append(
+                f"Dependabot config `{ecosystem}` `{directory}` update must schedule weekly checks"
+            )
+
+        limit = update.get("open-pull-requests-limit")
+        if not isinstance(limit, int) or limit <= 0:
+            errors.append(
+                f"Dependabot config `{ecosystem}` `{directory}` update must set a positive open-pull-requests-limit"
+            )
+
+        labels = update.get("labels")
+        if not isinstance(labels, list) or "dependencies" not in labels or "supply-chain" not in labels:
+            errors.append(
+                f"Dependabot config `{ecosystem}` `{directory}` update must include `dependencies` and `supply-chain` labels"
+            )
+
+        commit_message = update.get("commit-message")
+        if not isinstance(commit_message, dict) or not str(commit_message.get("prefix") or ""):
+            errors.append(
+                f"Dependabot config `{ecosystem}` `{directory}` update must set a commit-message prefix"
+            )
+
+        groups = update.get("groups")
+        if not isinstance(groups, dict) or not groups:
+            errors.append(
+                f"Dependabot config `{ecosystem}` `{directory}` update must define grouped update rules"
+            )
+
+    for target, _contract in required_targets.items():
+        if target not in seen_targets:
+            ecosystem, directory = target
+            errors.append(
+                f"Dependabot config missing required update target `{ecosystem}` in `{directory}`"
+            )
+
+    return errors
+
+
+def validate_dependabot_automation_workflow_content(*, workflow_content: str) -> list[str]:
+    errors: list[str] = []
+    for expected in (
+        "name: Dependabot Automation",
+        "pull_request_target:",
+        "github.actor == 'dependabot[bot]'",
+        "dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7",
+        "gh label create dependencies",
+        "gh pr edit \"$PR_URL\" --add-label \"dependencies\"",
+        "gh pr review \"$PR_URL\" --approve",
+        "gh pr merge --auto --squash \"$PR_URL\"",
+        "automerge:eligible",
+        "manual-review",
+    ):
+        if expected not in workflow_content:
+            errors.append(f"Dependabot automation workflow missing expected contract: {expected}")
+
+    try:
+        parsed = yaml.safe_load(workflow_content) or {}
+    except yaml.YAMLError as exc:
+        return [*errors, f"Dependabot automation workflow is not valid YAML: {exc}"]
+
+    if not isinstance(parsed, dict):
+        return [*errors, "Dependabot automation workflow must deserialize to a mapping"]
+
+    permissions = parsed.get("permissions")
+    if not isinstance(permissions, dict):
+        return [*errors, "Dependabot automation workflow must define top-level permissions"]
+    for key in ("contents", "pull-requests", "issues"):
+        if permissions.get(key) != "write":
+            errors.append(
+                f"Dependabot automation workflow must grant `{key}: write` permissions"
+            )
+
+    jobs = parsed.get("jobs")
+    if not isinstance(jobs, dict):
+        return [*errors, "Dependabot automation workflow must define jobs"]
+    triage = jobs.get("dependabot-triage")
+    if not isinstance(triage, dict):
+        return [
+            *errors,
+            "Dependabot automation workflow must define `dependabot-triage` job",
+        ]
+
+    if triage.get("if") != "github.actor == 'dependabot[bot]'":
+        errors.append(
+            "Dependabot automation workflow `dependabot-triage` job must only run for dependabot[bot]"
+        )
+
+    steps = triage.get("steps")
+    if not isinstance(steps, list):
+        return [
+            *errors,
+            "Dependabot automation workflow `dependabot-triage` must define steps",
+        ]
+
+    steps_by_name: dict[str, dict[str, object]] = {}
+    runs_by_name: dict[str, str] = {}
+    uses_by_name: dict[str, str] = {}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        name = step.get("name")
+        if not isinstance(name, str):
+            continue
+        steps_by_name[name] = step
+        run = step.get("run")
+        uses = step.get("uses")
+        if isinstance(run, str):
+            runs_by_name[name] = run
+        if isinstance(uses, str):
+            uses_by_name[name] = uses
+
+    required_steps = {
+        "Fetch Dependabot metadata": "dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7",
+        "Ensure dependency labels exist": None,
+        "Apply dependency labels": None,
+        "Determine automerge policy": None,
+        "Mark safe updates": None,
+        "Mark manual review updates": None,
+        "Approve safe updates": None,
+        "Enable auto-merge for safe updates": None,
+    }
+    for name, required_use in required_steps.items():
+        step = steps_by_name.get(name)
+        if step is None:
+            errors.append(f"Dependabot automation workflow must include step `{name}`")
+            continue
+        if required_use is not None and uses_by_name.get(name) != required_use:
+            errors.append(
+                f"Dependabot automation workflow `{name}` step must use `{required_use}`"
+            )
+
+    enable_merge_run = runs_by_name.get("Enable auto-merge for safe updates")
+    if enable_merge_run is None or 'gh pr merge --auto --squash "$PR_URL"' not in enable_merge_run:
+        errors.append(
+            "Dependabot automation workflow `Enable auto-merge for safe updates` must invoke `gh pr merge --auto --squash \"$PR_URL\"`"
+        )
+
+    approve_run = runs_by_name.get("Approve safe updates")
+    if approve_run is None or 'gh pr review "$PR_URL" --approve' not in approve_run:
+        errors.append(
+            "Dependabot automation workflow `Approve safe updates` must invoke `gh pr review \"$PR_URL\" --approve`"
+        )
+
+    return errors
+
+
 def validate_package_manager_docs(*, runbook_content: str, checklist_content: str) -> list[str]:
     errors: list[str] = []
     for heading in (
@@ -1677,6 +1862,14 @@ def validate_all() -> list[str]:
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
+
+    dependabot_config = _read(ROOT / ".github" / "dependabot.yml")
+    errors.extend(validate_dependabot_config(dependabot_content=dependabot_config))
+
+    dependabot_workflow = _read(ROOT / ".github" / "workflows" / "dependabot-automation.yml")
+    errors.extend(
+        validate_dependabot_automation_workflow_content(workflow_content=dependabot_workflow)
+    )
 
     package_manager_runbook = _read(ROOT / "docs" / "package_manager_publish.md")
     release_checklist = _read(ROOT / "docs" / "RELEASE_CHECKLIST.md")
