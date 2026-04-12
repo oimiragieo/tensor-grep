@@ -493,6 +493,24 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "CI workflow benchmark summary generation must pass `--baseline auto` to summarize_benchmarks.py"
         )
 
+    action_versions = {
+        "actions/checkout": "v6",
+        "actions/setup-python": "v6",
+        "actions/setup-node": "v6",
+        "actions/upload-artifact": "v7",
+        "actions/download-artifact": "v8",
+        "astral-sh/setup-uv": "v8",
+    }
+    for match in re.finditer(r"uses:\s+([^@\s\n]+)@([^\s\n]+)", ci_workflow):
+        action = match.group(1)
+        version = match.group(2)
+        if action in action_versions:
+            expected_version = action_versions[action]
+            if version != expected_version:
+                errors.append(
+                    f"CI workflow must use {action}@{expected_version}, found @{version}"
+                )
+
     return errors
 
 

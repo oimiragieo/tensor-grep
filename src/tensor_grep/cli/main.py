@@ -276,8 +276,8 @@ def _doctor_gpu_status() -> dict[str, Any]:
         status["error"] = str(e)
     return status
 
-def _doctor_ast_cache_status(path: str) -> dict[str, Any]:
-    root = Path(path).resolve()
+def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]:
+    root = Path(root_path).resolve()
     cache_file = root / ".tg_cache" / "ast" / "project_data_v6.json"
     status: dict[str, Any] = {"exists": False}
     if cache_file.exists():
@@ -288,7 +288,7 @@ def _doctor_ast_cache_status(path: str) -> dict[str, Any]:
         stale = False
         try:
             cache_mtime = stat.st_mtime
-            sgconfig = root / "sgconfig.yml"
+            sgconfig = Path(config_path).resolve()
             if sgconfig.exists() and sgconfig.stat().st_mtime > cache_mtime:
                 stale = True
             if not stale:
@@ -309,6 +309,7 @@ def _doctor_ast_cache_status(path: str) -> dict[str, Any]:
         status["stale"] = stale
     return status
 
+
 def _doctor_resident_worker_status(path: str) -> dict[str, Any]:
     import socket
     root = Path(path).resolve()
@@ -328,8 +329,14 @@ def _doctor_resident_worker_status(path: str) -> dict[str, Any]:
     return status
 
 
-def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
+def _build_doctor_payload(path: str, config: str | None = None, *, with_lsp: bool) -> dict[str, Any]:
     root = Path(path).resolve()
+    if config:
+        config_p = Path(config)
+        resolved_config = config_p if config_p.is_absolute() else Path.cwd() / config_p
+        root = resolved_config.parent
+    else:
+        resolved_config = root / "sgconfig.yml"
     native_tg_binary = _resolve_native_tg_binary()
     env_keys = [
         "TG_NATIVE_TG_BINARY",
@@ -346,11 +353,12 @@ def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
         "python_version": ".".join([str(x) for x in sys.version_info[:3]]),
         "invoked_as": sys.argv[0] if sys.argv else "tg",
         "root": str(root),
+        "config": str(resolved_config),
         "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
         "native_tg_binary_exists": native_tg_binary is not None,
         "rust_binary_version": _doctor_rust_binary_version(native_tg_binary),
         "gpu": _doctor_gpu_status(),
-        "ast_cache": _doctor_ast_cache_status(str(root)),
+        "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
         "resident_worker": _doctor_resident_worker_status(str(root)),
         "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
         "session_daemon": _doctor_session_daemon_status(str(root)),
