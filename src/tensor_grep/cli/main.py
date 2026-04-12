@@ -50,8 +50,8 @@ persisted repeated-query acceleration, and optional GPU routing.
 **Notes**
 - Bare patterns are treated as `tg search`.
 - Use `tg search --help` for ripgrep-compatible flags.
-- Use `tg run --help` for AST rewrite flags.
-- Use `tg doctor --json` for install, daemon, and LSP diagnostics.
+- `tg run --help` for AST rewrite flags.
+- Use `tg doctor --json` for system, GPU, cache, and daemon diagnostics.
 - Use `tg session --help` for cached edit-loop and daemon commands.""",
     no_args_is_help=True,
     add_completion=False,
@@ -4073,7 +4073,7 @@ def doctor(
         help="Include external LSP provider diagnostics.",
     ),
 ) -> None:
-    """Print runtime, daemon, and optional LSP diagnostics for AI troubleshooting."""
+    """Print system, GPU, cache, and optional daemon diagnostics for AI troubleshooting."""
     payload = _build_doctor_payload(path, config=config, with_lsp=with_lsp)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
@@ -4722,6 +4722,27 @@ def update() -> None:
     upgrade()
 
 
+@app.command(hidden=True)
+def worker(
+    port: int | None = typer.Option(None, "--port", help="Port to bind the TCP worker."),
+    stop: bool = typer.Option(False, "--stop", help="Stop the active resident worker."),
+) -> None:
+    """Internal command to manage the experimental Resident AST Worker."""
+    native_tg_binary = _resolve_native_tg_binary()
+    if native_tg_binary is None:
+        typer.echo("Error: native tg binary not found for worker command.", err=True)
+        raise typer.Exit(2)
+
+    cmd = [str(native_tg_binary), "worker"]
+    if port is not None:
+        cmd.extend(["--port", str(port)])
+    if stop:
+        cmd.append("--stop")
+
+    completed = subprocess.run(cmd, check=False)
+    raise typer.Exit(int(completed.returncode))
+
+
 def main_entry() -> None:
     import sys
 
@@ -4775,6 +4796,7 @@ def main_entry() -> None:
         "mcp",
         "upgrade",
         "update",
+        "worker",
     }
 
     if len(sys.argv) > 1:

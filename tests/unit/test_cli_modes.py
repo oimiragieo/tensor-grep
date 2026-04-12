@@ -373,7 +373,9 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
     assert result.exit_code == 0
     assert "--with-lsp" in help_text
     assert "--json" in help_text
-    assert "AI troubleshooting" in help_text
+    # Handle rich text wrapping that may split phrases
+    normalized_help = re.sub(r"\s+", " ", help_text)
+    assert "AI troubleshooting" in normalized_help
 
 
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
