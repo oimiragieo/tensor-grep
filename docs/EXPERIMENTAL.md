@@ -1,0 +1,20 @@
+# Experimental and Hidden Features
+
+This document catalogs features and commands in `tensor-grep` that are intentionally hidden from public CLI help or marked as experimental. These features are generally unsupported for production enterprise use, but are maintained for testing, advanced workflows, or future graduation to stable status.
+
+## 1. Resident AST Worker (`tg worker`)
+The Resident AST Worker is an experimental feature designed to keep the AST metadata cache (`project_data_v6.json`) warm in memory via TCP IPC, driving repeated micro-workflow latencies down to ~0.03s.
+
+- **Status:** Opt-in, Experimental.
+- **Hidden Command:** `tg worker`
+  - This command is hidden from `tg --help` to prevent confusion, but is fully functional when invoked directly (e.g., `tg worker --port 12345`).
+- **Feature Flag:** Set the environment variable `TG_RESIDENT_AST=1` to enable the worker workflow.
+- **Runbook:** Refer to [Resident AST Worker Runbook](runbooks/resident-worker.md) for troubleshooting IPC port conflicts and orphaned processes.
+
+## 2. Experimental Backend Overrides
+Various environment variables allow forcing specific backends to bypass the standard routing logic. These are intentionally undocumented in `--help` to prevent users from breaking the optimal routing paths.
+
+- `TG_FORCE_CPU=1`: Bypasses GPU acceleration entirely. (Documented in [gpu-troubleshooting.md](runbooks/gpu-troubleshooting.md))
+- `TG_RUST_FIRST_SEARCH=1` / `TG_RUST_EARLY_RG=1`: Experimental backend routing rules used during the migration to the Rust core.
+
+*Note: As `tensor-grep` stabilizes these features, they will either be graduated to public `sgconfig.yml` settings, converted into standard CLI flags, or formally deprecated.*
