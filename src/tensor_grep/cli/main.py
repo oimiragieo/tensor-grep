@@ -333,7 +333,7 @@ def _build_doctor_payload(path: str, config: str | None = None, *, with_lsp: boo
     root = Path(path).resolve()
     if config:
         config_p = Path(config)
-        resolved_config = config_p if config_p.is_absolute() else Path.cwd() / config_p
+        resolved_config = config_p if config_p.is_absolute() else (root / config_p).resolve()
         root = resolved_config.parent
     else:
         resolved_config = root / "sgconfig.yml"
@@ -4053,6 +4053,9 @@ def mcp_server() -> None:
 @app.command()
 def doctor(
     path: str = typer.Argument(".", help="Workspace root to inspect."),
+    config: str | None = typer.Option(
+        "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     with_lsp: bool = typer.Option(
         True,
@@ -4061,7 +4064,7 @@ def doctor(
     ),
 ) -> None:
     """Print runtime, daemon, and optional LSP diagnostics for AI troubleshooting."""
-    payload = _build_doctor_payload(path, with_lsp=with_lsp)
+    payload = _build_doctor_payload(path, config=config, with_lsp=with_lsp)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return

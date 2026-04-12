@@ -1180,7 +1180,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                         "Release workflow create-release "
                         f"`{step_name}` step must pass `{required_flag}`"
                     )
-        
+
         sigstore_step = create_release_steps_by_name.get("Sign artifacts with Sigstore")
         if sigstore_step is not None:
             uses_value = sigstore_step.get("uses", "")
@@ -1188,7 +1188,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
                 errors.append(
                     "Release workflow create-release `Sign artifacts with Sigstore` step must use `sigstore/gh-action-sigstore-python`"
                 )
-                
+
         slsa_step = create_release_steps_by_name.get("Generate SLSA Provenance")
         if slsa_step is not None:
             uses_value = slsa_step.get("uses", "")
