@@ -10,7 +10,7 @@
 
 ## Start Here
 
-- [README.md](../README.md) for the product overview and installation entry points
+- [Project README on GitHub](https://github.com/oimiragieo/tensor-grep/blob/main/README.md) for the product overview and installation entry points
 - [docs/benchmarks.md](benchmarks.md) for accepted benchmark lines and regression rules
 - [docs/routing_policy.md](routing_policy.md) for backend routing behavior
 - [docs/harness_api.md](harness_api.md) for machine-readable CLI contracts
@@ -23,7 +23,9 @@
 - [docs/HOTFIX_PROCEDURE.md](HOTFIX_PROCEDURE.md)
 - [docs/RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
 - [docs/EXPERIMENTAL.md](EXPERIMENTAL.md)
-- [docs/runbooks/](runbooks/)
+- [docs/runbooks/cache-management.md](runbooks/cache-management.md)
+- [docs/runbooks/gpu-troubleshooting.md](runbooks/gpu-troubleshooting.md)
+- [docs/runbooks/resident-worker.md](runbooks/resident-worker.md)
 
 ## Product Positioning
 
