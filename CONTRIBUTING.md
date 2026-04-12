@@ -43,11 +43,13 @@ Important surfaces include:
 - `tests/unit/test_release_assets_validation.py`
 - `tests/unit/test_public_docs_governance.py`
 - `tests/unit/test_enterprise_docs_governance.py`
+- `docs/CI_PIPELINE.md`
 
 ## Enterprise Docs
 
 Before calling a release enterprise-ready, keep these documents aligned with the shipped behavior:
 - `README.md`
+- `docs/CI_PIPELINE.md`
 - `docs/SUPPORT_MATRIX.md`
 - `docs/CONTRACTS.md`
 - `docs/HOTFIX_PROCEDURE.md`

@@ -11,6 +11,8 @@ jobs:
   audit:
     name: Dependency & License Audit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
@@ -41,3 +43,100 @@ jobs:
 
       - name: Run pip-audit
         run: uv run pip-audit
+
+  report-audit-status:
+    name: report-audit-status
+    if: always() && github.event_name == 'schedule'
+    needs: audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Create or update scheduled audit issue on failure
+        if: needs.audit.result != 'success'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const title = "[Security Audit] Scheduled dependency audit failure";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              "A scheduled dependency audit run failed.",
+              "",
+              `- Workflow: \`${context.workflow}\``,
+              `- Run: ${runUrl}`,
+              `- Commit: \`${context.sha}\``,
+              `- Ref: \`${context.ref}\``,
+              `- Audit result: \`${{ needs.audit.result }}\``,
+              "",
+              "This issue is managed automatically by `.github/workflows/audit.yml`.",
+              "",
+              "Immediate response:",
+              "1. Inspect the linked run for `cargo audit`, `cargo deny check`, and `pip-audit` output.",
+              "2. Merge or prepare the required dependency update.",
+              "3. Confirm the next successful scheduled audit closes this issue automatically."
+            ].join("\n");
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const existing = issues.find((issue) => issue.title === title);
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body: `Scheduled audit failed again: ${runUrl}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["dependencies", "supply-chain"],
+              });
+            }
+
+      - name: Close scheduled audit issue on success
+        if: needs.audit.result == 'success'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const title = "[Security Audit] Scheduled dependency audit failure";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+
+            const existing = issues.find((issue) => issue.title === title);
+            if (!existing) {
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing.number,
+              body: `Closing automatically after successful scheduled audit run: ${runUrl}`,
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: existing.number,
+              state: "closed",
+            });

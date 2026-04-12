@@ -134,6 +134,8 @@ Do not casually edit:
 
 If you change workflow, docs, or release behavior, expect to update validator-backed tests too.
 
+Read `docs/CI_PIPELINE.md` before editing CI, release, Dependabot, or audit automation. That file is the canonical contract for how the pipeline is supposed to behave and what follow-up validators must change with it.
+
 Important test surface:
 
 - `tests/unit/test_release_assets_validation.py`

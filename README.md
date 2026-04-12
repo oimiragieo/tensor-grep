@@ -21,6 +21,7 @@ Use these documents as the current product contract instead of relying on scatte
 - [docs/harness_cookbook.md](docs/harness_cookbook.md) for end-to-end harness workflows using `tg.exe search --json`, `tg.exe search --ndjson`, `tg.exe run --rewrite`, `tg.exe calibrate`, and `tg mcp`
 - [docs/installation.md](docs/installation.md) for the supported install paths and operational install notes
 - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the current enterprise release and rollback runbook
+- [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) for the current CI, release, audit, and dependency-maintenance automation
 
 The project is benchmark-governed. Public claims should follow the canonical docs above, not historical README snapshots.
 
@@ -32,6 +33,7 @@ These documents define the operating and governance surface for teams running `t
 - [docs/CONTRACTS.md](docs/CONTRACTS.md) for compatibility guarantees around configs, caches, and machine-readable outputs
 - [docs/HOTFIX_PROCEDURE.md](docs/HOTFIX_PROCEDURE.md) for patch, rollback, and verification process
 - [docs/EXPERIMENTAL.md](docs/EXPERIMENTAL.md) for hidden and opt-in features that are intentionally outside the stable public CLI surface
+- [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) for CI workflow structure, Dependabot policy, and scheduled audit remediation
 - [SECURITY.md](SECURITY.md) for vulnerability reporting expectations
 - [CONTRIBUTING.md](CONTRIBUTING.md) for contribution, validation, and release-intent rules
 

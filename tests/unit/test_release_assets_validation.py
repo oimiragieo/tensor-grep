@@ -260,6 +260,93 @@ def test_should_require_dependabot_automation_automerge_contract():
     assert "gh pr merge --auto --squash" in joined_errors
 
 
+def test_should_require_audit_workflow_issue_remediation_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = """
+    name: Security Audit
+    on:
+      schedule:
+        - cron: '0 0 * * *'
+      pull_request:
+        branches: [main]
+      workflow_dispatch:
+    jobs:
+      audit:
+        name: Dependency & License Audit
+        runs-on: ubuntu-latest
+        steps:
+          - run: cargo audit
+          - run: cargo deny check
+          - run: uv run pip-audit
+      report-audit-status:
+        if: github.event_name == 'schedule'
+        needs: audit
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+        steps:
+          - name: Create or update scheduled audit issue on failure
+            uses: actions/github-script@v7
+          - name: Close scheduled audit issue on success
+            uses: actions/github-script@v7
+    """
+    errors = module.validate_audit_workflow_content(workflow_content=textwrap.dedent(workflow))
+    joined_errors = "\n".join(errors)
+    assert "if: always()" in joined_errors
+    assert "issues: write" in joined_errors
+    assert "actions/github-script@v8" in joined_errors
+
+
+def test_should_require_audit_workflow_managed_issue_title_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = """
+    name: Security Audit
+    jobs:
+      audit:
+        name: Dependency & License Audit
+        runs-on: ubuntu-latest
+        steps:
+          - run: cargo audit
+          - run: cargo deny check
+          - run: uv run pip-audit
+      report-audit-status:
+        if: always() && github.event_name == 'schedule'
+        needs: audit
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+          issues: write
+        steps:
+          - name: Create or update scheduled audit issue on failure
+            uses: actions/github-script@v8
+            with:
+              script: |
+                const title = "audit failed";
+          - name: Close scheduled audit issue on success
+            uses: actions/github-script@v8
+            with:
+              script: |
+                const title = "audit failed";
+    """
+    errors = module.validate_audit_workflow_content(workflow_content=textwrap.dedent(workflow))
+    joined_errors = "\n".join(errors)
+    assert "[Security Audit] Scheduled dependency audit failure" in joined_errors
+
+
 def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

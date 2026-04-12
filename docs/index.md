@@ -15,6 +15,7 @@
 - [docs/routing_policy.md](routing_policy.md) for backend routing behavior
 - [docs/harness_api.md](harness_api.md) for machine-readable CLI contracts
 - [docs/installation.md](installation.md) for install and package-manager guidance
+- [docs/CI_PIPELINE.md](CI_PIPELINE.md) for CI, release, Dependabot, and scheduled audit automation
 
 ## Enterprise / Operational Docs
 
@@ -22,6 +23,7 @@
 - [docs/CONTRACTS.md](CONTRACTS.md)
 - [docs/HOTFIX_PROCEDURE.md](HOTFIX_PROCEDURE.md)
 - [docs/RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)
+- [docs/CI_PIPELINE.md](CI_PIPELINE.md)
 - [docs/EXPERIMENTAL.md](EXPERIMENTAL.md)
 - [docs/runbooks/cache-management.md](runbooks/cache-management.md)
 - [docs/runbooks/gpu-troubleshooting.md](runbooks/gpu-troubleshooting.md)

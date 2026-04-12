@@ -697,6 +697,132 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
     return errors
 
 
+def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
+    errors: list[str] = []
+    for expected in (
+        "name: Security Audit",
+        "schedule:",
+        "pull_request:",
+        "workflow_dispatch:",
+        "Dependency & License Audit",
+        "cargo audit",
+        "cargo deny check",
+        "pip-audit",
+        "report-audit-status:",
+        "if: always() && github.event_name == 'schedule'",
+        "Create or update scheduled audit issue on failure",
+        "Close scheduled audit issue on success",
+        "[Security Audit] Scheduled dependency audit failure",
+        "actions/github-script@v8",
+    ):
+        if expected not in workflow_content:
+            errors.append(f"Audit workflow missing expected contract: {expected}")
+
+    try:
+        parsed = yaml.safe_load(workflow_content) or {}
+    except yaml.YAMLError as exc:
+        return [*errors, f"Audit workflow is not valid YAML: {exc}"]
+
+    if not isinstance(parsed, dict):
+        return [*errors, "Audit workflow must deserialize to a mapping"]
+
+    jobs = parsed.get("jobs")
+    if not isinstance(jobs, dict):
+        return [*errors, "Audit workflow must define jobs"]
+
+    audit_job = jobs.get("audit")
+    if not isinstance(audit_job, dict):
+        errors.append("Audit workflow must define `audit` job")
+
+    report_job = jobs.get("report-audit-status")
+    if not isinstance(report_job, dict):
+        return [*errors, "Audit workflow must define `report-audit-status` job"]
+
+    if report_job.get("if") != "always() && github.event_name == 'schedule'":
+        errors.append(
+            "Audit workflow `report-audit-status` job must run only for scheduled events with if: always()"
+        )
+
+    needs = report_job.get("needs")
+    if needs != "audit":
+        errors.append("Audit workflow `report-audit-status` job must depend on `audit`")
+
+    permissions = report_job.get("permissions")
+    if not isinstance(permissions, dict):
+        errors.append("Audit workflow `report-audit-status` job must define permissions")
+    else:
+        if permissions.get("issues") != "write":
+            errors.append(
+                "Audit workflow `report-audit-status` job must grant `issues: write` permissions"
+            )
+        if permissions.get("contents") != "read":
+            errors.append(
+                "Audit workflow `report-audit-status` job must grant `contents: read` permissions"
+            )
+
+    steps = report_job.get("steps")
+    if not isinstance(steps, list):
+        return [*errors, "Audit workflow `report-audit-status` job must define steps"]
+
+    uses_by_name: dict[str, str] = {}
+    scripts_by_name: dict[str, str] = {}
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        name = step.get("name")
+        if not isinstance(name, str):
+            continue
+        uses = step.get("uses")
+        run = step.get("run")
+        with_block = step.get("with")
+        if isinstance(uses, str):
+            uses_by_name[name] = uses
+        if isinstance(run, str):
+            scripts_by_name[name] = run
+        elif isinstance(with_block, dict):
+            script = with_block.get("script")
+            if isinstance(script, str):
+                scripts_by_name[name] = script
+
+    for step_name in (
+        "Create or update scheduled audit issue on failure",
+        "Close scheduled audit issue on success",
+    ):
+        if uses_by_name.get(step_name) != "actions/github-script@v8":
+            errors.append(
+                f"Audit workflow `{step_name}` step must use `actions/github-script@v8`"
+            )
+
+    create_run = scripts_by_name.get("Create or update scheduled audit issue on failure")
+    if create_run is not None:
+        for expected in (
+            'const title = "[Security Audit] Scheduled dependency audit failure";',
+            "issues.create({",
+            "issues.update({",
+            "issues.createComment({",
+        ):
+            if expected not in create_run:
+                errors.append(
+                    "Audit workflow `Create or update scheduled audit issue on failure` step "
+                    f"must include `{expected}`"
+                )
+
+    close_run = scripts_by_name.get("Close scheduled audit issue on success")
+    if close_run is not None:
+        for expected in (
+            'const title = "[Security Audit] Scheduled dependency audit failure";',
+            'state: "closed"',
+            "issues.createComment({",
+        ):
+            if expected not in close_run:
+                errors.append(
+                    "Audit workflow `Close scheduled audit issue on success` step "
+                    f"must include `{expected}`"
+                )
+
+    return errors
+
+
 def validate_package_manager_docs(*, runbook_content: str, checklist_content: str) -> list[str]:
     errors: list[str] = []
     for heading in (
@@ -1862,6 +1988,9 @@ def validate_all() -> list[str]:
 
     ci_workflow = _read(ROOT / ".github" / "workflows" / "ci.yml")
     errors.extend(validate_ci_workflow_content(ci_workflow=ci_workflow))
+
+    audit_workflow = _read(ROOT / ".github" / "workflows" / "audit.yml")
+    errors.extend(validate_audit_workflow_content(workflow_content=audit_workflow))
 
     dependabot_config = _read(ROOT / ".github" / "dependabot.yml")
     errors.extend(validate_dependabot_config(dependabot_content=dependabot_config))

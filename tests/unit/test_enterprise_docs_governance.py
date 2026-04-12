@@ -7,6 +7,7 @@ CONTRACTS_PATH = Path("docs/CONTRACTS.md")
 HOTFIX_PROCEDURE_PATH = Path("docs/HOTFIX_PROCEDURE.md")
 INSTALLATION_PATH = Path("docs/installation.md")
 RELEASE_CHECKLIST_PATH = Path("docs/RELEASE_CHECKLIST.md")
+CI_PIPELINE_PATH = Path("docs/CI_PIPELINE.md")
 EXPERIMENTAL_PATH = Path("docs/EXPERIMENTAL.md")
 DOCS_INDEX_PATH = Path("docs/index.md")
 MKDOCS_PATH = Path("mkdocs.yml")
@@ -18,6 +19,7 @@ CACHE_RUNBOOK_PATH = Path("docs/runbooks/cache-management.md")
 def test_readme_should_point_to_enterprise_contract_docs() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
 
+    assert "docs/CI_PIPELINE.md" in readme
     assert "docs/SUPPORT_MATRIX.md" in readme
     assert "docs/CONTRACTS.md" in readme
     assert "docs/HOTFIX_PROCEDURE.md" in readme
@@ -87,11 +89,23 @@ def test_release_checklist_should_define_enterprise_ready_evidence() -> None:
     assert "docs/EXPERIMENTAL.md" in doc
 
 
+def test_ci_pipeline_doc_should_explain_release_and_supply_chain_automation() -> None:
+    doc = CI_PIPELINE_PATH.read_text(encoding="utf-8")
+
+    assert "Semantic Release" in doc
+    assert "Security Audit" in doc
+    assert "Dependabot" in doc
+    assert "auto-merge only for low-risk updates" in doc
+    assert "[Security Audit] Scheduled dependency audit failure" in doc
+    assert "scripts/validate_release_assets.py" in doc
+
+
 def test_docs_index_should_point_to_current_product_contracts() -> None:
     doc = DOCS_INDEX_PATH.read_text(encoding="utf-8")
 
     assert "native search and rewrite tool" in doc
     assert "Rust-native CPU text search" in doc
+    assert "docs/CI_PIPELINE.md" in doc
     assert "docs/benchmarks.md" in doc
     assert "docs/SUPPORT_MATRIX.md" in doc
     assert "GPU acceleration is benchmark-governed" in doc
@@ -102,6 +116,7 @@ def test_mkdocs_should_publish_current_repo_and_enterprise_nav() -> None:
 
     assert "Native search and rewrite tool" in doc
     assert "https://github.com/oimiragieo/tensor-grep" in doc
+    assert "CI Pipeline: CI_PIPELINE.md" in doc
     assert "Support Matrix: SUPPORT_MATRIX.md" in doc
     assert "Contracts: CONTRACTS.md" in doc
     assert "Experimental Features: EXPERIMENTAL.md" in doc
