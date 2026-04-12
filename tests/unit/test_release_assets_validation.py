@@ -189,8 +189,8 @@ def test_should_require_ci_pypi_parity_retry_arguments():
     publish-pypi:
       needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]
       steps:
-        - uses: astral-sh/setup-uv@v5
-        - uses: astral-sh/setup-uv@v5
+        - uses: astral-sh/setup-uv@v8.0.0
+        - uses: astral-sh/setup-uv@v8.0.0
         - run: |
             python scripts/validate_release_version_parity.py
     """
@@ -273,8 +273,8 @@ def test_should_require_ci_terminal_publish_success_gate():
     publish-pypi:
       needs: [release, build-wheels-pypi, build-sdist-pypi, validate-pypi-artifacts]
       steps:
-        - uses: astral-sh/setup-uv@v5
-        - uses: astral-sh/setup-uv@v5
+        - uses: astral-sh/setup-uv@v8.0.0
+        - uses: astral-sh/setup-uv@v8.0.0
         - run: |
             python scripts/validate_release_version_parity.py \
               --pypi-wait-seconds 180 \
@@ -770,11 +770,11 @@ def test_should_require_publish_success_gate_dist_branch_and_download_guard():
         if: always()
         needs: [release, publish-pypi]
         steps:
-          - uses: actions/checkout@v4
+          - uses: actions/checkout@v6
             if: needs.release.outputs.release_version != ''
           - name: Download all distributions
             if: needs.release.outputs.release_version != ''
-            uses: actions/download-artifact@v4
+            uses: actions/download-artifact@v8
             with:
               pattern: pypi-*
               path: dist
@@ -1593,6 +1593,32 @@ def test_should_require_release_binary_smoke_verify_expected_version_flag():
     )
 
 
+def test_should_require_create_release_sbom_slsa_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    release_workflow = """
+    jobs:
+      create-release:
+        steps:
+          - name: Build stuff
+            run: echo "building"
+    """
+    errors = module.validate_release_workflow_content(
+        release_workflow=textwrap.dedent(release_workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "Release workflow create-release job must include step `Generate Rust SBOM`" in joined_errors
+    assert "Release workflow create-release job must include step `Generate Python SBOM`" in joined_errors
+    assert "Release workflow create-release job must include step `Sign artifacts with Sigstore`" in joined_errors
+    assert "Release workflow create-release job must include step `Generate SLSA Provenance`" in joined_errors
+
+
 def test_should_require_release_binary_artifact_validation_flags():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
@@ -1807,7 +1833,7 @@ def test_should_require_validate_pypi_artifacts_job_step_flags():
       validate-pypi-artifacts:
         steps:
           - name: Download all distributions
-            uses: actions/download-artifact@v4
+            uses: actions/download-artifact@v8
             with:
               pattern: pypi-*
               path: dist
@@ -2337,7 +2363,7 @@ def test_should_require_release_publish_npm_setup_node_contract():
         needs: verify-release-assets
         steps:
           - name: Install uv
-            uses: astral-sh/setup-uv@v5
+            uses: astral-sh/setup-uv@v8.0.0
           - name: Setup Python
             run: uv python install 3.12
           - name: Validate release tag/version parity across package metadata
@@ -2355,7 +2381,7 @@ def test_should_require_release_publish_npm_setup_node_contract():
           - name: Setup Node.js
             uses: actions/setup-node@v3
             with:
-              node-version: '20'
+              node-version: '22'
           - name: Verify Version Match
             run: |
               TAG_VERSION=${GITHUB_REF#refs/tags/v}
@@ -2372,7 +2398,7 @@ def test_should_require_release_publish_npm_setup_node_contract():
     """
     errors = module.validate_release_workflow_content(release_workflow=release_workflow)
     assert any(
-        "publish-npm `Setup Node.js` step must use `actions/setup-node@v4`" in err for err in errors
+        "publish-npm `Setup Node.js` step must use `actions/setup-node@v6`" in err for err in errors
     )
     assert any(
         "publish-npm `Setup Node.js` step must include `registry-url: https://registry.npmjs.org`"
@@ -2394,8 +2420,8 @@ def test_should_require_release_build_binaries_step_contracts():
     build_binaries_prefix, build_binaries_rest = release_workflow.split("  build-binaries:", 1)
     build_binaries_section, remainder = build_binaries_rest.split("  create-release:", 1)
     build_binaries_section = build_binaries_section.replace(
-        "astral-sh/setup-uv@v5",
-        "astral-sh/setup-uv@v4",
+        "astral-sh/setup-uv@v8.0.0",
+        "astral-sh/setup-uv@v4.0.0",
         1,
     )
     build_binaries_section = build_binaries_section.replace(
@@ -2461,14 +2487,14 @@ def test_should_require_release_build_binaries_step_contracts():
         1,
     )
     release_workflow = release_workflow.replace(
-        "actions/upload-artifact@v4", "actions/upload-artifact@v3", 1
+        "actions/upload-artifact@v7", "actions/upload-artifact@v3", 1
     )
     release_workflow = release_workflow.replace("path: tg-*", "path: dist/*", 1)
     errors = module.validate_release_workflow_content(
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "build-binaries `Install uv` step must use `astral-sh/setup-uv@v5`" in joined_errors
+    assert "build-binaries `Install uv` step must use `astral-sh/setup-uv@v8.0.0`" in joined_errors
     assert (
         "build-binaries `Set up Python` step must invoke `uv python install 3.12`" in joined_errors
     )
@@ -2490,7 +2516,7 @@ def test_should_require_release_build_binaries_step_contracts():
         in joined_errors
     )
     assert (
-        "build-binaries `Upload Artifact` step must use `actions/upload-artifact@v4`"
+        "build-binaries `Upload Artifact` step must use `actions/upload-artifact@v7`"
         in joined_errors
     )
     assert "build-binaries `Upload Artifact` step must include `path: tg-*`" in joined_errors
@@ -2529,7 +2555,7 @@ def test_should_require_create_release_download_artifacts_contract():
 
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     release_workflow = release_workflow.replace(
-        "actions/download-artifact@v4",
+        "actions/download-artifact@v8",
         "actions/download-artifact@v3",
         1,
     )
@@ -2539,7 +2565,7 @@ def test_should_require_create_release_download_artifacts_contract():
     )
     joined_errors = "\n".join(errors)
     assert (
-        "create-release `Download Artifacts` step must use `actions/download-artifact@v4`"
+        "create-release `Download Artifacts` step must use `actions/download-artifact@v8`"
         in joined_errors
     )
     assert (
@@ -2560,8 +2586,8 @@ def test_should_require_create_release_setup_contract():
     create_release_prefix, create_release_rest = release_workflow.split("  create-release:", 1)
     create_release_section, remainder = create_release_rest.split("  verify-release-assets:", 1)
     create_release_section = create_release_section.replace(
-        "astral-sh/setup-uv@v5",
-        "astral-sh/setup-uv@v4",
+        "astral-sh/setup-uv@v8.0.0",
+        "astral-sh/setup-uv@v4.0.0",
         1,
     )
     create_release_section = create_release_section.replace(
@@ -2580,7 +2606,7 @@ def test_should_require_create_release_setup_contract():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "create-release `Install uv` step must use `astral-sh/setup-uv@v5`" in joined_errors
+    assert "create-release `Install uv` step must use `astral-sh/setup-uv@v8.0.0`" in joined_errors
     assert (
         "create-release `Setup Python` step must invoke `uv python install 3.12`" in joined_errors
     )
@@ -2641,7 +2667,7 @@ def test_should_require_verify_release_assets_checkout_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     verify_prefix, verify_rest = release_workflow.split("  verify-release-assets:", 1)
     verify_section, remainder = verify_rest.split("  validate-tag-version-parity:", 1)
-    verify_section = verify_section.replace("actions/checkout@v4", "actions/checkout@v3", 1)
+    verify_section = verify_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
     release_workflow = (
         verify_prefix
         + "  verify-release-assets:"
@@ -2653,7 +2679,7 @@ def test_should_require_verify_release_assets_checkout_contract():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "verify-release-assets job must include `actions/checkout@v4`" in joined_errors
+    assert "verify-release-assets job must include `actions/checkout@v6`" in joined_errors
 
 
 def test_should_require_verify_release_assets_python_entrypoint_contract():
@@ -2702,8 +2728,8 @@ def test_should_require_validate_tag_version_parity_setup_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     tag_prefix, tag_rest = release_workflow.split("  validate-tag-version-parity:", 1)
     tag_section, remainder = tag_rest.split("  publish-npm:", 1)
-    tag_section = tag_section.replace("actions/checkout@v4", "actions/checkout@v3", 1)
-    tag_section = tag_section.replace("astral-sh/setup-uv@v5", "astral-sh/setup-uv@v4", 1)
+    tag_section = tag_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
+    tag_section = tag_section.replace("astral-sh/setup-uv@v8.0.0", "astral-sh/setup-uv@v4.0.0", 1)
     tag_section = tag_section.replace("uv python install 3.12", "python -V", 1)
     release_workflow = (
         tag_prefix + "  validate-tag-version-parity:" + tag_section + "  publish-npm:" + remainder
@@ -2712,9 +2738,9 @@ def test_should_require_validate_tag_version_parity_setup_contract():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "validate-tag-version-parity job must include `actions/checkout@v4`" in joined_errors
+    assert "validate-tag-version-parity job must include `actions/checkout@v6`" in joined_errors
     assert (
-        "validate-tag-version-parity `Install uv` step must use `astral-sh/setup-uv@v5`"
+        "validate-tag-version-parity `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
         in joined_errors
     )
     assert (
@@ -2765,13 +2791,13 @@ def test_should_require_publish_npm_checkout_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
-    npm_section = npm_section.replace("actions/checkout@v4", "actions/checkout@v3", 1)
+    npm_section = npm_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
     release_workflow = npm_prefix + "  publish-npm:" + npm_section + "  publish-docs:" + remainder
     errors = module.validate_release_workflow_content(
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "publish-npm job must include `actions/checkout@v4`" in joined_errors
+    assert "publish-npm job must include `actions/checkout@v6`" in joined_errors
 
 
 def test_should_require_publish_npm_uv_python_setup_contract():
@@ -2786,14 +2812,14 @@ def test_should_require_publish_npm_uv_python_setup_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
-    npm_section = npm_section.replace("astral-sh/setup-uv@v5", "astral-sh/setup-uv@v4", 1)
+    npm_section = npm_section.replace("astral-sh/setup-uv@v8.0.0", "astral-sh/setup-uv@v4.0.0", 1)
     npm_section = npm_section.replace("uv python install 3.12", "python -V", 1)
     release_workflow = npm_prefix + "  publish-npm:" + npm_section + "  publish-docs:" + remainder
     errors = module.validate_release_workflow_content(
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "publish-npm `Install uv` step must use `astral-sh/setup-uv@v5`" in joined_errors
+    assert "publish-npm `Install uv` step must use `astral-sh/setup-uv@v8.0.0`" in joined_errors
     assert "publish-npm `Setup Python` step must invoke `uv python install 3.12`" in joined_errors
 
 
@@ -2809,13 +2835,13 @@ def test_should_require_publish_npm_node_version_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     npm_prefix, npm_rest = release_workflow.split("  publish-npm:", 1)
     npm_section, remainder = npm_rest.split("  publish-docs:", 1)
-    npm_section = npm_section.replace("node-version: '20'", "node-version: '18'", 1)
+    npm_section = npm_section.replace("node-version: '22'", "node-version: '18'", 1)
     release_workflow = npm_prefix + "  publish-npm:" + npm_section + "  publish-docs:" + remainder
     errors = module.validate_release_workflow_content(
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "publish-npm `Setup Node.js` step must include `node-version: 20`" in joined_errors
+    assert "publish-npm `Setup Node.js` step must include `node-version: 22`" in joined_errors
 
 
 def test_should_require_publish_npm_version_check_entrypoint_contract():
@@ -2938,7 +2964,7 @@ def test_should_require_publish_docs_checkout_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
-    docs_section = docs_section.replace("actions/checkout@v4", "actions/checkout@v3", 1)
+    docs_section = docs_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
     release_workflow = (
         docs_prefix + "  publish-docs:" + docs_section + "  release-success-gate:" + remainder
     )
@@ -2946,7 +2972,7 @@ def test_should_require_publish_docs_checkout_contract():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "publish-docs job must include `actions/checkout@v4`" in joined_errors
+    assert "publish-docs job must include `actions/checkout@v6`" in joined_errors
 
 
 def test_should_require_publish_docs_python_setup_contract():
@@ -2961,7 +2987,7 @@ def test_should_require_publish_docs_python_setup_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     docs_prefix, docs_rest = release_workflow.split("  publish-docs:", 1)
     docs_section, remainder = docs_rest.split("  release-success-gate:", 1)
-    docs_section = docs_section.replace("actions/setup-python@v5", "actions/setup-python@v4", 1)
+    docs_section = docs_section.replace("actions/setup-python@v6", "actions/setup-python@v4", 1)
     docs_section = docs_section.replace("python-version: '3.11'", "python-version: '3.10'", 1)
     release_workflow = (
         docs_prefix + "  publish-docs:" + docs_section + "  release-success-gate:" + remainder
@@ -2970,7 +2996,7 @@ def test_should_require_publish_docs_python_setup_contract():
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "publish-docs `Set up Python` step must use `actions/setup-python@v5`" in joined_errors
+    assert "publish-docs `Set up Python` step must use `actions/setup-python@v6`" in joined_errors
     assert "publish-docs `Set up Python` step must include `python-version: 3.11`" in joined_errors
 
 
@@ -3121,17 +3147,17 @@ def test_should_require_release_success_gate_setup_contract():
     release_workflow = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     gate_prefix, gate_rest = release_workflow.split("  release-success-gate:", 1)
     gate_section = gate_rest
-    gate_section = gate_section.replace("actions/checkout@v4", "actions/checkout@v3", 1)
-    gate_section = gate_section.replace("astral-sh/setup-uv@v5", "astral-sh/setup-uv@v4", 1)
+    gate_section = gate_section.replace("actions/checkout@v6", "actions/checkout@v3", 1)
+    gate_section = gate_section.replace("astral-sh/setup-uv@v8.0.0", "astral-sh/setup-uv@v4.0.0", 1)
     gate_section = gate_section.replace("uv python install 3.12", "python -V", 1)
     release_workflow = gate_prefix + "  release-success-gate:" + gate_section
     errors = module.validate_release_workflow_content(
         release_workflow=textwrap.dedent(release_workflow)
     )
     joined_errors = "\n".join(errors)
-    assert "release-success-gate job must include `actions/checkout@v4`" in joined_errors
+    assert "release-success-gate job must include `actions/checkout@v6`" in joined_errors
     assert (
-        "release-success-gate `Install uv` step must use `astral-sh/setup-uv@v5`" in joined_errors
+        "release-success-gate `Install uv` step must use `astral-sh/setup-uv@v8.0.0`" in joined_errors
     )
     assert (
         "release-success-gate `Setup Python` step must invoke `uv python install 3.12`"

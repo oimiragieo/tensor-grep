@@ -11,9 +11,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.0.0
       - name: Setup Python
         run: uv python install 3.12
       - name: Validate release/package asset consistency
@@ -30,10 +30,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.0.0
 
       - name: Validate Homebrew formula syntax
         if: runner.os == 'Linux'
@@ -103,10 +103,10 @@ jobs:
             gpu: cpu
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.0.0
 
       - name: Set up Python
         run: uv python install 3.12
@@ -160,7 +160,7 @@ jobs:
           ./tg-macos-amd64-${{ matrix.gpu }} --version
         
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binary-${{ runner.os }}-${{ matrix.gpu }}
           path: tg-*
@@ -170,16 +170,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v6
+
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.0.0
 
       - name: Setup Python
         run: uv python install 3.12
@@ -210,7 +212,35 @@ jobs:
           uv run python scripts/smoke_verify_release_binary.py \
             --artifacts-dir artifacts \
             --expected-version "${GITHUB_REF#refs/tags/v}"
-          
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@cargo-cyclonedx
+
+      - name: Generate Rust SBOM
+        working-directory: rust_core
+        run: cargo cyclonedx --format json --all-features
+
+      - name: Move Rust SBOM
+        run: mv rust_core/bom.json artifacts/sbom-rust.json
+
+      - name: Generate Python SBOM
+        run: |
+          uv pip install cyclonedx-bom
+          uv run cyclonedx-py environment --outfile artifacts/sbom-python.json
+
+      - name: Sign artifacts with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3.0.0
+        with:
+          inputs: >-
+            artifacts/**/tg-*
+            artifacts/CHECKSUMS.txt
+            artifacts/sbom-*.json
+
+      - name: Generate SLSA Provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: artifacts/**
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -218,15 +248,17 @@ jobs:
             artifacts/**/tg-*
             artifacts/CHECKSUMS.txt
             artifacts/package-manager-bundle/**
+            artifacts/sbom-*.json
+            artifacts/**/*.sig
+            artifacts/**/*.crt
           generate_release_notes: true
-
   verify-release-assets:
     needs: create-release
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Verify uploaded release assets and checksum coverage
         run: |
@@ -241,10 +273,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.0.0
 
       - name: Setup Python
         run: uv python install 3.12
@@ -262,12 +294,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Verify Version Match
@@ -286,7 +318,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.0.0
 
       - name: Setup Python
         run: uv python install 3.12
@@ -306,10 +338,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           
@@ -328,10 +360,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8.0.0
 
       - name: Setup Python
         run: uv python install 3.12

@@ -246,8 +246,97 @@ def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
     ]
 
 
-def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
+def _doctor_rust_binary_version(native_tg_binary: Path | None) -> str | None:
+    if not native_tg_binary:
+        return None
+    try:
+        import subprocess
+        res = subprocess.run([str(native_tg_binary), "--version"], capture_output=True, text=True, timeout=2)
+        if res.returncode == 0:
+            return res.stdout.strip()
+        return None
+    except Exception:
+        return None
+
+def _doctor_gpu_status() -> dict[str, Any]:
+    status: dict[str, Any] = {"available": False, "devices": [], "error": None}
+    try:
+        from tensor_grep.core.hardware.device_detect import DeviceDetector
+        detector = DeviceDetector()
+        status["available"] = detector.has_gpu()
+        status["device_count"] = detector.get_device_count()
+        for device in detector.list_devices():
+            status["devices"].append({
+                "id": device.device_id,
+                "vram_total_mb": device.vram_capacity_mb
+            })
+    except ImportError:
+        status["error"] = "PyTorch/cuDF not installed"
+    except Exception as e:
+        status["error"] = str(e)
+    return status
+
+def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]:
+    root = Path(root_path).resolve()
+    cache_file = root / ".tg_cache" / "ast" / "project_data_v6.json"
+    status: dict[str, Any] = {"exists": False}
+    if cache_file.exists():
+        stat = cache_file.stat()
+        status["exists"] = True
+        status["size_bytes"] = stat.st_size
+        status["mtime"] = stat.st_mtime
+        stale = False
+        try:
+            cache_mtime = stat.st_mtime
+            sgconfig = Path(config_path).resolve()
+            if sgconfig.exists() and sgconfig.stat().st_mtime > cache_mtime:
+                stale = True
+            if not stale:
+                with cache_file.open("r", encoding="utf-8") as f:
+                    import json
+                    data = json.load(f)
+                val_meta = data.get("validation_metadata", {})
+                for field in ("rule_files", "test_files", "tree_dirs"):
+                    for file_path_str, recorded_mtime_ns in val_meta.get(field, {}).items():
+                        p = Path(file_path_str)
+                        if not p.exists() or p.stat().st_mtime_ns > recorded_mtime_ns:
+                            stale = True
+                            break
+                    if stale:
+                        break
+        except Exception:
+            pass
+        status["stale"] = stale
+    return status
+
+
+def _doctor_resident_worker_status(path: str) -> dict[str, Any]:
+    import socket
     root = Path(path).resolve()
+    port_file = root / ".tg_cache" / "ast" / "worker_port.txt"
+    status: dict[str, Any] = {"port_file_exists": False, "port": None, "responding": False}
+    if port_file.exists():
+        status["port_file_exists"] = True
+        try:
+            port = int(port_file.read_text(encoding="utf-8").strip())
+            status["port"] = port
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.1)
+                s.connect(("127.0.0.1", port))
+                status["responding"] = True
+        except Exception:
+            status["responding"] = False
+    return status
+
+
+def _build_doctor_payload(path: str, config: str | None = None, *, with_lsp: bool) -> dict[str, Any]:
+    root = Path(path).resolve()
+    if config:
+        config_p = Path(config)
+        resolved_config = config_p if config_p.is_absolute() else (root / config_p).resolve()
+        root = resolved_config.parent
+    else:
+        resolved_config = root / "sgconfig.yml"
     native_tg_binary = _resolve_native_tg_binary()
     env_keys = [
         "TG_NATIVE_TG_BINARY",
@@ -261,10 +350,16 @@ def _build_doctor_payload(path: str, *, with_lsp: bool) -> dict[str, Any]:
         "version": _doctor_installed_version(),
         "platform": sys.platform,
         "python_executable": sys.executable,
+        "python_version": ".".join([str(x) for x in sys.version_info[:3]]),
         "invoked_as": sys.argv[0] if sys.argv else "tg",
         "root": str(root),
+        "config": str(resolved_config),
         "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
         "native_tg_binary_exists": native_tg_binary is not None,
+        "rust_binary_version": _doctor_rust_binary_version(native_tg_binary),
+        "gpu": _doctor_gpu_status(),
+        "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
+        "resident_worker": _doctor_resident_worker_status(str(root)),
         "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
         "session_daemon": _doctor_session_daemon_status(str(root)),
     }
@@ -283,12 +378,34 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         "tensor-grep doctor",
         f"version: {payload['version']}",
         f"platform: {payload['platform']}",
-        f"python: {payload['python_executable']}",
+        f"python: {payload['python_executable']} ({payload.get('python_version', 'unknown')})",
         f"invoked_as: {payload['invoked_as']}",
         f"root: {payload['root']}",
     ]
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
+    if rust_version := payload.get("rust_binary_version"):
+        lines.append(f"rust_binary_version:\n  {rust_version.replace(chr(10), chr(10) + '  ')}")
+
+    gpu_payload = cast(dict[str, Any], payload.get("gpu", {}))
+    lines.append(f"gpu: available={gpu_payload.get('available', False)}")
+    if gpu_payload.get("error"):
+        lines.append(f"  error: {gpu_payload['error']}")
+    for dev in gpu_payload.get("devices", []):
+        lines.append(f"  device {dev.get('id')}: {dev.get('vram_total_mb')} MB VRAM")
+
+    ast_payload = cast(dict[str, Any], payload.get("ast_cache", {}))
+    lines.append(f"ast_cache: exists={ast_payload.get('exists', False)}")
+    if ast_payload.get("exists"):
+        lines.append(f"  size: {ast_payload.get('size_bytes')} bytes")
+        lines.append(f"  mtime: {ast_payload.get('mtime')}")
+        lines.append(f"  stale: {ast_payload.get('stale')}")
+
+    worker_payload = cast(dict[str, Any], payload.get("resident_worker", {}))
+    lines.append(
+        f"resident_worker: port_file_exists={worker_payload.get('port_file_exists', False)} "
+        f"port={worker_payload.get('port')} responding={worker_payload.get('responding', False)}"
+    )
 
     env_payload = cast(dict[str, str], payload.get("env", {}))
     if env_payload:
@@ -3936,6 +4053,9 @@ def mcp_server() -> None:
 @app.command()
 def doctor(
     path: str = typer.Argument(".", help="Workspace root to inspect."),
+    config: str | None = typer.Option(
+        "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     with_lsp: bool = typer.Option(
         True,
@@ -3944,7 +4064,7 @@ def doctor(
     ),
 ) -> None:
     """Print runtime, daemon, and optional LSP diagnostics for AI troubleshooting."""
-    payload = _build_doctor_payload(path, with_lsp=with_lsp)
+    payload = _build_doctor_payload(path, config=config, with_lsp=with_lsp)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return

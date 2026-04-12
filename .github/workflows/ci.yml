@@ -24,7 +24,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Validate PR title for semantic release
         run: python scripts/validate_pr_title_semver.py
@@ -35,7 +35,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
         run: python -m pip install uv
@@ -61,13 +61,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
         run: python -m pip install uv
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -111,7 +111,7 @@ jobs:
         run: uv run python scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle
 
       - name: Upload package-manager bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-manager-bundle-${{ matrix.os }}
           path: artifacts/package-manager-bundle/
@@ -122,7 +122,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Repo Hygiene Guard
         shell: bash
@@ -153,7 +153,7 @@ jobs:
         run: python -m pip install uv
         
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           
@@ -190,7 +190,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Install uv
         run: python -m pip install uv
@@ -254,7 +254,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust_channel: [stable, nightly]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Setup Rust ${{ matrix.rust_channel }}
         shell: bash
@@ -273,7 +273,7 @@ jobs:
           cargo --version
           
       - name: Setup Python for PyO3 Linker
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           
@@ -297,13 +297,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Python for PyO3 Linker
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -327,13 +327,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
 
       - name: Setup Python for PyO3 Linker
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -380,13 +380,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Install uv
         run: python -m pip install uv
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
         
@@ -430,7 +430,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
         run: python -m pip install uv
@@ -480,7 +480,7 @@ jobs:
           cat artifacts/benchmark_summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-artifacts-ci
           path: artifacts/
@@ -497,7 +497,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -547,7 +547,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: v${{ needs.release.outputs.release_version }}
       - uses: PyO3/maturin-action@v1
@@ -557,7 +557,7 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pypi-wheels-${{ matrix.os }}
           path: dist
@@ -570,7 +570,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: v${{ needs.release.outputs.release_version }}
       - uses: PyO3/maturin-action@v1
@@ -580,7 +580,7 @@ jobs:
         env:
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pypi-sdist
           path: dist
@@ -593,9 +593,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Download all distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pypi-*
           path: dist
@@ -625,12 +625,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: v${{ needs.release.outputs.release_version }}
 
       - name: Download all distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pypi-*
           path: dist
@@ -663,14 +663,14 @@ jobs:
         run: |
           echo "No semantic-release version for this commit; skipping publish parity gate."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: needs.release.outputs.release_version != ''
         with:
           ref: v${{ needs.release.outputs.release_version }}
 
       - name: Download all distributions
         if: needs.release.outputs.release_version != '' && needs.release.outputs.publish_pypi == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: pypi-*
           path: dist
