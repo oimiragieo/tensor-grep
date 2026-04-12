@@ -1,6 +1,50 @@
 # CHANGELOG
 
 
+## v1.1.0 (2026-04-12)
+
+### Bug Fixes
+
+- **ci**: Apply ruff preview formatting for enterprise readiness
+  ([`a2124b5`](https://github.com/oimiragieo/tensor-grep/commit/a2124b519d44d5db7913f762f1b2bd3bd1296edc))
+
+### Features
+
+- **enterprise**: Harden supply-chain security and observability
+  ([#13](https://github.com/oimiragieo/tensor-grep/pull/13),
+  [`4144b61`](https://github.com/oimiragieo/tensor-grep/commit/4144b6130346f49b9095820abc32b072e4a4ee0c))
+
+* fix(enterprise): resolve doctor rendering, strict AST staleness, and Node 20 deprecation
+
+- cli: ensure tg doctor text output renders all new GPU/Worker/Cache fields - cli: upgrade AST cache
+  staleness check to evaluate sgconfig.yml and internal project_data_v6.json dependencies - ci:
+  enforce SLSA/SBOM step contracts in release workflow validators - ci: bump all actions to latest
+  major versions (checkout@v6, setup-python@v6, setup-node@v6) to resolve Node 20 deprecation
+  warnings
+
+* fix(enterprise): resolve doctor rendering, strict AST staleness, and CI action contracts
+
+- cli: explicitly assert actual recorded cache dependencies' st_mtime_ns matching Rust invalidation
+  rules - ci: mandate all newly-upgraded action majors (checkout@v6, setup-python@v6, etc) in ci
+  workflow validator - ci: upgrade SBOM/SLSA/Sigstore release checks from raw presence tests to
+  structural step-level contracts
+
+* fix(enterprise): resolve remaining doctor alignment and action validation gaps
+
+- cli: update \	g doctor\ to accept and resolve non-default \--config\ paths, perfectly aligning the
+  cache staleness check with the Rust orchestrator's behavior - ci: mandate strict action-major
+  versions per-job using structural regex validation in \alidate_ci_workflow_content\, preventing
+  any individual job drift
+
+* fix(enterprise): align doctor config parsing and clean up release validators
+
+- cli: update tg doctor signature to officially expose the --config flag, ensuring non-default
+  config paths correctly feed into the AST staleness diagnostics - ci: remove trailing whitespace in
+  validate_release_assets.py to restore strict ruff linting compliance
+
+* fix(ci): pin setup-uv to published v8.0.0 tag
+
+
 ## v1.0.1 (2026-04-12)
 
 ### Bug Fixes
