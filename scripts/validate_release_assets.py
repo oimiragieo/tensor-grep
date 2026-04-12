@@ -129,7 +129,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
             "publish-pypi must depend on validate-pypi-artifacts before uploading to PyPI"
         )
 
-    uv_bootstrap_count = ci_workflow.count("uses: astral-sh/setup-uv@v8") + ci_workflow.count(
+    uv_bootstrap_count = ci_workflow.count("uses: astral-sh/setup-uv@v8.0.0") + ci_workflow.count(
         "python -m pip install uv"
     )
     if uv_bootstrap_count < 2:
@@ -499,7 +499,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
         "actions/setup-node": "v6",
         "actions/upload-artifact": "v7",
         "actions/download-artifact": "v8",
-        "astral-sh/setup-uv": "v8",
+        "astral-sh/setup-uv": "v8.0.0",
     }
     for match in re.finditer(r"uses:\s+([^@\s\n]+)@([^\s\n]+)", ci_workflow):
         action = match.group(1)
@@ -797,9 +797,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append("Release workflow build-binaries job must include step `Install uv`")
         else:
             uses_value = build_install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v8":
+            if uses_value != "astral-sh/setup-uv@v8.0.0":
                 errors.append(
-                    "Release workflow build-binaries `Install uv` step must use `astral-sh/setup-uv@v8`"
+                    "Release workflow build-binaries `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
                 )
         build_setup_python_run = build_run_by_name.get("Set up Python")
         if build_setup_python_run is None:
@@ -1085,9 +1085,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append("Release workflow create-release job must include step `Install uv`")
         else:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v8":
+            if uses_value != "astral-sh/setup-uv@v8.0.0":
                 errors.append(
-                    "Release workflow create-release `Install uv` step must use `astral-sh/setup-uv@v8`"
+                    "Release workflow create-release `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
                 )
         setup_python_run = create_release_run_by_name.get("Setup Python")
         if setup_python_run is None:
@@ -1264,10 +1264,10 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
         install_uv_step = tag_steps_by_name.get("Install uv")
         if install_uv_step is not None:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v8":
+            if uses_value != "astral-sh/setup-uv@v8.0.0":
                 errors.append(
                     "Release workflow validate-tag-version-parity "
-                    "`Install uv` step must use `astral-sh/setup-uv@v8`"
+                    "`Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
                 )
         setup_python_run = tag_run_by_name.get("Setup Python")
         if setup_python_run is not None and "uv python install 3.12" not in setup_python_run:
@@ -1408,9 +1408,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             errors.append("Release workflow publish-npm job must include step `Install uv`")
         else:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v8":
+            if uses_value != "astral-sh/setup-uv@v8.0.0":
                 errors.append(
-                    "Release workflow publish-npm `Install uv` step must use `astral-sh/setup-uv@v8`"
+                    "Release workflow publish-npm `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
                 )
         setup_python_run = publish_npm_runs.get("Setup Python")
         if setup_python_run is None:
@@ -1535,9 +1535,9 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             )
         else:
             uses_value = install_uv_step.get("uses")
-            if uses_value != "astral-sh/setup-uv@v8":
+            if uses_value != "astral-sh/setup-uv@v8.0.0":
                 errors.append(
-                    "Release workflow release-success-gate `Install uv` step must use `astral-sh/setup-uv@v8`"
+                    "Release workflow release-success-gate `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
                 )
         setup_python_run = release_gate_runs.get("Setup Python")
         if setup_python_run is None:
@@ -1606,7 +1606,7 @@ def validate_release_workflow_content(*, release_workflow: str) -> list[str]:
             '`echo "Release publication gates passed: parity, npm, docs."`'
         )
 
-    if "uses: astral-sh/setup-uv@v8" not in release_workflow:
+    if "uses: astral-sh/setup-uv@v8.0.0" not in release_workflow:
         errors.append(
             "Release workflow package-manager validation must install uv before fallback checks"
         )
