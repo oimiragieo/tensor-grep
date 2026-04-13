@@ -156,6 +156,10 @@ impl RoutingDecision {
         Self::new(BackendSelection::Ripgrep, "rg_passthrough", false)
     }
 
+    pub const fn ripgrep_force() -> Self {
+        Self::new(BackendSelection::Ripgrep, "force-cpu", false)
+    }
+
     pub const fn gpu_sidecar() -> Self {
         Self::new(
             BackendSelection::GpuSidecar,
@@ -182,6 +186,9 @@ pub const fn route_search(
     }
 
     if config.force_cpu {
+        if config.rg_available && (config.prefer_rg_passthrough || !structured_output) {
+            return RoutingDecision::ripgrep_force();
+        }
         return RoutingDecision::native_cpu_force(config.rg_available, structured_output);
     }
 

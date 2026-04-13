@@ -20,11 +20,13 @@ pub struct RipgrepSearchArgs {
     pub invert_match: bool,
     pub count: bool,
     pub line_number: bool,
+    pub only_matching: bool,
     pub context: Option<usize>,
     pub max_count: Option<usize>,
     pub word_regexp: bool,
     pub globs: Vec<String>,
     pub no_ignore: bool,
+    pub color: Option<String>,
     pub patterns: Vec<String>,
     pub path: String,
 }
@@ -51,6 +53,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.invert_match {
         command.arg("-v");
     }
+    if args.only_matching {
+        command.arg("-o");
+    }
     if args.count {
         command.arg("-c");
     } else if args.line_number {
@@ -69,6 +74,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if args.no_ignore {
         command.arg("--no-ignore");
+    }
+    if let Some(color) = &args.color {
+        command.arg("--color").arg(color);
     }
     for glob in &args.globs {
         command.arg("-g").arg(glob);

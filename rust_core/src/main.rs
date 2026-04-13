@@ -90,7 +90,7 @@ pub struct PositionalCli {
     pub ignore_case: bool,
 
     /// Find and Replace in-place
-    #[arg(long)]
+    #[arg(short = 'r', long)]
     pub replace: Option<String>,
 
     /// Force the native CPU engine
@@ -100,6 +100,14 @@ pub struct PositionalCli {
     /// Route search to GPU backends via Python sidecar (comma-separated device IDs)
     #[arg(long = "gpu-device-ids", value_delimiter = ',')]
     pub gpu_device_ids: Vec<i32>,
+
+    /// Output coloring (auto, always, never)
+    #[arg(long)]
+    pub color: Option<String>,
+
+    /// Print only the matched parts of a line
+    #[arg(short = 'o', long)]
+    pub only_matching: bool,
 
     /// Emit machine-readable routing metadata as JSON
     #[arg(long, conflicts_with = "ndjson")]
@@ -163,6 +171,14 @@ pub struct SearchArgs {
     /// Route search to GPU backends via Python sidecar (comma-separated device IDs)
     #[arg(long = "gpu-device-ids", value_delimiter = ',')]
     pub gpu_device_ids: Vec<i32>,
+
+    /// Output coloring (auto, always, never)
+    #[arg(long)]
+    pub color: Option<String>,
+
+    /// Print only the matched parts of a line
+    #[arg(short = 'o', long)]
+    pub only_matching: bool,
 
     /// Emit machine-readable routing metadata as JSON
     #[arg(long, conflicts_with = "ndjson")]
@@ -613,6 +629,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         word_regexp: false,
         globs: Vec::new(),
         no_ignore: false,
+        color: None,
         patterns: Vec::new(),
         path: String::new(),
     };
@@ -631,6 +648,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "-F" | "--fixed-strings" => args.fixed_strings = true,
             "-v" | "--invert-match" => args.invert_match = true,
             "-c" | "--count" => args.count = true,
+            "-o" | "--only-matching" => args.only_matching = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
             "--no-ignore" => args.no_ignore = true,
             "-C" | "--context" => {
@@ -642,6 +660,10 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 index += 1;
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
                 args.max_count = Some(value);
+            }
+            "--color" => {
+                index += 1;
+                args.color = Some(tokens.get(index)?.clone());
             }
             "-g" | "--glob" => {
                 index += 1;
@@ -1439,11 +1461,13 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         invert_match: cli.invert_match,
         count: cli.count,
         line_number: !cli.count,
+        only_matching: cli.only_matching,
         context: None,
         max_count: cli.max_count,
         word_regexp: false,
         globs: Vec::new(),
         no_ignore: true,
+        color: cli.color.clone(),
         patterns: vec![pattern.to_string()],
         path: path.to_string(),
     }
@@ -1456,11 +1480,13 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         invert_match: args.invert_match,
         count: args.count,
         line_number: false,
+        only_matching: args.only_matching,
         context: args.context,
         max_count: args.max_count,
         word_regexp: args.word_regexp,
         globs: args.globs.clone(),
         no_ignore: args.no_ignore,
+        color: args.color.clone(),
         patterns: request.patterns.clone(),
         path: request.path.clone(),
     }

@@ -496,20 +496,22 @@ def run_command(
         print(rewrite_json)
         return exit_code
 
-    del rewrite, config, json_output, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
+    del rewrite, config, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
 
     search_path = path or "."
     cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang, query_pattern=pattern)
     backend = _select_ast_backend_for_pattern(cfg, pattern)
     backend_name = type(backend).__name__
-    print(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
 
-    if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
-        print(
-            "Warning: AstBackend not available (requires torch_geometric/tree_sitter). "
-            "Falling back to CPU regex.",
-            file=sys.stderr,
-        )
+    if not json_output:
+        print(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
+
+        if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
+            print(
+                "Warning: AstBackend not available (requires torch_geometric/tree_sitter). "
+                "Falling back to CPU regex.",
+                file=sys.stderr,
+            )
 
     all_results = SearchResult(matches=[], total_files=0, total_matches=0)
 
@@ -531,6 +533,29 @@ def run_command(
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
+
+    if json_output:
+        import json
+
+        payload = {
+            "version": 1,
+            "routing_backend": backend_name,
+            "routing_reason": "ast",
+            "sidecar_used": False,
+            "query": pattern,
+            "path": search_path,
+            "total_matches": all_results.total_matches,
+            "matches": [
+                {
+                    "file": match.file,
+                    "line": match.line_number,
+                    "text": match.text
+                }
+                for match in all_results.matches
+            ],
+        }
+        print(json.dumps(payload))
+        return 0
 
     from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
