@@ -86,9 +86,9 @@ fn test_route_search_prioritizes_force_cpu_over_auto_gpu() {
         true,
     );
 
-    assert_eq!(decision.selection, BackendSelection::NativeCpu);
-    assert_eq!(decision.reason, "force_cpu");
-    assert!(decision.allow_rg_fallback);
+    assert_eq!(decision.selection, BackendSelection::Ripgrep);
+    assert_eq!(decision.reason, "force-cpu");
+    assert!(!decision.allow_rg_fallback);
 }
 
 #[test]

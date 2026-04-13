@@ -203,13 +203,11 @@ def _capture_snapshot(file_paths: list[str]) -> list[dict[str, Any]]:
             stat = path.stat()
         except OSError:
             continue
-        snapshot.append(
-            {
-                "path": str(path),
-                "size": int(stat.st_size),
-                "mtime_ns": int(stat.st_mtime_ns),
-            }
-        )
+        snapshot.append({
+            "path": str(path),
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        })
     snapshot.sort(key=lambda item: str(item["path"]))
     return snapshot
 

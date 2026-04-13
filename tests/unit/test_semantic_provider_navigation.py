@@ -450,13 +450,11 @@ def test_cli_defs_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         repo_map,
         "build_symbol_defs_json",
-        lambda symbol, path, semantic_provider="native": json.dumps(
-            {
-                "symbol": symbol,
-                "path": str(path),
-                "semantic_provider": semantic_provider,
-            }
-        ),
+        lambda symbol, path, semantic_provider="native": json.dumps({
+            "symbol": symbol,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+        }),
     )
 
     result = CliRunner().invoke(
@@ -472,13 +470,11 @@ def test_cli_impact_accepts_provider_option(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(
         repo_map,
         "build_symbol_impact_json",
-        lambda symbol, path, semantic_provider="native": json.dumps(
-            {
-                "symbol": symbol,
-                "path": str(path),
-                "semantic_provider": semantic_provider,
-            }
-        ),
+        lambda symbol, path, semantic_provider="native": json.dumps({
+            "symbol": symbol,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+        }),
     )
 
     result = CliRunner().invoke(
@@ -494,13 +490,11 @@ def test_cli_source_accepts_provider_option(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(
         repo_map,
         "build_symbol_source_json",
-        lambda symbol, path, semantic_provider="native": json.dumps(
-            {
-                "symbol": symbol,
-                "path": str(path),
-                "semantic_provider": semantic_provider,
-            }
-        ),
+        lambda symbol, path, semantic_provider="native": json.dumps({
+            "symbol": symbol,
+            "path": str(path),
+            "semantic_provider": semantic_provider,
+        }),
     )
 
     result = CliRunner().invoke(
@@ -517,14 +511,12 @@ def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_json",
-        lambda symbol, path, max_depth=3, semantic_provider="native": json.dumps(
-            {
-                "symbol": symbol,
-                "path": str(path),
-                "max_depth": max_depth,
-                "semantic_provider": semantic_provider,
-            }
-        ),
+        lambda symbol, path, max_depth=3, semantic_provider="native": json.dumps({
+            "symbol": symbol,
+            "path": str(path),
+            "max_depth": max_depth,
+            "semantic_provider": semantic_provider,
+        }),
     )
 
     result = CliRunner().invoke(
@@ -550,16 +542,14 @@ def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypat
         repo_map,
         "build_symbol_blast_radius_plan_json",
         lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native": (
-            json.dumps(
-                {
-                    "symbol": symbol,
-                    "path": str(path),
-                    "max_depth": max_depth,
-                    "max_files": max_files,
-                    "max_symbols": max_symbols,
-                    "semantic_provider": semantic_provider,
-                }
-            )
+            json.dumps({
+                "symbol": symbol,
+                "path": str(path),
+                "max_depth": max_depth,
+                "max_files": max_files,
+                "max_symbols": max_symbols,
+                "semantic_provider": semantic_provider,
+            })
         ),
     )
 
@@ -596,14 +586,12 @@ def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path, monkeyp
         render_profile="full",
         profile=False,
         semantic_provider="native": (
-            json.dumps(
-                {
-                    "symbol": symbol,
-                    "path": str(path),
-                    "max_depth": max_depth,
-                    "semantic_provider": semantic_provider,
-                }
-            )
+            json.dumps({
+                "symbol": symbol,
+                "path": str(path),
+                "max_depth": max_depth,
+                "semantic_provider": semantic_provider,
+            })
         ),
     )
 
