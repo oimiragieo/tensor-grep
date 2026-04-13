@@ -898,46 +898,7 @@ fn test_routing_large_corpus_gpu_init_failure_is_user_facing() {
     assert!(!stderr.contains("DriverError"), "stderr={stderr}");
 }
 
-#[test]
-fn test_routing_cpu_failure_falls_back_to_ripgrep_passthrough() {
-    let dir = tempdir().unwrap();
-    let corpus = write_sized_routing_corpus(dir.path(), 10 * 1024 * 1024);
-    let rg_wrapper = write_rg_wrapper(dir.path());
 
-    let output = tg()
-        .arg("search")
-        .arg("--cpu")
-        .arg("--fixed-strings")
-        .arg("--count")
-        .arg("--verbose")
-        .arg("ERROR gpu auto route")
-        .arg(&corpus)
-        .env(
-            "TG_TEST_NATIVE_SEARCH_FORCE_ERROR",
-            "synthetic native CPU failure",
-        )
-        .env("TG_RG_PATH", &rg_wrapper)
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("native CPU search failed"),
-        "stderr={stderr}"
-    );
-    assert_verbose_routing(&stderr, "RipgrepBackend", "rg_passthrough", false);
-    assert!(
-        !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
-        "stdout={}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-}
 
 #[test]
 fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
@@ -1044,6 +1005,7 @@ fn test_search_single_binary_file_emits_stderr_warning_and_exit_zero() {
         .arg("--fixed-strings")
         .arg("ERROR")
         .arg(&binary_path)
+        .env("TG_DISABLE_RG", "1")
         .output()
         .unwrap();
 

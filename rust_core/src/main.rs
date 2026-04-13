@@ -140,6 +140,10 @@ pub struct SearchArgs {
     #[arg(short = 'c', long)]
     pub count: bool,
 
+    /// Find and Replace in-place
+    #[arg(short = 'r', long)]
+    pub replace: Option<String>,
+
     /// Show NUM context lines before and after each match
     #[arg(short = 'C', long)]
     pub context: Option<usize>,
@@ -624,6 +628,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         invert_match: false,
         count: false,
         line_number: false,
+        only_matching: false,
         context: None,
         max_count: None,
         word_regexp: false,
@@ -834,11 +839,55 @@ mod tests {
         assert!(parse_default_search_frontdoor_args(&positional).is_none());
         assert!(parse_default_search_frontdoor_args(&positional_count).is_none());
     }
+
+    #[test]
+    fn test_search_args_parses_replace_flag() {
+        use clap::Parser;
+        let args = ["tg", "search", "-r", "REPLACEMENT", "PATTERN", "path"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let cli = CommandCli::try_parse_from(&args).expect("Failed to parse args");
+        if let Commands::Search(search_args) = cli.command {
+            assert_eq!(search_args.replace.as_deref(), Some("REPLACEMENT"));
+        } else {
+            panic!("Expected Search command");
+        }
+
+        let long_args = ["tg", "search", "--replace", "REPLACEMENT", "PATTERN", "path"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let cli_long = CommandCli::try_parse_from(&long_args).expect("Failed to parse long args");
+        if let Commands::Search(search_args) = cli_long.command {
+            assert_eq!(search_args.replace.as_deref(), Some("REPLACEMENT"));
+        } else {
+            panic!("Expected Search command");
+        }
+    }
+
+    #[test]
+    fn early_positional_ripgrep_args_rejects_replace_flag() {
+        let replace = ["tg", "-r", "REPLACEMENT", "PATTERN", "path"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        assert!(parse_early_positional_ripgrep_args(&replace).is_none());
+    }
 }
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Search(args) => handle_ripgrep_search(args),
+        Commands::Search(args) => {
+            if args.replace.is_some() {
+                let mut py_args: Vec<String> = std::env::args().skip(1).collect();
+                if py_args.first().map(|s| s.as_str()) != Some("search") {
+                    py_args.insert(0, "search".to_string());
+                }
+                return handle_python_passthrough("search", py_args.into_iter().skip(1).collect());
+            }
+            handle_ripgrep_search(args)
+        },
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
         Commands::AuditVerify(args) => handle_audit_verify_command(args),

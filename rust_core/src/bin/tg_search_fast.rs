@@ -23,11 +23,13 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         invert_match: false,
         count: false,
         line_number: false,
+        only_matching: false,
         context: None,
         max_count: None,
         word_regexp: false,
         globs: Vec::new(),
         no_ignore: false,
+        color: None,
         patterns: Vec::new(),
         path: String::new(),
     };
