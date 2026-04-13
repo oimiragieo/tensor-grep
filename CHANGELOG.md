@@ -1,6 +1,74 @@
 # CHANGELOG
 
 
+## v1.1.2 (2026-04-13)
+
+### Bug Fixes
+
+- **ci**: Align linux ruff preview formatting
+  ([`ac743e4`](https://github.com/oimiragieo/tensor-grep/commit/ac743e45b0c436d1ab266e22b6dcbc89e9266da7))
+
+- **ci**: Align preview formatting and force-cpu routing tests
+  ([`284f279`](https://github.com/oimiragieo/tensor-grep/commit/284f279b0321eb6d1e779ee12bdcced0a439cf28))
+
+- **core**: Address CLI routing, ripgrep passthrough, and output bugs
+  ([`c00fe31`](https://github.com/oimiragieo/tensor-grep/commit/c00fe31fe253fb71572cb891ec5e5bdb098786c0))
+
+- cli: ensure all remaining subcommands (doctor, map, session, checkpoint, etc) are correctly routed
+  to the python passthrough layer in native Rust binary - cli: disable early ripgrep passthrough if
+  --replace or -r is provided, preventing ignored replace operations - cli: add --color and -o /
+  --only-matching argument mapping to PositionalCli and early ripgrep parser, enabling correct
+  output formatting and preventing Clap parser crashes - cli: allow forced --cpu searches to
+  natively route to ripgrep if structured output is not needed, bypassing the 6x slower custom Rust
+  CPU backend - cli: fix --json flag being ignored in tg run when --apply is false
+
+- **core**: Apply replacement string to output matches in Python CLI
+  ([`32e0ee3`](https://github.com/oimiragieo/tensor-grep/commit/32e0ee3421acbf564a82ebdf9180c194f5663d59))
+
+- **core**: Resolve native build failures and ensure search replace routes to python
+  ([`06ddc06`](https://github.com/oimiragieo/tensor-grep/commit/06ddc060f7d5b611f0c61bb9a2743d9cce827fa8))
+
+- rust: add missing color and only_matching fields to early RipgrepSearchArgs initializers, fixing
+  the build breakage in tg_search_fast.rs and main.rs - rust: add replace field to SearchArgs and
+  properly route tg search -r requests natively through to the python passthrough logic - rust:
+  cleanly map color and only_matching down into the underlying ripgrep invocation process builder -
+  rust: removed obsolete routing fallback test
+  test_routing_cpu_failure_falls_back_to_ripgrep_passthrough since native cpu is fully bypassed when
+  ripgrep handles --cpu requests - chore: removed stray test.rs file from the repository root
+
+- **enterprise**: Ensure missing python subcommands route to the correct native executor and update
+  help
+  ([`19f965b`](https://github.com/oimiragieo/tensor-grep/commit/19f965bf38269eb5dac920a6b9bcfc3530d693a1))
+
+- cli: added missing editor and testing subcommands to the native positional executor whitelist to
+  ensure they are handled properly by their explicit sub-commands, resolving the bug where they
+  incorrectly fell back to native search modes - cli: explicitly disabled the implicit ripgrep
+  passthrough optimization when --replace (-r) is present to guarantee Python-layer string
+  replacement logic correctly executes
+
+### Chores
+
+- Format codebase and align benchmark comparison docs
+  ([`521b8f9`](https://github.com/oimiragieo/tensor-grep/commit/521b8f98c6fd4bd7a9656163be82e389c03b4a70))
+
+### Continuous Integration
+
+- Align formatter-sensitive test files with ubuntu ruff
+  ([`f9459f1`](https://github.com/oimiragieo/tensor-grep/commit/f9459f14fc830a922daa4bdb1d62edee7dfd7ab3))
+
+- Align ubuntu ruff formatter output
+  ([`9a68c24`](https://github.com/oimiragieo/tensor-grep/commit/9a68c2473ebd84c1d05eb5dc72f9948afe515e18))
+
+- Apply ruff preview formatting
+  ([`63c586b`](https://github.com/oimiragieo/tensor-grep/commit/63c586bf19e9c841fe578eb41b175769e8fa2fa3))
+
+- Automate audit issue remediation and document pipeline
+  ([`5cb1a6f`](https://github.com/oimiragieo/tensor-grep/commit/5cb1a6f73f2396658e6ed4dd32460f9050ef6e52))
+
+- Automate dependency maintenance with dependabot
+  ([`ac07baf`](https://github.com/oimiragieo/tensor-grep/commit/ac07baf65af0dec9ab2ddc6dd5696a8461559e80))
+
+
 ## v1.1.1 (2026-04-12)
 
 ### Bug Fixes
