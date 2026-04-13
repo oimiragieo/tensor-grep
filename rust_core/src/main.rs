@@ -366,88 +366,103 @@ pub enum Commands {
     GpuOomProbe(GpuOomProbeArgs),
 
     // Editor-plane and Python passthrough commands:
-    #[command(name = "map")]
+    #[command(name = "map", disable_help_flag = true)]
     Map {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "session")]
+    #[command(name = "session", disable_help_flag = true)]
     Session {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "doctor")]
+    #[command(name = "doctor", disable_help_flag = true)]
     Doctor {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "checkpoint")]
+    #[command(name = "checkpoint", disable_help_flag = true)]
     Checkpoint {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "source")]
+    #[command(name = "source", disable_help_flag = true)]
     Source {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "impact")]
+    #[command(name = "impact", disable_help_flag = true)]
     Impact {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "callers")]
+    #[command(name = "callers", disable_help_flag = true)]
     Callers {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "blast-radius")]
+    #[command(name = "blast-radius", disable_help_flag = true)]
     BlastRadius {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "blast-radius-render")]
+    #[command(name = "blast-radius-render", disable_help_flag = true)]
     BlastRadiusRender {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "blast-radius-plan")]
+    #[command(name = "blast-radius-plan", disable_help_flag = true)]
     BlastRadiusPlan {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "edit-plan")]
+    #[command(name = "edit-plan", disable_help_flag = true)]
     EditPlan {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "context-render")]
+    #[command(name = "context-render", disable_help_flag = true)]
     ContextRender {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "rulesets")]
+    #[command(name = "rulesets", disable_help_flag = true)]
     Rulesets {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "audit-history")]
+    #[command(name = "audit-history", disable_help_flag = true)]
     AuditHistory {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "audit-diff")]
+    #[command(name = "audit-diff", disable_help_flag = true)]
     AuditDiff {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "review-bundle")]
+    #[command(name = "review-bundle", disable_help_flag = true)]
     ReviewBundle {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    #[command(name = "devices")]
+    #[command(name = "devices", disable_help_flag = true)]
     Devices {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "defs", disable_help_flag = true)]
+    Defs {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "refs", disable_help_flag = true)]
+    Refs {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "context", disable_help_flag = true)]
+    Context {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -987,51 +1002,6 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::New { args } => {
             use tensor_grep_rs::backend_ast_workflow::handle_ast_new;
             handle_ast_new(args)
-        }
-        Commands::Defs {
-            path,
-            symbol,
-            provider,
-            json,
-        } => {
-            use tensor_grep_rs::backend_ast_workflow::SessionRequest;
-            use tensor_grep_rs::editor_plane::handle_defs;
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Defs {
-                path: path.to_string_lossy().to_string(),
-                symbol: symbol.clone(),
-                provider: provider.clone(),
-            })? {
-                std::process::exit(exit_code);
-            }
-            handle_defs(path, symbol, provider, json)
-        }
-        Commands::Refs {
-            path,
-            symbol,
-            provider,
-            json,
-        } => {
-            use tensor_grep_rs::backend_ast_workflow::SessionRequest;
-            use tensor_grep_rs::editor_plane::handle_refs;
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Refs {
-                path: path.to_string_lossy().to_string(),
-                symbol: symbol.clone(),
-                provider: provider.clone(),
-            })? {
-                std::process::exit(exit_code);
-            }
-            handle_refs(path, symbol, provider, json)
-        }
-        Commands::Context { path, query, json } => {
-            use tensor_grep_rs::backend_ast_workflow::SessionRequest;
-            use tensor_grep_rs::editor_plane::handle_context;
-            if let Some(exit_code) = try_resident_execution(SessionRequest::Context {
-                path: path.to_string_lossy().to_string(),
-                query: query.clone(),
-            })? {
-                std::process::exit(exit_code);
-            }
-            handle_context(path, query, json)
         }
         Commands::Worker { port, stop } => {
             use tensor_grep_rs::backend_ast_workflow::{handle_ast_worker_tcp, SessionRequest};
