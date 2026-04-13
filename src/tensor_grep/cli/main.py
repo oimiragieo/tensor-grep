@@ -582,6 +582,42 @@ def _can_passthrough_rg(
     )
 
 
+def _replace_lines(
+    matches: list[MatchLine], pattern: str, config: "SearchConfig"
+) -> list[MatchLine]:
+    if config.replace_str is None:
+        return matches
+
+    flags = 0
+    if config.ignore_case or (config.smart_case and pattern.islower()):
+        flags |= re.IGNORECASE
+
+    if config.fixed_strings:
+        regex = None
+    elif config.line_regexp:
+        regex = re.compile(f"^{pattern}$", flags)
+    elif config.word_regexp:
+        regex = re.compile(rf"\b{pattern}\b", flags)
+    else:
+        regex = re.compile(pattern, flags)
+
+    extracted: list[MatchLine] = []
+    for match in matches:
+        if config.fixed_strings:
+            flags_val = flags
+            if flags_val & re.IGNORECASE:
+                new_text = re.sub(re.escape(pattern), config.replace_str.replace("\\", r"\\"), match.text, flags=re.IGNORECASE)
+            else:
+                new_text = match.text.replace(pattern, config.replace_str)
+        else:
+            if regex is not None:
+                new_text = regex.sub(config.replace_str, match.text)
+            else:
+                new_text = match.text
+        extracted.append(replace(match, text=new_text))
+    return extracted
+
+
 def _only_matching_lines(
     matches: list[MatchLine], pattern: str, config: "SearchConfig"
 ) -> list[MatchLine]:
@@ -2127,6 +2163,9 @@ def search_command(
                 matched_file_paths.add(current_file)
             matched_file_paths.update(m.file for m in result.matches)
             _merge_runtime_routing(result)
+
+    if config.replace_str is not None:
+        all_results.matches = _replace_lines(all_results.matches, pattern, config)
 
     if only_matching:
         all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
