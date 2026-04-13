@@ -1731,6 +1731,41 @@ def test_cli_disables_ripgrep_passthrough_for_replace_mode(monkeypatch):
     assert called["passthrough"] is False
 
 
+def test_cli_disables_ripgrep_passthrough_for_short_replace_mode(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="REPLACED", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    called = {"passthrough": False}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        called["passthrough"] = True
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available", lambda self: True
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "-r", "REPLACED"])
+
+    assert result.exit_code == 0
+    assert called["passthrough"] is False
+
+
 def test_upgrade_uses_uv_when_available(monkeypatch):
     calls: list[list[str]] = []
 
@@ -3651,6 +3686,70 @@ def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
     cli_main.main_entry()
 
     assert seen["argv"] == ["tg", "devices", "--json"]
+
+
+def test_main_entry_should_not_rewrite_map_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "map", "--json"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "map", "--json"]
+
+
+def test_main_entry_should_not_rewrite_doctor_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "doctor", "--json"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "doctor", "--json"]
+
+
+def test_main_entry_should_not_rewrite_checkpoint_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "checkpoint", "list"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "checkpoint", "list"]
+
+
+def test_main_entry_should_not_rewrite_session_subcommand(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, list[str]] = {}
+
+    def _fake_app():
+        seen["argv"] = list(sys.argv)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(sys, "argv", ["tg", "session", "list"])
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == ["tg", "session", "list"]
 
 
 def test_main_entry_should_not_rewrite_calibrate_subcommand(monkeypatch):

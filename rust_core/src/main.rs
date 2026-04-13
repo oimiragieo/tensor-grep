@@ -1233,6 +1233,19 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         "worker",
         "defs",
         "refs",
+        "source",
+        "impact",
+        "callers",
+        "blast-radius",
+        "blast-radius-render",
+        "blast-radius-plan",
+        "edit-plan",
+        "context-render",
+        "rulesets",
+        "audit-history",
+        "audit-diff",
+        "review-bundle",
+        "devices",
         "context",
         "lsp",
         "__gpu-native-stats",
@@ -1243,6 +1256,7 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         "map",
         "session",
         "doctor",
+        "checkpoint",
     ];
 
     for arg in raw_args.iter().skip(1) {
