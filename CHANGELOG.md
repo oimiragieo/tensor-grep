@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.1.3 (2026-04-13)
+
+### Bug Fixes
+
+- **core**: Add all remaining Typer commands to python bootstrap known commands list
+  ([`c64c890`](https://github.com/oimiragieo/tensor-grep/commit/c64c8909b0da7fdd2aa990638e4a293a4f5760e0))
+
+- cli: ensure context-render, edit-plan, last-radius, last-radius-render, last-radius-plan,
+  ulesets, udit-verify, udit-history, udit-diff, eview-bundle, and update are correctly
+  acknowledged in ootstrap.py and main.py's known command sets, preventing any remaining top-level
+  subcommands from improperly routing to the ripgrep fallback path
+
+- **core**: Perfectly align native subcommand routing and output formatting
+  ([`b77c21f`](https://github.com/oimiragieo/tensor-grep/commit/b77c21f447d712bd4aceacebeb9fe899a804612f))
+
+- cli: ensure all commands (map, doctor, session, checkpoint) execute their Typer definitions rather
+  than mapping incorrectly into Ripgrep search patterns through the bootstrap layer - cli: unblock
+  the native Ripgrep passthrough for -o and --only-matching by un-listing them from python-required
+  search flags in bootstrap.py, allowing the rg native format (which natively suppresses the
+  filename prefix for single files) to execute accurately
+
+### Documentation
+
+- Update README for CLI parity fixes
+  ([`d9dc724`](https://github.com/oimiragieo/tensor-grep/commit/d9dc7245da69f301b2b219f1f168fd10dfbbdf6d))
+
+
 ## v1.1.2 (2026-04-13)
 
 ### Bug Fixes
