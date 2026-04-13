@@ -239,6 +239,7 @@ def _extract_rewrite_error_message(stderr: str, fallback: str) -> str:
 
 @lru_cache(maxsize=1)
 def _resolve_native_tg_binary() -> Path:
+    import shutil
     repo_root = _repo_root()
     binary_name = "tg.exe" if os.name == "nt" else "tg"
     env_override = os.environ.get("TG_MCP_TG_BINARY")
@@ -248,6 +249,7 @@ def _resolve_native_tg_binary() -> Path:
         candidates.append(Path(env_override).expanduser())
     candidates.extend([
         repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "rust_core" / "target" / "debug" / binary_name,
         repo_root / "benchmarks" / binary_name,
         repo_root / "benchmarks" / "tg_rust.exe",
     ])
@@ -255,6 +257,11 @@ def _resolve_native_tg_binary() -> Path:
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()
+
+    if which_tg := shutil.which(binary_name):
+        return Path(which_tg).resolve()
+    if which_tensor_grep := shutil.which("tensor-grep" + (".exe" if os.name == "nt" else "")):
+        return Path(which_tensor_grep).resolve()
 
     raise FileNotFoundError(
         "Native tg binary not found. Build rust_core/target/release/tg with cargo build --release."

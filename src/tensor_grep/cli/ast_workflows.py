@@ -265,8 +265,8 @@ def _select_ast_backend_name_for_pattern(pattern: str, language: str) -> str:
             or _SUPPORTED_NATIVE_PATTERN_RE.fullmatch(stripped_pattern)
         )
     )
-    # Default policy: prefer native if pattern matches simple shape, otherwise wrapper.
-    return "AstBackend" if supports_native_pattern else "AstGrepWrapperBackend"
+    # Default policy: prefer wrapper.
+    return "AstGrepWrapperBackend"
 
 
 def _load_rule_specs_and_meta(
@@ -610,7 +610,7 @@ def _select_ast_backend_for_pattern(
     backend: Any
     if Pipeline.__module__ == "tensor_grep.core.pipeline":
         # Optimization: Prefer native AST backend if available, as it is much faster
-        if _check_backend_available("AstBackend"):
+        if pattern_kind == "native" and _check_backend_available("AstBackend"):
             backend = _get_cached_backend("AstBackend")
         elif _check_backend_available("AstGrepWrapperBackend"):
             backend = _get_cached_backend("AstGrepWrapperBackend")

@@ -340,45 +340,6 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Return exact definition locations for a symbol
-    Defs {
-        /// File or directory to inventory
-        path: PathBuf,
-        /// Exact symbol name to resolve
-        #[arg(long)]
-        symbol: String,
-        /// Semantic provider: native, lsp, or hybrid
-        #[arg(long, default_value = "native")]
-        provider: String,
-        /// Emit machine-readable JSON output
-        #[arg(long)]
-        json: bool,
-    },
-    /// Return symbol references across the inventory root
-    Refs {
-        /// File or directory to inventory
-        path: PathBuf,
-        /// Exact symbol name to resolve
-        #[arg(long)]
-        symbol: String,
-        /// Semantic provider: native, lsp, or hybrid
-        #[arg(long, default_value = "native")]
-        provider: String,
-        /// Emit machine-readable JSON output
-        #[arg(long)]
-        json: bool,
-    },
-    /// Return a ranked repository context pack for edit planning
-    Context {
-        /// File or directory to inventory
-        path: PathBuf,
-        /// Search query (symbol name or related text)
-        #[arg(long)]
-        query: String,
-        /// Emit machine-readable JSON output
-        #[arg(long)]
-        json: bool,
-    },
     /// Start a resident AST worker
     #[command(hide = true)]
     Worker {
@@ -403,6 +364,93 @@ pub enum Commands {
     #[cfg(feature = "cuda")]
     #[command(hide = true, name = "__gpu-oom-probe")]
     GpuOomProbe(GpuOomProbeArgs),
+
+    // Editor-plane and Python passthrough commands:
+    #[command(name = "map")]
+    Map {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "session")]
+    Session {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "doctor")]
+    Doctor {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "checkpoint")]
+    Checkpoint {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "source")]
+    Source {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "impact")]
+    Impact {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "callers")]
+    Callers {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "blast-radius")]
+    BlastRadius {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "blast-radius-render")]
+    BlastRadiusRender {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "blast-radius-plan")]
+    BlastRadiusPlan {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "edit-plan")]
+    EditPlan {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "context-render")]
+    ContextRender {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "rulesets")]
+    Rulesets {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "audit-history")]
+    AuditHistory {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "audit-diff")]
+    AuditDiff {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "review-bundle")]
+    ReviewBundle {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    #[command(name = "devices")]
+    Devices {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
 
     #[command(external_subcommand)]
     PythonPassthrough(Vec<String>),
@@ -1006,6 +1054,26 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::GpuCudaGraphs(args) => handle_gpu_cuda_graph_benchmark_command(args),
         #[cfg(feature = "cuda")]
         Commands::GpuOomProbe(args) => handle_gpu_oom_probe_command(args),
+        Commands::Map { args } => handle_python_passthrough("map", args),
+        Commands::Session { args } => handle_python_passthrough("session", args),
+        Commands::Doctor { args } => handle_python_passthrough("doctor", args),
+        Commands::Checkpoint { args } => handle_python_passthrough("checkpoint", args),
+        Commands::Defs { args } => handle_python_passthrough("defs", args),
+        Commands::Refs { args } => handle_python_passthrough("refs", args),
+        Commands::Source { args } => handle_python_passthrough("source", args),
+        Commands::Impact { args } => handle_python_passthrough("impact", args),
+        Commands::Callers { args } => handle_python_passthrough("callers", args),
+        Commands::BlastRadius { args } => handle_python_passthrough("blast-radius", args),
+        Commands::BlastRadiusRender { args } => handle_python_passthrough("blast-radius-render", args),
+        Commands::BlastRadiusPlan { args } => handle_python_passthrough("blast-radius-plan", args),
+        Commands::EditPlan { args } => handle_python_passthrough("edit-plan", args),
+        Commands::ContextRender { args } => handle_python_passthrough("context-render", args),
+        Commands::Rulesets { args } => handle_python_passthrough("rulesets", args),
+        Commands::AuditHistory { args } => handle_python_passthrough("audit-history", args),
+        Commands::AuditDiff { args } => handle_python_passthrough("audit-diff", args),
+        Commands::ReviewBundle { args } => handle_python_passthrough("review-bundle", args),
+        Commands::Devices { args } => handle_python_passthrough("devices", args),
+        Commands::Context { args } => handle_python_passthrough("context", args),
         Commands::PythonPassthrough(args) => {
             let command = args[0].clone();
             let command_args = args[1..].to_vec();

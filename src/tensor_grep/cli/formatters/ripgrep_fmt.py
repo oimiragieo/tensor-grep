@@ -39,6 +39,12 @@ class RipgrepFormatter(OutputFormatter):
             return "\n".join(lines)
 
         for match in result.matches:
-            # Basic ripgrep-like output: file:line:text
-            lines.append(f"{match.file}:{match.line_number}:{match.text}")
+            if self.config.with_filename or (
+                self.config.file_patterns is None
+                and not self.config.no_filename
+                and result.total_files > 1
+            ):
+                lines.append(f"{match.file}:{match.line_number}:{match.text}")
+            else:
+                lines.append(f"{match.line_number}:{match.text}")
         return "\n".join(lines)

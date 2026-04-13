@@ -30,7 +30,7 @@ class TestFormatters:
     def test_should_format_lines(self):
         fmt = RipgrepFormatter()
         output = fmt.format(self.result)
-        assert output == "test.log:2:ERROR test"
+        assert output == "2:ERROR test"
 
     def test_json_output_is_valid_json(self):
         fmt = JsonFormatter()

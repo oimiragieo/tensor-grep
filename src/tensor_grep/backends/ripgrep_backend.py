@@ -198,6 +198,10 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-F")
             if config.no_ignore:
                 cmd.append("--no-ignore")
+            if config.only_matching:
+                cmd.append("-o")
+            if config.color:
+                cmd.extend(["--color", config.color])
             if config.glob:
                 for glob in config.glob:
                     cmd.extend(["-g", glob])
