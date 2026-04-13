@@ -130,6 +130,13 @@ Current benchmark-governed strengths:
 - native AST search/rewrite beats `sg` on the accepted AST benchmark surfaces in [docs/benchmarks.md](docs/benchmarks.md)
 - repeated-query acceleration remains the strongest warm-path win on unchanged corpora
 
+Current CLI correctness line:
+
+- plain-text and `--json` invocations now share the same routed command surface for `doctor`, `map`, `session`, `checkpoint`, `rulesets`, `context-render`, `edit-plan`, and the blast-radius family
+- `tg search --replace` rewrites emitted match text in ripgrep style without mutating files
+- `tg search -o` now mirrors ripgrep single-file output formatting instead of forcing `file:line:text`
+- `tg run --json` emits structured output even without `--apply`
+
 Important constraint:
 
 - do not treat internal GPU pipeline throughput as the same thing as end-to-end CLI crossover
@@ -190,7 +197,7 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 
 Installer defaults and channels:
 - Default behavior installs the latest stable PyPI release.
-- Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.1`).
+- Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.3`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
@@ -210,7 +217,7 @@ irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/instal
 
 ```bash
 # Linux/macOS: install a specific stable release
-TENSOR_GREP_VERSION=1.1.1 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+TENSOR_GREP_VERSION=1.1.3 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
 ```
 
 ### Python Package Managers (pip/uv)
