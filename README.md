@@ -15,6 +15,7 @@ Harness consumers should use the documented public contracts in [docs/harness_ap
 Use these documents as the current product contract instead of relying on scattered examples:
 
 - [docs/benchmarks.md](docs/benchmarks.md) for the accepted benchmark matrix, artifact naming, and regression rules
+- [docs/tool_comparison.md](docs/tool_comparison.md) for the public workload-class comparison story against `rg`, `git grep`, `ast-grep`, and other comparator families
 - [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current native GPU crossover story and its limits
 - [docs/routing_policy.md](docs/routing_policy.md) for current CPU/GPU/index/AST routing behavior
 - [docs/harness_api.md](docs/harness_api.md) for machine-readable CLI and MCP contract shapes
@@ -86,13 +87,24 @@ Please see the [CHANGELOG.md](CHANGELOG.md) for a release history.
 
 ## Benchmark Snapshot
 
-The canonical benchmark matrix lives in [docs/benchmarks.md](docs/benchmarks.md). The short version:
+The canonical benchmark matrix lives in [docs/benchmarks.md](docs/benchmarks.md). One benchmark is never enough. The public comparison summary lives in [docs/tool_comparison.md](docs/tool_comparison.md), and the tables below are the current host-local snapshot on this Windows machine, not a universal claim.
 
-- cold generic text search stays near `rg`
-- native CPU large-file search is the main measured win over `rg`
-- native AST search/rewrite is benchmarked separately from plain text search
-- indexed repeated-query paths are benchmarked separately from cold scans and now run under the CI benchmark job with the `bench` extra installed
-- native GPU remains benchmark-governed and hardware-specific
+Current quick tool comparison:
+
+- artifact: [`artifacts/bench_tool_comparison.json`](artifacts/bench_tool_comparison.json)
+- script: `uv run python benchmarks/run_tool_comparison_benchmarks.py --output artifacts/bench_tool_comparison.json`
+
+| Scenario | ripgrep | `tg search` | `tg search --cpu` | `git grep --no-index` |
+| --- | --- | --- | --- | --- |
+| standard corpus | `0.166s` | `0.240s` | `0.212s` | `0.293s` |
+| 200MB large file | `0.108s` | `0.240s` | `0.125s` | `0.214s` |
+
+Current read:
+
+- `rg` remains the cold generic text-search baseline
+- `tg search --cpu` is materially faster than default `tg search` on both comparator rows, but `rg` still leads both published rows on this host
+- host-local peer rows currently include `rg` and `git grep --no-index`; `ag`, `ack`, `ugrep`, and `grep` are omitted on this host because they are not installed
+- native AST search/rewrite, repeated-query acceleration, and GPU are separate benchmark surfaces and should not be conflated with cold plain-text search
 
 Current repeated-query snapshot:
 
@@ -111,31 +123,12 @@ Current AI handoff comparison snapshot:
 - mean overall score: `0.972222`
 - current read-group heuristic: same-directory related/test reads are prefetched into the primary phase when they stay local to the edit slice
 
-Current cold-path startup refresh:
+Current benchmark-governed strengths:
 
-- artifact: [`artifacts/bench_run_benchmarks_passthrough_startup_refresh.json`](artifacts/bench_run_benchmarks_passthrough_startup_refresh.json)
-- same-host back-to-back delta on the default `tg search` path:
-  `Max Count Limit` `-46.34%`, `Count Matches` `-17.09%`, `Word Boundary` `-14.01%`, `File Glob Filtering` `-4.33%`
-- accepted read: caching ripgrep resolution helps the small passthrough-style searches, but cold generic search still trails `rg` overall
-- next two narrow targets: the remaining default `-c` count-path overhead, then positional `-w`
-
-Current positional `-m` snapshot:
-
-- artifacts:
-  [`artifacts/bench_run_benchmarks_positional_m_baseline_lane.json`](artifacts/bench_run_benchmarks_positional_m_baseline_lane.json)
-  and [`artifacts/bench_run_benchmarks_positional_m_candidate.json`](artifacts/bench_run_benchmarks_positional_m_candidate.json)
-- positional `tg -m <n> PATTERN PATH` now preserves `max_count` through the positional ripgrep and native routing path
-- on the experimental `explicit_binary_positional_early_rg` lane, `Max Count Limit` improved from `0.163646s` to `0.158791s` (`-2.97%`)
-
-Current positional `--glob` outcome:
-
-- artifacts:
-  [`artifacts/bench_run_benchmarks_positional_glob_baseline_lane.json`](artifacts/bench_run_benchmarks_positional_glob_baseline_lane.json)
-  and [`artifacts/bench_run_benchmarks_positional_glob_candidate.json`](artifacts/bench_run_benchmarks_positional_glob_candidate.json)
-- rejected result: widening the experimental positional launcher to accept `--glob` exposed a product bug instead of a win
-- on the same-host `explicit_binary_positional_early_rg` lane, `File Glob Filtering` moved from `0.149999s` with parity `PASS` to `0.285383s` with parity `FAIL`
-- accepted read: do not land positional `--glob` on this line until the routing contract is fixed and remeasured
-- next two narrow targets: the remaining default `-c` count-path overhead, then positional `-w`
+- host-local large-file comparator: `tg search --cpu 0.125s` versus default `tg search 0.240s` in [`artifacts/bench_tool_comparison.json`](artifacts/bench_tool_comparison.json)
+- native CPU benchmark line: `tg --cpu` wins the count-heavy `large_file_200mb_count` row (`0.063s` vs `0.108s`), but still trails `rg` on `cold_standard_corpus`, `large_file_200mb`, and `many_file_directory` in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
+- native AST search/rewrite beats `sg` on the accepted AST benchmark surfaces in [docs/benchmarks.md](docs/benchmarks.md)
+- repeated-query acceleration remains the strongest warm-path win on unchanged corpora
 
 Important constraint:
 
@@ -144,7 +137,7 @@ Important constraint:
 
 ## Why should I use `tensor-grep`?
 
-- **Native CPU engine with real large-file wins.** The Rust text engine embeds ripgrep's grep crates directly, avoids subprocess overhead, and adds chunk parallelism for large files. See [docs/benchmarks.md](docs/benchmarks.md) for the accepted benchmark matrix.
+- **Native CPU engine with measured workload-class wins.** The Rust text engine embeds ripgrep's grep crates directly, avoids subprocess overhead in the native path, and adds chunk parallelism for large files. See [docs/tool_comparison.md](docs/tool_comparison.md) and [docs/benchmarks.md](docs/benchmarks.md) for the current measured line.
 - **Native AST search and rewrite.** `tg run` stays fully native for structural search, rewrite planning, diff, apply, and verify.
 - **Repeated-query acceleration.** The trigram index gives warm-query wins on unchanged corpora without changing the public search contract.
 - **Harness-first machine interfaces.** JSON, NDJSON, diff, batch rewrite, and MCP are documented and regression-tested. Start with [docs/harness_api.md](docs/harness_api.md) and [docs/harness_cookbook.md](docs/harness_cookbook.md).
@@ -152,8 +145,8 @@ Important constraint:
 - **Benchmark-governed GPU path.** Native CUDA support exists, but route selection stays tied to measured crossover data. The current GPU story is documented in [docs/gpu_crossover.md](docs/gpu_crossover.md).
 - **Multi-pattern GPU search.** Pass multiple patterns with `-e pattern1 -e pattern2` for GPU-accelerated multi-pattern matching in a single pass.
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
-- **It is a drop-in replacement for ripgrep.** `tg search` accepts the exact same 70+ CLI flags (`-i`, `-v`, `-C`, `-g`, `-t`) that you already know and love from `ripgrep`.
-- **In-place file mutations.** Unlike ripgrep, `tensor-grep` supports native find-and-replace mutability via `--replace` on the Rust path.
+- **It is a drop-in replacement for ripgrep for the common search surface.** `tg search` accepts the familiar `ripgrep`-style flags (`-i`, `-v`, `-C`, `-g`, `-t`) that matter for day-to-day code and log search.
+- **Output replacement and actual rewrites are separate tools.** `tg search --replace` rewrites emitted match text in ripgrep style, while `tg run --rewrite ... --apply` performs real file edits through the AST rewrite path.
 - **Native structural search and rewrite.** Run `tg run`, `tg scan`, and batch rewrite flows against the native AST backend instead of text-only matching.
 - **Repeated-query acceleration.** Indexed literal and regex-prefilter paths are benchmarked separately from cold scans. See [docs/benchmarks.md](docs/benchmarks.md) for the current measured line instead of relying on stale microbench numbers.
 - **Semantic Understanding:** `tg classify` uses `cyBERT` when the NLP stack is installed and reachable. Treat it as an optional path, not part of the default hot search loop.
@@ -197,7 +190,7 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 
 Installer defaults and channels:
 - Default behavior installs the latest stable PyPI release.
-- Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.0`).
+- Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.1`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
@@ -217,7 +210,7 @@ irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/instal
 
 ```bash
 # Linux/macOS: install a specific stable release
-TENSOR_GREP_VERSION=1.1.0 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
+TENSOR_GREP_VERSION=1.1.1 curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh | bash
 ```
 
 ### Python Package Managers (pip/uv)
@@ -473,7 +466,11 @@ The native CPU, AST, index, and primary GPU paths live in Rust. Python remains o
 
 The `v1.x` line is feature-complete for the current native search, AST, and editor-plane surface. The remaining work is intentionally narrow:
 
+- add semantic context compression for repo-map and render outputs so agent loops carry less low-value code without losing exact source anchors
+- add tighter multi-agent signal surfaces on top of the existing JSON/NDJSON, session, and MCP contracts instead of inventing another parallel agent protocol
+- publish a broader reproducible comparator pack for tools such as `ag`, `ack`, `ugrep`, and GNU `grep` alongside the current `rg` and `git grep` rows
 - graduate or retire the experimental resident AST worker based on benchmark-governed evidence, not intuition
+- keep benchmark-governed security and compliance acceleration on top of the existing rulesets and audit surfaces
 - keep managed provider / editor-plane integrations honest and contract-tested
 - continue supply-chain hardening, package-manager validation, and operational docs for team ownership
 - preserve benchmark history and rejected experiments so future work stays measurable instead of speculative

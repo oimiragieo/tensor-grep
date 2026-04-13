@@ -12,6 +12,7 @@
 
 - [Project README on GitHub](https://github.com/oimiragieo/tensor-grep/blob/main/README.md) for the product overview and installation entry points
 - [docs/benchmarks.md](benchmarks.md) for accepted benchmark lines and regression rules
+- [docs/tool_comparison.md](tool_comparison.md) for the public workload-class comparison story
 - [docs/routing_policy.md](routing_policy.md) for backend routing behavior
 - [docs/harness_api.md](harness_api.md) for machine-readable CLI contracts
 - [docs/installation.md](installation.md) for install and package-manager guidance
@@ -32,5 +33,6 @@
 ## Product Positioning
 
 - `rg` remains the cold generic text-search baseline.
+- `tg --cpu` can beat `rg` on selected count-heavy workloads and materially narrow the large-file gap, but comparison claims stay workload-specific.
 - `tensor-grep` is strongest on native AST workflows, repeated-query acceleration, machine-readable harness flows, and managed enterprise rollout.
 - GPU acceleration is benchmark-governed and hardware-specific, not a universal default.

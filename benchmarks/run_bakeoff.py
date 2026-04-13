@@ -76,30 +76,34 @@ def load_scenarios(path: str | Path) -> list[Scenario]:
     payload = json.loads(scenarios_path.read_text(encoding="utf-8"))
     scenarios = payload.get("scenarios")
     if not isinstance(scenarios, list):
-        raise ScenarioValidationError([
-            {"field": "scenarios", "code": "invalid_type", "expected": "list"}
-        ])
+        raise ScenarioValidationError(
+            [{"field": "scenarios", "code": "invalid_type", "expected": "list"}]
+        )
 
     errors: list[dict[str, Any]] = []
     validated: list[Scenario] = []
     for index, scenario in enumerate(scenarios):
         if not isinstance(scenario, dict):
-            errors.append({
-                "scenario_index": index,
-                "field": "scenario",
-                "code": "invalid_type",
-                "expected": "object",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "scenario",
+                    "code": "invalid_type",
+                    "expected": "object",
+                }
+            )
             continue
 
         current = dict(scenario)
         missing = [field for field in _REQUIRED_FIELDS if field not in current]
         for field in missing:
-            errors.append({
-                "scenario_index": index,
-                "field": field,
-                "code": "missing_required_field",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": field,
+                    "code": "missing_required_field",
+                }
+            )
         if missing:
             continue
 
@@ -110,51 +114,63 @@ def load_scenarios(path: str | Path) -> list[Scenario]:
         expected_primary_span = current["expected_primary_span"]
 
         if not isinstance(repo_fixture, str):
-            errors.append({
-                "scenario_index": index,
-                "field": "repo_fixture",
-                "code": "invalid_type",
-                "expected": "str",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "repo_fixture",
+                    "code": "invalid_type",
+                    "expected": "str",
+                }
+            )
         elif not Path(repo_fixture).is_absolute():
             current["repo_fixture"] = str((scenarios_path.parent / repo_fixture).resolve())
         if not isinstance(query_or_symbol, str):
-            errors.append({
-                "scenario_index": index,
-                "field": "query_or_symbol",
-                "code": "invalid_type",
-                "expected": "str",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "query_or_symbol",
+                    "code": "invalid_type",
+                    "expected": "str",
+                }
+            )
         if mode not in _ALLOWED_MODES:
-            errors.append({
-                "scenario_index": index,
-                "field": "mode",
-                "code": "invalid_choice",
-                "expected": list(_ALLOWED_MODES),
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "mode",
+                    "code": "invalid_choice",
+                    "expected": list(_ALLOWED_MODES),
+                }
+            )
         if expected_primary_file is not None and not isinstance(expected_primary_file, str):
-            errors.append({
-                "scenario_index": index,
-                "field": "expected_primary_file",
-                "code": "invalid_type",
-                "expected": "str | null",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "expected_primary_file",
+                    "code": "invalid_type",
+                    "expected": "str | null",
+                }
+            )
         if expected_primary_span is not None and not _valid_span(expected_primary_span):
-            errors.append({
-                "scenario_index": index,
-                "field": "expected_primary_span",
-                "code": "invalid_shape",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "expected_primary_span",
+                    "code": "invalid_shape",
+                }
+            )
 
         for field in _LIST_FIELDS:
             value = current[field]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-                errors.append({
-                    "scenario_index": index,
-                    "field": field,
-                    "code": "invalid_type",
-                    "expected": "list[str]",
-                })
+                errors.append(
+                    {
+                        "scenario_index": index,
+                        "field": field,
+                        "code": "invalid_type",
+                        "expected": "list[str]",
+                    }
+                )
 
         validated.append(current)
 
@@ -192,11 +208,13 @@ def run_scenario(
         "actual_primary_file": edit_plan_seed.get("primary_file"),
         "actual_primary_span": edit_plan_seed.get("primary_span"),
         "actual_dependent_files": _ordered_unique_strings(edit_plan_seed.get("dependent_files")),
-        "actual_suggested_edit_files": _ordered_unique_strings([
-            current.get("file")
-            for current in list(edit_plan_seed.get("suggested_edits", []))
-            if isinstance(current, dict)
-        ]),
+        "actual_suggested_edit_files": _ordered_unique_strings(
+            [
+                current.get("file")
+                for current in list(edit_plan_seed.get("suggested_edits", []))
+                if isinstance(current, dict)
+            ]
+        ),
         "actual_test_files": _ordered_unique_strings(
             edit_plan_seed.get("validation_tests", payload.get("tests", []))
         ),
@@ -217,16 +235,20 @@ def run_scenario(
 
 def score_scenario(scenario: Scenario, actual: ResultRow) -> ResultRow:
     repo_root = Path(str(scenario["repo_fixture"]))
-    expected_files = _ordered_unique_strings([
-        scenario.get("expected_primary_file"),
-        *list(scenario.get("expected_dependent_files", [])),
-        *list(scenario.get("expected_suggested_edit_files", [])),
-    ])
-    actual_files = _ordered_unique_strings([
-        actual.get("actual_primary_file"),
-        *list(actual.get("actual_dependent_files", [])),
-        *list(actual.get("actual_suggested_edit_files", [])),
-    ])
+    expected_files = _ordered_unique_strings(
+        [
+            scenario.get("expected_primary_file"),
+            *list(scenario.get("expected_dependent_files", [])),
+            *list(scenario.get("expected_suggested_edit_files", [])),
+        ]
+    )
+    actual_files = _ordered_unique_strings(
+        [
+            actual.get("actual_primary_file"),
+            *list(actual.get("actual_dependent_files", [])),
+            *list(actual.get("actual_suggested_edit_files", [])),
+        ]
+    )
 
     normalized_expected_files = {_normalize_path(path, repo_root) for path in expected_files}
     normalized_actual_files = {_normalize_path(path, repo_root) for path in actual_files}

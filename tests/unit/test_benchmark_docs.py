@@ -15,6 +15,7 @@ def test_benchmark_docs_should_publish_the_current_benchmark_matrix() -> None:
     assert "## Benchmark Matrix" in doc
     assert "run_benchmarks.py" in doc
     assert "run_native_cpu_benchmarks.py" in doc
+    assert "run_tool_comparison_benchmarks.py" in doc
     assert "run_hot_query_benchmarks.py" in doc
     assert "run_ast_benchmarks.py" in doc
     assert "run_ast_multilang_benchmarks.py" in doc
@@ -26,6 +27,7 @@ def test_benchmark_docs_should_publish_the_current_benchmark_matrix() -> None:
     assert "run_index_scaling_benchmark.py" in doc
     assert "artifacts/bench_run_benchmarks.json" in doc
     assert "artifacts/bench_run_native_cpu_benchmarks.json" in doc
+    assert "artifacts/bench_tool_comparison.json" in doc
     assert "artifacts/bench_hot_query_benchmarks.json" in doc
     assert "artifacts/bench_run_ast_benchmarks.json" in doc
     assert "artifacts/bench_ast_multilang.json" in doc

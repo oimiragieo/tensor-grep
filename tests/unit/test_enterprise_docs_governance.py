@@ -10,6 +10,7 @@ RELEASE_CHECKLIST_PATH = Path("docs/RELEASE_CHECKLIST.md")
 CI_PIPELINE_PATH = Path("docs/CI_PIPELINE.md")
 EXPERIMENTAL_PATH = Path("docs/EXPERIMENTAL.md")
 DOCS_INDEX_PATH = Path("docs/index.md")
+TOOL_COMPARISON_PATH = Path("docs/tool_comparison.md")
 MKDOCS_PATH = Path("mkdocs.yml")
 RESIDENT_WORKER_RUNBOOK_PATH = Path("docs/runbooks/resident-worker.md")
 GPU_RUNBOOK_PATH = Path("docs/runbooks/gpu-troubleshooting.md")
@@ -107,8 +108,20 @@ def test_docs_index_should_point_to_current_product_contracts() -> None:
     assert "Rust-native CPU text search" in doc
     assert "docs/CI_PIPELINE.md" in doc
     assert "docs/benchmarks.md" in doc
+    assert "docs/tool_comparison.md" in doc
     assert "docs/SUPPORT_MATRIX.md" in doc
     assert "GPU acceleration is benchmark-governed" in doc
+
+
+def test_tool_comparison_doc_should_keep_workload_specific_claims() -> None:
+    doc = TOOL_COMPARISON_PATH.read_text(encoding="utf-8")
+
+    assert "single universal winner" in doc
+    assert "one benchmark is never enough" in doc
+    assert "Host-Local Command Snapshot" in doc
+    assert "Semgrep" in doc
+    assert "Zoekt" in doc
+    assert "git grep --no-index" in doc
 
 
 def test_mkdocs_should_publish_current_repo_and_enterprise_nav() -> None:
@@ -120,6 +133,7 @@ def test_mkdocs_should_publish_current_repo_and_enterprise_nav() -> None:
     assert "Support Matrix: SUPPORT_MATRIX.md" in doc
     assert "Contracts: CONTRACTS.md" in doc
     assert "Experimental Features: EXPERIMENTAL.md" in doc
+    assert "Tool Comparison: tool_comparison.md" in doc
 
 
 def test_experimental_docs_and_runbooks_should_warn_about_worker_support_boundary() -> None:

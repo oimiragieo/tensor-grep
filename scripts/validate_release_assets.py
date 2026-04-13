@@ -941,6 +941,7 @@ def validate_readme_contract(*, readme_content: str) -> list[str]:
     for expected in (
         "## Canonical Docs",
         "[docs/benchmarks.md](docs/benchmarks.md)",
+        "[docs/tool_comparison.md](docs/tool_comparison.md)",
         "[docs/gpu_crossover.md](docs/gpu_crossover.md)",
         "[docs/routing_policy.md](docs/routing_policy.md)",
         "[docs/harness_api.md](docs/harness_api.md)",
@@ -974,6 +975,7 @@ def validate_benchmarks_docs(*, benchmarks_content: str) -> list[str]:
         "## Benchmark Matrix",
         "| Surface | Script | Default artifact |",
         "`benchmarks/run_benchmarks.py`",
+        "`benchmarks/run_tool_comparison_benchmarks.py`",
         "`benchmarks/run_hot_query_benchmarks.py`",
         "`benchmarks/run_ast_rewrite_benchmarks.py`",
     ):

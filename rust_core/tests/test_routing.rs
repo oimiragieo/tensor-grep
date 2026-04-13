@@ -898,8 +898,6 @@ fn test_routing_large_corpus_gpu_init_failure_is_user_facing() {
     assert!(!stderr.contains("DriverError"), "stderr={stderr}");
 }
 
-
-
 #[test]
 fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
     let dir = tempdir().unwrap();

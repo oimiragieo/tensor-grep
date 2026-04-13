@@ -61,11 +61,13 @@ def render_world_class_report(
         )
 
     if provider_navigation is None:
-        lines.extend([
-            "",
-            "## Provider Hard Cases",
-            "- provider-navigation input not provided",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Provider Hard Cases",
+                "- provider-navigation input not provided",
+            ]
+        )
     else:
         lines.extend(["", "## Provider Hard Cases"])
         for provider, metrics in sorted(
@@ -86,12 +88,14 @@ def render_world_class_report(
             )
 
     if competitor is None:
-        lines.extend([
-            "",
-            "## Competitor Status",
-            "- competitor-normalized input not provided",
-            "- manual Claude Code / Aider / OpenHands runs are still required",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Competitor Status",
+                "- competitor-normalized input not provided",
+                "- manual Claude Code / Aider / OpenHands runs are still required",
+            ]
+        )
     else:
         lines.extend(["", "## Competitor Summary"])
         for system, metrics in sorted(
@@ -106,14 +110,16 @@ def render_world_class_report(
                 f"wall_clock=`{current.get('mean_wall_clock_seconds', 0.0)}`"
             )
 
-    lines.extend([
-        "",
-        "## Decision",
-        "- keep pursuing Python precision; that remains the weakest engineering area",
-        "- runtime work should stay benchmark-led because caller_scan/repo_map_build/file_parse still dominate",
-        "- competitor comparison is operationally ready but still needs manual external runs",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Decision",
+            "- keep pursuing Python precision; that remains the weakest engineering area",
+            "- runtime work should stay benchmark-led because caller_scan/repo_map_build/file_parse still dominate",
+            "- competitor comparison is operationally ready but still needs manual external runs",
+            "",
+        ]
+    )
     return "\n".join(lines)
 
 

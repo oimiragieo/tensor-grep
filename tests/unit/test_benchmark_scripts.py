@@ -189,64 +189,66 @@ def test_build_attempt_ledger_should_normalize_payload_shape(tmp_path):
     )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
-    payload = module.build_attempt_ledger_payload({
-        "task_id": "tg-task-1",
-        "root": str(repo_root),
-        "attempts": [
-            {
-                "attempt_id": "attempt-1",
-                "parent_attempt_id": None,
-                "kind": "rewrite_apply_verify",
-                "status": "validation_failed",
-                "retryable": True,
-                "retry_stage": "validation",
-                "retry_reason": "lint-failed",
-                "checkpoint_id": "chk-1",
-                "audit_manifest_path": "artifacts/audit/attempt-1.json",
-                "validation_success": False,
-                "score_artifact": None,
-                "inputs": ["artifacts/plans/plan-1.json"],
-                "outputs": ["artifacts/diffs/attempt-1.diff"],
-            },
-            {
-                "attempt_id": "attempt-2",
-                "parent_attempt_id": "attempt-1",
-                "kind": "rewrite_apply_verify",
-                "status": "accepted",
-                "retryable": False,
-                "retry_stage": "none",
-                "retry_reason": "accepted",
-                "checkpoint_id": "chk-2",
-                "audit_manifest_path": "artifacts/audit/attempt-2.json",
-                "validation_success": True,
-                "score_artifact": "artifacts/scores/attempt-2.json",
-                "inputs": ["artifacts/diffs/attempt-2.diff"],
-                "outputs": ["artifacts/scores/attempt-2.json"],
-            },
-        ],
-        "final_outcome": {
-            "status": "accepted",
-            "accepted_attempt_id": "attempt-2",
-            "score_artifact": "artifacts/scores/attempt-2.json",
-            "summary": "accepted after one retry",
-        },
-        "replay": {
-            "preserve_attempt_ids": True,
-            "partial_retry_ledger": [
+    payload = module.build_attempt_ledger_payload(
+        {
+            "task_id": "tg-task-1",
+            "root": str(repo_root),
+            "attempts": [
                 {
                     "attempt_id": "attempt-1",
-                    "resumed_from": "validation",
-                    "resumed_as": "attempt-2",
-                    "reason": "lint-failed",
-                }
+                    "parent_attempt_id": None,
+                    "kind": "rewrite_apply_verify",
+                    "status": "validation_failed",
+                    "retryable": True,
+                    "retry_stage": "validation",
+                    "retry_reason": "lint-failed",
+                    "checkpoint_id": "chk-1",
+                    "audit_manifest_path": "artifacts/audit/attempt-1.json",
+                    "validation_success": False,
+                    "score_artifact": None,
+                    "inputs": ["artifacts/plans/plan-1.json"],
+                    "outputs": ["artifacts/diffs/attempt-1.diff"],
+                },
+                {
+                    "attempt_id": "attempt-2",
+                    "parent_attempt_id": "attempt-1",
+                    "kind": "rewrite_apply_verify",
+                    "status": "accepted",
+                    "retryable": False,
+                    "retry_stage": "none",
+                    "retry_reason": "accepted",
+                    "checkpoint_id": "chk-2",
+                    "audit_manifest_path": "artifacts/audit/attempt-2.json",
+                    "validation_success": True,
+                    "score_artifact": "artifacts/scores/attempt-2.json",
+                    "inputs": ["artifacts/diffs/attempt-2.diff"],
+                    "outputs": ["artifacts/scores/attempt-2.json"],
+                },
             ],
-            "audit_chain": [
-                "artifacts/audit/attempt-1.json",
-                "artifacts/audit/attempt-2.json",
-            ],
-            "next_action": "score accepted attempt",
-        },
-    })
+            "final_outcome": {
+                "status": "accepted",
+                "accepted_attempt_id": "attempt-2",
+                "score_artifact": "artifacts/scores/attempt-2.json",
+                "summary": "accepted after one retry",
+            },
+            "replay": {
+                "preserve_attempt_ids": True,
+                "partial_retry_ledger": [
+                    {
+                        "attempt_id": "attempt-1",
+                        "resumed_from": "validation",
+                        "resumed_as": "attempt-2",
+                        "reason": "lint-failed",
+                    }
+                ],
+                "audit_chain": [
+                    "artifacts/audit/attempt-1.json",
+                    "artifacts/audit/attempt-2.json",
+                ],
+                "next_action": "score accepted attempt",
+            },
+        }
+    )
 
     assert payload["artifact"] == "agent_attempt_ledger"
     assert payload["suite"] == "agent_loop"
@@ -267,39 +269,41 @@ def test_build_attempt_ledger_cli_should_write_output_file(tmp_path):
     input_path = tmp_path / "attempt_ledger_input.json"
     output_path = tmp_path / "attempt_ledger_output.json"
     input_path.write_text(
-        json.dumps({
-            "task_id": "tg-task-2",
-            "root": str(repo_root),
-            "attempts": [
-                {
-                    "attempt_id": "attempt-a",
-                    "parent_attempt_id": None,
-                    "kind": "rewrite_apply_verify",
+        json.dumps(
+            {
+                "task_id": "tg-task-2",
+                "root": str(repo_root),
+                "attempts": [
+                    {
+                        "attempt_id": "attempt-a",
+                        "parent_attempt_id": None,
+                        "kind": "rewrite_apply_verify",
+                        "status": "accepted",
+                        "retryable": False,
+                        "retry_stage": "none",
+                        "retry_reason": "accepted",
+                        "checkpoint_id": "chk-a",
+                        "audit_manifest_path": "artifacts/audit/attempt-a.json",
+                        "validation_success": True,
+                        "score_artifact": "artifacts/scores/attempt-a.json",
+                        "inputs": [],
+                        "outputs": ["artifacts/scores/attempt-a.json"],
+                    }
+                ],
+                "final_outcome": {
                     "status": "accepted",
-                    "retryable": False,
-                    "retry_stage": "none",
-                    "retry_reason": "accepted",
-                    "checkpoint_id": "chk-a",
-                    "audit_manifest_path": "artifacts/audit/attempt-a.json",
-                    "validation_success": True,
+                    "accepted_attempt_id": "attempt-a",
                     "score_artifact": "artifacts/scores/attempt-a.json",
-                    "inputs": [],
-                    "outputs": ["artifacts/scores/attempt-a.json"],
-                }
-            ],
-            "final_outcome": {
-                "status": "accepted",
-                "accepted_attempt_id": "attempt-a",
-                "score_artifact": "artifacts/scores/attempt-a.json",
-                "summary": "accepted",
-            },
-            "replay": {
-                "preserve_attempt_ids": True,
-                "partial_retry_ledger": [],
-                "audit_chain": ["artifacts/audit/attempt-a.json"],
-                "next_action": "none",
-            },
-        }),
+                    "summary": "accepted",
+                },
+                "replay": {
+                    "preserve_attempt_ids": True,
+                    "partial_retry_ledger": [],
+                    "audit_chain": ["artifacts/audit/attempt-a.json"],
+                    "next_action": "none",
+                },
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -734,16 +738,18 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
     )
     monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
 
-    timing_samples = iter([
-        9.9,
-        8.8,
-        0.40,
-        0.20,
-        0.30,
-        0.80,
-        0.60,
-        0.70,
-    ])
+    timing_samples = iter(
+        [
+            9.9,
+            8.8,
+            0.40,
+            0.20,
+            0.30,
+            0.80,
+            0.60,
+            0.70,
+        ]
+    )
     timing_calls: list[list[str]] = []
     capture_calls: list[list[str]] = []
 
@@ -1199,62 +1205,64 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
         lambda *_args, **_kwargs: {"path": tmp_path / "many_files", "file_count": 1200},
     )
 
-    benchmark_rows = iter([
-        {
-            "name": "cold_standard_corpus",
-            "target": str(tmp_path / "bench_data"),
-            "pattern": "ERROR",
-            "rg_time_s": 1.0,
-            "tg_time_s": 1.04,
-            "rg_samples_s": [1.0, 0.98, 1.04],
-            "tg_samples_s": [1.04, 1.01, 1.06],
-            "ratio_vs_rg": 1.04,
-            "threshold_ratio": 1.05,
-            "status": "PASS",
-            "counts_match": True,
-        },
-        {
-            "name": "large_file_200mb",
-            "target": str(tmp_path / "large_fixture.log"),
-            "pattern": "ERROR native cpu benchmark sentinel",
-            "rg_time_s": 1.0,
-            "tg_time_s": 1.12,
-            "rg_samples_s": [1.0, 1.01, 0.99],
-            "tg_samples_s": [1.12, 1.14, 1.11],
-            "ratio_vs_rg": 1.12,
-            "threshold_ratio": 1.15,
-            "require_tg_faster": False,
-            "status": "PASS",
-            "counts_match": True,
-        },
-        {
-            "name": "large_file_200mb_count",
-            "target": str(tmp_path / "large_fixture.log"),
-            "pattern": "ERROR native cpu benchmark sentinel",
-            "rg_time_s": 1.0,
-            "tg_time_s": 0.92,
-            "rg_samples_s": [1.0, 1.01, 0.99],
-            "tg_samples_s": [0.92, 0.94, 0.91],
-            "ratio_vs_rg": 0.92,
-            "threshold_ratio": 1.0,
-            "require_tg_faster": True,
-            "status": "PASS",
-            "counts_match": True,
-        },
-        {
-            "name": "many_file_directory",
-            "target": str(tmp_path / "many_files"),
-            "pattern": "ERROR native cpu benchmark sentinel",
-            "rg_time_s": 1.0,
-            "tg_time_s": 1.03,
-            "rg_samples_s": [1.0, 1.01, 0.99],
-            "tg_samples_s": [1.03, 1.02, 1.04],
-            "ratio_vs_rg": 1.03,
-            "threshold_ratio": 1.05,
-            "status": "PASS",
-            "counts_match": True,
-        },
-    ])
+    benchmark_rows = iter(
+        [
+            {
+                "name": "cold_standard_corpus",
+                "target": str(tmp_path / "bench_data"),
+                "pattern": "ERROR",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.04,
+                "rg_samples_s": [1.0, 0.98, 1.04],
+                "tg_samples_s": [1.04, 1.01, 1.06],
+                "ratio_vs_rg": 1.04,
+                "threshold_ratio": 1.05,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "large_file_200mb",
+                "target": str(tmp_path / "large_fixture.log"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.12,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [1.12, 1.14, 1.11],
+                "ratio_vs_rg": 1.12,
+                "threshold_ratio": 1.15,
+                "require_tg_faster": False,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "large_file_200mb_count",
+                "target": str(tmp_path / "large_fixture.log"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 0.92,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [0.92, 0.94, 0.91],
+                "ratio_vs_rg": 0.92,
+                "threshold_ratio": 1.0,
+                "require_tg_faster": True,
+                "status": "PASS",
+                "counts_match": True,
+            },
+            {
+                "name": "many_file_directory",
+                "target": str(tmp_path / "many_files"),
+                "pattern": "ERROR native cpu benchmark sentinel",
+                "rg_time_s": 1.0,
+                "tg_time_s": 1.03,
+                "rg_samples_s": [1.0, 1.01, 0.99],
+                "tg_samples_s": [1.03, 1.02, 1.04],
+                "ratio_vs_rg": 1.03,
+                "threshold_ratio": 1.05,
+                "status": "PASS",
+                "counts_match": True,
+            },
+        ]
+    )
     monkeypatch.setattr(
         module, "run_native_cpu_benchmark_case", lambda **_kwargs: next(benchmark_rows)
     )
@@ -1594,15 +1602,17 @@ def test_run_harness_loop_iteration_should_require_zero_remaining_matches(monkey
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir()
 
-    responses = iter([
-        (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
-        (
-            0.22,
-            {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]},
-        ),
-        (0.33, {"plan": {"total_edits": 3}, "verification": None}),
-        (0.14, {"total_matches": 0, "matches": []}),
-    ])
+    responses = iter(
+        [
+            (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
+            (
+                0.22,
+                {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]},
+            ),
+            (0.33, {"plan": {"total_edits": 3}, "verification": None}),
+            (0.14, {"total_matches": 0, "matches": []}),
+        ]
+    )
     commands: list[list[str]] = []
 
     def _fake_run_json_command(command):
@@ -1896,38 +1906,40 @@ def test_run_index_scaling_benchmark_should_fail_when_10k_build_exceeds_threshol
         },
     )
 
-    rows = iter([
-        {
-            "name": "index_scale_1000_files",
-            "file_count": 1000,
-            "build_time_s": 1.0,
-            "index_size_bytes": 1024,
-            "query_median_s": 0.01,
-            "query_correct": True,
-            "build_within_threshold": True,
-            "queries": [{"pattern": "ERROR timeout"}] * 3,
-        },
-        {
-            "name": "index_scale_5000_files",
-            "file_count": 5000,
-            "build_time_s": 5.0,
-            "index_size_bytes": 4096,
-            "query_median_s": 0.03,
-            "query_correct": True,
-            "build_within_threshold": True,
-            "queries": [{"pattern": "ERROR timeout"}] * 3,
-        },
-        {
-            "name": "index_scale_10000_files",
-            "file_count": 10000,
-            "build_time_s": 61.0,
-            "index_size_bytes": 8192,
-            "query_median_s": 0.05,
-            "query_correct": True,
-            "build_within_threshold": False,
-            "queries": [{"pattern": "ERROR timeout"}] * 3,
-        },
-    ])
+    rows = iter(
+        [
+            {
+                "name": "index_scale_1000_files",
+                "file_count": 1000,
+                "build_time_s": 1.0,
+                "index_size_bytes": 1024,
+                "query_median_s": 0.01,
+                "query_correct": True,
+                "build_within_threshold": True,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+            {
+                "name": "index_scale_5000_files",
+                "file_count": 5000,
+                "build_time_s": 5.0,
+                "index_size_bytes": 4096,
+                "query_median_s": 0.03,
+                "query_correct": True,
+                "build_within_threshold": True,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+            {
+                "name": "index_scale_10000_files",
+                "file_count": 10000,
+                "build_time_s": 61.0,
+                "index_size_bytes": 8192,
+                "query_median_s": 0.05,
+                "query_correct": True,
+                "build_within_threshold": False,
+                "queries": [{"pattern": "ERROR timeout"}] * 3,
+            },
+        ]
+    )
     monkeypatch.setattr(module, "benchmark_scale", lambda **_kwargs: next(rows))
 
     result = module.run_index_scaling_benchmark(
@@ -2251,41 +2263,43 @@ def test_analyze_bakeoff_misses_should_bucket_false_positive_paths(monkeypatch, 
     output_path = tmp_path / "bakeoff_analysis.json"
     markdown_path = tmp_path / "bakeoff_analysis.md"
     input_path.write_text(
-        json.dumps({
-            "artifact": "bench_bakeoff",
-            "summary": {
-                "scenario_count": 2,
-                "mean_file_hit_rate": 0.75,
-                "mean_file_precision": 0.5,
-            },
-            "rows": [
-                {
-                    "name": "click:blast-radius:open_file",
-                    "query_or_symbol": "open_file",
-                    "expected_primary_file": "src/click/utils.py",
-                    "actual_primary_file": "src/click/utils.py",
-                    "false_positive_files": [
-                        "repo/examples/demo.py",
-                        "repo/src/click/__init__.py",
-                        "repo/src/click/_compat.py",
-                    ],
-                    "file_hit_rate": 0.5,
-                    "file_precision": 0.25,
+        json.dumps(
+            {
+                "artifact": "bench_bakeoff",
+                "summary": {
+                    "scenario_count": 2,
+                    "mean_file_hit_rate": 0.75,
+                    "mean_file_precision": 0.5,
                 },
-                {
-                    "name": "click:blast-radius:UsageError",
-                    "query_or_symbol": "UsageError",
-                    "expected_primary_file": "src/click/exceptions.py",
-                    "actual_primary_file": "src/click/exceptions.py",
-                    "false_positive_files": [
-                        "repo/src/click/formatting.py",
-                        "repo/src/click/shell_completion.py",
-                    ],
-                    "file_hit_rate": 1.0,
-                    "file_precision": 0.75,
-                },
-            ],
-        }),
+                "rows": [
+                    {
+                        "name": "click:blast-radius:open_file",
+                        "query_or_symbol": "open_file",
+                        "expected_primary_file": "src/click/utils.py",
+                        "actual_primary_file": "src/click/utils.py",
+                        "false_positive_files": [
+                            "repo/examples/demo.py",
+                            "repo/src/click/__init__.py",
+                            "repo/src/click/_compat.py",
+                        ],
+                        "file_hit_rate": 0.5,
+                        "file_precision": 0.25,
+                    },
+                    {
+                        "name": "click:blast-radius:UsageError",
+                        "query_or_symbol": "UsageError",
+                        "expected_primary_file": "src/click/exceptions.py",
+                        "actual_primary_file": "src/click/exceptions.py",
+                        "false_positive_files": [
+                            "repo/src/click/formatting.py",
+                            "repo/src/click/shell_completion.py",
+                        ],
+                        "file_hit_rate": 1.0,
+                        "file_precision": 0.75,
+                    },
+                ],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -2337,13 +2351,15 @@ def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path
     tg_binary.write_text("binary", encoding="utf-8")
     monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
-    cmd = module.build_tg_ast_benchmark_cmd([
-        "run",
-        "--lang",
-        "python",
-        "pattern",
-        "bench_ast_data",
-    ])
+    cmd = module.build_tg_ast_benchmark_cmd(
+        [
+            "run",
+            "--lang",
+            "python",
+            "pattern",
+            "bench_ast_data",
+        ]
+    )
 
     assert cmd[0] == str(tg_binary)
     assert cmd[1:] == ["run", "--lang", "python", "pattern", "bench_ast_data"]
@@ -3043,18 +3059,22 @@ def test_run_hot_query_benchmarks_should_run_stringzilla_probe_in_subprocess(mon
         captured.setdefault("calls", []).append((cmd, env))
         pattern = cmd[-1]
         if pattern == "ERROR timeout":
-            return json.dumps({
+            return json.dumps(
+                {
+                    "available": True,
+                    "seconds": 0.4,
+                    "routing_reason": "stringzilla_fixed_strings_index",
+                    "matches": 2000,
+                }
+            )
+        return json.dumps(
+            {
                 "available": True,
-                "seconds": 0.4,
-                "routing_reason": "stringzilla_fixed_strings_index",
+                "seconds": 0.01,
+                "routing_reason": "stringzilla_fixed_strings_index_cache",
                 "matches": 2000,
-            })
-        return json.dumps({
-            "available": True,
-            "seconds": 0.01,
-            "routing_reason": "stringzilla_fixed_strings_index_cache",
-            "matches": 2000,
-        })
+            }
+        )
 
     monkeypatch.setattr(module.subprocess, "check_output", _fake_check_output)
 
@@ -3093,19 +3113,23 @@ def test_check_regression_should_refuse_cross_environment_comparison_by_default(
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "linux", "machine": "x86_64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "linux", "machine": "x86_64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.2}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.2}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -3131,19 +3155,23 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "linux", "machine": "x86_64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "linux", "machine": "x86_64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -3172,19 +3200,23 @@ def test_check_regression_should_use_five_percent_default_threshold(monkeypatch,
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.06}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.06}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -3214,10 +3246,12 @@ def test_check_regression_should_compare_hot_query_benchmarks(monkeypatch, tmp_p
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
-        json.dumps({
-            **payload,
-            "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
-        }),
+        json.dumps(
+            {
+                **payload,
+                "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -3276,20 +3310,24 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -3320,22 +3358,26 @@ def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tm
     milestones_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = milestones_dir / "baseline_m1.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "milestone": "m1",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "milestone": "m1",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "milestone": "m2",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.04}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "milestone": "m2",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.04}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -3367,11 +3409,13 @@ def test_check_regression_should_fail_when_auto_baseline_platform_is_unavailable
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "darwin", "machine": "arm64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "darwin", "machine": "arm64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -3402,20 +3446,24 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.0}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.0}],
+            }
+        ),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "windows", "machine": "amd64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "windows", "machine": "amd64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -3450,11 +3498,13 @@ def test_summarize_benchmarks_should_fail_when_auto_baseline_platform_is_unavail
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps({
-            "suite": "run_benchmarks",
-            "environment": {"platform": "darwin", "machine": "arm64"},
-            "rows": [{"name": "x", "tg_time_s": 1.05}],
-        }),
+        json.dumps(
+            {
+                "suite": "run_benchmarks",
+                "environment": {"platform": "darwin", "machine": "arm64"},
+                "rows": [{"name": "x", "tg_time_s": 1.05}],
+            }
+        ),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -3520,25 +3570,27 @@ def test_run_external_eval_should_aggregate_manifest_packs(tmp_path):
     module = _load_script_module("run_external_eval_script", "benchmarks/run_external_eval.py")
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "id": "demo",
-                    "language": "python",
-                    "category": "demo",
-                    "description": "demo",
-                    "repo_fixture": str(tmp_path),
-                    "query_or_symbol": "symbol",
-                    "mode": "blast-radius",
-                    "expected_primary_file": "a.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 2},
-                    "expected_dependent_files": [],
-                    "expected_suggested_edit_files": [],
-                    "expected_test_files": [],
-                    "expected_validation_commands_contain": [],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     manifest = {
@@ -3604,25 +3656,27 @@ def test_normalize_competitor_eval_should_score_manual_records(tmp_path):
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "id": "demo",
-                    "language": "python",
-                    "category": "demo",
-                    "description": "demo",
-                    "repo_fixture": str(tmp_path),
-                    "query_or_symbol": "symbol",
-                    "mode": "blast-radius",
-                    "expected_primary_file": "a.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 2},
-                    "expected_dependent_files": ["b.py"],
-                    "expected_suggested_edit_files": [],
-                    "expected_test_files": ["tests/test_a.py"],
-                    "expected_validation_commands_contain": ["pytest tests/test_a.py"],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": ["b.py"],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": ["tests/test_a.py"],
+                        "expected_validation_commands_contain": ["pytest tests/test_a.py"],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     payload = {
@@ -3660,25 +3714,27 @@ def test_normalize_competitor_eval_should_normalize_windows_style_paths(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "id": "demo",
-                    "language": "python",
-                    "category": "demo",
-                    "description": "demo",
-                    "repo_fixture": str(tmp_path),
-                    "query_or_symbol": "symbol",
-                    "mode": "blast-radius",
-                    "expected_primary_file": "src/pkg/mod.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 2},
-                    "expected_dependent_files": ["tests/test_mod.py"],
-                    "expected_suggested_edit_files": ["tests/test_mod.py"],
-                    "expected_test_files": ["tests/test_mod.py"],
-                    "expected_validation_commands_contain": ["pytest tests/test_mod.py -q"],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "src/pkg/mod.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": ["tests/test_mod.py"],
+                        "expected_suggested_edit_files": ["tests/test_mod.py"],
+                        "expected_test_files": ["tests/test_mod.py"],
+                        "expected_validation_commands_contain": ["pytest tests/test_mod.py -q"],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     payload = {
@@ -3744,36 +3800,38 @@ def test_render_patch_scorecard_should_emit_summary_and_failures():
     module = _load_script_module(
         "render_patch_scorecard_script", "benchmarks/render_patch_scorecard.py"
     )
-    markdown = module.render_patch_scorecard([
-        {
-            "rows": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "copilot",
-                    "patch_applied": 1.0,
-                    "validation_passed": 1.0,
-                    "primary_file_hit": 1.0,
-                    "primary_span_hit": 1.0,
-                    "changed_file_recall": 1.0,
-                    "predicted_test_hit_rate": 1.0,
-                    "predicted_validation_cmd_hit_rate": 1.0,
-                    "apply_error": "",
-                },
-                {
-                    "instance_id": "demo-2",
-                    "system": "gemini-cli",
-                    "patch_applied": 0.0,
-                    "validation_passed": 0.0,
-                    "primary_file_hit": 0.0,
-                    "primary_span_hit": 0.0,
-                    "changed_file_recall": 0.0,
-                    "predicted_test_hit_rate": 1.0,
-                    "predicted_validation_cmd_hit_rate": 1.0,
-                    "apply_error": "timeout after 10s",
-                },
-            ]
-        }
-    ])
+    markdown = module.render_patch_scorecard(
+        [
+            {
+                "rows": [
+                    {
+                        "instance_id": "demo-1",
+                        "system": "copilot",
+                        "patch_applied": 1.0,
+                        "validation_passed": 1.0,
+                        "primary_file_hit": 1.0,
+                        "primary_span_hit": 1.0,
+                        "changed_file_recall": 1.0,
+                        "predicted_test_hit_rate": 1.0,
+                        "predicted_validation_cmd_hit_rate": 1.0,
+                        "apply_error": "",
+                    },
+                    {
+                        "instance_id": "demo-2",
+                        "system": "gemini-cli",
+                        "patch_applied": 0.0,
+                        "validation_passed": 0.0,
+                        "primary_file_hit": 0.0,
+                        "primary_span_hit": 0.0,
+                        "changed_file_recall": 0.0,
+                        "predicted_test_hit_rate": 1.0,
+                        "predicted_validation_cmd_hit_rate": 1.0,
+                        "apply_error": "timeout after 10s",
+                    },
+                ]
+            }
+        ]
+    )
 
     assert markdown.startswith("# Patch Evaluation Scorecard")
     assert "`copilot`" in markdown
@@ -4247,25 +4305,27 @@ def test_run_claude_competitor_eval_should_build_records_from_scenarios(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "id": "demo",
-                    "language": "python",
-                    "category": "demo",
-                    "description": "demo",
-                    "repo_fixture": str(tmp_path),
-                    "query_or_symbol": "symbol",
-                    "mode": "blast-radius",
-                    "expected_primary_file": "a.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 2},
-                    "expected_dependent_files": [],
-                    "expected_suggested_edit_files": [],
-                    "expected_test_files": [],
-                    "expected_validation_commands_contain": [],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -4277,18 +4337,22 @@ def test_run_claude_competitor_eval_should_build_records_from_scenarios(tmp_path
             "Proc",
             (),
             {
-                "stdout": json.dumps({
-                    "result": json.dumps({
-                        "actual_primary_file": "a.py",
-                        "actual_primary_span": {"start_line": 1, "end_line": 2},
-                        "actual_dependent_files": [],
-                        "actual_suggested_edit_files": [],
-                        "actual_test_files": [],
-                        "actual_validation_commands": ["pytest -q"],
-                        "context_token_count": 123,
-                        "notes": "ok",
-                    })
-                })
+                "stdout": json.dumps(
+                    {
+                        "result": json.dumps(
+                            {
+                                "actual_primary_file": "a.py",
+                                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                "actual_dependent_files": [],
+                                "actual_suggested_edit_files": [],
+                                "actual_test_files": [],
+                                "actual_validation_commands": ["pytest -q"],
+                                "context_token_count": 123,
+                                "notes": "ok",
+                            }
+                        )
+                    }
+                )
             },
         )(),
     )
@@ -4309,25 +4373,27 @@ def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path,
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "id": "demo",
-                    "language": "python",
-                    "category": "demo",
-                    "description": "demo",
-                    "repo_fixture": str(tmp_path),
-                    "query_or_symbol": "symbol",
-                    "mode": "blast-radius",
-                    "expected_primary_file": "a.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 2},
-                    "expected_dependent_files": [],
-                    "expected_suggested_edit_files": [],
-                    "expected_test_files": [],
-                    "expected_validation_commands_contain": [],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -4339,25 +4405,31 @@ def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path,
             "Proc",
             (),
             {
-                "stdout": "\n".join([
-                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                    json.dumps({
-                        "type": "item.completed",
-                        "item": {
-                            "type": "agent_message",
-                            "text": json.dumps({
-                                "actual_primary_file": "a.py",
-                                "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                "actual_dependent_files": [],
-                                "actual_suggested_edit_files": [],
-                                "actual_test_files": [],
-                                "actual_validation_commands": ["pytest -q"],
-                                "context_token_count": 123,
-                                "notes": "ok",
-                            }),
-                        },
-                    }),
-                ])
+                "stdout": "\n".join(
+                    [
+                        json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                        json.dumps(
+                            {
+                                "type": "item.completed",
+                                "item": {
+                                    "type": "agent_message",
+                                    "text": json.dumps(
+                                        {
+                                            "actual_primary_file": "a.py",
+                                            "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                            "actual_dependent_files": [],
+                                            "actual_suggested_edit_files": [],
+                                            "actual_test_files": [],
+                                            "actual_validation_commands": ["pytest -q"],
+                                            "context_token_count": 123,
+                                            "notes": "ok",
+                                        }
+                                    ),
+                                },
+                            }
+                        ),
+                    ]
+                )
             },
         )(),
     )
@@ -4558,16 +4630,18 @@ def test_run_patch_bakeoff_should_score_applied_patch_and_validation(tmp_path):
         "    assert create_invoice(2) == 4\n",
         encoding="utf-8",
     )
-    patch_text = "\n".join([
-        "diff --git a/src/payments.py b/src/payments.py",
-        "--- a/src/payments.py",
-        "+++ b/src/payments.py",
-        "@@ -1,2 +1,2 @@",
-        " def create_invoice(total):",
-        "-    return total + 1",
-        "+    return total + 2",
-        "",
-    ])
+    patch_text = "\n".join(
+        [
+            "diff --git a/src/payments.py b/src/payments.py",
+            "--- a/src/payments.py",
+            "+++ b/src/payments.py",
+            "@@ -1,2 +1,2 @@",
+            " def create_invoice(total):",
+            "-    return total + 1",
+            "+    return total + 2",
+            "",
+        ]
+    )
     scenario = {
         "instance_id": "demo-1",
         "repo_fixture": str(repo_root),
@@ -4625,15 +4699,17 @@ def test_run_patch_bakeoff_should_normalize_truncated_patch_before_apply(tmp_pat
     prediction = {
         "instance_id": "demo-truncated",
         "system": "demo",
-        "model_patch": "\n".join([
-            "diff --git a/src/demo.py b/src/demo.py",
-            "--- a/src/demo.py",
-            "+++ b/src/demo.py",
-            "@@ -1,2 +1,2 @@",
-            " def value():",
-            "-    return 'old'",
-            "+    return 'new'",
-        ]),
+        "model_patch": "\n".join(
+            [
+                "diff --git a/src/demo.py b/src/demo.py",
+                "--- a/src/demo.py",
+                "+++ b/src/demo.py",
+                "@@ -1,2 +1,2 @@",
+                " def value():",
+                "-    return 'old'",
+                "+    return 'new'",
+            ]
+        ),
         "actual_test_files": [],
         "actual_validation_commands": [],
     }
@@ -4870,27 +4946,29 @@ def test_build_attempt_ledger_should_infer_final_outcome_and_retry_chain(tmp_pat
     module = _load_script_module(
         "build_attempt_ledger_script", "benchmarks/build_attempt_ledger.py"
     )
-    payload = module.build_attempt_ledger_payload({
-        "task_id": "tg-task-1",
-        "root": str(tmp_path),
-        "attempts": [
-            {
-                "attempt_id": "attempt-1",
-                "status": "validation_failed",
-                "retry_stage": "validation",
-                "retry_reason": "lint-failed",
-                "audit_manifest_path": "artifacts/audit/attempt-1.json",
-            },
-            {
-                "attempt_id": "attempt-2",
-                "parent_attempt_id": "attempt-1",
-                "status": "accepted",
-                "validation_success": True,
-                "score_artifact": "artifacts/scores/attempt-2.json",
-                "audit_manifest_path": "artifacts/audit/attempt-2.json",
-            },
-        ],
-    })
+    payload = module.build_attempt_ledger_payload(
+        {
+            "task_id": "tg-task-1",
+            "root": str(tmp_path),
+            "attempts": [
+                {
+                    "attempt_id": "attempt-1",
+                    "status": "validation_failed",
+                    "retry_stage": "validation",
+                    "retry_reason": "lint-failed",
+                    "audit_manifest_path": "artifacts/audit/attempt-1.json",
+                },
+                {
+                    "attempt_id": "attempt-2",
+                    "parent_attempt_id": "attempt-1",
+                    "status": "accepted",
+                    "validation_success": True,
+                    "score_artifact": "artifacts/scores/attempt-2.json",
+                    "audit_manifest_path": "artifacts/audit/attempt-2.json",
+                },
+            ],
+        }
+    )
 
     assert payload["artifact"] == "agent_attempt_ledger"
     assert payload["suite"] == "agent_loop"
@@ -4915,33 +4993,35 @@ def test_build_attempt_ledger_should_infer_multi_session_and_multi_task_replay(t
     module = _load_script_module(
         "build_attempt_ledger_multitask_script", "benchmarks/build_attempt_ledger.py"
     )
-    payload = module.build_attempt_ledger_payload({
-        "task_id": "tg-task-1",
-        "root": str(tmp_path),
-        "tasks": [
-            {"task_id": "tg-task-1", "status": "accepted", "accepted_attempt_id": "attempt-2"},
-            {"task_id": "tg-task-2", "status": "accepted", "accepted_attempt_id": "attempt-3"},
-        ],
-        "attempts": [
-            {
-                "attempt_id": "attempt-1",
-                "status": "validation_failed",
-                "session_id": "session-a",
-            },
-            {
-                "attempt_id": "attempt-2",
-                "parent_attempt_id": "attempt-1",
-                "status": "accepted",
-                "session_id": "session-a",
-            },
-            {
-                "attempt_id": "attempt-3",
-                "parent_attempt_id": "attempt-2",
-                "status": "accepted",
-                "session_id": "session-b",
-            },
-        ],
-    })
+    payload = module.build_attempt_ledger_payload(
+        {
+            "task_id": "tg-task-1",
+            "root": str(tmp_path),
+            "tasks": [
+                {"task_id": "tg-task-1", "status": "accepted", "accepted_attempt_id": "attempt-2"},
+                {"task_id": "tg-task-2", "status": "accepted", "accepted_attempt_id": "attempt-3"},
+            ],
+            "attempts": [
+                {
+                    "attempt_id": "attempt-1",
+                    "status": "validation_failed",
+                    "session_id": "session-a",
+                },
+                {
+                    "attempt_id": "attempt-2",
+                    "parent_attempt_id": "attempt-1",
+                    "status": "accepted",
+                    "session_id": "session-a",
+                },
+                {
+                    "attempt_id": "attempt-3",
+                    "parent_attempt_id": "attempt-2",
+                    "status": "accepted",
+                    "session_id": "session-b",
+                },
+            ],
+        }
+    )
 
     assert payload["replay"]["multi_session"] is True
     assert payload["replay"]["handoff"]["from_session_id"] == "session-a"
@@ -4959,7 +5039,12 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
     monkeypatch.setattr(
         module.repo_map,
         "build_symbol_blast_radius_render",
-        lambda symbol, path, max_files=6, max_sources=6, max_symbols_per_file=6, semantic_provider="native": {
+        lambda symbol,
+        path,
+        max_files=6,
+        max_sources=6,
+        max_symbols_per_file=6,
+        semantic_provider="native": {
             "semantic_provider": semantic_provider,
             "rendered_context": "def create_invoice(total):\n    return total + 1\n",
             "token_estimate": 42,
@@ -5225,17 +5310,19 @@ def test_patch_runner_common_should_normalize_truncated_model_patch():
     module = _load_script_module(
         "patch_runner_common_normalize_script", "benchmarks/patch_runner_common.py"
     )
-    patch_text = "\n".join([
-        "diff --git a/src/demo.py b/src/demo.py",
-        "index 1111111..2222222 100644",
-        "--- a/src/demo.py",
-        "+++ b/src/demo.py",
-        "@@ -1,3 +1,3 @@",
-        " line1",
-        "-old",
-        "+new",
-        " line3",
-    ])
+    patch_text = "\n".join(
+        [
+            "diff --git a/src/demo.py b/src/demo.py",
+            "index 1111111..2222222 100644",
+            "--- a/src/demo.py",
+            "+++ b/src/demo.py",
+            "@@ -1,3 +1,3 @@",
+            " line1",
+            "-old",
+            "+new",
+            " line3",
+        ]
+    )
 
     normalized = module.normalize_model_patch_text(patch_text)
 
@@ -5260,16 +5347,18 @@ def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tm
     monkeypatch.setattr(
         module,
         "_run_gemini_command",
-        lambda *args, **kwargs: json.dumps({
-            "response": "```diff\n"
-            "diff --git a/demo.py b/demo.py\n"
-            "--- a/demo.py\n"
-            "+++ b/demo.py\n"
-            "@@ -1 +1 @@\n"
-            "-old\n"
-            "+new\n"
-            "```"
-        }),
+        lambda *args, **kwargs: json.dumps(
+            {
+                "response": "```diff\n"
+                "diff --git a/demo.py b/demo.py\n"
+                "--- a/demo.py\n"
+                "+++ b/demo.py\n"
+                "@@ -1 +1 @@\n"
+                "-old\n"
+                "+new\n"
+                "```"
+            }
+        ),
     )
 
     payload = module.build_payload(driver_payload, model="gemini-2.5-flash")
@@ -5523,11 +5612,13 @@ def test_run_gemini_patch_predictions_should_prepare_isolated_home_without_mcp(t
     source_home = tmp_path / "source-home"
     source_home.mkdir()
     (source_home / "settings.json").write_text(
-        json.dumps({
-            "mcpServers": {"Exa": {"command": "exa-mcp"}},
-            "security": {"auth": {"selectedType": "oauth-personal"}},
-            "general": {"preferredEditor": "vscode"},
-        }),
+        json.dumps(
+            {
+                "mcpServers": {"Exa": {"command": "exa-mcp"}},
+                "security": {"auth": {"selectedType": "oauth-personal"}},
+                "general": {"preferredEditor": "vscode"},
+            }
+        ),
         encoding="utf-8",
     )
     (source_home / "oauth_creds.json").write_text("{}", encoding="utf-8")
@@ -5701,20 +5792,22 @@ def test_run_gemini_skill_ab_should_score_records_when_scenarios_are_provided(
     }
     scenarios_path = tmp_path / "scenarios.json"
     scenarios_path.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "instance_id": "demo-1",
-                    "repo_fixture": str(repo_root),
-                    "expected_primary_file": "demo.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 1},
-                    "expected_changed_files": ["demo.py"],
-                    "expected_test_files": [],
-                    "validation_commands": [],
-                    "expected_validation_commands_contain": [],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "instance_id": "demo-1",
+                        "repo_fixture": str(repo_root),
+                        "expected_primary_file": "demo.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 1},
+                        "expected_changed_files": ["demo.py"],
+                        "expected_test_files": [],
+                        "validation_commands": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -5790,24 +5883,26 @@ def test_run_gemini_skill_ab_should_support_partial_resume(monkeypatch, tmp_path
         ]
 
     monkeypatch.setattr(module, "run_ab_record", _fake_run)
-    partial = module.build_partial_payload([
-        {
-            "instance_id": "demo-1",
-            "system": "gemini-baseline",
-            "model_patch": "",
-            "wall_clock_seconds": 1.0,
-            "notes": "",
-            "use_skill": False,
-        },
-        {
-            "instance_id": "demo-1",
-            "system": "gemini-enhanced",
-            "model_patch": "",
-            "wall_clock_seconds": 2.0,
-            "notes": "",
-            "use_skill": True,
-        },
-    ])
+    partial = module.build_partial_payload(
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "gemini-baseline",
+                "model_patch": "",
+                "wall_clock_seconds": 1.0,
+                "notes": "",
+                "use_skill": False,
+            },
+            {
+                "instance_id": "demo-1",
+                "system": "gemini-enhanced",
+                "model_patch": "",
+                "wall_clock_seconds": 2.0,
+                "notes": "",
+                "use_skill": True,
+            },
+        ]
+    )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -5869,16 +5964,18 @@ def test_run_gemini_skill_ab_should_resume_incomplete_instance_ids(monkeypatch, 
         ]
 
     monkeypatch.setattr(module, "run_ab_record", _fake_run)
-    partial = module.build_partial_payload([
-        {
-            "instance_id": "demo-1",
-            "system": "gemini-enhanced",
-            "model_patch": "",
-            "wall_clock_seconds": 2.0,
-            "notes": "",
-            "use_skill": True,
-        },
-    ])
+    partial = module.build_partial_payload(
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "gemini-enhanced",
+                "model_patch": "",
+                "wall_clock_seconds": 2.0,
+                "notes": "",
+                "use_skill": True,
+            },
+        ]
+    )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -6052,17 +6149,19 @@ def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch,
         }
 
     monkeypatch.setattr(module, "run_gemini_patch_record", _fake_run)
-    partial = module.build_partial_payload([
-        {
-            "instance_id": "demo-1",
-            "system": "gemini-cli",
-            "model_patch": "diff --git a/demo-1 b/demo-1",
-            "actual_test_files": [],
-            "actual_validation_commands": [],
-            "wall_clock_seconds": 1.0,
-            "notes": "",
-        }
-    ])
+    partial = module.build_partial_payload(
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "gemini-cli",
+                "model_patch": "diff --git a/demo-1 b/demo-1",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+                "wall_clock_seconds": 1.0,
+                "notes": "",
+            }
+        ]
+    )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -6374,17 +6473,19 @@ def test_run_copilot_patch_predictions_should_support_partial_resume(monkeypatch
         }
 
     monkeypatch.setattr(module, "run_copilot_patch_record", _fake_run)
-    partial = module.build_partial_payload([
-        {
-            "instance_id": "demo-1",
-            "system": "copilot",
-            "model_patch": "diff --git a/demo-1 b/demo-1",
-            "actual_test_files": [],
-            "actual_validation_commands": [],
-            "wall_clock_seconds": 1.0,
-            "notes": "",
-        }
-    ])
+    partial = module.build_partial_payload(
+        [
+            {
+                "instance_id": "demo-1",
+                "system": "copilot",
+                "model_patch": "diff --git a/demo-1 b/demo-1",
+                "actual_test_files": [],
+                "actual_validation_commands": [],
+                "wall_clock_seconds": 1.0,
+                "notes": "",
+            }
+        ]
+    )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -7579,44 +7680,46 @@ def test_run_claude_skill_ab_matrix_should_summarize_trace_rows():
         "run_claude_skill_ab_matrix_summary_script", "benchmarks/run_claude_skill_ab_matrix.py"
     )
 
-    summary = module.summarize_trace_rows([
-        {
-            "system": "claude-baseline",
-            "asked_meta_question": False,
-            "response_shape": "analysis_then_patch",
-            "first_tg_seconds": None,
-            "first_patch_seconds": 10.0,
-            "first_file_change_seconds": 0.2,
-            "post_edit_deliberation_seconds": 9.8,
-            "tg_invocation_count": 0,
-            "tg_seconds_total": 0.0,
-            "changed_file_count": 1,
-        },
-        {
-            "system": "claude-enhanced",
-            "asked_meta_question": True,
-            "response_shape": "meta_question",
-            "first_tg_seconds": 1.5,
-            "first_patch_seconds": None,
-            "first_file_change_seconds": None,
-            "post_edit_deliberation_seconds": None,
-            "tg_invocation_count": 2,
-            "tg_seconds_total": 0.75,
-            "changed_file_count": 0,
-        },
-        {
-            "system": "claude-enhanced",
-            "asked_meta_question": False,
-            "response_shape": "analysis_then_patch",
-            "first_tg_seconds": 1.0,
-            "first_patch_seconds": 20.0,
-            "first_file_change_seconds": 0.1,
-            "post_edit_deliberation_seconds": 19.9,
-            "tg_invocation_count": 1,
-            "tg_seconds_total": 0.25,
-            "changed_file_count": 1,
-        },
-    ])
+    summary = module.summarize_trace_rows(
+        [
+            {
+                "system": "claude-baseline",
+                "asked_meta_question": False,
+                "response_shape": "analysis_then_patch",
+                "first_tg_seconds": None,
+                "first_patch_seconds": 10.0,
+                "first_file_change_seconds": 0.2,
+                "post_edit_deliberation_seconds": 9.8,
+                "tg_invocation_count": 0,
+                "tg_seconds_total": 0.0,
+                "changed_file_count": 1,
+            },
+            {
+                "system": "claude-enhanced",
+                "asked_meta_question": True,
+                "response_shape": "meta_question",
+                "first_tg_seconds": 1.5,
+                "first_patch_seconds": None,
+                "first_file_change_seconds": None,
+                "post_edit_deliberation_seconds": None,
+                "tg_invocation_count": 2,
+                "tg_seconds_total": 0.75,
+                "changed_file_count": 0,
+            },
+            {
+                "system": "claude-enhanced",
+                "asked_meta_question": False,
+                "response_shape": "analysis_then_patch",
+                "first_tg_seconds": 1.0,
+                "first_patch_seconds": 20.0,
+                "first_file_change_seconds": 0.1,
+                "post_edit_deliberation_seconds": 19.9,
+                "tg_invocation_count": 1,
+                "tg_seconds_total": 0.25,
+                "changed_file_count": 1,
+            },
+        ]
+    )
 
     assert summary["claude-baseline"]["record_count"] == 1
     assert summary["claude-baseline"]["response_shape_counts"] == {"analysis_then_patch": 1}
@@ -7818,39 +7921,41 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
     )
 
     partial = module.build_partial_payload([])
-    partial["experiments"].append({
-        "name": "output-standard__task-standard__effort-default",
-        "enhanced_output_contract": "standard",
-        "enhanced_task_contract": "standard",
-        "enhanced_effort": "",
-        "prediction_records": [
-            {
-                "instance_id": "demo-1",
-                "system": "claude-enhanced",
-                "model_patch": "diff --git a/x b/x",
-            }
-        ],
-        "trace_records": [
-            {
-                "instance_id": "demo-1",
-                "system": "claude-enhanced",
-                "response_shape": "analysis_then_patch",
-            }
-        ],
-        "bakeoff_rows": [
-            {
-                "instance_id": "demo-1",
-                "system": "claude-enhanced",
-                "patch_applied": True,
-                "validation_passed": True,
-            }
-        ],
-        "prediction_record_count": 1,
-        "trace_record_count": 1,
-        "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
-        "bakeoff_summary": {"scenario_count": 1},
-        "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 1.0}},
-    })
+    partial["experiments"].append(
+        {
+            "name": "output-standard__task-standard__effort-default",
+            "enhanced_output_contract": "standard",
+            "enhanced_task_contract": "standard",
+            "enhanced_effort": "",
+            "prediction_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                }
+            ],
+            "trace_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                }
+            ],
+            "bakeoff_rows": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "patch_applied": True,
+                    "validation_passed": True,
+                }
+            ],
+            "prediction_record_count": 1,
+            "trace_record_count": 1,
+            "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
+            "bakeoff_summary": {"scenario_count": 1},
+            "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 1.0}},
+        }
+    )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -7979,46 +8084,48 @@ def test_run_claude_skill_ab_matrix_should_resume_incomplete_experiment_instance
     )
 
     partial = module.build_partial_payload([])
-    partial["experiments"].append({
-        "name": "output-standard__task-standard__effort-default",
-        "enhanced_output_contract": "standard",
-        "enhanced_task_contract": "standard",
-        "enhanced_effort": "",
-        "prediction_records": [
-            {
-                "instance_id": "demo-1",
-                "system": "claude-baseline",
-                "model_patch": "",
-                "wall_clock_seconds": 10.0,
-            },
-            {
-                "instance_id": "demo-1",
-                "system": "claude-enhanced",
-                "model_patch": "diff --git a/x b/x",
-                "wall_clock_seconds": 20.0,
-            },
-        ],
-        "trace_records": [
-            {
-                "instance_id": "demo-1",
-                "system": "claude-baseline",
-                "response_shape": "analysis_only",
-            }
-        ],
-        "bakeoff_rows": [
-            {
-                "instance_id": "demo-1",
-                "system": "claude-baseline",
-                "patch_applied": False,
-                "validation_passed": False,
-            }
-        ],
-        "prediction_record_count": 2,
-        "trace_record_count": 1,
-        "trace_summary": {"claude-baseline": {"record_count": 1}},
-        "bakeoff_summary": {"scenario_count": 1},
-        "system_score_summary": {"claude-baseline": {"record_count": 1}},
-    })
+    partial["experiments"].append(
+        {
+            "name": "output-standard__task-standard__effort-default",
+            "enhanced_output_contract": "standard",
+            "enhanced_task_contract": "standard",
+            "enhanced_effort": "",
+            "prediction_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-baseline",
+                    "model_patch": "",
+                    "wall_clock_seconds": 10.0,
+                },
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                    "wall_clock_seconds": 20.0,
+                },
+            ],
+            "trace_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-baseline",
+                    "response_shape": "analysis_only",
+                }
+            ],
+            "bakeoff_rows": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-baseline",
+                    "patch_applied": False,
+                    "validation_passed": False,
+                }
+            ],
+            "prediction_record_count": 2,
+            "trace_record_count": 1,
+            "trace_summary": {"claude-baseline": {"record_count": 1}},
+            "bakeoff_summary": {"scenario_count": 1},
+            "system_score_summary": {"claude-baseline": {"record_count": 1}},
+        }
+    )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -8114,21 +8221,25 @@ def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monk
     scenarios_path = tmp_path / "scenarios.json"
     output_path = tmp_path / "matrix.json"
     driver_path.write_text(
-        json.dumps({
-            "records": [
-                {"instance_id": "demo-1"},
-                {"instance_id": "demo-2"},
-            ]
-        }),
+        json.dumps(
+            {
+                "records": [
+                    {"instance_id": "demo-1"},
+                    {"instance_id": "demo-2"},
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     scenarios_path.write_text(
-        json.dumps({
-            "scenarios": [
-                {"instance_id": "demo-1"},
-                {"instance_id": "demo-2"},
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {"instance_id": "demo-1"},
+                    {"instance_id": "demo-2"},
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -8182,47 +8293,51 @@ def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monk
 
     def _fake_write_json(path, payload):
         if Path(path) == output_path:
-            writes.append((
-                int(payload["experiment_count"]),
-                len(payload["experiments"][0]["prediction_records"]),
-            ))
+            writes.append(
+                (
+                    int(payload["experiment_count"]),
+                    len(payload["experiments"][0]["prediction_records"]),
+                )
+            )
 
     monkeypatch.setattr(module, "write_json", _fake_write_json)
 
-    partial = module.build_partial_payload([
-        {
-            "name": "output-standard__task-standard",
-            "enhanced_output_contract": "standard",
-            "enhanced_task_contract": "standard",
-            "prediction_records": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-enhanced",
-                    "model_patch": "diff --git a/x b/x",
-                }
-            ],
-            "trace_records": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-enhanced",
-                    "response_shape": "analysis_then_patch",
-                }
-            ],
-            "bakeoff_rows": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-enhanced",
-                    "patch_applied": True,
-                    "validation_passed": True,
-                }
-            ],
-            "prediction_record_count": 1,
-            "trace_record_count": 1,
-            "trace_summary": {"claude-enhanced": {"record_count": 1}},
-            "bakeoff_summary": {"scenario_count": 1},
-            "system_score_summary": {"claude-enhanced": {"record_count": 1}},
-        }
-    ])
+    partial = module.build_partial_payload(
+        [
+            {
+                "name": "output-standard__task-standard",
+                "enhanced_output_contract": "standard",
+                "enhanced_task_contract": "standard",
+                "prediction_records": [
+                    {
+                        "instance_id": "demo-1",
+                        "system": "claude-enhanced",
+                        "model_patch": "diff --git a/x b/x",
+                    }
+                ],
+                "trace_records": [
+                    {
+                        "instance_id": "demo-1",
+                        "system": "claude-enhanced",
+                        "response_shape": "analysis_then_patch",
+                    }
+                ],
+                "bakeoff_rows": [
+                    {
+                        "instance_id": "demo-1",
+                        "system": "claude-enhanced",
+                        "patch_applied": True,
+                        "validation_passed": True,
+                    }
+                ],
+                "prediction_record_count": 1,
+                "trace_record_count": 1,
+                "trace_summary": {"claude-enhanced": {"record_count": 1}},
+                "bakeoff_summary": {"scenario_count": 1},
+                "system_score_summary": {"claude-enhanced": {"record_count": 1}},
+            }
+        ]
+    )
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -8253,47 +8368,49 @@ def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
     )
     payload_path = tmp_path / "matrix.json"
     payload_path.write_text(
-        json.dumps({
-            "artifact": "claude_skill_ab_matrix",
-            "experiments": [
-                {
-                    "name": "output-standard__task-standard",
-                    "enhanced_output_contract": "standard",
-                    "enhanced_task_contract": "standard",
-                    "system_score_summary": {
-                        "claude-enhanced": {
-                            "mean_patch_applied_rate": 0.0,
-                            "mean_validation_pass_rate": 0.0,
-                        }
+        json.dumps(
+            {
+                "artifact": "claude_skill_ab_matrix",
+                "experiments": [
+                    {
+                        "name": "output-standard__task-standard",
+                        "enhanced_output_contract": "standard",
+                        "enhanced_task_contract": "standard",
+                        "system_score_summary": {
+                            "claude-enhanced": {
+                                "mean_patch_applied_rate": 0.0,
+                                "mean_validation_pass_rate": 0.0,
+                            }
+                        },
+                        "trace_summary": {
+                            "claude-enhanced": {
+                                "meta_question_rate": 1.0,
+                                "mean_post_edit_deliberation_seconds": None,
+                                "mean_first_tg_seconds": None,
+                            }
+                        },
                     },
-                    "trace_summary": {
-                        "claude-enhanced": {
-                            "meta_question_rate": 1.0,
-                            "mean_post_edit_deliberation_seconds": None,
-                            "mean_first_tg_seconds": None,
-                        }
+                    {
+                        "name": "output-terse__task-standard",
+                        "enhanced_output_contract": "terse",
+                        "enhanced_task_contract": "standard",
+                        "system_score_summary": {
+                            "claude-enhanced": {
+                                "mean_patch_applied_rate": 1.0,
+                                "mean_validation_pass_rate": 1.0,
+                            }
+                        },
+                        "trace_summary": {
+                            "claude-enhanced": {
+                                "meta_question_rate": 0.0,
+                                "mean_post_edit_deliberation_seconds": 41.545078,
+                                "mean_first_tg_seconds": None,
+                            }
+                        },
                     },
-                },
-                {
-                    "name": "output-terse__task-standard",
-                    "enhanced_output_contract": "terse",
-                    "enhanced_task_contract": "standard",
-                    "system_score_summary": {
-                        "claude-enhanced": {
-                            "mean_patch_applied_rate": 1.0,
-                            "mean_validation_pass_rate": 1.0,
-                        }
-                    },
-                    "trace_summary": {
-                        "claude-enhanced": {
-                            "meta_question_rate": 0.0,
-                            "mean_post_edit_deliberation_seconds": 41.545078,
-                            "mean_first_tg_seconds": None,
-                        }
-                    },
-                },
-            ],
-        }),
+                ],
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -8312,24 +8429,26 @@ def test_render_provider_navigation_scorecard_should_render_ranked_markdown(tmp_
     )
     payload_path = tmp_path / "provider.json"
     payload_path.write_text(
-        json.dumps({
-            "artifact": "bench_provider_navigation",
-            "providers": ["native", "hybrid"],
-            "by_provider": {
-                "native": {
-                    "scenario_count": 2,
-                    "mean_caller_hit_rate": 0.0,
-                    "mean_caller_precision": 0.0,
-                    "mean_test_hit_rate": 1.0,
+        json.dumps(
+            {
+                "artifact": "bench_provider_navigation",
+                "providers": ["native", "hybrid"],
+                "by_provider": {
+                    "native": {
+                        "scenario_count": 2,
+                        "mean_caller_hit_rate": 0.0,
+                        "mean_caller_precision": 0.0,
+                        "mean_test_hit_rate": 1.0,
+                    },
+                    "hybrid": {
+                        "scenario_count": 2,
+                        "mean_caller_hit_rate": 1.0,
+                        "mean_caller_precision": 1.0,
+                        "mean_test_hit_rate": 1.0,
+                    },
                 },
-                "hybrid": {
-                    "scenario_count": 2,
-                    "mean_caller_hit_rate": 1.0,
-                    "mean_caller_precision": 1.0,
-                    "mean_test_hit_rate": 1.0,
-                },
-            },
-        }),
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -8347,10 +8466,12 @@ def test_run_claude_skill_ab_should_load_tg_trace_records(tmp_path):
     )
     log_path = tmp_path / "tg_trace.jsonl"
     log_path.write_text(
-        "\n".join([
-            '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.5}',
-            '{"argv":["tg","refs","Demo"],"exit_code":0,"duration_seconds":1.25}',
-        ])
+        "\n".join(
+            [
+                '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.5}',
+                '{"argv":["tg","refs","Demo"],"exit_code":0,"duration_seconds":1.25}',
+            ]
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -8453,7 +8574,13 @@ def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, 
     monkeypatch.setattr(
         module.repo_map,
         "build_symbol_blast_radius_render",
-        lambda symbol, path, max_depth=3, max_files=6, max_sources=6, profile=True, semantic_provider="native": (
+        lambda symbol,
+        path,
+        max_depth=3,
+        max_files=6,
+        max_sources=6,
+        profile=True,
+        semantic_provider="native": (
             captured.update({"provider": semantic_provider})
             or {
                 "_profiling": {"total_elapsed_s": 0.2, "breakdown_pct": {}, "phases": []},
@@ -8500,45 +8627,57 @@ def test_run_codex_competitor_eval_should_retry_without_schema_when_first_result
         command = list(args[0])
         calls.append(command)
         if "--output-schema" in command:
-            stdout = "\n".join([
-                json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                json.dumps({
-                    "type": "item.completed",
-                    "item": {
-                        "type": "agent_message",
-                        "text": json.dumps({
-                            "actual_primary_file": None,
-                            "actual_primary_span": None,
-                            "actual_dependent_files": [],
-                            "actual_suggested_edit_files": [],
-                            "actual_test_files": [],
-                            "actual_validation_commands": [],
-                            "context_token_count": 0,
-                            "notes": "Awaiting code-edit task to plan against.",
-                        }),
-                    },
-                }),
-            ])
+            stdout = "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "agent_message",
+                                "text": json.dumps(
+                                    {
+                                        "actual_primary_file": None,
+                                        "actual_primary_span": None,
+                                        "actual_dependent_files": [],
+                                        "actual_suggested_edit_files": [],
+                                        "actual_test_files": [],
+                                        "actual_validation_commands": [],
+                                        "context_token_count": 0,
+                                        "notes": "Awaiting code-edit task to plan against.",
+                                    }
+                                ),
+                            },
+                        }
+                    ),
+                ]
+            )
         else:
-            stdout = "\n".join([
-                json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                json.dumps({
-                    "type": "item.completed",
-                    "item": {
-                        "type": "agent_message",
-                        "text": json.dumps({
-                            "actual_primary_file": "a.py",
-                            "actual_primary_span": {"start_line": 1, "end_line": 2},
-                            "actual_dependent_files": [],
-                            "actual_suggested_edit_files": [],
-                            "actual_test_files": [],
-                            "actual_validation_commands": ["pytest -q"],
-                            "context_token_count": 123,
-                            "notes": "ok",
-                        }),
-                    },
-                }),
-            ])
+            stdout = "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "agent_message",
+                                "text": json.dumps(
+                                    {
+                                        "actual_primary_file": "a.py",
+                                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                        "actual_dependent_files": [],
+                                        "actual_suggested_edit_files": [],
+                                        "actual_test_files": [],
+                                        "actual_validation_commands": ["pytest -q"],
+                                        "context_token_count": 123,
+                                        "notes": "ok",
+                                    }
+                                ),
+                            },
+                        }
+                    ),
+                ]
+            )
         return type("Proc", (), {"stdout": stdout})()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -8555,10 +8694,12 @@ def test_run_codex_competitor_eval_should_normalize_string_primary_span():
         "run_codex_competitor_eval_span_script", "benchmarks/run_codex_competitor_eval.py"
     )
 
-    record = module._normalize_primary_span({
-        "actual_primary_file": None,
-        "actual_primary_span": "src/pkg/mod.py:10-14",
-    })
+    record = module._normalize_primary_span(
+        {
+            "actual_primary_file": None,
+            "actual_primary_span": "src/pkg/mod.py:10-14",
+        }
+    )
 
     assert record["actual_primary_file"] == "src/pkg/mod.py"
     assert record["actual_primary_span"] == {"start_line": 10, "end_line": 14}
@@ -8570,25 +8711,27 @@ def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_pat
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "id": "demo",
-                    "language": "python",
-                    "category": "demo",
-                    "description": "demo",
-                    "repo_fixture": str(tmp_path),
-                    "query_or_symbol": "symbol",
-                    "mode": "blast-radius",
-                    "expected_primary_file": "a.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 2},
-                    "expected_dependent_files": [],
-                    "expected_suggested_edit_files": [],
-                    "expected_test_files": [],
-                    "expected_validation_commands_contain": [],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -8601,16 +8744,18 @@ def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_pat
             (),
             {
                 "stdout": "● "
-                + json.dumps({
-                    "actual_primary_file": "a.py",
-                    "actual_primary_span": {"start_line": 1, "end_line": 2},
-                    "actual_dependent_files": [],
-                    "actual_suggested_edit_files": [],
-                    "actual_test_files": [],
-                    "actual_validation_commands": ["pytest -q"],
-                    "context_token_count": 123,
-                    "notes": "ok",
-                })
+                + json.dumps(
+                    {
+                        "actual_primary_file": "a.py",
+                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                        "actual_dependent_files": [],
+                        "actual_suggested_edit_files": [],
+                        "actual_test_files": [],
+                        "actual_validation_commands": ["pytest -q"],
+                        "context_token_count": 123,
+                        "notes": "ok",
+                    }
+                )
             },
         )(),
     )
@@ -8639,15 +8784,17 @@ def test_run_copilot_competitor_eval_should_parse_wrapped_final_json():
     module = _load_script_module(
         "run_copilot_competitor_eval_wrapped_script", "benchmarks/run_copilot_competitor_eval.py"
     )
-    stdout = "\n".join([
-        "● Planning the answer first.",
-        "",
-        '● {"actual_primary_file":"a.py","actual_primary_span":{"start_li',
-        '  ne":1,"end_line":2},"actual_dependent_files":[],"actual_suggested_',
-        '  edit_files":[],"actual_test_files":[],"actual_validation_commands":[',
-        '  "pytest -q"],"context_token_count":123,"notes":"ok"}',
-        "",
-    ])
+    stdout = "\n".join(
+        [
+            "● Planning the answer first.",
+            "",
+            '● {"actual_primary_file":"a.py","actual_primary_span":{"start_li',
+            '  ne":1,"end_line":2},"actual_dependent_files":[],"actual_suggested_',
+            '  edit_files":[],"actual_test_files":[],"actual_validation_commands":[',
+            '  "pytest -q"],"context_token_count":123,"notes":"ok"}',
+            "",
+        ]
+    )
 
     extracted = module._extract_text_from_copilot_output(stdout)
 
@@ -8658,13 +8805,15 @@ def test_run_copilot_competitor_eval_should_parse_fenced_json_from_mixed_output(
     module = _load_script_module(
         "run_copilot_competitor_eval_fenced_script", "benchmarks/run_copilot_competitor_eval.py"
     )
-    stdout = "\n".join([
-        "Analyzing repository...",
-        "I found the likely target below.",
-        "```json",
-        '{"actual_primary_file":"b.py","actual_primary_span":{"start_line":10,"end_line":12},"actual_dependent_files":[],"actual_suggested_edit_files":[],"actual_test_files":[],"actual_validation_commands":["pytest -q"],"context_token_count":321,"notes":"ok"}',
-        "```",
-    ])
+    stdout = "\n".join(
+        [
+            "Analyzing repository...",
+            "I found the likely target below.",
+            "```json",
+            '{"actual_primary_file":"b.py","actual_primary_span":{"start_line":10,"end_line":12},"actual_dependent_files":[],"actual_suggested_edit_files":[],"actual_test_files":[],"actual_validation_commands":["pytest -q"],"context_token_count":321,"notes":"ok"}',
+            "```",
+        ]
+    )
 
     extracted = module._extract_text_from_copilot_output(stdout)
 
@@ -8677,25 +8826,27 @@ def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps({
-            "scenarios": [
-                {
-                    "id": "demo",
-                    "language": "python",
-                    "category": "demo",
-                    "description": "demo",
-                    "repo_fixture": str(tmp_path),
-                    "query_or_symbol": "symbol",
-                    "mode": "blast-radius",
-                    "expected_primary_file": "a.py",
-                    "expected_primary_span": {"start_line": 1, "end_line": 2},
-                    "expected_dependent_files": [],
-                    "expected_suggested_edit_files": [],
-                    "expected_test_files": [],
-                    "expected_validation_commands_contain": [],
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "id": "demo",
+                        "language": "python",
+                        "category": "demo",
+                        "description": "demo",
+                        "repo_fixture": str(tmp_path),
+                        "query_or_symbol": "symbol",
+                        "mode": "blast-radius",
+                        "expected_primary_file": "a.py",
+                        "expected_primary_span": {"start_line": 1, "end_line": 2},
+                        "expected_dependent_files": [],
+                        "expected_suggested_edit_files": [],
+                        "expected_test_files": [],
+                        "expected_validation_commands_contain": [],
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -8707,20 +8858,24 @@ def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path
             "Proc",
             (),
             {
-                "stdout": json.dumps({
-                    "session_id": "demo",
-                    "response": json.dumps({
-                        "actual_primary_file": "a.py",
-                        "actual_primary_span": {"start_line": 1, "end_line": 2},
-                        "actual_dependent_files": [],
-                        "actual_suggested_edit_files": [],
-                        "actual_test_files": [],
-                        "actual_validation_commands": ["pytest -q"],
-                        "context_token_count": 123,
-                        "notes": "ok",
-                    }),
-                    "stats": {},
-                })
+                "stdout": json.dumps(
+                    {
+                        "session_id": "demo",
+                        "response": json.dumps(
+                            {
+                                "actual_primary_file": "a.py",
+                                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                "actual_dependent_files": [],
+                                "actual_suggested_edit_files": [],
+                                "actual_test_files": [],
+                                "actual_validation_commands": ["pytest -q"],
+                                "context_token_count": 123,
+                                "notes": "ok",
+                            }
+                        ),
+                        "stats": {},
+                    }
+                )
             },
         )(),
     )
@@ -8745,121 +8900,135 @@ def test_build_external_agent_patch_driver_comparison_should_build_payload(tmp_p
     claude_output_path = tmp_path / "claude_output.json"
     codex_output_path = tmp_path / "codex_output.json"
     gemini_path.write_text(
-        json.dumps({
-            "artifact": "gemini_patch_driver_validation_summary",
-            "instance_id": "gemini-1",
-            "output_file": str(gemini_output_path),
-            "actual_primary_file": "glob.ts",
-            "follow_up_reads": ["glob.ts#L1-L10", "grep.ts#L1-L20"],
-            "validation_commands": ["uv run pytest -q"],
-            "ledger_next_action": "run patch system",
-        }),
+        json.dumps(
+            {
+                "artifact": "gemini_patch_driver_validation_summary",
+                "instance_id": "gemini-1",
+                "output_file": str(gemini_output_path),
+                "actual_primary_file": "glob.ts",
+                "follow_up_reads": ["glob.ts#L1-L10", "grep.ts#L1-L20"],
+                "validation_commands": ["uv run pytest -q"],
+                "ledger_next_action": "run patch system",
+            }
+        ),
         encoding="utf-8",
     )
     claude_path.write_text(
-        json.dumps({
-            "artifact": "claude_patch_driver_validation_summary",
-            "instance_id": "claude-1",
-            "output_file": str(claude_output_path),
-            "actual_primary_file": "FileWriteToolDiff.tsx",
-            "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
-            "validation_commands": ["uv run pytest -q"],
-            "ledger_next_action": "run patch system",
-        }),
+        json.dumps(
+            {
+                "artifact": "claude_patch_driver_validation_summary",
+                "instance_id": "claude-1",
+                "output_file": str(claude_output_path),
+                "actual_primary_file": "FileWriteToolDiff.tsx",
+                "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
+                "validation_commands": ["uv run pytest -q"],
+                "ledger_next_action": "run patch system",
+            }
+        ),
         encoding="utf-8",
     )
     codex_path.write_text(
-        json.dumps({
-            "artifact": "codex_patch_driver_validation_summary",
-            "instance_id": "codex-1",
-            "output_file": str(codex_output_path),
-            "actual_primary_file": "fuzzy_file_search.rs",
-            "follow_up_reads": ["fuzzy_file_search.rs#L1-L10"],
-            "validation_commands": ["cargo test"],
-            "ledger_next_action": "run patch system",
-        }),
+        json.dumps(
+            {
+                "artifact": "codex_patch_driver_validation_summary",
+                "instance_id": "codex-1",
+                "output_file": str(codex_output_path),
+                "actual_primary_file": "fuzzy_file_search.rs",
+                "follow_up_reads": ["fuzzy_file_search.rs#L1-L10"],
+                "validation_commands": ["cargo test"],
+                "ledger_next_action": "run patch system",
+            }
+        ),
         encoding="utf-8",
     )
     gemini_output_path.write_text(
-        json.dumps({
-            "records": [
-                {
-                    "instance_id": "gemini-1",
-                    "navigation_pack": {
-                        "parallel_read_groups": [
-                            {
-                                "phase": 0,
-                                "label": "primary",
-                                "can_parallelize": False,
-                                "mentions": ["glob.ts#L1-L10"],
-                                "files": ["glob.ts"],
-                                "roles": ["primary"],
-                            },
-                            {
-                                "phase": 1,
-                                "label": "related",
-                                "can_parallelize": True,
-                                "mentions": ["grep.ts#L1-L20"],
-                                "files": ["grep.ts"],
-                                "roles": ["related"],
-                            },
-                        ]
-                    },
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "instance_id": "gemini-1",
+                        "navigation_pack": {
+                            "parallel_read_groups": [
+                                {
+                                    "phase": 0,
+                                    "label": "primary",
+                                    "can_parallelize": False,
+                                    "mentions": ["glob.ts#L1-L10"],
+                                    "files": ["glob.ts"],
+                                    "roles": ["primary"],
+                                },
+                                {
+                                    "phase": 1,
+                                    "label": "related",
+                                    "can_parallelize": True,
+                                    "mentions": ["grep.ts#L1-L20"],
+                                    "files": ["grep.ts"],
+                                    "roles": ["related"],
+                                },
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     claude_output_path.write_text(
-        json.dumps({
-            "records": [
-                {
-                    "instance_id": "claude-1",
-                    "navigation_pack": {
-                        "parallel_read_groups": [
-                            {
-                                "phase": 0,
-                                "label": "primary",
-                                "can_parallelize": False,
-                                "mentions": ["FileWriteToolDiff.tsx#L1-L10"],
-                                "files": ["FileWriteToolDiff.tsx"],
-                                "roles": ["primary"],
-                            }
-                        ]
-                    },
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "instance_id": "claude-1",
+                        "navigation_pack": {
+                            "parallel_read_groups": [
+                                {
+                                    "phase": 0,
+                                    "label": "primary",
+                                    "can_parallelize": False,
+                                    "mentions": ["FileWriteToolDiff.tsx#L1-L10"],
+                                    "files": ["FileWriteToolDiff.tsx"],
+                                    "roles": ["primary"],
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     codex_output_path.write_text(
-        json.dumps({
-            "records": [
-                {
-                    "instance_id": "codex-1",
-                    "navigation_pack": {
-                        "parallel_read_groups": [
-                            {
-                                "phase": 0,
-                                "label": "primary",
-                                "can_parallelize": False,
-                                "mentions": ["fuzzy_file_search.rs#L1-L10"],
-                                "files": ["fuzzy_file_search.rs"],
-                                "roles": ["primary"],
-                            }
-                        ]
-                    },
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "instance_id": "codex-1",
+                        "navigation_pack": {
+                            "parallel_read_groups": [
+                                {
+                                    "phase": 0,
+                                    "label": "primary",
+                                    "can_parallelize": False,
+                                    "mentions": ["fuzzy_file_search.rs#L1-L10"],
+                                    "files": ["fuzzy_file_search.rs"],
+                                    "roles": ["primary"],
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
-    payload = module.build_payload([
-        ("gemini", gemini_path),
-        ("claude", claude_path),
-        ("codex", codex_path),
-    ])
+    payload = module.build_payload(
+        [
+            ("gemini", gemini_path),
+            ("claude", claude_path),
+            ("codex", codex_path),
+        ]
+    )
 
     assert payload["artifact"] == "external_agent_patch_driver_comparison"
     assert payload["common_contract"]["ledger_artifact"] == "agent_attempt_ledger"
@@ -8882,54 +9051,64 @@ def test_build_external_agent_patch_driver_comparison_cli_should_write_output(tm
     gemini_output_path = tmp_path / "gemini_output.json"
     claude_output_path = tmp_path / "claude_output.json"
     gemini_path.write_text(
-        json.dumps({
-            "artifact": "gemini_patch_driver_validation_summary",
-            "instance_id": "gemini-1",
-            "output_file": str(gemini_output_path),
-            "actual_primary_file": "glob.ts",
-            "follow_up_reads": ["glob.ts#L1-L10"],
-            "validation_commands": ["uv run pytest -q"],
-            "ledger_next_action": "run patch system",
-        }),
+        json.dumps(
+            {
+                "artifact": "gemini_patch_driver_validation_summary",
+                "instance_id": "gemini-1",
+                "output_file": str(gemini_output_path),
+                "actual_primary_file": "glob.ts",
+                "follow_up_reads": ["glob.ts#L1-L10"],
+                "validation_commands": ["uv run pytest -q"],
+                "ledger_next_action": "run patch system",
+            }
+        ),
         encoding="utf-8",
     )
     claude_path.write_text(
-        json.dumps({
-            "artifact": "claude_patch_driver_validation_summary",
-            "instance_id": "claude-1",
-            "output_file": str(claude_output_path),
-            "actual_primary_file": "FileWriteToolDiff.tsx",
-            "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
-            "validation_commands": ["uv run pytest -q"],
-            "ledger_next_action": "run patch system",
-        }),
+        json.dumps(
+            {
+                "artifact": "claude_patch_driver_validation_summary",
+                "instance_id": "claude-1",
+                "output_file": str(claude_output_path),
+                "actual_primary_file": "FileWriteToolDiff.tsx",
+                "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
+                "validation_commands": ["uv run pytest -q"],
+                "ledger_next_action": "run patch system",
+            }
+        ),
         encoding="utf-8",
     )
     gemini_output_path.write_text(
-        json.dumps({
-            "records": [
-                {"instance_id": "gemini-1", "navigation_pack": {"parallel_read_groups": []}}
-            ]
-        }),
+        json.dumps(
+            {
+                "records": [
+                    {"instance_id": "gemini-1", "navigation_pack": {"parallel_read_groups": []}}
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     claude_output_path.write_text(
-        json.dumps({
-            "records": [
-                {"instance_id": "claude-1", "navigation_pack": {"parallel_read_groups": []}}
-            ]
-        }),
+        json.dumps(
+            {
+                "records": [
+                    {"instance_id": "claude-1", "navigation_pack": {"parallel_read_groups": []}}
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
-    exit_code = module.main([
-        "--summary",
-        f"gemini={gemini_path}",
-        "--summary",
-        f"claude={claude_path}",
-        "--output",
-        str(output_path),
-    ])
+    exit_code = module.main(
+        [
+            "--summary",
+            f"gemini={gemini_path}",
+            "--summary",
+            f"claude={claude_path}",
+            "--output",
+            str(output_path),
+        ]
+    )
 
     written = json.loads(output_path.read_text(encoding="utf-8"))
     assert exit_code == 0
@@ -8945,36 +9124,38 @@ def test_build_external_agent_patch_driver_scorecard_should_score_compactness_an
     )
     comparison_path = tmp_path / "comparison.json"
     comparison_path.write_text(
-        json.dumps({
-            "artifact": "external_agent_patch_driver_comparison",
-            "systems": [
-                {
-                    "system": "gemini",
-                    "primary_file": "glob.ts",
-                    "follow_up_count": 5,
-                    "parallel_read_group_count": 3,
-                    "estimated_saved_read_steps": 2,
-                    "validation_commands": ["uv run pytest -q"],
-                },
-                {
-                    "system": "codex",
-                    "primary_file": "fuzzy_file_search.rs",
-                    "follow_up_count": 5,
-                    "parallel_read_group_count": 3,
-                    "estimated_saved_read_steps": 2,
-                    "validation_commands": ["cargo test"],
-                },
-                {
-                    "system": "wide",
-                    "primary_file": "reader.py",
-                    "follow_up_count": 9,
-                    "parallel_read_group_count": 4,
-                    "estimated_saved_read_steps": 5,
-                    "validation_commands": ["pytest -q"],
-                },
-            ],
-            "common_contract": {"next_action": "run patch system"},
-        }),
+        json.dumps(
+            {
+                "artifact": "external_agent_patch_driver_comparison",
+                "systems": [
+                    {
+                        "system": "gemini",
+                        "primary_file": "glob.ts",
+                        "follow_up_count": 5,
+                        "parallel_read_group_count": 3,
+                        "estimated_saved_read_steps": 2,
+                        "validation_commands": ["uv run pytest -q"],
+                    },
+                    {
+                        "system": "codex",
+                        "primary_file": "fuzzy_file_search.rs",
+                        "follow_up_count": 5,
+                        "parallel_read_group_count": 3,
+                        "estimated_saved_read_steps": 2,
+                        "validation_commands": ["cargo test"],
+                    },
+                    {
+                        "system": "wide",
+                        "primary_file": "reader.py",
+                        "follow_up_count": 9,
+                        "parallel_read_group_count": 4,
+                        "estimated_saved_read_steps": 5,
+                        "validation_commands": ["pytest -q"],
+                    },
+                ],
+                "common_contract": {"next_action": "run patch system"},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -8998,20 +9179,22 @@ def test_build_external_agent_patch_driver_scorecard_cli_should_write_output(tmp
     comparison_path = tmp_path / "comparison.json"
     output_path = tmp_path / "scorecard.json"
     comparison_path.write_text(
-        json.dumps({
-            "artifact": "external_agent_patch_driver_comparison",
-            "systems": [
-                {
-                    "system": "codex",
-                    "primary_file": "fuzzy_file_search.rs",
-                    "follow_up_count": 5,
-                    "parallel_read_group_count": 3,
-                    "estimated_saved_read_steps": 2,
-                    "validation_commands": ["cargo test"],
-                }
-            ],
-            "common_contract": {"next_action": "run patch system"},
-        }),
+        json.dumps(
+            {
+                "artifact": "external_agent_patch_driver_comparison",
+                "systems": [
+                    {
+                        "system": "codex",
+                        "primary_file": "fuzzy_file_search.rs",
+                        "follow_up_count": 5,
+                        "parallel_read_group_count": 3,
+                        "estimated_saved_read_steps": 2,
+                        "validation_commands": ["cargo test"],
+                    }
+                ],
+                "common_contract": {"next_action": "run patch system"},
+            }
+        ),
         encoding="utf-8",
     )
 

@@ -246,11 +246,13 @@ def _resolve_native_tg_binary() -> Path:
     candidates = []
     if env_override:
         candidates.append(Path(env_override).expanduser())
-    candidates.extend([
-        repo_root / "rust_core" / "target" / "release" / binary_name,
-        repo_root / "benchmarks" / binary_name,
-        repo_root / "benchmarks" / "tg_rust.exe",
-    ])
+    candidates.extend(
+        [
+            repo_root / "rust_core" / "target" / "release" / binary_name,
+            repo_root / "benchmarks" / binary_name,
+            repo_root / "benchmarks" / "tg_rust.exe",
+        ]
+    )
 
     for candidate in candidates:
         if candidate.is_file():

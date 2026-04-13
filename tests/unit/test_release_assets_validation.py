@@ -31,6 +31,7 @@ def test_should_require_readme_canonical_doc_links_and_release_markers():
     ## Canonical Docs
 
     - [docs/benchmarks.md](docs/benchmarks.md)
+    - [docs/tool_comparison.md](docs/tool_comparison.md)
     - [docs/gpu_crossover.md](docs/gpu_crossover.md)
     """
     errors = module.validate_readme_contract(readme_content=readme)
@@ -59,6 +60,7 @@ def test_should_accept_readme_when_public_contract_markers_exist():
     ## Canonical Docs
 
     - [docs/benchmarks.md](docs/benchmarks.md)
+    - [docs/tool_comparison.md](docs/tool_comparison.md)
     - [docs/gpu_crossover.md](docs/gpu_crossover.md)
     - [docs/routing_policy.md](docs/routing_policy.md)
     - [docs/harness_api.md](docs/harness_api.md)
@@ -112,6 +114,7 @@ def test_should_accept_benchmarks_doc_when_public_benchmark_contract_exists():
     | Surface | Script | Default artifact |
     | --- | --- | --- |
     | End-to-end CLI text search | `benchmarks/run_benchmarks.py` | `artifacts/bench_run_benchmarks.json` |
+    | Host-local CLI tool comparison | `benchmarks/run_tool_comparison_benchmarks.py` | `artifacts/bench_tool_comparison.json` |
     | AST rewrite plan/diff/apply | `benchmarks/run_ast_rewrite_benchmarks.py` | `artifacts/bench_ast_rewrite.json` |
     | Repeated-query / hot-cache search | `benchmarks/run_hot_query_benchmarks.py` | `artifacts/bench_hot_query_benchmarks.json` |
 
@@ -1223,6 +1226,7 @@ def test_should_validate_readme_canonical_docs_and_installation_contract():
             "and the workflow guide in [docs/harness_cookbook.md](docs/harness_cookbook.md).\n"
             "## Canonical Docs\n"
             "- [docs/benchmarks.md](docs/benchmarks.md)\n"
+            "- [docs/tool_comparison.md](docs/tool_comparison.md)\n"
             "- [docs/gpu_crossover.md](docs/gpu_crossover.md)\n"
             "- [docs/routing_policy.md](docs/routing_policy.md)\n"
             "- [docs/harness_api.md](docs/harness_api.md)\n"

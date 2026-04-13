@@ -4,12 +4,14 @@ README_PATH = Path("README.md")
 ROUTING_DOC_PATH = Path("docs/routing_policy.md")
 WORLD_CLASS_PLAN_PATH = Path("docs/world_class_plan.md")
 BENCHMARKS_DOC_PATH = Path("docs/benchmarks.md")
+TOOL_COMPARISON_DOC_PATH = Path("docs/tool_comparison.md")
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
 
     assert "docs/benchmarks.md" in readme
+    assert "docs/tool_comparison.md" in readme
     assert "docs/gpu_crossover.md" in readme
     assert "docs/routing_policy.md" in readme
     assert "docs/harness_api.md" in readme
@@ -114,6 +116,24 @@ def test_benchmark_docs_should_freeze_comparator_set_and_pack_inventory() -> Non
     assert "0.282347" in doc
     assert "## Comparative Benchmark v3" in doc
     assert "same accepted comparator set and pack inventory" in doc
+
+
+def test_tool_comparison_doc_should_publish_workload_specific_comparator_story() -> None:
+    doc = TOOL_COMPARISON_DOC_PATH.read_text(encoding="utf-8")
+
+    assert "# Tool Comparison" in doc
+    assert "one benchmark is never enough" in doc
+    assert "Host-Local Command Snapshot" in doc
+    assert "git grep --no-index" in doc
+    assert "ast-grep" in doc
+    assert "Semgrep" in doc
+    assert "Zoekt" in doc
+    assert "artifacts/bench_run_benchmarks.json" in doc
+    assert "artifacts/bench_tool_comparison.json" in doc
+    assert "artifacts/bench_run_native_cpu_benchmarks.json" in doc
+    assert "rg --no-ignore ERROR artifacts/bench_data" in doc
+    assert "tg search --cpu --no-ignore ERROR artifacts/bench_data" in doc
+    assert "CLI contract parity" in doc
 
 
 def test_future_roadmap_should_define_new_program_and_first_batch() -> None:

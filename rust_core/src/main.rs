@@ -50,7 +50,7 @@ const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
 #[command(version = "0.2.0")]
-#[command(about = "tensor-grep: GPU-Accelerated Log Parsing CLI")]
+#[command(about = "tensor-grep: native search, rewrite, and repository analysis CLI")]
 #[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 pub struct CommandCli {
     #[command(subcommand)]
@@ -60,7 +60,7 @@ pub struct CommandCli {
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
 #[command(version = "0.2.0")]
-#[command(about = "tensor-grep: GPU-Accelerated Log Parsing CLI")]
+#[command(about = "tensor-grep: native search, rewrite, and repository analysis CLI")]
 #[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 pub struct PositionalCli {
     /// The search pattern (regex or string)
@@ -89,7 +89,7 @@ pub struct PositionalCli {
     #[arg(short = 'i', long)]
     pub ignore_case: bool,
 
-    /// Find and Replace in-place
+    /// Replace matches in emitted output (ripgrep-style)
     #[arg(short = 'r', long)]
     pub replace: Option<String>,
 
@@ -140,7 +140,7 @@ pub struct SearchArgs {
     #[arg(short = 'c', long)]
     pub count: bool,
 
-    /// Find and Replace in-place
+    /// Replace matches in emitted output (ripgrep-style)
     #[arg(short = 'r', long)]
     pub replace: Option<String>,
 
@@ -380,6 +380,7 @@ pub enum Commands {
         json: bool,
     },
     /// Start a resident AST worker
+    #[command(hide = true)]
     Worker {
         /// TCP port to listen on
         #[arg(long, default_value = "9999")]
@@ -854,10 +855,17 @@ mod tests {
             panic!("Expected Search command");
         }
 
-        let long_args = ["tg", "search", "--replace", "REPLACEMENT", "PATTERN", "path"]
-            .into_iter()
-            .map(OsString::from)
-            .collect::<Vec<_>>();
+        let long_args = [
+            "tg",
+            "search",
+            "--replace",
+            "REPLACEMENT",
+            "PATTERN",
+            "path",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect::<Vec<_>>();
         let cli_long = CommandCli::try_parse_from(&long_args).expect("Failed to parse long args");
         if let Commands::Search(search_args) = cli_long.command {
             assert_eq!(search_args.replace.as_deref(), Some("REPLACEMENT"));
@@ -887,7 +895,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
                 return handle_python_passthrough("search", py_args.into_iter().skip(1).collect());
             }
             handle_ripgrep_search(args)
-        },
+        }
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
         Commands::AuditVerify(args) => handle_audit_verify_command(args),

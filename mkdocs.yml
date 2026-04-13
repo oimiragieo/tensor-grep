@@ -40,6 +40,7 @@ nav:
     - Package Manager Publish: package_manager_publish.md
   - Architecture: architecture.md
   - Benchmarks: benchmarks.md
+  - Tool Comparison: tool_comparison.md
 
 markdown_extensions:
   - pymdownx.highlight:
