@@ -214,7 +214,7 @@ def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):
     sub_dir.mkdir(parents=True)
     nested_file = sub_dir / "c.py"
     nested_file.write_text("pattern\n", encoding="utf-8")
-    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+    _project_cfg, _rule_specs, candidate_files, _test_data, _hints = _load_ast_project_data(
         str(config_path)
     )
     assert "c.py" in [Path(f).name for f in candidate_files]
@@ -222,7 +222,7 @@ def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):
     # 4.6 Remove nested source file -> should invalidate
     time.sleep(0.1)
     nested_file.unlink()
-    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+    _project_cfg, _rule_specs, candidate_files, _test_data, _hints = _load_ast_project_data(
         str(config_path)
     )
     assert "c.py" not in [Path(f).name for f in candidate_files]
@@ -232,7 +232,20 @@ def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):
     config_path.write_text(
         "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: javascript\n", encoding="utf-8"
     )
-    project_cfg, rule_specs, candidate_files, test_data, _hints = _load_ast_project_data(
+    project_cfg, _rule_specs, _candidate_files, _test_data, _hints = _load_ast_project_data(
         str(config_path)
     )
     assert project_cfg["language"] == "javascript"
+
+
+def test_select_ast_backend_name_for_pattern_should_prefer_native_for_native_shapes():
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
+
+    assert _select_ast_backend_name_for_pattern("(function_definition)", "python") == "AstBackend"
+    assert _select_ast_backend_name_for_pattern("function_definition", "python") == "AstBackend"
+
+
+def test_select_ast_backend_name_for_pattern_should_use_wrapper_for_ast_grep_patterns():
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
+
+    assert _select_ast_backend_name_for_pattern("def $FUNC():", "python") == "AstGrepWrapperBackend"

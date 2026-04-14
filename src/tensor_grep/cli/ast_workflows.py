@@ -265,8 +265,7 @@ def _select_ast_backend_name_for_pattern(pattern: str, language: str) -> str:
             or _SUPPORTED_NATIVE_PATTERN_RE.fullmatch(stripped_pattern)
         )
     )
-    # Default policy: prefer wrapper.
-    return "AstGrepWrapperBackend"
+    return "AstBackend" if supports_native_pattern else "AstGrepWrapperBackend"
 
 
 def _load_rule_specs_and_meta(
