@@ -3659,7 +3659,7 @@ def run(
     from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
-    cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang, query_pattern=pattern)
+    cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=lang, query_pattern=pattern)
     backend = _select_ast_backend_for_pattern(cfg, pattern)
     backend_name = type(backend).__name__
     typer.echo(f"Executing {_describe_ast_backend_mode(backend_name)} run...")

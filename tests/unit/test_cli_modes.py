@@ -3225,7 +3225,7 @@ def test_run_should_report_ast_wrapper_backend_mode(monkeypatch):
     assert "GPU-Accelerated AST-Grep Run" not in result.output
 
 
-def test_run_should_keep_wrapper_first_ast_policy(monkeypatch):
+def test_run_should_use_native_first_ast_policy(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _CapturingAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
     _CapturingAstPipeline.seen_configs = []
@@ -3241,7 +3241,7 @@ def test_run_should_keep_wrapper_first_ast_policy(monkeypatch):
 
     assert result.exit_code == 0
     assert _CapturingAstPipeline.last_config is not None
-    assert _CapturingAstPipeline.last_config.ast_prefer_native is False
+    assert _CapturingAstPipeline.last_config.ast_prefer_native is True
     assert _CapturingAstPipeline.last_config.query_pattern == "ERROR"
 
 

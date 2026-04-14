@@ -499,7 +499,7 @@ def run_command(
     del rewrite, config, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
 
     search_path = path or "."
-    cfg = SearchConfig(ast=True, ast_prefer_native=False, lang=lang, query_pattern=pattern)
+    cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=lang, query_pattern=pattern)
     backend = _select_ast_backend_for_pattern(cfg, pattern)
     backend_name = type(backend).__name__
 
