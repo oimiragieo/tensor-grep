@@ -134,6 +134,34 @@ fn python_passthrough_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
     }
 }
 
+fn pythonpath_validating_passthrough_wrapper_script(
+    dir: &Path,
+    marker: &Path,
+    expected_src: &Path,
+) -> PathBuf {
+    if cfg!(windows) {
+        write_wrapper_script(
+            dir,
+            "pythonpath-validating-wrapper.cmd",
+            &format!(
+                "@echo off\r\nsetlocal\r\necho %PYTHONPATH%>\"{}\"\r\necho %PYTHONPATH% | findstr /C:\"{}\" >nul\r\nif errorlevel 1 exit /b 1\r\necho Usage: tensor_grep defs\r\nexit /b 0\r\n",
+                marker.display(),
+                expected_src.display()
+            ),
+        )
+    } else {
+        write_wrapper_script(
+            dir,
+            "pythonpath-validating-wrapper.sh",
+            &format!(
+                "#!/bin/sh\nprintf '%s' \"$PYTHONPATH\" > '{}'\nprintf '%s' \"$PYTHONPATH\" | grep -F -- '{}' >/dev/null || exit 1\nprintf 'Usage: tensor_grep defs\\n'\nexit 0\n",
+                marker.display(),
+                expected_src.display()
+            ),
+        )
+    }
+}
+
 fn rg_wrapper_script(dir: &Path, marker: &Path) -> PathBuf {
     if cfg!(windows) {
         write_wrapper_script(
@@ -250,6 +278,47 @@ fn test_tg_update_alias_uses_python_passthrough_override() {
         marker.exists(),
         "expected passthrough override marker at {}",
         marker.display()
+    );
+}
+
+#[test]
+fn test_tg_defs_help_injects_repo_src_into_pythonpath_for_passthrough() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("pythonpath-marker.txt");
+    let expected_src = repo_root().join("src");
+    let python_wrapper =
+        pythonpath_validating_passthrough_wrapper_script(dir.path(), &marker, &expected_src);
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("defs")
+        .arg("--help")
+        .env("TG_SIDECAR_PYTHON", &python_wrapper);
+
+    let output = run_with_timeout(tg, Duration::from_secs(10));
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.to_lowercase().contains("usage:"),
+        "combined={combined}"
+    );
+
+    let injected_pythonpath = fs::read_to_string(&marker).unwrap();
+    assert!(
+        injected_pythonpath.contains(expected_src.to_string_lossy().as_ref()),
+        "pythonpath={injected_pythonpath}"
     );
 }
 

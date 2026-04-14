@@ -1037,7 +1037,9 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Impact { args } => handle_python_passthrough("impact", args),
         Commands::Callers { args } => handle_python_passthrough("callers", args),
         Commands::BlastRadius { args } => handle_python_passthrough("blast-radius", args),
-        Commands::BlastRadiusRender { args } => handle_python_passthrough("blast-radius-render", args),
+        Commands::BlastRadiusRender { args } => {
+            handle_python_passthrough("blast-radius-render", args)
+        }
         Commands::BlastRadiusPlan { args } => handle_python_passthrough("blast-radius-plan", args),
         Commands::EditPlan { args } => handle_python_passthrough("edit-plan", args),
         Commands::ContextRender { args } => handle_python_passthrough("context-render", args),

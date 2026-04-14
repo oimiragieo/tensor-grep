@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,6 +16,7 @@ const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
 const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
 const TG_SIDECAR_TIMEOUT_MS_ENV: &str = "TG_SIDECAR_TIMEOUT_MS";
 const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
+const MAX_SOURCE_ROOT_ANCESTOR_DEPTH: usize = 4;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SidecarRequest {
@@ -76,6 +77,7 @@ pub fn execute_python_passthrough_command(
     let python = resolve_python_command();
 
     let mut child = Command::new(&python);
+    configure_python_module_path(&mut child);
     child
         .arg("-m")
         .arg(DEFAULT_TENSOR_GREP_MODULE)
@@ -103,6 +105,7 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
     })?;
 
     let mut child = Command::new(&python);
+    configure_python_module_path(&mut child);
     match launch_target {
         PythonLaunchTarget::Module(module) => {
             child.arg("-m").arg(module);
@@ -330,6 +333,49 @@ fn resolve_python_command() -> OsString {
     OsString::from("python")
 }
 
+fn configure_python_module_path(command: &mut Command) {
+    let Some(source_root) = resolve_repo_source_root() else {
+        return;
+    };
+
+    command.env(
+        "PYTHONPATH",
+        merged_pythonpath(&source_root, env::var_os("PYTHONPATH")),
+    );
+}
+
+fn resolve_repo_source_root() -> Option<PathBuf> {
+    let current_exe = env::current_exe().ok()?;
+    resolve_repo_source_root_relative_to_exe(&current_exe)
+}
+
+fn resolve_repo_source_root_relative_to_exe(exe_path: &Path) -> Option<PathBuf> {
+    let exe_dir = exe_path.parent()?;
+
+    for base in exe_dir.ancestors().take(MAX_SOURCE_ROOT_ANCESTOR_DEPTH + 1) {
+        let candidate = base.join("src");
+        if candidate.join("tensor_grep").is_dir() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn merged_pythonpath(source_root: &Path, existing: Option<OsString>) -> OsString {
+    let mut paths = vec![source_root.to_path_buf()];
+
+    if let Some(existing) = existing {
+        for path in env::split_paths(&existing) {
+            if path != source_root {
+                paths.push(path);
+            }
+        }
+    }
+
+    env::join_paths(&paths).unwrap_or_else(|_| source_root.as_os_str().to_os_string())
+}
+
 fn resolve_sidecar_target() -> PythonLaunchTarget {
     if let Some(script) = env::var_os("TG_SIDECAR_SCRIPT") {
         return PythonLaunchTarget::Script(PathBuf::from(script));
@@ -369,5 +415,62 @@ fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
             python.to_string_lossy()
         ),
         stderr: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merged_pythonpath, resolve_repo_source_root_relative_to_exe};
+    use std::env;
+    use std::fs;
+    use std::path::Path;
+    use tempfile::tempdir;
+
+    #[test]
+    fn resolves_repo_source_root_relative_to_native_binary() {
+        let dir = tempdir().unwrap();
+        let repo_root = dir.path().join("repo");
+        let exe_path = repo_root
+            .join("rust_core")
+            .join("target")
+            .join("debug")
+            .join(if cfg!(windows) { "tg.exe" } else { "tg" });
+        let source_root = repo_root.join("src");
+        let rust_source_root = repo_root.join("rust_core").join("src");
+
+        fs::create_dir_all(exe_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(source_root.join("tensor_grep")).unwrap();
+        fs::create_dir_all(&rust_source_root).unwrap();
+        fs::write(&exe_path, b"binary").unwrap();
+
+        let resolved = resolve_repo_source_root_relative_to_exe(&exe_path);
+        assert_eq!(resolved.as_deref(), Some(source_root.as_path()));
+    }
+
+    #[test]
+    fn merged_pythonpath_prepends_source_root_and_preserves_existing_entries() {
+        let source_root = Path::new("repo").join("src");
+        let existing = env::join_paths([Path::new("alpha"), Path::new("beta")]).unwrap();
+
+        let merged = merged_pythonpath(&source_root, Some(existing));
+        let paths = env::split_paths(&merged).collect::<Vec<_>>();
+
+        assert_eq!(paths[0], source_root);
+        assert_eq!(paths[1], Path::new("alpha"));
+        assert_eq!(paths[2], Path::new("beta"));
+    }
+
+    #[test]
+    fn merged_pythonpath_dedupes_existing_source_root() {
+        let source_root = Path::new("repo").join("src");
+        let existing =
+            env::join_paths([source_root.clone(), Path::new("beta").to_path_buf()]).unwrap();
+
+        let merged = merged_pythonpath(&source_root, Some(existing));
+        let paths = env::split_paths(&merged).collect::<Vec<_>>();
+
+        assert_eq!(paths[0], source_root);
+        assert_eq!(paths[1], Path::new("beta"));
+        assert_eq!(paths.len(), 2);
     }
 }
