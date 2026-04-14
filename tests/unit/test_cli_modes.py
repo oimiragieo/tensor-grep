@@ -1631,7 +1631,7 @@ def test_only_matching_outputs_token_not_whole_line(monkeypatch):
     result = runner.invoke(app, ["search", "ERROR", ".", "--only-matching"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "1:ERROR"
+    assert result.stdout.strip() == "ERROR"
 
 
 def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):
@@ -3243,6 +3243,21 @@ def test_run_should_use_native_first_ast_policy(monkeypatch):
     assert _CapturingAstPipeline.last_config is not None
     assert _CapturingAstPipeline.last_config.ast_prefer_native is True
     assert _CapturingAstPipeline.last_config.query_pattern == "ERROR"
+
+def test_ast_rust_language_support_matrix(monkeypatch):
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._check_backend_available", lambda name: True
+    )
+
+    # Native S-expression for Rust (supported by PyO3/tree-sitter)
+    backend_native = _select_ast_backend_name_for_pattern("(function_item) @match", "rust")
+    assert backend_native == "AstBackend"
+
+    # Ast-grep specific string query with variadic params (supported by ast-grep CLI wrapper)
+    backend_wrapper = _select_ast_backend_name_for_pattern("fn $F($$$ARGS)", "rust")
+    assert backend_wrapper == "AstGrepWrapperBackend"
 
 
 def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):

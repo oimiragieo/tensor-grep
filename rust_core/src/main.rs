@@ -1340,47 +1340,6 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 }
 
 fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
-    const SUBCOMMANDS: &[&str] = &[
-        "search",
-        "calibrate",
-        "upgrade",
-        "audit-verify",
-        "update",
-        "mcp",
-        "classify",
-        "run",
-        "scan",
-        "test",
-        "new",
-        "worker",
-        "defs",
-        "refs",
-        "source",
-        "impact",
-        "callers",
-        "blast-radius",
-        "blast-radius-render",
-        "blast-radius-plan",
-        "edit-plan",
-        "context-render",
-        "rulesets",
-        "audit-history",
-        "audit-diff",
-        "review-bundle",
-        "devices",
-        "context",
-        "lsp",
-        "__gpu-native-stats",
-        "__gpu-transfer-bench",
-        "__gpu-cuda-graphs",
-        "__gpu-oom-probe",
-        // Editor-plane and Python passthrough commands:
-        "map",
-        "session",
-        "doctor",
-        "checkpoint",
-    ];
-
     for arg in raw_args.iter().skip(1) {
         let token = arg.to_string_lossy();
         if token == "--help" || token == "-h" || token == "--version" || token == "-V" {
@@ -1389,7 +1348,12 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         if token.starts_with('-') {
             continue;
         }
-        return !SUBCOMMANDS.contains(&token.as_ref());
+        const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
+        let is_known = RAW_PY.lines().any(|line| {
+            let t = line.trim();
+            t.starts_with('"') && (t.ends_with(r#"","#) || t.ends_with(r#"""#)) && t.contains(&format!("\"{token}\""))
+        });
+        return !is_known;
     }
 
     false

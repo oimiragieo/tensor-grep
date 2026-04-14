@@ -6,41 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-_KNOWN_COMMANDS = {
-    "search",
-    "calibrate",
-    "devices",
-    "map",
-    "context",
-    "context-render",
-    "defs",
-    "source",
-    "impact",
-    "refs",
-    "callers",
-    "blast-radius",
-    "blast-radius-render",
-    "blast-radius-plan",
-    "edit-plan",
-    "checkpoint",
-    "session",
-    "classify",
-    "run",
-    "rulesets",
-    "scan",
-    "test",
-    "audit-verify",
-    "audit-history",
-    "audit-diff",
-    "review-bundle",
-    "new",
-    "lsp",
-    "doctor",
-    "mcp",
-    "upgrade",
-    "update",
-    "worker",
-}
+from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
 
 _TG_ONLY_SEARCH_FLAGS = {
     "--ast",

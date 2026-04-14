@@ -4813,41 +4813,8 @@ def main_entry() -> None:
         print("Arrow Zero-Copy IPC is available")
         sys.exit(0)
 
-    known_commands = {
-        "search",
-        "calibrate",
-        "devices",
-        "map",
-        "context",
-        "context-render",
-        "defs",
-        "source",
-        "impact",
-        "refs",
-        "callers",
-        "blast-radius",
-        "blast-radius-render",
-        "blast-radius-plan",
-        "edit-plan",
-        "checkpoint",
-        "session",
-        "classify",
-        "run",
-        "rulesets",
-        "scan",
-        "test",
-        "audit-verify",
-        "audit-history",
-        "audit-diff",
-        "review-bundle",
-        "new",
-        "lsp",
-        "doctor",
-        "mcp",
-        "upgrade",
-        "update",
-        "worker",
-    }
+    from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
+    known_commands = _KNOWN_COMMANDS
 
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]

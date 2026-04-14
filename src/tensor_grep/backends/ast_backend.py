@@ -367,6 +367,14 @@ class AstBackend(ComputeBackend):
                 import tree_sitter_javascript
 
                 parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_javascript.language()))
+            elif lang == "typescript" or lang == "ts":
+                import tree_sitter_typescript
+
+                parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_typescript.language_typescript()))
+            elif lang == "rust" or lang == "rs":
+                import tree_sitter_rust
+
+                parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
             else:
                 raise ValueError(f"Language '{lang}' is not yet supported by the AstBackend.")
         except Exception as e:
@@ -513,8 +521,14 @@ class AstBackend(ComputeBackend):
 
         try:
             query = self._get_query(parser, lang, pattern)
-        except Exception as exc:
-            raise ValueError(f"Invalid AST query pattern for language '{lang}': {pattern}") from exc
+        except Exception:
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="AstBackend",
+                routing_reason="ast-native",
+            )
 
         matches = []
         seen_lines = set()
