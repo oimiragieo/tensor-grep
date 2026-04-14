@@ -1631,7 +1631,7 @@ def test_only_matching_outputs_token_not_whole_line(monkeypatch):
     result = runner.invoke(app, ["search", "ERROR", ".", "--only-matching"])
 
     assert result.exit_code == 0
-    assert result.stdout.strip() == "ERROR"
+    assert result.stdout.strip() == "1:ERROR"
 
 
 def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):

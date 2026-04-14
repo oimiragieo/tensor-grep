@@ -47,7 +47,7 @@ class RipgrepFormatter(OutputFormatter):
             ):
                 parts.append(str(match.file))
 
-            if self.config.line_number and not self.config.only_matching:
+            if self.config.line_number:
                 parts.append(str(match.line_number))
 
             parts.append(str(match.text))
