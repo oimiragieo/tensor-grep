@@ -808,10 +808,13 @@ mod tests {
         let simple = parse_args(&["tg", "search", "ERROR", "bench_data"]);
         let regex = parse_args(&["tg", "search", "ERROR.*timeout", "bench_data"]);
         let count = parse_args(&["tg", "search", "-c", "ERROR", "bench_data"]);
-
+        let context = parse_args(&["tg", "search", "-C", "2", "CRITICAL", "bench_data"]);
+        let max_count = parse_args(&["tg", "search", "-m", "10", "ERROR", "bench_data"]);
         assert!(should_use_early_ripgrep_fast_path(&simple));
         assert!(should_use_early_ripgrep_fast_path(&regex));
         assert!(should_use_early_ripgrep_fast_path(&count));
+        assert!(should_use_early_ripgrep_fast_path(&context));
+        assert!(should_use_early_ripgrep_fast_path(&max_count));
     }
 
     #[test]
