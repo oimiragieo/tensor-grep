@@ -1585,19 +1585,28 @@ fn test_routing_external_editor_plane_commands_are_forwarded() {
 
 #[test]
 fn test_routing_native_editor_plane_commands() {
+    let dir = tempdir().unwrap();
+    let python_wrapper = write_python_wrapper(dir.path());
+
     for command in vec!["defs", "refs", "context"] {
-        let output = tg().arg(command).arg("--help").output().unwrap();
+        let output = tg()
+            .current_dir(repo_root())
+            .arg(command)
+            .arg("--help")
+            .env("TG_SIDECAR_PYTHON", &python_wrapper)
+            .output()
+            .unwrap();
 
         let stdout = combined_output(&output);
         assert!(
-            stdout.to_lowercase().contains("usage:"),
-            "Native editor-plane help for '{}' did not contain usage text. output={}",
+            stdout.contains(&format!("-m tensor_grep {}", command)),
+            "Native editor-plane command '{}' was not forwarded properly. output={}",
             command,
             stdout
         );
         assert!(
-            stdout.contains(command),
-            "Native editor-plane help for '{}' did not mention the command name. output={}",
+            stdout.contains("--help"),
+            "Native editor-plane command '{}' did not forward the help flag. output={}",
             command,
             stdout
         );

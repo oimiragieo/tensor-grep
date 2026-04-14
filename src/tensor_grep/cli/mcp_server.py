@@ -240,6 +240,7 @@ def _extract_rewrite_error_message(stderr: str, fallback: str) -> str:
 @lru_cache(maxsize=1)
 def _resolve_native_tg_binary() -> Path:
     import shutil
+
     repo_root = _repo_root()
     binary_name = "tg.exe" if os.name == "nt" else "tg"
     env_override = os.environ.get("TG_MCP_TG_BINARY")
