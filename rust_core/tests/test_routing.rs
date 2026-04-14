@@ -1588,9 +1588,19 @@ fn test_routing_native_editor_plane_commands() {
     for command in vec!["defs", "refs", "context"] {
         let output = tg().arg(command).arg("--help").output().unwrap();
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(stdout.to_lowercase().contains("usage:"));
-        assert!(stdout.contains(command));
+        let stdout = combined_output(&output);
+        assert!(
+            stdout.to_lowercase().contains("usage:"),
+            "Native editor-plane help for '{}' did not contain usage text. output={}",
+            command,
+            stdout
+        );
+        assert!(
+            stdout.contains(command),
+            "Native editor-plane help for '{}' did not mention the command name. output={}",
+            command,
+            stdout
+        );
     }
 }
 
