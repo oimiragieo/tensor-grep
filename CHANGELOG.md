@@ -1,6 +1,76 @@
 # CHANGELOG
 
 
+## v1.1.4 (2026-04-14)
+
+### Bug Fixes
+
+- **ci**: Stabilize rust passthrough tests
+  ([`b0c023d`](https://github.com/oimiragieo/tensor-grep/commit/b0c023d6b8c10179674bd88cb60f46263298da7d))
+
+- **core**: Align AST workflow hints with native-first routing
+  ([`312d7d6`](https://github.com/oimiragieo/tensor-grep/commit/312d7d6b33e81aa4591cbeb33525ef7cda2781ee))
+
+- **core**: Fully restore AST native-first routing policy and prevent unsupported pattern crashes
+  ([`511b659`](https://github.com/oimiragieo/tensor-grep/commit/511b659f9989f250d9373d7b67baaaaa6ef0f263))
+
+- cli: changed the hard-coded st_prefer_native=False default to True in main.py and
+  st_workflows.py to ensure 	g run can actually hit the native AstBackend when appropriate - cli:
+  restored the pattern_kind == 'native' safeguard in _select_ast_backend_for_pattern to prevent
+  non-S-expression queries (like def ()) from crashing the native 	ree-sitter parser, ensuring they
+  correctly fall back to AstGrepWrapperBackend - tests: updated 	est_cli_modes.py to explicitly
+  assert the new native-first default AST policy
+
+- **core**: Make python passthrough work from checkout builds
+  ([`ded17d6`](https://github.com/oimiragieo/tensor-grep/commit/ded17d625ec429f92e778c75f0bf51aba936678b))
+
+- **core**: Remove debug output from native fast-path parsing that caused benchmark parity and
+  timing regressions
+  ([`686b8de`](https://github.com/oimiragieo/tensor-grep/commit/686b8de3726495acafbc1622e1c01befb19a161f))
+
+- rust: stripped a rogue println! debug statement from try_default_search_frontdoor_passthrough that
+  was erroneously writing to stdout during native Ripgrep passthrough operations - perf: resolved
+  the massive benchmark regressions in the -C, -m, and -F test suites by eliminating the stdout
+  buffering and benchmark suite parsing overhead caused by the debug output
+
+- **core**: Resolve AST backend pattern routing, MCP native binary lookup, and CPU formatter parity
+  ([`b954924`](https://github.com/oimiragieo/tensor-grep/commit/b954924d2d102cddf7e25ed9b4fea1af691457a9))
+
+- cli: reverted the AST backend default optimization in _select_ast_backend_for_pattern to correctly
+  prefer AstGrepWrapperBackend for standard ast-grep syntax patterns (e.g. def $F()), restoring
+  execution parity - cli: updated RipgrepFormatter to respect Ripgrep's native single-file
+  formatting contract, allowing --cpu and GPU modes to accurately omit the filename prefix when
+  searching a single file - mcp: expanded _resolve_native_tg_binary to interrogate shutil.which for
+  global/pip tensor-grep installations, fixing the FileNotFoundError that crashed AST rewrite plans
+  in non-developer environments
+
+- **core**: Restore native build integrity and align editor-plane clap parsing
+  ([`edda28e`](https://github.com/oimiragieo/tensor-grep/commit/edda28e99fce2b45ff16475e318da9dee7653f3d))
+
+- rust: removed obsolete Defs, Refs, and Context structured match blocks from un_command_cli to
+  align with the new unified Vec<String> python passthrough models, eliminating the E0599 missing
+  variant compile errors - rust: added disable_help_flag = true to all editor-plane commands in the
+  Commands enum, guaranteeing clap safely delegates --help arguments directly to the Python Typer
+  application without prematurely halting execution - python: restored AstBackend as the default
+  optimization fallback in st_workflows.py, ensuring standard raw S-expressions correctly process
+  natively through the PyO3 tree-sitter implementation
+
+### Build System
+
+- Sync uv lock with 1.1.3 metadata
+  ([`d839754`](https://github.com/oimiragieo/tensor-grep/commit/d839754d10b0bf74946915ca0fed9ecedce3bbe1))
+
+### Documentation
+
+- Clarify native AST runtime dependency on environment availability
+  ([`dd589a3`](https://github.com/oimiragieo/tensor-grep/commit/dd589a3b86bd8aac251545e7de40b58f2ca7fcb5))
+
+### Testing
+
+- Accept forwarded editor-plane help from combined output
+  ([`5b28b0d`](https://github.com/oimiragieo/tensor-grep/commit/5b28b0d46688aad7d11c5776e9f19209f5abcd3d))
+
+
 ## v1.1.3 (2026-04-13)
 
 ### Bug Fixes
