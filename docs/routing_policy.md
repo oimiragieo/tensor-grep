@@ -67,7 +67,9 @@ The smart router chooses `NativeGpuBackend` for both explicit and calibrated aut
 
 ## AST commands
 
-`tg run` is always routed to `AstBackend` with `routing_reason = "ast-native"`.
+`tg run` is policy-routed to `AstBackend` with `routing_reason = "ast-native"` by default.
+
+However, **actual runtime native AST execution depends on `AstBackend().is_available()` in the environment.** If the required dependencies (like `torch-geometric` or `tree-sitter`) are not present or the environment lacks support, the router will automatically fall back to `AstGrepWrapperBackend` (the `ast-grep` CLI). Additionally, string-based metavariable queries (like `def $F($$$ARGS)`) that cannot be natively parsed as S-expressions will deliberately trigger this fallback.
 
 That applies to:
 
