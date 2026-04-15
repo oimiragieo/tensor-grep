@@ -73,6 +73,10 @@ pub struct PositionalCli {
     #[arg(short = 'c', long)]
     pub count: bool,
 
+    /// Show line numbers
+    #[arg(short = 'n', long)]
+    pub line_number: bool,
+
     /// Stop after NUM matching lines per file
     #[arg(short = 'm', long)]
     pub max_count: Option<usize>,
@@ -139,6 +143,10 @@ pub struct SearchArgs {
     /// Count matching lines
     #[arg(short = 'c', long)]
     pub count: bool,
+
+    /// Show line numbers
+    #[arg(short = 'n', long)]
+    pub line_number: bool,
 
     /// Replace matches in emitted output (ripgrep-style)
     #[arg(short = 'r', long)]
@@ -717,6 +725,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "-F" | "--fixed-strings" => args.fixed_strings = true,
             "-v" | "--invert-match" => args.invert_match = true,
             "-c" | "--count" => args.count = true,
+            "-n" | "--line-number" => args.line_number = true,
             "-o" | "--only-matching" => args.only_matching = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
             "--no-ignore" => args.no_ignore = true,
@@ -753,7 +762,6 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
     }
     args.patterns.push(positionals[0].clone());
     args.path = positionals[1].clone();
-    args.line_number = false;
     Some(args)
 }
 
@@ -1543,7 +1551,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         fixed_strings: args.fixed_strings,
         invert_match: args.invert_match,
         count: args.count,
-        line_number: false,
+        line_number: args.line_number,
         only_matching: args.only_matching,
         context: args.context,
         max_count: args.max_count,

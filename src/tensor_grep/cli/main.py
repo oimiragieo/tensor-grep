@@ -1774,8 +1774,8 @@ def search_command(
         False, "--include-zero", help="Print zero match counts with -c."
     ),
     line_buffered: bool = typer.Option(False, "--line-buffered", help="Force line buffering."),
-    line_number: bool = typer.Option(
-        True, "-n", "--line-number", help="Show line numbers (1-based)."
+    line_number: bool | None = typer.Option(
+        None, "-n", "--line-number", help="Show line numbers (1-based)."
     ),
     max_columns: int | None = typer.Option(
         None, "-M", "--max-columns", help="Omit lines longer than this limit."
@@ -1893,6 +1893,9 @@ def search_command(
     if not file_path:
         typer.echo("Error: Please provide at least one PATH to search.", err=True)
         sys.exit(1)
+
+    if line_number is None:
+        line_number = sys.stdout.isatty()
 
     paths_to_search = file_path
 
