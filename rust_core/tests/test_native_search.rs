@@ -378,6 +378,63 @@ fn test_search_command_single_file_count_output_omits_filename_in_non_tty_mode()
 }
 
 #[test]
+fn test_native_positional_search_only_matching_omits_line_numbers_by_default() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("positional-only-matching.log");
+    fs::write(&file_path, "INFO ready\nERROR failed\nERROR timeout\n").unwrap();
+
+    // Raw rg-style positional format: tg <pattern> <path> -o
+    let output = tg()
+        .arg("ERROR")
+        .arg(&file_path)
+        .arg("-o")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "ERROR\nERROR\n"
+    );
+}
+
+#[test]
+fn test_native_positional_search_only_matching_includes_line_numbers_when_requested() {
+    let dir = tempdir().unwrap();
+    let file_path = dir.path().join("positional-only-matching-line.log");
+    fs::write(&file_path, "INFO ready\nERROR failed\nERROR timeout\n").unwrap();
+
+    // Raw rg-style positional format: tg -n <pattern> <path> -o
+    let output = tg()
+        .arg("-n")
+        .arg("ERROR")
+        .arg(&file_path)
+        .arg("-o")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "2:ERROR\n3:ERROR\n"
+    );
+}
+
+#[test]
 fn test_native_search_json_output_is_valid() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("json.log");
@@ -723,6 +780,7 @@ fn test_native_search_default_output_lines_are_not_interleaved() {
         let output = tg()
             .arg("--cpu")
             .arg("--fixed-strings")
+            .arg("-n")
             .arg(STREAMING_PATTERN)
             .arg(&file_path)
             .output()

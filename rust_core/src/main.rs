@@ -1532,7 +1532,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
         count: cli.count,
-        line_number: !cli.count,
+        line_number: cli.line_number,
         only_matching: cli.only_matching,
         context: None,
         max_count: cli.max_count,
@@ -1585,7 +1585,7 @@ fn native_search_config_for_positional(
         json: cli.json,
         ndjson: cli.ndjson,
         verbose: cli.verbose,
-        line_number: !cli.count,
+        line_number: cli.line_number,
         ..NativeSearchConfig::default()
     }
 }
@@ -4033,11 +4033,13 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 invert_match: params.invert_match,
                                 count: params.count,
                                 line_number: params.line_number,
+                                only_matching: false,
                                 context: params.context,
                                 max_count: params.max_count,
                                 word_regexp: params.word_regexp,
                                 globs: params.globs.clone(),
                                 no_ignore: params.no_ignore,
+                                color: None,
                                 patterns: params.patterns.to_vec(),
                                 path: params.path.to_string(),
                             });
