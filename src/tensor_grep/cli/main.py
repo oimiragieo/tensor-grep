@@ -195,26 +195,7 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
 )
 
 
-@lru_cache(maxsize=1)
-def _resolve_native_tg_binary() -> Path | None:
-    repo_root = Path(__file__).resolve().parents[3]
-    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
-    env_override = os.environ.get("TG_NATIVE_TG_BINARY")
-
-    candidates = []
-    if env_override:
-        candidates.append(Path(env_override).expanduser())
-    candidates.extend([
-        repo_root / "rust_core" / "target" / "release" / binary_name,
-        repo_root / "rust_core" / "target" / "debug" / binary_name,
-    ])
-
-    existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
-    if not existing:
-        return None
-
-    return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
-
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
 def _doctor_installed_version() -> str:
     try:

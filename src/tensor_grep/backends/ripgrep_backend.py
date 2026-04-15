@@ -17,25 +17,10 @@ class RipgrepBackend(ComputeBackend):
         return self._get_binary_name() is not None
 
     def _get_binary_name(self) -> str | None:
-        import shutil
-
-        if shutil.which("rg"):
-            return "rg"
-        if shutil.which("rg.exe"):
-            return "rg.exe"
-
-        # Check standard ripgrep windows paths if in dev env
-        import os
-        from pathlib import Path
-
-        repo_root = Path(__file__).resolve().parents[3]
-        dev_path = os.path.join(
-            str(repo_root), "benchmarks", "ripgrep-14.1.0-x86_64-pc-windows-msvc", "rg.exe"
-        )
-        if os.path.exists(dev_path):
-            return dev_path
-
-        return None
+        from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+        
+        path = resolve_ripgrep_binary()
+        return str(path) if path else None
 
     def search(
         self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None

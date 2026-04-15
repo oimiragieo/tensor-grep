@@ -237,37 +237,7 @@ def _extract_rewrite_error_message(stderr: str, fallback: str) -> str:
     return fallback
 
 
-@lru_cache(maxsize=1)
-def _resolve_native_tg_binary() -> Path:
-    import shutil
-
-    repo_root = _repo_root()
-    binary_name = "tg.exe" if os.name == "nt" else "tg"
-    env_override = os.environ.get("TG_MCP_TG_BINARY")
-
-    candidates = []
-    if env_override:
-        candidates.append(Path(env_override).expanduser())
-    candidates.extend([
-        repo_root / "rust_core" / "target" / "release" / binary_name,
-        repo_root / "rust_core" / "target" / "debug" / binary_name,
-        repo_root / "benchmarks" / binary_name,
-        repo_root / "benchmarks" / "tg_rust.exe",
-    ])
-
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.resolve()
-
-    if which_tg := shutil.which(binary_name):
-        return Path(which_tg).resolve()
-    if which_tensor_grep := shutil.which("tensor-grep" + (".exe" if os.name == "nt" else "")):
-        return Path(which_tensor_grep).resolve()
-
-    raise FileNotFoundError(
-        "Native tg binary not found. Build rust_core/target/release/tg with cargo build --release."
-    )
-
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
 def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
     if not pattern.strip():
@@ -306,7 +276,7 @@ def _build_rewrite_command(
     test_cmd: str | None = None,
 ) -> list[str]:
     command = [
-        str(_resolve_native_tg_binary()),
+        str(resolve_native_tg_binary()),
         "run",
         "--lang",
         lang,
@@ -342,7 +312,7 @@ def _build_rewrite_command(
 
 def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
     return [
-        str(_resolve_native_tg_binary()),
+        str(resolve_native_tg_binary()),
         "search",
         "--index",
         "--json",
@@ -352,6 +322,9 @@ def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
 
 
 def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[str]:
+    import sys
+    env = os.environ.copy()
+    env["TG_SIDECAR_PYTHON"] = sys.executable
     return subprocess.run(
         command,
         capture_output=True,
@@ -360,6 +333,7 @@ def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[s
         encoding="utf-8",
         errors="replace",
         check=False,
+        env=env,
     )
 
 

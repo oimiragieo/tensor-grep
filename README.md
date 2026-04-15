@@ -142,6 +142,15 @@ Important constraint:
 - do not treat internal GPU pipeline throughput as the same thing as end-to-end CLI crossover
 - current GPU routing decisions should follow [docs/gpu_crossover.md](docs/gpu_crossover.md), not isolated microbenchmarks
 
+## Product Contracts
+
+`tensor-grep` enforces strict behavioral and output contracts to ensure reliable execution for both human users and AI agent harnesses.
+
+- **Routing Parity:** `tensor-grep` maintains exact character-for-character parity for text search outputs across all supported launcher modes (`native`, `bootstrap`, `python-m`). The only exception is `--help` text, which differs in word-wrapping layout between Clap (Rust) and Typer (Python) but guarantees the presence of valid `Usage:` instructions.
+- **Golden-Output Scope:** The test suite snapshots exact, raw, and deterministic groupings and file path output directly from the engines. Native `tg.exe` intentionally does not support `-a` (text parsing of binaries) or `--count-matches` flags; these are handled exclusively by the Python `ripgrep` fallback and are explicitly skipped in native-only contract tests.
+- **Launcher Behavior:** The native Rust binary (`tg.exe`) acts as the primary front door, embedding AST search and fast-path text search. Unimplemented complex flags fall back to the Python sidecar. The Python wrapper (`python -m tensor_grep`) delegates structural and plain search commands back down to the native binary when available to guarantee uniform performance and path resolution.
+- **Non-Contract Fields:** Absolute temporary directory paths (normalized to `<TMP_DIR>` in tests), non-deterministic multi-threaded file ordering (stabilized via `-j 1` in tests or sorting where applicable), and specific help-text layouts are intentional non-contract fields.
+
 ## Why should I use `tensor-grep`?
 
 - **Native CPU engine with measured workload-class wins.** The Rust text engine embeds ripgrep's grep crates directly, avoids subprocess overhead in the native path, and adds chunk parallelism for large files. See [docs/tool_comparison.md](docs/tool_comparison.md) and [docs/benchmarks.md](docs/benchmarks.md) for the current measured line.

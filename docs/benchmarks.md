@@ -87,6 +87,8 @@ The benchmark suite name and artifact file name should stay aligned with the scr
 
 ## Acceptance Rules
 
+- **Control-plane changes require artifacts:** If a patch changes launcher routing, frontend dispatch, or output formatting, it MUST include updated benchmark artifacts (e.g., `artifacts/bench_run_benchmarks.json`).
+- **Regression policy:** If a patch is correct but regresses accepted benchmark lines, it must be either rejected or explicitly documented in `docs/PAPER.md` as an intentional non-goal.
 - Do not update benchmark docs or claims until the relevant artifact has been rerun on the accepted line.
 - Compare against the current accepted baseline, not memory.
 - Reject wins that only appear in microprofiles if end-to-end artifacts regress.

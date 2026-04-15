@@ -1,10 +1,10 @@
 import json
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
 
 @pytest.fixture(scope="module")
 def golden_fixture_dir(tmp_path_factory):
@@ -57,23 +57,23 @@ def run_tg(launcher, args, cwd):
         cmd = [sys.executable, "-m", "tensor_grep", "search"] + args
     else:
         cmd = [_get_native_binary(), "search"] + args
-        
+
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     assert result.returncode == 0, f"Command failed: {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}"
     stdout = result.stdout
-    
+
     # We remove routing/stats output as they are non-contractual metadata
     stdout = "\n".join(line for line in stdout.splitlines() if not line.startswith("[routing]") and not line.startswith("[stats]"))
-    
+
     # We normalize the randomly generated pytest temp directory to a static string
     # as the absolute execution path is an intentional non-contract field.
     cwd_str = str(cwd)
     stdout = stdout.replace(cwd_str, "<TMP_DIR>")
-    
+
     cwd_json = json.dumps(cwd_str)[1:-1]
     stdout = stdout.replace(cwd_json, "<TMP_DIR>")
-    
-    # We stabilize ordering, because file iteration order in multi-file parallel searches 
+
+    # We stabilize ordering, because file iteration order in multi-file parallel searches
     # is non-deterministic across OS/environments and is a non-contractual field.
     if "--json" in args or "--ndjson" in args:
         lines = []
@@ -94,12 +94,12 @@ def run_tg(launcher, args, cwd):
         if "--ndjson" in args:
             lines.sort()
         return "\n".join(lines) + "\n"
-    
+
     if not stdout.strip().isdigit():
         lines = [line for line in stdout.splitlines() if line.strip()]
         lines.sort()
         stdout = "\n".join(lines) + "\n" if lines else ""
-        
+
     return stdout
 
 @pytest.mark.parametrize("launcher", LAUNCHERS)

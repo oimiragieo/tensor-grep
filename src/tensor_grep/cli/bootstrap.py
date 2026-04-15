@@ -94,34 +94,7 @@ def _requires_full_cli(search_args: list[str]) -> bool:
     return False
 
 
-def _resolve_rg_binary() -> str | None:
-    if shutil.which("rg"):
-        return "rg"
-    if shutil.which("rg.exe"):
-        return "rg.exe"
-
-    dev_path = Path.cwd() / "benchmarks" / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
-    if dev_path.exists():
-        return str(dev_path)
-    return None
-
-
-def _resolve_native_tg_binary() -> str | None:
-    override = os.environ.get("TG_NATIVE_TG_BINARY", "").strip()
-    if override:
-        override_path = Path(override).expanduser().resolve()
-        if override_path.is_file():
-            return str(override_path)
-    repo_root = Path(__file__).resolve().parents[3]
-    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
-    candidates = [
-        repo_root / "rust_core" / "target" / "release" / binary_name,
-        repo_root / "rust_core" / "target" / "debug" / binary_name,
-    ]
-    existing = [candidate for candidate in candidates if candidate.is_file()]
-    if not existing:
-        return None
-    return str(max(existing, key=lambda candidate: candidate.stat().st_mtime_ns))
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
 
 
 def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
@@ -189,7 +162,9 @@ def main_entry() -> None:
 
     search_args = _normalize_search_invocation(argv)
     if search_args is not None:
-        native_binary = _resolve_native_tg_binary()
+        native_binary_path = resolve_native_tg_binary()
+        native_binary = str(native_binary_path) if native_binary_path else None
+        
         if native_binary is not None and (
             _can_delegate_to_native_tg_search(search_args)
             or (_prefer_rust_first_search() and not _requires_full_cli(search_args))
@@ -197,7 +172,8 @@ def main_entry() -> None:
             raise SystemExit(_run_native_tg_search(native_binary, search_args))
 
         if not _requires_full_cli(search_args):
-            binary_name = _resolve_rg_binary()
+            rg_binary_path = resolve_ripgrep_binary()
+            binary_name = str(rg_binary_path) if rg_binary_path else None
             if binary_name is not None:
                 raise SystemExit(_run_rg_passthrough(binary_name, search_args))
 
