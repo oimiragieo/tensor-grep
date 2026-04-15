@@ -1,0 +1,2 @@
+.\file1.txt:1:hello
+.\file2.txt:2:hello

@@ -1,0 +1,1 @@
+{"matches": [{"file": ".\\file1.txt", "line": 1, "text": "hello world"}, {"file": ".\\file2.txt", "line": 2, "text": "hello again friend"}], "path": ".", "query": "hello", "routing_backend": "NativeCpuBackend", "routing_reason": "json_output", "sidecar_used": false, "total_matches": 2, "version": "X"}

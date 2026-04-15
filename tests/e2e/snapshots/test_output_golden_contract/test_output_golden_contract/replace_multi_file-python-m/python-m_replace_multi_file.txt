@@ -1,0 +1,2 @@
+.\file1.txt:HI world
+.\file2.txt:HI again friend

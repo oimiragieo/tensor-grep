@@ -53,6 +53,9 @@ gpu_bench_data/
 !tests/golden/
 !tests/golden/**/*.txt
 !tests/golden/**/*.log
+!tests/e2e/snapshots/
+!tests/e2e/snapshots/**/*.txt
+!tests/e2e/snapshots/**/*.json
 
 # Tests
 .hypothesis/

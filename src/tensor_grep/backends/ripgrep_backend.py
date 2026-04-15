@@ -1,4 +1,5 @@
 import subprocess
+from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -25,9 +26,11 @@ class RipgrepBackend(ComputeBackend):
 
         # Check standard ripgrep windows paths if in dev env
         import os
+        from pathlib import Path
 
+        repo_root = Path(__file__).resolve().parents[3]
         dev_path = os.path.join(
-            os.getcwd(), "benchmarks", "ripgrep-14.1.0-x86_64-pc-windows-msvc", "rg.exe"
+            str(repo_root), "benchmarks", "ripgrep-14.1.0-x86_64-pc-windows-msvc", "rg.exe"
         )
         if os.path.exists(dev_path):
             return dev_path
@@ -119,7 +122,9 @@ class RipgrepBackend(ComputeBackend):
             matched_file_paths: list[str] = []
             match_counts_by_file: dict[str, int] = {}
 
-            multi_file = isinstance(file_path, list) and len(file_path) > 1
+            multi_file = (isinstance(file_path, (list, tuple)) and len(file_path) > 1) or (
+                isinstance(file_path, str) and Path(file_path).is_dir()
+            ) or (isinstance(file_path, (list, tuple)) and len(file_path) == 1 and Path(file_path[0]).is_dir())
             for line in lines:
                 matched_path: str | None = None
                 if multi_file and ":" in line:
@@ -200,6 +205,13 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--no-ignore")
             if config.only_matching:
                 cmd.append("-o")
+            if config.text:
+                cmd.append("-a")
+            if config.line_number is not None:
+                if config.line_number:
+                    cmd.append("-n")
+                else:
+                    cmd.append("--no-line-number")
             if config.color:
                 cmd.extend(["--color", config.color])
             if config.glob:
@@ -220,6 +232,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-c")
             if config.count_matches:
                 cmd.append("--count-matches")
+            if config.threads > 0:
+                cmd.extend(["-j", str(config.threads)])
 
         # The pattern
         cmd.append(pattern)
