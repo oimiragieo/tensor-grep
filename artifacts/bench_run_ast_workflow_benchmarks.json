@@ -1,0 +1,30 @@
+{
+  "artifact": "bench_run_ast_workflow_benchmarks",
+  "environment": {
+    "machine": "amd64",
+    "platform": "windows",
+    "python_version": "3.14.0"
+  },
+  "generated_at_epoch_s": 1776286321.0009375,
+  "rows": [
+    {
+      "backend": "native",
+      "exit_code": 0,
+      "name": "ast_run_workflow",
+      "tg_time_s": 0.022623
+    },
+    {
+      "backend": "sidecar",
+      "exit_code": 0,
+      "name": "ast_scan_workflow",
+      "tg_time_s": 0.25773
+    },
+    {
+      "backend": "sidecar",
+      "exit_code": 0,
+      "name": "ast_test_workflow",
+      "tg_time_s": 0.352436
+    }
+  ],
+  "suite": "run_ast_workflow_benchmarks"
+}
