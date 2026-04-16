@@ -118,6 +118,20 @@ def run_tg(launcher, args, cwd):
                     parsed["version"] = "X"
                 if "file" in parsed and isinstance(parsed["file"], str):
                     parsed["file"] = _normalize_relative_prefix(parsed["file"])
+                if "match_counts_by_file" in parsed and isinstance(
+                    parsed["match_counts_by_file"], dict
+                ):
+                    parsed["match_counts_by_file"] = {
+                        _normalize_relative_prefix(str(path)): count
+                        for path, count in parsed["match_counts_by_file"].items()
+                    }
+                if "matched_file_paths" in parsed and isinstance(
+                    parsed["matched_file_paths"], list
+                ):
+                    parsed["matched_file_paths"] = [
+                        _normalize_relative_prefix(str(path))
+                        for path in parsed["matched_file_paths"]
+                    ]
                 # Stabilize matches order for json array
                 if "matches" in parsed:
                     for match in parsed["matches"]:
