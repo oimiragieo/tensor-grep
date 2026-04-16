@@ -1,4 +1,5 @@
 from collections import defaultdict
+from pathlib import Path
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.core.config import SearchConfig
@@ -8,6 +9,16 @@ from tensor_grep.core.result import SearchResult
 class RipgrepFormatter(OutputFormatter):
     def __init__(self, config: SearchConfig | None = None):
         self.config = config or SearchConfig()
+
+    @staticmethod
+    def _binary_notice(file_path: str) -> str:
+        try:
+            offset = Path(file_path).read_bytes().find(b"\0")
+        except OSError:
+            offset = -1
+        if offset < 0:
+            offset = 0
+        return f'binary file matches (found "/0" byte around offset {offset})'
 
     def format(self, result: SearchResult) -> str:
         lines = []
@@ -38,7 +49,31 @@ class RipgrepFormatter(OutputFormatter):
                         lines.append(f"{count}")
             return "\n".join(lines)
 
-        for match in result.matches:
+        if not self.config.text and not self.config.binary:
+            binary_files = {
+                match.file for match in result.matches if "\0" in str(match.text)
+            }
+            if binary_files:
+                for file_path in sorted(binary_files):
+                    message = self._binary_notice(file_path)
+                    if self.config.with_filename or (
+                        self.config.file_patterns is None
+                        and not self.config.no_filename
+                        and result.total_files > 1
+                    ):
+                        lines.append(f"{file_path}:{message}")
+                    else:
+                        lines.append(message)
+
+                non_binary_matches = [
+                    match for match in result.matches if match.file not in binary_files
+                ]
+            else:
+                non_binary_matches = result.matches
+        else:
+            non_binary_matches = result.matches
+
+        for match in non_binary_matches:
             parts = []
             if self.config.with_filename or (
                 self.config.file_patterns is None

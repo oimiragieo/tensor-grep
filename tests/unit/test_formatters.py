@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+from pathlib import Path
 
 from tensor_grep.cli.formatters.csv_fmt import CsvFormatter
 from tensor_grep.cli.formatters.json_fmt import JsonFormatter
@@ -85,3 +86,41 @@ class TestFormatters:
         fmt = RipgrepFormatter(config=config)
         output = fmt.format(result)
         assert output.splitlines() == ["a.log:2", "b.log:1"]
+
+    def test_binary_matches_emit_ripgrep_style_notice(self, tmp_path: Path):
+        binary_file = tmp_path / "sample.bin"
+        binary_file.write_bytes(b"some binary data\0hello\0more data")
+        result = SearchResult(
+            matches=[
+                MatchLine(
+                    line_number=1,
+                    text="some binary data\0hello\0more data",
+                    file=str(binary_file),
+                )
+            ],
+            total_files=1,
+            total_matches=1,
+        )
+
+        fmt = RipgrepFormatter(config=SearchConfig())
+
+        assert fmt.format(result) == 'binary file matches (found "/0" byte around offset 16)'
+
+    def test_binary_matches_respect_text_mode(self, tmp_path: Path):
+        binary_file = tmp_path / "sample.bin"
+        binary_file.write_bytes(b"some binary data\0hello\0more data")
+        result = SearchResult(
+            matches=[
+                MatchLine(
+                    line_number=1,
+                    text="some binary data\0hello\0more data",
+                    file=str(binary_file),
+                )
+            ],
+            total_files=1,
+            total_matches=1,
+        )
+
+        fmt = RipgrepFormatter(config=SearchConfig(text=True, line_number=False))
+
+        assert fmt.format(result) == "some binary data\0hello\0more data"
