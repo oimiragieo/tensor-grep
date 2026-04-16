@@ -59,12 +59,12 @@ def test_resolve_native_tg_binary_ignores_legacy_benchmark_binary(monkeypatch, t
     runtime_file.parent.mkdir(parents=True, exist_ok=True)
     runtime_file.write_text("# stub\n", encoding="utf-8")
 
-    legacy_binary = repo_root / "benchmarks" / "tg_rust.exe"
+    legacy_name = "tg_rust.exe" if sys.platform.startswith("win") else "tg"
+    legacy_binary = repo_root / "benchmarks" / legacy_name
     legacy_binary.parent.mkdir(parents=True, exist_ok=True)
     legacy_binary.write_text("legacy\n", encoding="utf-8")
 
     monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
-    monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
     monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
     monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
     monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
