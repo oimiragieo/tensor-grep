@@ -50,7 +50,7 @@ GOLDEN_CASES = [
 LAUNCHERS = ["python-m", "native"]
 
 
-def _get_native_binary() -> str:
+def _get_native_binary() -> str | None:
     exe_name = "tg.exe" if sys.platform == "win32" else "tg"
     debug_path = Path(f"rust_core/target/debug/{exe_name}")
     release_path = Path(f"rust_core/target/release/{exe_name}")
@@ -58,7 +58,12 @@ def _get_native_binary() -> str:
         return str(release_path.resolve())
     if debug_path.exists():
         return str(debug_path.resolve())
-    pytest.fail("Native binary not found. Please compile it first.")
+    return None
+
+
+def _skip_if_native_binary_missing(launcher: str) -> None:
+    if launcher == "native" and _get_native_binary() is None:
+        pytest.skip("Native binary not built in this environment")
 
 
 def _normalize_relative_prefix(value: str) -> str:
@@ -69,7 +74,9 @@ def run_tg(launcher, args, cwd):
     if launcher == "python-m":
         cmd = [sys.executable, "-m", "tensor_grep", "search", *args]
     else:
-        cmd = [_get_native_binary(), "search", *args]
+        native_binary = _get_native_binary()
+        assert native_binary is not None, "Native binary not found. Please compile it first."
+        cmd = [native_binary, "search", *args]
 
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     assert result.returncode == 0, (
@@ -132,7 +139,15 @@ def run_tg(launcher, args, cwd):
 @pytest.mark.parametrize("launcher", LAUNCHERS)
 @pytest.mark.parametrize("name, args, target", GOLDEN_CASES, ids=[c[0] for c in GOLDEN_CASES])
 def test_output_golden_contract(golden_fixture_dir, snapshot, launcher, name, args, target):
+    _skip_if_native_binary_missing(launcher)
     if launcher == "native" and ("--count-matches" in args or "-a" in args):
         pytest.skip("Native tg.exe does not support this flag currently")
     tg_stdout = run_tg(launcher, args + target, golden_fixture_dir)
     snapshot.assert_match(tg_stdout, f"{launcher}_{name}.txt")
+
+
+def test_output_golden_contract_skips_native_when_binary_is_missing(monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_get_native_binary", lambda: None)
+
+    with pytest.raises(pytest.skip.Exception, match="Native binary not built"):
+        _skip_if_native_binary_missing("native")

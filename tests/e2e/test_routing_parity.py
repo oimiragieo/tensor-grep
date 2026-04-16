@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 
-def _get_native_binary() -> str:
+def _get_native_binary() -> str | None:
     exe_name = "tg.exe" if sys.platform == "win32" else "tg"
     debug_path = Path(f"rust_core/target/debug/{exe_name}")
     release_path = Path(f"rust_core/target/release/{exe_name}")
@@ -16,7 +16,12 @@ def _get_native_binary() -> str:
         return str(release_path.resolve())
     if debug_path.exists():
         return str(debug_path.resolve())
-    pytest.fail("Native binary not found. Please compile it first.")
+    return None
+
+
+def _skip_if_native_binary_missing(launcher: str) -> None:
+    if launcher == "native" and _get_native_binary() is None:
+        pytest.skip("Native binary not built in this environment")
 
 
 def run_command(
@@ -25,7 +30,9 @@ def run_command(
     if launcher == "python-m":
         cmd = [sys.executable, "-m", "tensor_grep", *args]
     elif launcher == "native":
-        cmd = [_get_native_binary(), *args]
+        native_binary = _get_native_binary()
+        assert native_binary is not None, "Native binary not found. Please compile it first."
+        cmd = [native_binary, *args]
     elif launcher == "bootstrap":
         cmd = [sys.executable, str(Path("src/tensor_grep/cli/bootstrap.py").resolve()), *args]
     else:
@@ -147,6 +154,7 @@ def test_routing_parity_matrix(
     check_stderr(baseline_result.stderr)
 
     for launcher in ["native", "bootstrap"]:
+        _skip_if_native_binary_missing(launcher)
         result = run_command(launcher, args, cwd=parity_env)
 
         assert result.returncode == baseline_result.returncode, (
@@ -216,6 +224,7 @@ def test_routing_parity_matrix(
 
 @pytest.mark.parametrize("launcher", ["native", "bootstrap"])
 def test_routing_parity_glob(parity_env, launcher: str):
+    _skip_if_native_binary_missing(launcher)
     # Test recursive glob filtering. We compare the set of matched files instead of exact
     # character-for-character parity because directory iteration order and `./` prefixes
     # differ between Ripgrep (Python fallback) and native tg.exe.
@@ -239,3 +248,10 @@ def test_routing_parity_glob(parity_env, launcher: str):
 
     assert la_files == bl_files
     assert len(la_files) == 2  # target.txt and dir/nested.txt
+
+
+def test_routing_parity_glob_skips_native_when_binary_is_missing(monkeypatch, parity_env):
+    monkeypatch.setattr(sys.modules[__name__], "_get_native_binary", lambda: None)
+
+    with pytest.raises(pytest.skip.Exception, match="Native binary not built"):
+        _skip_if_native_binary_missing("native")
