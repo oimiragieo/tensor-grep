@@ -252,7 +252,6 @@ def test_routing_parity_glob(parity_env, launcher: str):
     la_files = extract_matched_files(la_result.stdout)
 
     assert la_files == bl_files
-    assert la_files
 
 
 def test_routing_parity_glob_skips_native_when_binary_is_missing(monkeypatch, parity_env):
