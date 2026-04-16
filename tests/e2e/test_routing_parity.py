@@ -142,6 +142,9 @@ COMMAND_CASES = [
 def test_routing_parity_matrix(
     parity_env, args: list[str], expected_code: int, check_stdout, check_stderr
 ):
+    if "--ndjson" in args and _get_native_binary() is None:
+        pytest.skip("python -m tensor_grep requires native tg support for --ndjson")
+
     # We will use python-m as the baseline
     baseline_result = run_command("python-m", args, cwd=parity_env)
 
