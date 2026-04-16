@@ -239,3 +239,22 @@ fn test_tg_run_reports_invalid_pattern_without_panic() {
     );
     assert!(!stderr.contains("panicked"), "stderr={stderr}");
 }
+
+#[test]
+fn test_ast_backend_matches_rust_functions_with_types() {
+    let source =
+        "fn add(x: i32) {}\nfn add2(y: i32) -> i32 { y }\npub fn add3<T>(z: T) -> T { z }\n";
+    let (_dir, file_path) = write_source_file("rs", source);
+    let backend = AstBackend::new();
+
+    let matches = backend
+        .search(
+            "fn $F($$$ARGS)",
+            "rust",
+            file_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+    let matched_lines: Vec<usize> = matches.iter().map(|m| m.line).collect();
+    assert_eq!(matched_lines, vec![1, 2, 3]);
+}
