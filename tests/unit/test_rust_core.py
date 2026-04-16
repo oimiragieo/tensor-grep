@@ -76,6 +76,7 @@ def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_
     result = backend.search(str(log_file), "ERROR", config=SearchConfig(count=True))
 
     assert result.total_matches == 4
+    assert result.match_counts_by_file == {str(log_file): 4}
     assert result.routing_backend == "RustCoreBackend"
     assert result.routing_reason == "rust_count"
 

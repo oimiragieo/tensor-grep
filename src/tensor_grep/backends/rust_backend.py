@@ -58,6 +58,7 @@ class RustCoreBackend(ComputeBackend):
                 )
                 return SearchResult(
                     matches=[],  # No lines needed for count
+                    match_counts_by_file={str(file_path): total_count} if total_count > 0 else {},
                     total_files=1 if total_count > 0 else 0,
                     total_matches=total_count,
                     routing_backend="RustCoreBackend",
