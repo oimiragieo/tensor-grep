@@ -1,6 +1,154 @@
 # CHANGELOG
 
 
+## v1.2.0 (2026-04-16)
+
+### Bug Fixes
+
+- Align runtime-path callsites and tests
+  ([`9e84d7e`](https://github.com/oimiragieo/tensor-grep/commit/9e84d7e5f55b63cff7bad4e8b7cbe49481a9f06d))
+
+- Align test formatting with CI ruff
+  ([`1b01e08`](https://github.com/oimiragieo/tensor-grep/commit/1b01e085af4dd72bd9176963238da181c784ad69))
+
+- Avoid python launcher recursion in native tg resolution
+  ([`58e5bb9`](https://github.com/oimiragieo/tensor-grep/commit/58e5bb949a79a80d9083150713e4a2dbb639be31))
+
+- Harden native tg resolution for launcher shims
+  ([`9699d86`](https://github.com/oimiragieo/tensor-grep/commit/9699d864302a407b2661d7778359033b9c4796f8))
+
+- Ignore benchmark tg binaries in runtime resolver
+  ([`10bf30b`](https://github.com/oimiragieo/tensor-grep/commit/10bf30bc99670917b6385be4f3a78a4eb24d3b34))
+
+- Normalize json golden output metadata
+  ([`7797e04`](https://github.com/oimiragieo/tensor-grep/commit/7797e0480e93a2275b0694cba87a8a7c60c76528))
+
+- Normalize python launcher snapshots across platforms
+  ([`a894dad`](https://github.com/oimiragieo/tensor-grep/commit/a894dad79ad3d3089eb3de101b8f95560e3f3e2a))
+
+- Preserve binary output parity without rg
+  ([`d773d03`](https://github.com/oimiragieo/tensor-grep/commit/d773d03eeb179c9e4fb2ef41d10f7a99b4716864))
+
+- Preserve per-file counts in rust fast path
+  ([`c51c2b9`](https://github.com/oimiragieo/tensor-grep/commit/c51c2b959de01158ca50e41b74ddb879d943c52a))
+
+- Resolve CI runtime path and native search regressions
+  ([`273e23b`](https://github.com/oimiragieo/tensor-grep/commit/273e23bdda3124d3beb621284ef0e00950b8f9ef))
+
+- Route bootstrap glob searches through full cli
+  ([`590ded8`](https://github.com/oimiragieo/tensor-grep/commit/590ded87701469c199b99a77d0796cabb2fe8768))
+
+- Skip native e2e cases without compiled binary
+  ([`bfe0eaa`](https://github.com/oimiragieo/tensor-grep/commit/bfe0eaac0d27fa57f720f614e23aaf15e31ea095))
+
+- Skip ndjson parity without native tg
+  ([`a744315`](https://github.com/oimiragieo/tensor-grep/commit/a7443156167f8763beff02d4622e2eaf81587635))
+
+- Stabilize golden output contracts across platforms
+  ([`ad22df3`](https://github.com/oimiragieo/tensor-grep/commit/ad22df3ed6e380057a5d902f6bbd203c521f2247))
+
+- Stabilize python launcher golden contracts
+  ([`fe02711`](https://github.com/oimiragieo/tensor-grep/commit/fe027114f7867796ae56059e61b404c2f59971da))
+
+- **core**: Fully resolve native positional -o formatting mismatch
+  ([`6454e6f`](https://github.com/oimiragieo/tensor-grep/commit/6454e6fd8789970b41bdcf3b80ee0e0eabc3f45c))
+
+- rust: removed hardcoded line_number: !cli.count fallback in positional_ripgrep_args and
+  native_search_config_for_positional that incorrectly bypassed the explicit -n flag, finally
+  allowing raw native searches like tg bar <file> -o to perfectly mirror ripgrep's formatting
+  behavior - test: added explicit native regression tests
+  (test_native_positional_search_only_matching_omits_line_numbers_by_default and
+  test_native_positional_search_only_matching_includes_line_numbers_when_requested) to definitively
+  lock in the positional -o formatting contract
+
+- **core**: Perfectly align -n and -o output contracts with ripgrep terminal behaviors
+  ([`c4be166`](https://github.com/oimiragieo/tensor-grep/commit/c4be166e089f3fb15d87547c4f23c2d9d129383b))
+
+- cli: refactored Typer --line-number flag to accept None natively, enabling tensor-grep to fall
+  back to isatty() detection identically to rg when not explicitly overridden - cli: fixed a
+  regression in RipgrepFormatter where line numbers were unconditionally printed if the
+  --line-number flag wasn't explicitly disabled, restoring proper -o bare token formatting on
+  redirected streams and single files - rust: mapped the -n and --line-number flags through
+  parse_early_ripgrep_args and the native PositionalCli so native fast-path text searches correctly
+  append -n to the underlying rg execution when explicitly requested
+
+- **core**: Restore full bootstrap test suite and fix -o line-number formatting
+  ([`a002bff`](https://github.com/oimiragieo/tensor-grep/commit/a002bff88230adc7466fce6d528c4240d97e6702))
+
+- test: restored the complete suite of test_cli_bootstrap.py behavioral tests that were accidentally
+  overwritten, ensuring all passthrough and routing fallback behaviors remain actively tested
+  alongside the new command registry parity checks - cli: fixed a regression in RipgrepFormatter
+  where line numbers were unconditionally suppressed when only_matching was active. The formatter
+  now correctly respects self.config.line_number, ensuring tg search --cpu -o outputs 1:bar natively
+  in line with ripgrep's default contract
+
+- **core**: Unify command registry across layers, solve -o format parity, and normalize invalid AST
+  queries
+  ([`b076ee2`](https://github.com/oimiragieo/tensor-grep/commit/b076ee239c35c115cb93f187839ecf2bfd5f2c02))
+
+- cli: consolidated the hardcoded command lists from main.rs, main.py, and bootstrap.py into a
+  single authoritative commands.py file, read at compile-time by Rust and at runtime by Python -
+  cli: updated RipgrepFormatter and native args struct to perfectly align --cpu -o and default -o
+  output formats with ripgrep's single-file matching contract - ast: normalized the error handling
+  in AstBackend to catch parsing exceptions and emit an empty SearchResult envelope, matching
+  AstGrepWrapperBackend's contract - ast: explicitly registered tree-sitter-rust inside AstBackend
+  to fully support native S-expression queries against Rust codebases - tests: added an explicit
+  structural integrity test (test_cli_bootstrap.py) verifying that commands.py, bootstrap.py, and
+  the Typer CLI app dynamically align and fail-fast on drift
+
+### Chores
+
+- Commit benchmark artifacts for routing parity
+  ([`27013dc`](https://github.com/oimiragieo/tensor-grep/commit/27013dcdb7925d897b0bc0946b6d65b8ac0a3669))
+
+### Features
+
+- Complete Phase 4, Phase 5, and Phase 6 hardening
+  ([`355d3d0`](https://github.com/oimiragieo/tensor-grep/commit/355d3d06ca553d79a185f13399c7c04039969f81))
+
+- Task 7 (Packaging and Runtime Path Hardening): Centralized runtime binary resolution in
+  \	ensor_grep.cli.runtime_paths\. Passed \TG_SIDECAR_PYTHON\ from MCP server to ensure proper
+  fallback execution context. - Task 8 (Benchmark Governance Hardening): Added explicit regression
+  policies to \docs/benchmarks.md\ and \docs/PAPER.md\. Created \	est_benchmark_governance.py\ unit
+  test to validate benchmark coverage rules. - Task 9 (Docs and Contract Surfacing): Explicitly
+  documented routing parity scope, golden-output scope, launcher behaviors, and non-contract fields
+  in \README.md\ under \## Product Contracts\. - Addressed ruff lint errors and ran all gates
+  successfully.
+
+### Testing
+
+- Enforce routing parity matrix and output golden contracts
+  ([`35213d2`](https://github.com/oimiragieo/tensor-grep/commit/35213d29ef7b72703af1edd59a1531f368d61ac3))
+
+This commits the test suites for Task 5 and Task 6 with strict, deterministic execution.
+
+Task 5 (Routing Parity): - Validates the routing backend and flag behavior across python-m,
+  bootstrap, and native launchers. - Enforces character-for-character stdout/stderr parity for
+  search operations. - Intentionally relaxes --help parity checks, as Clap (Rust) and Typer (Python)
+  have inherently different help layouts and word-wrapping behaviors.
+
+Task 6 (Output Golden Contract): - Snapshots un-sorted, raw grouping, and deterministic file outputs
+  from the engine. - Uses '-j 1' to disable multi-threading non-determinism at the engine level. -
+  Normalizes only the dynamic temporary directory path (<TMP_DIR>) to ensure snapshots are stable
+  across CI environments without compromising the format contract. - Fixes RipgrepBackend
+  thread-count propagation to ensure deterministic Python-fallback behavior.
+
+- Relax bootstrap glob parity expectation
+  ([`2983a94`](https://github.com/oimiragieo/tensor-grep/commit/2983a949fe274a83d2addd4f65537f09a775ffde))
+
+- Stabilize glob parity across launchers
+  ([`b688374`](https://github.com/oimiragieo/tensor-grep/commit/b6883748b4a0d8d212715e016ef13db3234073f0))
+
+- **routing**: Add comprehensive routing parity matrix for CLI entrypoints
+  ([`50d5def`](https://github.com/oimiragieo/tensor-grep/commit/50d5defe04bb4642f515f26f4ce0d929d456e8ea))
+
+- Added an e2e table-driven test suite to exhaustively verify that all three primary execution modes
+  (Python bootstrap, module execution, and native Rust binary) consistently route commands
+  identically. - Includes extensive coverage of core subcommands (search, run, map, doctor, session,
+  defs) and flags (-o, -r, --cpu, --json, etc.), ensuring no launcher diverges structurally or
+  behaviorally.
+
+
 ## v1.1.4 (2026-04-14)
 
 ### Bug Fixes
