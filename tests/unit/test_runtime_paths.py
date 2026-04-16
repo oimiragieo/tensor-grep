@@ -88,6 +88,47 @@ def test_resolve_native_tg_binary_ignores_current_python_launcher(monkeypatch, t
     assert resolve_native_tg_binary() is None
 
 
+def test_resolve_native_tg_binary_ignores_current_python_launcher_when_python_resolves_elsewhere(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    venv_dir = tmp_path / "venv" / ("Scripts" if sys.platform.startswith("win") else "bin")
+    venv_dir.mkdir(parents=True, exist_ok=True)
+    python_path = venv_dir / ("python.exe" if sys.platform.startswith("win") else "python")
+    python_path.write_text("python\n", encoding="utf-8")
+    tg_path = venv_dir / ("tg.exe" if sys.platform.startswith("win") else "tg")
+    tg_path.write_text("launcher\n", encoding="utf-8")
+
+    resolved_python_path = tmp_path / "host-python" / python_path.name
+    resolved_python_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_python_path.write_text("python\n", encoding="utf-8")
+
+    original_resolve = runtime_paths.Path.resolve
+
+    def fake_resolve(path_obj, *args, **kwargs):
+        if path_obj == python_path:
+            return resolved_python_path
+        return original_resolve(path_obj, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.setattr(runtime_paths.sys, "executable", str(python_path))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setattr(runtime_paths.Path, "resolve", fake_resolve)
+    monkeypatch.setattr(
+        runtime_paths.shutil,
+        "which",
+        lambda name: str(tg_path) if name in {"tg", "tg.exe"} else None,
+    )
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() is None
+
+
 def test_resolve_ripgrep_binary_env_override(tmp_path):
     rg_path = tmp_path / ("rg.exe" if sys.platform.startswith("win") else "rg")
     rg_path.touch()
@@ -127,7 +168,7 @@ def test_bootstrap_resolution_parity(tmp_path):
         [sys.executable, str(bootstrap_script), "search", "foo"],
         env=env,
         capture_output=True,
-        text=True
+        text=True,
     )
 
     # Because it uses the shared helper, it should fail with a FileNotFoundError,

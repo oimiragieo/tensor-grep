@@ -107,9 +107,15 @@ class RipgrepBackend(ComputeBackend):
             matched_file_paths: list[str] = []
             match_counts_by_file: dict[str, int] = {}
 
-            multi_file = (isinstance(file_path, (list, tuple)) and len(file_path) > 1) or (
-                isinstance(file_path, str) and Path(file_path).is_dir()
-            ) or (isinstance(file_path, (list, tuple)) and len(file_path) == 1 and Path(file_path[0]).is_dir())
+            multi_file = (
+                (isinstance(file_path, (list, tuple)) and len(file_path) > 1)
+                or (isinstance(file_path, str) and Path(file_path).is_dir())
+                or (
+                    isinstance(file_path, (list, tuple))
+                    and len(file_path) == 1
+                    and Path(file_path[0]).is_dir()
+                )
+            )
             for line in lines:
                 matched_path: str | None = None
                 if multi_file and ":" in line:

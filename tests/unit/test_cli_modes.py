@@ -3225,12 +3225,11 @@ def test_run_should_use_native_first_ast_policy(monkeypatch):
     assert _CapturingAstPipeline.last_config.ast_prefer_native is True
     assert _CapturingAstPipeline.last_config.query_pattern == "ERROR"
 
+
 def test_ast_rust_language_support_matrix(monkeypatch):
     from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
 
-    monkeypatch.setattr(
-        "tensor_grep.cli.ast_workflows._check_backend_available", lambda name: True
-    )
+    monkeypatch.setattr("tensor_grep.cli.ast_workflows._check_backend_available", lambda name: True)
 
     # Native S-expression for Rust (supported by PyO3/tree-sitter)
     backend_native = _select_ast_backend_name_for_pattern("(function_item) @match", "rust")

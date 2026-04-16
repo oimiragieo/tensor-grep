@@ -5,18 +5,28 @@ from functools import lru_cache
 from pathlib import Path
 
 
+def _current_python_bin_dirs() -> set[Path]:
+    executable = Path(sys.executable)
+    bin_dirs = {executable.parent}
+    try:
+        bin_dirs.add(executable.resolve().parent)
+    except OSError:
+        pass
+    return bin_dirs
+
+
 def _looks_like_current_python_launcher(candidate: Path) -> bool:
     """Reject console-entrypoint shims from the active Python environment.
 
     These PATH hits recurse back into `python -m tensor_grep...` and are not
     native `tg` binaries.
     """
+    candidate_bin_dirs = {candidate.parent}
     try:
-        resolved = candidate.resolve()
-        python_bin_dir = Path(sys.executable).resolve().parent
+        candidate_bin_dirs.add(candidate.resolve().parent)
     except OSError:
-        return False
-    return resolved.parent == python_bin_dir
+        pass
+    return not _current_python_bin_dirs().isdisjoint(candidate_bin_dirs)
 
 
 @lru_cache(maxsize=1)
@@ -35,13 +45,11 @@ def resolve_native_tg_binary() -> Path | None:
     candidates = []
 
     # Priority 2: In-tree build
-    candidates.extend(
-        [
-            repo_root / "rust_core" / "target" / "release" / binary_name,
-            repo_root / "rust_core" / "target" / "debug" / binary_name,
-            repo_root / "benchmarks" / binary_name,
-        ]
-    )
+    candidates.extend([
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "rust_core" / "target" / "debug" / binary_name,
+        repo_root / "benchmarks" / binary_name,
+    ])
     if sys.platform.startswith("win"):
         candidates.append(repo_root / "benchmarks" / "tg_rust.exe")
 
@@ -54,7 +62,9 @@ def resolve_native_tg_binary() -> Path | None:
         resolved = Path(which_tg).resolve()
         if not _looks_like_current_python_launcher(resolved):
             return resolved
-    if which_tensor_grep := shutil.which("tensor-grep" + (".exe" if sys.platform.startswith("win") else "")):
+    if which_tensor_grep := shutil.which(
+        "tensor-grep" + (".exe" if sys.platform.startswith("win") else "")
+    ):
         resolved = Path(which_tensor_grep).resolve()
         if not _looks_like_current_python_launcher(resolved):
             return resolved

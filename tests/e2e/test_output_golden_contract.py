@@ -9,11 +9,14 @@ import pytest
 @pytest.fixture(scope="module")
 def golden_fixture_dir(tmp_path_factory):
     dir_path = tmp_path_factory.mktemp("golden_fixtures")
-    (dir_path / "file1.txt").write_text("hello world\nfoo bar baz\ngoodbye world\n", encoding="utf-8")
+    (dir_path / "file1.txt").write_text(
+        "hello world\nfoo bar baz\ngoodbye world\n", encoding="utf-8"
+    )
     (dir_path / "file2.txt").write_text("nothing here\nhello again friend\nend\n", encoding="utf-8")
     # binary file
     (dir_path / "file3.bin").write_bytes(b"some binary data\0hello\0more data")
     return dir_path
+
 
 # Format: (name, args, target)
 GOLDEN_CASES = [
@@ -35,12 +38,13 @@ GOLDEN_CASES = [
     ("line_number_single_file", ["-n", "hello"], ["file1.txt"]),
     ("binary_multi_file", ["hello"], ["."]),
     ("binary_single_file", ["hello"], ["file3.bin"]),
-    ("binary_text_flag", ["-a", "hello"], ["file3.bin"]), # Treat binary as text
+    ("binary_text_flag", ["-a", "hello"], ["file3.bin"]),  # Treat binary as text
     ("json_multi_file", ["--json", "hello"], ["."]),
     ("ndjson_multi_file", ["--ndjson", "hello"], ["."]),
 ]
 
 LAUNCHERS = ["python-m", "native"]
+
 
 def _get_native_binary() -> str:
     exe_name = "tg.exe" if sys.platform == "win32" else "tg"
@@ -52,6 +56,7 @@ def _get_native_binary() -> str:
         return str(debug_path.resolve())
     pytest.fail("Native binary not found. Please compile it first.")
 
+
 def run_tg(launcher, args, cwd):
     if launcher == "python-m":
         cmd = [sys.executable, "-m", "tensor_grep", "search", *args]
@@ -59,11 +64,17 @@ def run_tg(launcher, args, cwd):
         cmd = [_get_native_binary(), "search", *args]
 
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
-    assert result.returncode == 0, f"Command failed: {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    assert result.returncode == 0, (
+        f"Command failed: {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )
     stdout = result.stdout
 
     # We remove routing/stats output as they are non-contractual metadata
-    stdout = "\n".join(line for line in stdout.splitlines() if not line.startswith("[routing]") and not line.startswith("[stats]"))
+    stdout = "\n".join(
+        line
+        for line in stdout.splitlines()
+        if not line.startswith("[routing]") and not line.startswith("[stats]")
+    )
 
     # We normalize the randomly generated pytest temp directory to a static string
     # as the absolute execution path is an intentional non-contract field.
@@ -86,7 +97,9 @@ def run_tg(launcher, args, cwd):
                     parsed["version"] = "X"
                 # Stabilize matches order for json array
                 if "matches" in parsed:
-                    parsed["matches"].sort(key=lambda m: (m.get("file", ""), m.get("line", 0), m.get("text", "")))
+                    parsed["matches"].sort(
+                        key=lambda m: (m.get("file", ""), m.get("line", 0), m.get("text", ""))
+                    )
                 lines.append(json.dumps(parsed, sort_keys=True))
             except json.JSONDecodeError:
                 lines.append(line)
@@ -102,6 +115,7 @@ def run_tg(launcher, args, cwd):
 
     return stdout
 
+
 @pytest.mark.parametrize("launcher", LAUNCHERS)
 @pytest.mark.parametrize("name, args, target", GOLDEN_CASES, ids=[c[0] for c in GOLDEN_CASES])
 def test_output_golden_contract(golden_fixture_dir, snapshot, launcher, name, args, target):
@@ -109,4 +123,3 @@ def test_output_golden_contract(golden_fixture_dir, snapshot, launcher, name, ar
         pytest.skip("Native tg.exe does not support this flag currently")
     tg_stdout = run_tg(launcher, args + target, golden_fixture_dir)
     snapshot.assert_match(tg_stdout, f"{launcher}_{name}.txt")
-

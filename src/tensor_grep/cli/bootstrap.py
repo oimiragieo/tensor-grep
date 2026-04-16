@@ -93,6 +93,7 @@ def _requires_full_cli(search_args: list[str]) -> bool:
             return True
     return False
 
+
 def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     if not search_args:
         return False

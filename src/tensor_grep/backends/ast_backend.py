@@ -370,7 +370,9 @@ class AstBackend(ComputeBackend):
             elif lang == "typescript" or lang == "ts":
                 import tree_sitter_typescript
 
-                parser = tree_sitter.Parser(tree_sitter.Language(tree_sitter_typescript.language_typescript()))
+                parser = tree_sitter.Parser(
+                    tree_sitter.Language(tree_sitter_typescript.language_typescript())
+                )
             elif lang == "rust" or lang == "rs":
                 import tree_sitter_rust
 

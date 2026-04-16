@@ -195,6 +195,7 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "gpu_device_ids",
 )
 
+
 def _doctor_installed_version() -> str:
     try:
         from importlib.metadata import version
@@ -4796,6 +4797,7 @@ def main_entry() -> None:
         sys.exit(0)
 
     from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
+
     known_commands = _KNOWN_COMMANDS
 
     if len(sys.argv) > 1:

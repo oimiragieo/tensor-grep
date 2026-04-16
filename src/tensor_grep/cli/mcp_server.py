@@ -237,6 +237,7 @@ def _extract_rewrite_error_message(stderr: str, fallback: str) -> str:
         return line
     return fallback
 
+
 def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
     if not pattern.strip():
         return "Pattern must not be empty."
@@ -321,6 +322,7 @@ def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
 
 def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[str]:
     import sys
+
     env = os.environ.copy()
     env["TG_SIDECAR_PYTHON"] = sys.executable
     return subprocess.run(

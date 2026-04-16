@@ -18,7 +18,10 @@ def _get_native_binary() -> str:
         return str(debug_path.resolve())
     pytest.fail("Native binary not found. Please compile it first.")
 
-def run_command(launcher: str, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+
+def run_command(
+    launcher: str, args: list[str], cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     if launcher == "python-m":
         cmd = [sys.executable, "-m", "tensor_grep", *args]
     elif launcher == "native":
@@ -29,7 +32,10 @@ def run_command(launcher: str, args: list[str], cwd: Path | None = None) -> subp
         raise ValueError(f"Unknown launcher {launcher}")
 
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+
+
 LAUNCHERS = ["python-m", "native", "bootstrap"]
+
 
 # A fixture to create a realistic search environment
 @pytest.fixture(scope="module")
@@ -41,13 +47,15 @@ def parity_env(tmp_path_factory):
     (env_dir / "dir" / "nested.txt").write_text("banana apple\n", encoding="utf-8")
     return env_dir
 
+
 # Format: (args, expected_exit_code, check_stdout_fn, check_stderr_fn)
 # We use simple string match or lambda for flexibility.
 def assert_json(stdout: str):
     assert stdout.strip() != ""
     for line in stdout.strip().splitlines():
-        if not line.startswith("[routing]"): # rust might print this to stderr, but just in case
+        if not line.startswith("[routing]"):  # rust might print this to stderr, but just in case
             json.loads(line)
+
 
 def assert_ndjson(stdout: str):
     assert stdout.strip() != ""
@@ -59,14 +67,18 @@ def assert_ndjson(stdout: str):
         except json.JSONDecodeError:
             pytest.fail(f"Invalid NDJSON line: {line}")
 
+
 def assert_text_lines(stdout: str):
     assert len(stdout.splitlines()) > 0
+
 
 def assert_empty(stdout: str):
     assert not stdout.strip()
 
+
 def no_check(out: str):
     pass
+
 
 # We check which layer handled it.
 # For native rust, search is usually native unless it falls back to python.
@@ -89,26 +101,26 @@ COMMAND_CASES = [
     (["search", "apple", "target.txt", "-c"], 0, assert_text_lines, no_check),
     (["search", "apple", "target.txt", "-C", "1"], 0, assert_text_lines, no_check),
     (["search", "apple", "target.txt", "--glob", "*.txt"], 0, assert_text_lines, no_check),
-
     # missing target
-    (["search", "notfoundinanyfile", "target.txt"], 1, no_check, no_check), # usually exit 1 for no matches
-
+    (
+        ["search", "notfoundinanyfile", "target.txt"],
+        1,
+        no_check,
+        no_check,
+    ),  # usually exit 1 for no matches
     # --- run / scan / test ---
     (["run", "--help"], 0, assert_text_lines, no_check),
     (["scan", "--help"], 0, assert_text_lines, no_check),
     (["test", "--help"], 0, assert_text_lines, no_check),
-
     # --- map / doctor / session / checkpoint ---
     (["map", "--help"], 0, assert_text_lines, no_check),
     (["doctor", "--help"], 0, assert_text_lines, no_check),
     (["session", "--help"], 0, assert_text_lines, no_check),
     (["checkpoint", "--help"], 0, assert_text_lines, no_check),
-
     # --- defs / refs / context ---
     (["defs", "--help"], 0, assert_text_lines, no_check),
     (["refs", "--help"], 0, assert_text_lines, no_check),
     (["context", "--help"], 0, assert_text_lines, no_check),
-
     # --- blast-radius, rulesets, audit ---
     (["blast-radius", "--help"], 0, assert_text_lines, no_check),
     (["rulesets", "--help"], 0, assert_text_lines, no_check),
@@ -118,13 +130,18 @@ COMMAND_CASES = [
     (["review-bundle", "--help"], 0, assert_text_lines, no_check),
 ]
 
+
 @pytest.mark.parametrize("args, expected_code, check_stdout, check_stderr", COMMAND_CASES)
-def test_routing_parity_matrix(parity_env, args: list[str], expected_code: int, check_stdout, check_stderr):
+def test_routing_parity_matrix(
+    parity_env, args: list[str], expected_code: int, check_stdout, check_stderr
+):
     # We will use python-m as the baseline
     baseline_result = run_command("python-m", args, cwd=parity_env)
 
     if expected_code is not None:
-        assert baseline_result.returncode == expected_code, f"Failed on python-m {' '.join(args)}\nstdout: {baseline_result.stdout}\nstderr: {baseline_result.stderr}"
+        assert baseline_result.returncode == expected_code, (
+            f"Failed on python-m {' '.join(args)}\nstdout: {baseline_result.stdout}\nstderr: {baseline_result.stderr}"
+        )
 
     check_stdout(baseline_result.stdout)
     check_stderr(baseline_result.stderr)
@@ -132,13 +149,16 @@ def test_routing_parity_matrix(parity_env, args: list[str], expected_code: int, 
     for launcher in ["native", "bootstrap"]:
         result = run_command(launcher, args, cwd=parity_env)
 
-        assert result.returncode == baseline_result.returncode, f"Exit code mismatch for {launcher} vs python-m on args: {args}\npython-m: {baseline_result.returncode}\n{launcher}: {result.returncode}"
+        assert result.returncode == baseline_result.returncode, (
+            f"Exit code mismatch for {launcher} vs python-m on args: {args}\npython-m: {baseline_result.returncode}\n{launcher}: {result.returncode}"
+        )
 
         # To compare stdout/stderr we ignore execution time logs, routing reason logs, or other non-deterministic stuff.
         def clean_output(output: str) -> str:
             output = output.replace("bootstrap.py", "python -m tensor_grep")
             lines = [
-                line for line in output.splitlines()
+                line
+                for line in output.splitlines()
                 if not line.startswith("[routing]") and not line.startswith("[stats]")
             ]
             return "\n".join(lines)
@@ -150,8 +170,12 @@ def test_routing_parity_matrix(parity_env, args: list[str], expected_code: int, 
             # Typer and Clap output differently formatted help text. Even between python-m and bootstrap,
             # Typer's word wrapping changes based on the length of sys.argv[0].
             # We assert that both commands successfully generated help text (Usage string is present).
-            assert "Usage:" in la_stdout or "usage:" in la_stdout.lower(), f"Help missing Usage:\n{la_stdout}"
-            assert "Usage:" in bl_stdout or "usage:" in bl_stdout.lower(), f"Baseline help missing Usage:\n{bl_stdout}"
+            assert "Usage:" in la_stdout or "usage:" in la_stdout.lower(), (
+                f"Help missing Usage:\n{la_stdout}"
+            )
+            assert "Usage:" in bl_stdout or "usage:" in bl_stdout.lower(), (
+                f"Baseline help missing Usage:\n{bl_stdout}"
+            )
         else:
             if "--json" in args or "--ndjson" in args:
                 # normalize json before comparing
@@ -168,18 +192,27 @@ def test_routing_parity_matrix(parity_env, args: list[str], expected_code: int, 
                     )
 
                 if "--json" in args:
-                    assert _norm_json(la_stdout) == _norm_json(bl_stdout), f"Stdout JSON mismatch for {launcher} vs python-m on args: {args}"
+                    assert _norm_json(la_stdout) == _norm_json(bl_stdout), (
+                        f"Stdout JSON mismatch for {launcher} vs python-m on args: {args}"
+                    )
                 else:
-                    assert _norm_ndjson(la_stdout) == _norm_ndjson(bl_stdout), f"Stdout NDJSON mismatch for {launcher} vs python-m on args: {args}"
+                    assert _norm_ndjson(la_stdout) == _norm_ndjson(bl_stdout), (
+                        f"Stdout NDJSON mismatch for {launcher} vs python-m on args: {args}"
+                    )
             else:
-                assert la_stdout == bl_stdout, f"Stdout mismatch for {launcher} vs python-m on args: {args}"
+                assert la_stdout == bl_stdout, (
+                    f"Stdout mismatch for {launcher} vs python-m on args: {args}"
+                )
 
         bl_stderr = clean_output(baseline_result.stderr)
         la_stderr = clean_output(result.stderr)
 
         # Only compare stderr if not help/version since typr/clap help might differ slightly
         if "--help" not in args:
-            assert la_stderr == bl_stderr, f"Stderr mismatch for {launcher} vs python-m on args: {args}"
+            assert la_stderr == bl_stderr, (
+                f"Stderr mismatch for {launcher} vs python-m on args: {args}"
+            )
+
 
 @pytest.mark.parametrize("launcher", ["native", "bootstrap"])
 def test_routing_parity_glob(parity_env, launcher: str):
