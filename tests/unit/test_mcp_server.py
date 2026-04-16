@@ -856,7 +856,7 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -902,7 +902,7 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -972,7 +972,7 @@ def test_tg_rewrite_apply_supports_optional_validation_commands():
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -1110,7 +1110,7 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -1167,7 +1167,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag():
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -1230,7 +1230,7 @@ def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -1284,7 +1284,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag():
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -2035,7 +2035,7 @@ def test_tg_rewrite_diff_wraps_unified_diff_with_routing_metadata():
     diff_preview = "--- a/file.py\n+++ b/file.py\n@@ -1,1 +1,1 @@\n-old\n+new\n"
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(
@@ -2110,7 +2110,7 @@ def test_tg_index_search_returns_native_index_search_json_shape():
     }
 
     with (
-        patch("tensor_grep.cli.mcp_server._resolve_native_tg_binary", return_value=Path("tg.exe")),
+        patch("tensor_grep.cli.mcp_server.resolve_native_tg_binary", return_value=Path("tg.exe")),
         patch(
             "tensor_grep.cli.mcp_server.subprocess.run",
             return_value=CompletedProcess(

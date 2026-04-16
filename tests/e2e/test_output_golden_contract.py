@@ -54,9 +54,9 @@ def _get_native_binary() -> str:
 
 def run_tg(launcher, args, cwd):
     if launcher == "python-m":
-        cmd = [sys.executable, "-m", "tensor_grep", "search"] + args
+        cmd = [sys.executable, "-m", "tensor_grep", "search", *args]
     else:
-        cmd = [_get_native_binary(), "search"] + args
+        cmd = [_get_native_binary(), "search", *args]
 
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     assert result.returncode == 0, f"Command failed: {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}"

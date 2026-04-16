@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
 
 _TG_ONLY_SEARCH_FLAGS = {
     "--ast",
@@ -93,10 +93,6 @@ def _requires_full_cli(search_args: list[str]) -> bool:
             return True
     return False
 
-
-from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
-
-
 def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     if not search_args:
         return False
@@ -164,7 +160,7 @@ def main_entry() -> None:
     if search_args is not None:
         native_binary_path = resolve_native_tg_binary()
         native_binary = str(native_binary_path) if native_binary_path else None
-        
+
         if native_binary is not None and (
             _can_delegate_to_native_tg_search(search_args)
             or (_prefer_rust_first_search() and not _requires_full_cli(search_args))

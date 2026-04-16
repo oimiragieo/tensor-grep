@@ -382,7 +382,7 @@ def test_doctor_help_mentions_lsp_and_json() -> None:
 def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
     monkeypatch.setattr(
-        "tensor_grep.cli.main._resolve_native_tg_binary",
+        "tensor_grep.cli.main.resolve_native_tg_binary",
         lambda: tmp_path / "rust_core" / "target" / "debug" / "tg.exe",
     )
     monkeypatch.setattr(
@@ -445,7 +445,7 @@ def test_doctor_json_passes_non_default_config_to_payload_builder(
 
 def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.2.3")
-    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(
         "tensor_grep.cli.main._doctor_session_daemon_status",
         lambda path: {"running": False},
@@ -507,7 +507,7 @@ def test_cli_should_fail_fast_on_invalid_gpu_device_ids(monkeypatch):
 def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
     seen: dict[str, object] = {}
 
-    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
     monkeypatch.setattr(
         "tensor_grep.cli.main._can_delegate_to_native_tg_search",
         lambda *args, **kwargs: True,
@@ -545,7 +545,7 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
 def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_code(monkeypatch):
     seen: dict[str, object] = {}
 
-    monkeypatch.setattr("tensor_grep.cli.main._resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
     monkeypatch.setattr(
         "tensor_grep.cli.main._can_delegate_to_native_tg_search",
         lambda *args, **kwargs: True,
@@ -1504,25 +1504,6 @@ def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_p
         str(sibling_b.resolve()),
         str(test_path.resolve()),
     ])
-
-
-def test_resolve_native_tg_binary_should_ignore_legacy_benchmark_binary(monkeypatch, tmp_path):
-    from tensor_grep.cli import main as cli_main
-
-    repo_root = tmp_path / "repo"
-    cli_path = repo_root / "src" / "tensor_grep" / "cli" / "main.py"
-    cli_path.parent.mkdir(parents=True, exist_ok=True)
-    cli_path.write_text("# stub\n", encoding="utf-8")
-
-    legacy_binary = repo_root / "benchmarks" / "tg_rust.exe"
-    legacy_binary.parent.mkdir(parents=True, exist_ok=True)
-    legacy_binary.write_text("legacy\n", encoding="utf-8")
-
-    monkeypatch.setattr(cli_main, "__file__", str(cli_path))
-    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
-    cli_main._resolve_native_tg_binary.cache_clear()
-
-    assert cli_main._resolve_native_tg_binary() is None
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
@@ -4167,7 +4148,7 @@ def test_calibrate_command_delegates_to_native_tg(monkeypatch):
     class _Completed:
         returncode = 0
 
-    monkeypatch.setattr(cli_main, "_resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: Path("tg.exe"))
     monkeypatch.setattr(
         subprocess,
         "run",

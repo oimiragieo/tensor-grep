@@ -31,22 +31,12 @@ def test_rust_core_uses_source_of_truth() -> None:
     assert 'include_str!("../../src/tensor_grep/cli/commands.py")' in content, "Rust core must include commands.py as source of truth"
 
 
-def test_resolve_native_tg_binary_should_prefer_env_override(monkeypatch, tmp_path):
-    native_binary = tmp_path / "tg.exe"
-    native_binary.write_text("binary", encoding="utf-8")
-    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(native_binary))
-
-    resolved = bootstrap._resolve_native_tg_binary()
-
-    assert resolved == str(native_binary)
-
-
 def test_main_entry_should_passthrough_search_subcommand_to_rg(monkeypatch):
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "-i", "ERROR", "."])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
-    monkeypatch.setattr(bootstrap, "_resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",
@@ -67,8 +57,8 @@ def test_main_entry_should_passthrough_raw_rg_style_invocation(monkeypatch):
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sys, "argv", ["tg", "-i", "ERROR", "."])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
-    monkeypatch.setattr(bootstrap, "_resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",
@@ -89,8 +79,8 @@ def test_main_entry_should_fallback_to_full_cli_for_tg_specific_flags(monkeypatc
     called = {"full_cli": False}
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--debug"])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
-    monkeypatch.setattr(bootstrap, "_resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",
@@ -109,7 +99,7 @@ def test_main_entry_should_not_delegate_tg_specific_flags_even_when_rust_first_e
     called = {"full_cli": False}
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--debug"])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
     monkeypatch.setenv("TG_RUST_FIRST_SEARCH", "1")
     monkeypatch.setattr(
         bootstrap,
@@ -132,7 +122,7 @@ def test_main_entry_should_delegate_cpu_flag_to_native_tg(monkeypatch):
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--cpu"])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
     monkeypatch.setattr(
         bootstrap,
         "_run_native_tg_search",
@@ -155,7 +145,7 @@ def test_main_entry_should_delegate_plain_search_to_native_tg_when_rust_first_en
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "-i", "ERROR", "."])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
     monkeypatch.setenv("TG_RUST_FIRST_SEARCH", "1")
     monkeypatch.setattr(
         bootstrap,
@@ -184,7 +174,7 @@ def test_main_entry_should_delegate_cpu_flag_to_env_override_native_tg(monkeypat
     native_binary.write_text("binary", encoding="utf-8")
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--cpu"])
-    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(native_binary))
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: native_binary)
     monkeypatch.setattr(
         bootstrap,
         "_run_native_tg_search",
@@ -205,7 +195,7 @@ def test_main_entry_should_delegate_ndjson_flag_to_native_tg(monkeypatch):
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--ndjson"])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
     monkeypatch.setattr(
         bootstrap,
         "_run_native_tg_search",
@@ -242,7 +232,7 @@ def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkey
             "bench_data",
         ],
     )
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
     monkeypatch.setattr(
         bootstrap,
         "_run_native_tg_search",
@@ -276,8 +266,8 @@ def test_main_entry_should_fallback_to_full_cli_when_rg_is_unavailable(monkeypat
     called = {"full_cli": False}
 
     monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", "."])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
-    monkeypatch.setattr(bootstrap, "_resolve_rg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: None)
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",
@@ -294,7 +284,7 @@ def test_main_entry_should_fallback_to_full_cli_for_help(monkeypatch):
     called = {"full_cli": False}
 
     monkeypatch.setattr(sys, "argv", ["tg", "--help"])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",
@@ -311,7 +301,7 @@ def test_main_entry_should_fallback_to_full_cli_for_calibrate_subcommand(monkeyp
     called = {"full_cli": False}
 
     monkeypatch.setattr(sys, "argv", ["tg", "calibrate"])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",
@@ -328,7 +318,7 @@ def test_main_entry_should_fallback_to_full_cli_for_update_subcommand(monkeypatc
     called = {"full_cli": False}
 
     monkeypatch.setattr(sys, "argv", ["tg", "update"])
-    monkeypatch.setattr(bootstrap, "_resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",

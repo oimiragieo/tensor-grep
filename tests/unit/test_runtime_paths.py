@@ -58,7 +58,7 @@ def test_resolve_ripgrep_binary_cwd_independence(tmp_path, monkeypatch):
 
         monkeypatch.chdir(tmp_path)
         resolve_ripgrep_binary.cache_clear()
-        
+
         new_resolved = resolve_ripgrep_binary()
         assert original_resolved == new_resolved
 
@@ -66,22 +66,22 @@ def test_resolve_ripgrep_binary_cwd_independence(tmp_path, monkeypatch):
 def test_bootstrap_resolution_parity(tmp_path):
     """Verify that bootstrap.py and main.py use the exact same binary resolution logic."""
     import subprocess
-    
+
     missing_path = tmp_path / "missing_binary"
     bootstrap_script = Path("src/tensor_grep/cli/bootstrap.py").resolve()
-    
+
     # We want to trigger a search to make it try resolving
     env = os.environ.copy()
     env["TG_NATIVE_TG_BINARY"] = str(missing_path)
     env["TG_RUST_FIRST_SEARCH"] = "1"  # Forces native fallback in bootstrap
-    
+
     result = subprocess.run(
         [sys.executable, str(bootstrap_script), "search", "foo"],
         env=env,
         capture_output=True,
         text=True
     )
-    
+
     # Because it uses the shared helper, it should fail with a FileNotFoundError,
     # NOT silently fall back and successfully run a search.
     assert result.returncode != 0
@@ -92,7 +92,7 @@ def test_bootstrap_resolution_parity(tmp_path):
 def test_mcp_sidecar_env_propagation():
     """Verify that the MCP sidecar correctly propagates TG_SIDECAR_PYTHON to subprocesses."""
     from tensor_grep.cli.mcp_server import _run_rewrite_subprocess
-    
+
     with patch("subprocess.run") as mock_run:
         _run_rewrite_subprocess(["dummy", "cmd"])
         mock_run.assert_called_once()

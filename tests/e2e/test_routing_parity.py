@@ -160,8 +160,12 @@ def test_routing_parity_matrix(parity_env, args: list[str], expected_code: int, 
                         return json.dumps(json.loads(out), sort_keys=True)
                     except json.JSONDecodeError:
                         return out
+
                 def _norm_ndjson(out: str) -> str:
-                    return "\n".join(json.dumps(json.loads(l), sort_keys=True) if l.strip() else l for l in out.splitlines())
+                    return "\n".join(
+                        json.dumps(json.loads(line), sort_keys=True) if line.strip() else line
+                        for line in out.splitlines()
+                    )
 
                 if "--json" in args:
                     assert _norm_json(la_stdout) == _norm_json(bl_stdout), f"Stdout JSON mismatch for {launcher} vs python-m on args: {args}"

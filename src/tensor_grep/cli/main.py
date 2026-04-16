@@ -17,6 +17,7 @@ import typer
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
@@ -194,9 +195,6 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "gpu_device_ids",
 )
 
-
-from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
-
 def _doctor_installed_version() -> str:
     try:
         from importlib.metadata import version
@@ -328,7 +326,7 @@ def _build_doctor_payload(
         root = resolved_config.parent
     else:
         resolved_config = root / "sgconfig.yml"
-    native_tg_binary = _resolve_native_tg_binary()
+    native_tg_binary = resolve_native_tg_binary()
     env_keys = [
         "TG_NATIVE_TG_BINARY",
         "TG_RUST_FIRST_SEARCH",
@@ -1992,7 +1990,7 @@ def search_command(
         gpu_device_ids=parsed_gpu_device_ids,
     )
 
-    native_tg_binary = _resolve_native_tg_binary()
+    native_tg_binary = resolve_native_tg_binary()
     if native_tg_binary is not None and _can_delegate_to_native_tg_search(
         config,
         ndjson=ndjson,
@@ -2316,7 +2314,7 @@ def search_command(
 @app.command()
 def calibrate() -> None:
     """Measure CPU vs GPU crossover thresholds using the native Rust binary."""
-    native_tg_binary = _resolve_native_tg_binary()
+    native_tg_binary = resolve_native_tg_binary()
     if native_tg_binary is None:
         typer.echo("Error: native tg binary not found for calibrate command.", err=True)
         raise typer.Exit(2)
@@ -4756,7 +4754,7 @@ def worker(
     stop: bool = typer.Option(False, "--stop", help="Stop the active resident worker."),
 ) -> None:
     """Internal command to manage the experimental Resident AST Worker."""
-    native_tg_binary = _resolve_native_tg_binary()
+    native_tg_binary = resolve_native_tg_binary()
     if native_tg_binary is None:
         typer.echo("Error: native tg binary not found for worker command.", err=True)
         raise typer.Exit(2)

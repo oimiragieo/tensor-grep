@@ -177,7 +177,7 @@ def test_public_mcp_tools_roundtrip_against_native_binary(
     source_file.write_text("def add(x, y): return x + y\n", encoding="utf-8")
 
     monkeypatch.setenv("TG_MCP_TG_BINARY", command_env["TG_MCP_TG_BINARY"])
-    mcp_server._resolve_native_tg_binary.cache_clear()
+    mcp_server.resolve_native_tg_binary.cache_clear()
 
     index_payload = json.loads(mcp_server.tg_index_search("ERROR", str(project)))
     assert index_payload["version"] == 1

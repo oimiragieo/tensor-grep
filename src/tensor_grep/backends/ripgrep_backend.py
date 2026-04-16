@@ -18,7 +18,7 @@ class RipgrepBackend(ComputeBackend):
 
     def _get_binary_name(self) -> str | None:
         from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
-        
+
         path = resolve_ripgrep_binary()
         return str(path) if path else None
 

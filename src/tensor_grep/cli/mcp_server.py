@@ -22,6 +22,7 @@ from tensor_grep.cli.repo_map import (
     build_symbol_source,
 )
 from tensor_grep.cli.rule_packs import resolve_rule_pack
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
 from tensor_grep.core.pipeline import Pipeline
@@ -235,9 +236,6 @@ def _extract_rewrite_error_message(stderr: str, fallback: str) -> str:
             continue
         return line
     return fallback
-
-
-from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
 def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
     if not pattern.strip():

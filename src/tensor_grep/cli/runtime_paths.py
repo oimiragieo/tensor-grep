@@ -9,7 +9,7 @@ from pathlib import Path
 def resolve_native_tg_binary() -> Path | None:
     repo_root = Path(__file__).resolve().parents[3]
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
-    
+
     # Priority 1: Exact explicit override
     env_override = os.environ.get("TG_NATIVE_TG_BINARY") or os.environ.get("TG_MCP_TG_BINARY")
     if env_override:
@@ -17,9 +17,9 @@ def resolve_native_tg_binary() -> Path | None:
         if p.is_file():
             return p.resolve()
         raise FileNotFoundError(f"Configured binary {p} not found.")
-        
+
     candidates = []
-    
+
     # Priority 2: In-tree build
     candidates.extend(
         [
@@ -46,13 +46,13 @@ def resolve_native_tg_binary() -> Path | None:
 @lru_cache(maxsize=1)
 def resolve_ripgrep_binary() -> Path | None:
     binary_name = "rg.exe" if sys.platform.startswith("win") else "rg"
-    
+
     # Priority 1: Explicit override
     if env_override := os.environ.get("TG_RG_PATH"):
         p = Path(env_override).expanduser()
         if p.is_file():
             return p.resolve()
-            
+
     # Priority 2: In-tree bundled binary
     repo_root = Path(__file__).resolve().parents[3]
     if sys.platform.startswith("win"):
@@ -61,12 +61,12 @@ def resolve_ripgrep_binary() -> Path | None:
         dev_path = repo_root / "benchmarks" / "ripgrep-14.1.0-x86_64-apple-darwin" / "rg"
     else:
         dev_path = repo_root / "benchmarks" / "ripgrep-14.1.0-x86_64-unknown-linux-musl" / "rg"
-        
+
     if dev_path.is_file():
         return dev_path.resolve()
-        
+
     # Priority 3: PATH
     if which_rg := shutil.which(binary_name):
         return Path(which_rg).resolve()
-        
+
     return None
