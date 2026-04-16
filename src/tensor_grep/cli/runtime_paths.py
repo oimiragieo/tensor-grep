@@ -5,6 +5,20 @@ from functools import lru_cache
 from pathlib import Path
 
 
+def _looks_like_current_python_launcher(candidate: Path) -> bool:
+    """Reject console-entrypoint shims from the active Python environment.
+
+    These PATH hits recurse back into `python -m tensor_grep...` and are not
+    native `tg` binaries.
+    """
+    try:
+        resolved = candidate.resolve()
+        python_bin_dir = Path(sys.executable).resolve().parent
+    except OSError:
+        return False
+    return resolved.parent == python_bin_dir
+
+
 @lru_cache(maxsize=1)
 def resolve_native_tg_binary() -> Path | None:
     repo_root = Path(__file__).resolve().parents[3]
@@ -37,9 +51,13 @@ def resolve_native_tg_binary() -> Path | None:
 
     # Priority 3: PATH installations
     if which_tg := shutil.which(binary_name):
-        return Path(which_tg).resolve()
+        resolved = Path(which_tg).resolve()
+        if not _looks_like_current_python_launcher(resolved):
+            return resolved
     if which_tensor_grep := shutil.which("tensor-grep" + (".exe" if sys.platform.startswith("win") else "")):
-        return Path(which_tensor_grep).resolve()
+        resolved = Path(which_tensor_grep).resolve()
+        if not _looks_like_current_python_launcher(resolved):
+            return resolved
 
     return None
 

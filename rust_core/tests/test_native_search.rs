@@ -399,10 +399,7 @@ fn test_native_positional_search_only_matching_omits_line_numbers_by_default() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "ERROR\nERROR\n"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "ERROR\nERROR\n");
 }
 
 #[test]

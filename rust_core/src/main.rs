@@ -1359,7 +1359,9 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
         const RAW_PY: &str = include_str!("../../src/tensor_grep/cli/commands.py");
         let is_known = RAW_PY.lines().any(|line| {
             let t = line.trim();
-            t.starts_with('"') && (t.ends_with(r#"","#) || t.ends_with(r#"""#)) && t.contains(&format!("\"{token}\""))
+            t.starts_with('"')
+                && (t.ends_with(r#"","#) || t.ends_with(r#"""#))
+                && t.contains(&format!("\"{token}\""))
         });
         return !is_known;
     }

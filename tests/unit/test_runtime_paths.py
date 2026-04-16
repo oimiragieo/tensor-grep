@@ -61,6 +61,33 @@ def test_resolve_native_tg_binary_ignores_legacy_benchmark_binary(monkeypatch, t
     assert resolve_native_tg_binary() is None
 
 
+def test_resolve_native_tg_binary_ignores_current_python_launcher(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    venv_dir = tmp_path / "venv" / ("Scripts" if sys.platform.startswith("win") else "bin")
+    venv_dir.mkdir(parents=True, exist_ok=True)
+    python_path = venv_dir / ("python.exe" if sys.platform.startswith("win") else "python")
+    python_path.write_text("python\n", encoding="utf-8")
+    tg_path = venv_dir / ("tg.exe" if sys.platform.startswith("win") else "tg")
+    tg_path.write_text("launcher\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.setattr(runtime_paths.sys, "executable", str(python_path))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setattr(
+        runtime_paths.shutil,
+        "which",
+        lambda name: str(tg_path) if name in {"tg", "tg.exe"} else None,
+    )
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() is None
+
+
 def test_resolve_ripgrep_binary_env_override(tmp_path):
     rg_path = tmp_path / ("rg.exe" if sys.platform.startswith("win") else "rg")
     rg_path.touch()
