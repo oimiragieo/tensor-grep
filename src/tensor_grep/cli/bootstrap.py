@@ -16,6 +16,7 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--files-with-matches",
     "--files-without-match",
     "--format",
+    "--glob",
     "--gpu-device-ids",
     "--json",
     "--ndjson",
@@ -24,6 +25,7 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--replace",
     "--stats",
     "-l",
+    "-g",
     "-r",
 }
 

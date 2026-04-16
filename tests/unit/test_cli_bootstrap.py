@@ -101,6 +101,24 @@ def test_main_entry_should_fallback_to_full_cli_for_tg_specific_flags(monkeypatc
     assert called["full_cli"] is True
 
 
+def test_main_entry_should_fallback_to_full_cli_for_glob_flag(monkeypatch):
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", ".", "--glob", "dir/*.txt"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
 def test_main_entry_should_not_delegate_tg_specific_flags_even_when_rust_first_env_is_enabled(
     monkeypatch,
 ):
