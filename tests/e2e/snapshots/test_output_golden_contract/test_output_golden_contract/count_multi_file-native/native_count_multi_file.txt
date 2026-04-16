@@ -1,2 +1,2 @@
-.\file1.txt:1
-.\file2.txt:1
+text/file1.txt:1
+text/file2.txt:1

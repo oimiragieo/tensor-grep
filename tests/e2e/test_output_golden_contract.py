@@ -9,38 +9,42 @@ import pytest
 @pytest.fixture(scope="module")
 def golden_fixture_dir(tmp_path_factory):
     dir_path = tmp_path_factory.mktemp("golden_fixtures")
-    (dir_path / "file1.txt").write_text(
+    text_dir = dir_path / "text"
+    text_dir.mkdir()
+    (text_dir / "file1.txt").write_text(
         "hello world\nfoo bar baz\ngoodbye world\n", encoding="utf-8"
     )
-    (dir_path / "file2.txt").write_text("nothing here\nhello again friend\nend\n", encoding="utf-8")
+    (text_dir / "file2.txt").write_text("nothing here\nhello again friend\nend\n", encoding="utf-8")
     # binary file
     (dir_path / "file3.bin").write_bytes(b"some binary data\0hello\0more data")
     return dir_path
 
 
 # Format: (name, args, target)
+TEXT_DIR_TARGET = ["text"]
+TEXT_FILE1_TARGET = ["text/file1.txt"]
+
 GOLDEN_CASES = [
-    ("default_multi_file", ["hello"], ["."]),
-    ("default_single_file", ["hello"], ["file1.txt"]),
-    ("cpu_multi_file", ["--cpu", "hello"], ["."]),
-    ("cpu_single_file", ["--cpu", "hello"], ["file1.txt"]),
-    ("only_matching_multi_file", ["-o", "hello"], ["."]),
-    ("only_matching_single_file", ["-o", "hello"], ["file1.txt"]),
-    ("only_matching_line_number_multi_file", ["-o", "-n", "hello"], ["."]),
-    ("only_matching_line_number_single_file", ["-o", "-n", "hello"], ["file1.txt"]),
-    ("count_multi_file", ["-c", "hello"], ["."]),
-    ("count_single_file", ["-c", "hello"], ["file1.txt"]),
-    ("count_matches_multi_file", ["--count-matches", "hello"], ["."]),
-    ("count_matches_single_file", ["--count-matches", "hello"], ["file1.txt"]),
-    ("replace_multi_file", ["-r", "HI", "hello"], ["."]),
-    ("replace_single_file", ["-r", "HI", "hello"], ["file1.txt"]),
-    ("line_number_multi_file", ["-n", "hello"], ["."]),
-    ("line_number_single_file", ["-n", "hello"], ["file1.txt"]),
-    ("binary_multi_file", ["hello"], ["."]),
+    ("default_multi_file", ["hello"], TEXT_DIR_TARGET),
+    ("default_single_file", ["hello"], TEXT_FILE1_TARGET),
+    ("cpu_multi_file", ["--cpu", "hello"], TEXT_DIR_TARGET),
+    ("cpu_single_file", ["--cpu", "hello"], TEXT_FILE1_TARGET),
+    ("only_matching_multi_file", ["-o", "hello"], TEXT_DIR_TARGET),
+    ("only_matching_single_file", ["-o", "hello"], TEXT_FILE1_TARGET),
+    ("only_matching_line_number_multi_file", ["-o", "-n", "hello"], TEXT_DIR_TARGET),
+    ("only_matching_line_number_single_file", ["-o", "-n", "hello"], TEXT_FILE1_TARGET),
+    ("count_multi_file", ["-c", "hello"], TEXT_DIR_TARGET),
+    ("count_single_file", ["-c", "hello"], TEXT_FILE1_TARGET),
+    ("count_matches_multi_file", ["--count-matches", "hello"], TEXT_DIR_TARGET),
+    ("count_matches_single_file", ["--count-matches", "hello"], TEXT_FILE1_TARGET),
+    ("replace_multi_file", ["-r", "HI", "hello"], TEXT_DIR_TARGET),
+    ("replace_single_file", ["-r", "HI", "hello"], TEXT_FILE1_TARGET),
+    ("line_number_multi_file", ["-n", "hello"], TEXT_DIR_TARGET),
+    ("line_number_single_file", ["-n", "hello"], TEXT_FILE1_TARGET),
     ("binary_single_file", ["hello"], ["file3.bin"]),
     ("binary_text_flag", ["-a", "hello"], ["file3.bin"]),  # Treat binary as text
-    ("json_multi_file", ["--json", "hello"], ["."]),
-    ("ndjson_multi_file", ["--ndjson", "hello"], ["."]),
+    ("json_multi_file", ["--json", "hello"], TEXT_DIR_TARGET),
+    ("ndjson_multi_file", ["--ndjson", "hello"], TEXT_DIR_TARGET),
 ]
 
 LAUNCHERS = ["python-m", "native"]
@@ -55,6 +59,10 @@ def _get_native_binary() -> str:
     if debug_path.exists():
         return str(debug_path.resolve())
     pytest.fail("Native binary not found. Please compile it first.")
+
+
+def _normalize_relative_prefix(value: str) -> str:
+    return value.replace("\\", "/").removeprefix("./")
 
 
 def run_tg(launcher, args, cwd):
@@ -95,8 +103,13 @@ def run_tg(launcher, args, cwd):
                 parsed = json.loads(line)
                 if "version" in parsed:
                     parsed["version"] = "X"
+                if "file" in parsed and isinstance(parsed["file"], str):
+                    parsed["file"] = _normalize_relative_prefix(parsed["file"])
                 # Stabilize matches order for json array
                 if "matches" in parsed:
+                    for match in parsed["matches"]:
+                        if "file" in match and isinstance(match["file"], str):
+                            match["file"] = _normalize_relative_prefix(match["file"])
                     parsed["matches"].sort(
                         key=lambda m: (m.get("file", ""), m.get("line", 0), m.get("text", ""))
                     )
@@ -109,7 +122,7 @@ def run_tg(launcher, args, cwd):
         return "\n".join(lines) + "\n"
 
     if not stdout.strip().isdigit():
-        lines = [line for line in stdout.splitlines() if line.strip()]
+        lines = [_normalize_relative_prefix(line) for line in stdout.splitlines() if line.strip()]
         lines.sort()
         stdout = "\n".join(lines) + "\n" if lines else ""
 

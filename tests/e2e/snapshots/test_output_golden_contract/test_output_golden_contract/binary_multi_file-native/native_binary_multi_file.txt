@@ -1,2 +1,0 @@
-.\file1.txt:hello world
-.\file2.txt:hello again friend

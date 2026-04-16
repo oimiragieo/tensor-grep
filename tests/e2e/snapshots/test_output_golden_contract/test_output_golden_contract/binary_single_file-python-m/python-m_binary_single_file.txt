@@ -1,1 +1,1 @@
-binary file matches (found "\0" byte around offset 16)
+binary file matches (found "/0" byte around offset 16)
