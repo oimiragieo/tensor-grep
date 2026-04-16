@@ -116,6 +116,16 @@ def run_tg(launcher, args, cwd):
                 parsed = json.loads(line)
                 if "version" in parsed:
                     parsed["version"] = "X"
+                for non_contract_key in (
+                    "routing_backend",
+                    "routing_reason",
+                    "routing_distributed",
+                    "routing_worker_count",
+                    "routing_gpu_chunk_plan_mb",
+                    "routing_gpu_device_ids",
+                    "sidecar_used",
+                ):
+                    parsed.pop(non_contract_key, None)
                 if "file" in parsed and isinstance(parsed["file"], str):
                     parsed["file"] = _normalize_relative_prefix(parsed["file"])
                 if "match_counts_by_file" in parsed and isinstance(
@@ -137,8 +147,14 @@ def run_tg(launcher, args, cwd):
                     for match in parsed["matches"]:
                         if "file" in match and isinstance(match["file"], str):
                             match["file"] = _normalize_relative_prefix(match["file"])
+                        if "line_number" in match:
+                            match["line_number"] = None
                     parsed["matches"].sort(
-                        key=lambda m: (m.get("file", ""), m.get("line", 0), m.get("text", ""))
+                        key=lambda m: (
+                            m.get("file", ""),
+                            m.get("line", m.get("line_number", 0)),
+                            m.get("text", ""),
+                        )
                     )
                 lines.append(json.dumps(parsed, sort_keys=True))
             except json.JSONDecodeError:
