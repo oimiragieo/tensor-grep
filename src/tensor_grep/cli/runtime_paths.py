@@ -34,6 +34,9 @@ def resolve_native_tg_binary() -> Path | None:
     repo_root = Path(__file__).resolve().parents[3]
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
 
+    if os.environ.get("TG_DISABLE_NATIVE_TG") in {"1", "true", "TRUE", "yes", "YES"}:
+        return None
+
     # Priority 1: Exact explicit override
     env_override = os.environ.get("TG_NATIVE_TG_BINARY") or os.environ.get("TG_MCP_TG_BINARY")
     if env_override:

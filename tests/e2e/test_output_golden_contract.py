@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -71,14 +72,19 @@ def _normalize_relative_prefix(value: str) -> str:
 
 
 def run_tg(launcher, args, cwd):
+    env = None
     if launcher == "python-m":
         cmd = [sys.executable, "-m", "tensor_grep", "search", *args]
+        env = dict(os.environ)
+        env["TG_DISABLE_NATIVE_TG"] = "1"
+        env.pop("TG_NATIVE_TG_BINARY", None)
+        env.pop("TG_MCP_TG_BINARY", None)
     else:
         native_binary = _get_native_binary()
         assert native_binary is not None, "Native binary not found. Please compile it first."
         cmd = [native_binary, "search", *args]
 
-    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    result = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     assert result.returncode == 0, (
         f"Command failed: {' '.join(cmd)}\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
@@ -142,6 +148,8 @@ def test_output_golden_contract(golden_fixture_dir, snapshot, launcher, name, ar
     _skip_if_native_binary_missing(launcher)
     if launcher == "native" and ("--count-matches" in args or "-a" in args):
         pytest.skip("Native tg.exe does not support this flag currently")
+    if launcher == "python-m" and "--ndjson" in args:
+        pytest.skip("python -m tensor_grep requires native tg support for --ndjson")
     tg_stdout = run_tg(launcher, args + target, golden_fixture_dir)
     snapshot.assert_match(tg_stdout, f"{launcher}_{name}.txt")
 

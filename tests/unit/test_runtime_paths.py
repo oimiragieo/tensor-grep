@@ -41,6 +41,18 @@ def test_resolve_native_tg_binary_missing_override(tmp_path):
             resolve_native_tg_binary()
 
 
+def test_resolve_native_tg_binary_can_be_explicitly_disabled(tmp_path):
+    binary_path = tmp_path / ("tg.exe" if sys.platform.startswith("win") else "tg")
+    binary_path.touch()
+
+    with patch.dict(
+        os.environ,
+        {"TG_DISABLE_NATIVE_TG": "1", "TG_NATIVE_TG_BINARY": str(binary_path)},
+        clear=False,
+    ):
+        assert resolve_native_tg_binary() is None
+
+
 def test_resolve_native_tg_binary_ignores_legacy_benchmark_binary(monkeypatch, tmp_path):
     repo_root = tmp_path / "repo"
     runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"

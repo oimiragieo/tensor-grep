@@ -50,9 +50,7 @@ class RipgrepFormatter(OutputFormatter):
             return "\n".join(lines)
 
         if not self.config.text and not self.config.binary:
-            binary_files = {
-                match.file for match in result.matches if "\0" in str(match.text)
-            }
+            binary_files = {match.file for match in result.matches if "\0" in str(match.text)}
             if binary_files:
                 for file_path in sorted(binary_files):
                     message = self._binary_notice(file_path)
