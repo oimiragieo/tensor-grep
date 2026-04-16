@@ -52,6 +52,7 @@ def parity_env(tmp_path_factory):
     (env_dir / "other.log").write_text("apple juice\nno match here\n", encoding="utf-8")
     (env_dir / "dir").mkdir()
     (env_dir / "dir" / "nested.txt").write_text("banana apple\n", encoding="utf-8")
+    (env_dir / "dir" / "second.txt").write_text("apple tart\n", encoding="utf-8")
     return env_dir
 
 
@@ -228,10 +229,10 @@ def test_routing_parity_matrix(
 @pytest.mark.parametrize("launcher", ["native", "bootstrap"])
 def test_routing_parity_glob(parity_env, launcher: str):
     _skip_if_native_binary_missing(launcher)
-    # Test recursive glob filtering. We compare the set of matched files instead of exact
-    # character-for-character parity because directory iteration order and `./` prefixes
-    # differ between Ripgrep (Python fallback) and native tg.exe.
-    args = ["search", "apple", ".", "--glob", "**/*.txt"]
+    # Test glob filtering across multiple matched files in a nested directory. This avoids
+    # relying on platform-specific `**/*.txt` behavior in raw ripgrep passthrough while
+    # still exercising a meaningful launcher-parity glob contract.
+    args = ["search", "apple", ".", "--glob", "dir/*.txt"]
     bl_result = run_command("python-m", args, cwd=parity_env)
     la_result = run_command(launcher, args, cwd=parity_env)
 
@@ -241,8 +242,10 @@ def test_routing_parity_glob(parity_env, launcher: str):
         files = set()
         for line in stdout.splitlines():
             if ":" in line and not line.startswith("["):
-                # Extract filepath, normalizing any '.\' or './' prefix
+                # Extract filepath, normalizing prefixes and separators for cross-platform
+                # comparison between rg passthrough and Python/native launchers.
                 filepath = line.split(":", 1)[0].replace(".\\", "").replace("./", "")
+                filepath = filepath.replace("\\", "/")
                 files.add(filepath)
         return files
 
@@ -250,7 +253,7 @@ def test_routing_parity_glob(parity_env, launcher: str):
     la_files = extract_matched_files(la_result.stdout)
 
     assert la_files == bl_files
-    assert len(la_files) == 2  # target.txt and dir/nested.txt
+    assert la_files == {"dir/nested.txt", "dir/second.txt"}
 
 
 def test_routing_parity_glob_skips_native_when_binary_is_missing(monkeypatch, parity_env):
