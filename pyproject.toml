@@ -79,6 +79,11 @@ addopts = [
   "-x",
   "--tb=short",
 ]
+filterwarnings = [
+  "ignore:.*asyncio\\.iscoroutinefunction.*:DeprecationWarning:pytest_asyncio",
+  "ignore:.*asyncio\\.iscoroutinefunction.*:DeprecationWarning:pygls",
+  "ignore:.*asyncio\\.get_event_loop_policy.*:DeprecationWarning:pytest_asyncio",
+]
 
 [tool.coverage.run]
 source = ["src/tensor_grep"]
