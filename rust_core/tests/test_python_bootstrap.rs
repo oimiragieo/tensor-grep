@@ -39,7 +39,7 @@ fn test_plain_text_search_succeeds_with_invalid_pythonhome() {
     assert_success(&output);
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "2:ERROR failed\n4:ERROR timeout\n"
+        "ERROR failed\nERROR timeout\n"
     );
 }
 

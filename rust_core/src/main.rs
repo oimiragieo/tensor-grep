@@ -1586,6 +1586,7 @@ fn native_search_config_for_positional(
         ndjson: cli.ndjson,
         verbose: cli.verbose,
         line_number: cli.line_number,
+        only_matching: cli.only_matching,
         ..NativeSearchConfig::default()
     }
 }
@@ -1616,6 +1617,7 @@ fn native_search_config_for_command(
         ndjson: args.ndjson,
         verbose: args.verbose,
         line_number: false,
+        only_matching: args.only_matching,
         ..NativeSearchConfig::default()
     }
 }

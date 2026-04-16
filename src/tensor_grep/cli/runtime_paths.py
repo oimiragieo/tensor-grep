@@ -26,9 +26,10 @@ def resolve_native_tg_binary() -> Path | None:
             repo_root / "rust_core" / "target" / "release" / binary_name,
             repo_root / "rust_core" / "target" / "debug" / binary_name,
             repo_root / "benchmarks" / binary_name,
-            repo_root / "benchmarks" / "tg_rust.exe",
         ]
     )
+    if sys.platform.startswith("win"):
+        candidates.append(repo_root / "benchmarks" / "tg_rust.exe")
 
     existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
     if existing:

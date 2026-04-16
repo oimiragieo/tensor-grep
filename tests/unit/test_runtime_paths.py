@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tensor_grep.cli import runtime_paths
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
 
 
@@ -38,6 +39,26 @@ def test_resolve_native_tg_binary_missing_override(tmp_path):
     with patch.dict(os.environ, {"TG_NATIVE_TG_BINARY": str(missing_path)}):
         with pytest.raises(FileNotFoundError, match="Configured binary"):
             resolve_native_tg_binary()
+
+
+def test_resolve_native_tg_binary_ignores_legacy_benchmark_binary(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    legacy_binary = repo_root / "benchmarks" / "tg_rust.exe"
+    legacy_binary.parent.mkdir(parents=True, exist_ok=True)
+    legacy_binary.write_text("legacy\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.setattr(runtime_paths.sys, "platform", "linux")
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() is None
 
 
 def test_resolve_ripgrep_binary_env_override(tmp_path):
