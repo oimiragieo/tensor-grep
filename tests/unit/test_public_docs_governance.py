@@ -5,6 +5,7 @@ ROUTING_DOC_PATH = Path("docs/routing_policy.md")
 WORLD_CLASS_PLAN_PATH = Path("docs/world_class_plan.md")
 BENCHMARKS_DOC_PATH = Path("docs/benchmarks.md")
 TOOL_COMPARISON_DOC_PATH = Path("docs/tool_comparison.md")
+PAPER_DOC_PATH = Path("docs/PAPER.md")
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -278,6 +279,26 @@ def test_benchmark_docs_should_record_comparative_benchmark_v5_governance() -> N
     assert "comparator additions" in doc
     assert "pack substitutions" in doc
     assert "new accepted artifact line" in doc
+
+
+def test_benchmark_docs_should_record_2026_04_18_windows_baseline_refresh() -> None:
+    doc = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
+
+    assert "## Windows Accepted Baseline Refresh (2026-04-18)" in doc
+    assert "clean `origin/main` evidence" in doc
+    assert "`benchmark_host_key`" in doc
+    assert "`host_provenance`" in doc
+    assert "`check_regression.py` policy is unchanged" in doc
+
+
+def test_paper_should_record_2026_04_18_windows_baseline_refresh() -> None:
+    doc = PAPER_DOC_PATH.read_text(encoding="utf-8")
+
+    assert "2026-04-18 Windows baseline refresh" in doc
+    assert "clean `origin/main` evidence" in doc
+    assert "`benchmark_host_key`" in doc
+    assert "`host_provenance`" in doc
+    assert "policy remained unchanged" in doc
 
 
 def test_native_rewrite_v2_roadmap_should_define_next_program() -> None:
