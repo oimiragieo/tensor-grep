@@ -76,11 +76,26 @@ class AstGrepWrapperBackend(ComputeBackend):
             for item in data_list:
                 file_path = str(item.get("file") or fallback_file or "")
                 text = item.get("text", "")
-                line_num = (
-                    item.get("range", {}).get("start", {}).get("line", 0) + 1
-                )  # 0-indexed to 1-indexed
+                match_range = item.get("range")
+                if not isinstance(match_range, dict):
+                    match_range = None
+                meta_variables = item.get("metaVariables")
+                if not isinstance(meta_variables, dict):
+                    meta_variables = None
+                start = match_range.get("start", {}) if match_range is not None else {}
+                if not isinstance(start, dict):
+                    start = {}
+                line_num = int(start.get("line", 0)) + 1  # 0-indexed to 1-indexed
 
-                matches.append(MatchLine(line_number=line_num, text=text, file=file_path))
+                matches.append(
+                    MatchLine(
+                        line_number=line_num,
+                        text=text,
+                        file=file_path,
+                        range=match_range,
+                        meta_variables=meta_variables,
+                    )
+                )
                 if file_path and file_path not in seen_files:
                     seen_files.add(file_path)
                     matched_files.append(file_path)

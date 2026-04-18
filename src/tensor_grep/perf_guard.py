@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,19 @@ def ensure_artifacts_dir(root_dir: Path) -> Path:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def benchmark_host_key(environment: Mapping[str, Any] | None) -> str:
+    if not isinstance(environment, Mapping):
+        environment = {}
+
+    platform_name = str(environment.get("platform") or "unknown").lower()
+    machine_name = str(environment.get("machine") or "unknown").lower()
+    python_version = str(environment.get("python_version") or "unknown")
+    if python_version != "unknown":
+        normalized_python_version = _normalize_python_version(python_version)
+        python_version = ".".join(str(part) for part in normalized_python_version)
+    return f"{platform_name}:{machine_name}:py{python_version}"
 
 
 def iter_regression_time_keys(suite: str | None, row: dict[str, Any]) -> tuple[str, ...]:
@@ -66,8 +80,43 @@ def check_regressions(
                 regressions.append(
                     f"{name}: {metric_key} regressed by {pct_delta:.2f}% "
                     f"(baseline={base_time:.3f}s current={cur_time:.3f}s)"
-                )
+            )
     return regressions
+
+
+def detect_comparator_drift(
+    baseline: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    comparator_key: str = "rg_time_s",
+    max_regression_pct: float = 10.0,
+    min_baseline_time_s: float = 0.2,
+) -> list[str]:
+    drift: list[str] = []
+    baseline_rows = {row["name"]: row for row in baseline.get("rows", [])}
+    current_rows = {row["name"]: row for row in current.get("rows", [])}
+
+    for name, cur in current_rows.items():
+        base = baseline_rows.get(name)
+        if not base:
+            continue
+        cur_time = cur.get(comparator_key)
+        base_time = base.get(comparator_key)
+        if not isinstance(cur_time, (float, int)) or not isinstance(base_time, (float, int)):
+            continue
+        if base_time <= 0:
+            continue
+        if float(base_time) < float(min_baseline_time_s):
+            continue
+        pct_delta = ((float(cur_time) - float(base_time)) / float(base_time)) * 100.0
+        if pct_delta == 0.0:
+            continue
+        direction = "slower" if pct_delta > 0 else "faster"
+        drift.append(
+            f"{name}: {comparator_key} comparator drift {direction} by {abs(pct_delta):.2f}% "
+            f"(baseline={base_time:.3f}s current={cur_time:.3f}s)"
+        )
+    return drift
 
 
 def detect_environment_mismatch(baseline: dict[str, Any], current: dict[str, Any]) -> str | None:

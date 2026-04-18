@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 from __future__ import annotations
 
 import argparse
@@ -25,6 +26,7 @@ from native_cpu_benchmark_utils import (  # noqa: E402
     ensure_many_file_fixture,
     resolve_native_cpu_bench_data_dir,
 )
+from tensor_grep.perf_guard import benchmark_host_key  # noqa: E402
 
 # Scenarios to test
 SCENARIOS = [
@@ -160,6 +162,13 @@ def resolve_bench_data_dir() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     return ROOT_DIR / "artifacts" / "bench_data"
+
+
+def _build_host_provenance(environment: dict[str, str]) -> dict[str, str]:
+    return {
+        "benchmark_host_key": benchmark_host_key(environment),
+        **environment,
+    }
 
 
 def generate_test_data(directory: str, num_files: int = 5, lines_per_file: int = 100000):
@@ -751,6 +760,11 @@ def main() -> int:
         "artifact": "bench_run_benchmarks",
         "suite": "run_benchmarks",
         "generated_at_epoch_s": time.time(),
+        "benchmark_host_key": benchmark_host_key({
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
+        }),
         "timing_samples_per_scenario": TIMING_SAMPLES_PER_SCENARIO,
         "native_cpu_forced": args.native,
         "native_cpu_mode": "direct_binary" if args.native else "default_binary",
@@ -761,6 +775,13 @@ def main() -> int:
             "tg_binary_source": tg_binary_source,
             "tg_launcher_mode": tg_launcher_mode,
         },
+        "host_provenance": _build_host_provenance({
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
+            "tg_binary_source": tg_binary_source,
+            "tg_launcher_mode": tg_launcher_mode,
+        }),
         "rows": rows,
         "parity_failures": parity_failures,
     }

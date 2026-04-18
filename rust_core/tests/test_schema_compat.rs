@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 const EXPECTED_EXAMPLES: &[&str] = &[
     "attempt_ledger.json",
+    "ast_run.json",
     "audit_manifest_verify.json",
     "blast_radius.json",
     "blast_radius_plan.json",
@@ -41,6 +42,7 @@ const EXPECTED_EXAMPLES: &[&str] = &[
     "source.json",
 ];
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchExample {
@@ -54,6 +56,7 @@ struct SearchExample {
     matches: Vec<SearchMatch>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetMetadataExample {
@@ -66,6 +69,7 @@ struct RulesetMetadataExample {
     rule_count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetsExample {
@@ -76,6 +80,7 @@ struct RulesetsExample {
     rulesets: Vec<RulesetMetadataExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetFindingExample {
@@ -90,6 +95,7 @@ struct RulesetFindingExample {
     evidence: Vec<RulesetEvidenceExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetEvidenceExample {
@@ -99,6 +105,7 @@ struct RulesetEvidenceExample {
     snippets: Vec<RulesetEvidenceSnippetExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetEvidenceSnippetExample {
@@ -106,6 +113,7 @@ struct RulesetEvidenceSnippetExample {
     truncated: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetScanExample {
@@ -128,6 +136,7 @@ struct RulesetScanExample {
     suppressions_written: Option<RulesetBaselineWrittenExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetBaselineSummaryExample {
@@ -138,6 +147,7 @@ struct RulesetBaselineSummaryExample {
     resolved_fingerprints: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetBaselineWrittenExample {
@@ -146,6 +156,7 @@ struct RulesetBaselineWrittenExample {
     count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RulesetSuppressionsSummaryExample {
@@ -153,6 +164,7 @@ struct RulesetSuppressionsSummaryExample {
     suppressed_findings: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RepoSymbolExample {
@@ -170,6 +182,7 @@ struct RepoSymbolExample {
     score: Option<i64>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CoverageExample {
@@ -178,6 +191,7 @@ struct CoverageExample {
     test_matching: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolDefsExample {
@@ -196,6 +210,7 @@ struct SymbolDefsExample {
     definitions: Vec<RepoSymbolExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolImpactExample {
@@ -217,6 +232,7 @@ struct SymbolImpactExample {
     related_paths: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolSourceBlockExample {
@@ -238,6 +254,7 @@ struct SymbolSourceBlockExample {
     render_diagnostics: Option<RenderDiagnosticsExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourceLineMapEntryExample {
@@ -247,6 +264,7 @@ struct SourceLineMapEntryExample {
     original_end_line: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RenderDiagnosticsExample {
@@ -261,6 +279,7 @@ struct RenderDiagnosticsExample {
     removed_boilerplate_lines: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolSourceExample {
@@ -280,6 +299,7 @@ struct SymbolSourceExample {
     sources: Vec<SymbolSourceBlockExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolReferenceExample {
@@ -292,6 +312,7 @@ struct SymbolReferenceExample {
     provenance: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolRefsExample {
@@ -311,6 +332,7 @@ struct SymbolRefsExample {
     references: Vec<SymbolReferenceExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolCallersExample {
@@ -330,6 +352,7 @@ struct SymbolCallersExample {
     related_paths: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BlastRadiusTreeLevelExample {
@@ -343,6 +366,7 @@ struct BlastRadiusTreeLevelExample {
     edge_summary: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SymbolBlastRadiusExample {
@@ -368,14 +392,56 @@ struct SymbolBlastRadiusExample {
     related_paths: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchMatch {
     file: String,
     line: usize,
     text: String,
+    #[serde(default)]
+    range: Option<SearchRangeExample>,
+    #[serde(default, rename = "metaVariables")]
+    meta_variables: Option<SearchMetaVariablesExample>,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchRangeExample {
+    #[serde(rename = "byteOffset")]
+    byte_offset: ByteRange,
+    start: SearchPositionExample,
+    end: SearchPositionExample,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchPositionExample {
+    line: usize,
+    column: usize,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchMetaVariablesExample {
+    #[serde(default)]
+    single: HashMap<String, SearchMetaVariableExample>,
+    #[serde(default)]
+    multi: HashMap<String, Vec<SearchMetaVariableExample>>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchMetaVariableExample {
+    text: String,
+    range: SearchRangeExample,
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GpuSidecarExample {
@@ -389,6 +455,7 @@ struct GpuSidecarExample {
     matches: Vec<GpuSearchMatch>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GpuSearchMatch {
@@ -397,6 +464,7 @@ struct GpuSearchMatch {
     text: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CalibrateExample {
@@ -413,6 +481,7 @@ struct CalibrateExample {
     measurements: Vec<CalibrateMeasurementExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CalibrateMeasurementExample {
@@ -423,6 +492,7 @@ struct CalibrateMeasurementExample {
     gpu_samples_ms: Vec<f64>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RewritePlanExample {
@@ -440,6 +510,7 @@ struct RewritePlanExample {
     rejected_overlaps: Vec<OverlapRejectionExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RewriteEditExample {
@@ -454,6 +525,7 @@ struct RewriteEditExample {
     metavar_env: HashMap<String, String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ByteRange {
@@ -461,6 +533,7 @@ struct ByteRange {
     end: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OverlapRejectionExample {
@@ -470,6 +543,7 @@ struct OverlapRejectionExample {
     reason: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ApplyVerifyExample {
@@ -484,6 +558,7 @@ struct ApplyVerifyExample {
     verification: Option<VerifyResultExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckpointExample {
@@ -494,6 +569,7 @@ struct CheckpointExample {
     file_count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuditManifestExample {
@@ -504,6 +580,7 @@ struct AuditManifestExample {
     signature_kind: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuditManifestVerifyChecksExample {
@@ -512,6 +589,7 @@ struct AuditManifestVerifyChecksExample {
     signature_valid: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuditManifestVerifyExample {
@@ -531,6 +609,7 @@ struct AuditManifestVerifyExample {
     errors: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct VerifyResultExample {
@@ -539,6 +618,7 @@ struct VerifyResultExample {
     mismatches: Vec<VerifyMismatchExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct VerifyMismatchExample {
@@ -549,6 +629,7 @@ struct VerifyMismatchExample {
     actual: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ValidationSummaryExample {
@@ -558,6 +639,7 @@ struct ValidationSummaryExample {
     errors: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ValidationCommandExample {
@@ -569,6 +651,7 @@ struct ValidationCommandExample {
     stderr: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct McpRewriteDiffExample {
@@ -579,6 +662,7 @@ struct McpRewriteDiffExample {
     diff: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SearchNdjsonExample {
@@ -595,6 +679,7 @@ struct SearchNdjsonExample {
     pattern_text: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RepoMapExample {
@@ -611,6 +696,7 @@ struct RepoMapExample {
     related_paths: Vec<PathBuf>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RankedRepoSymbolExample {
@@ -627,6 +713,7 @@ struct RankedRepoSymbolExample {
     score: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RepoImportExample {
@@ -636,6 +723,7 @@ struct RepoImportExample {
     provenance: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RankedRepoImportExample {
@@ -646,6 +734,7 @@ struct RankedRepoImportExample {
     score: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RankedPathMatchExample {
@@ -662,6 +751,7 @@ struct RankedPathMatchExample {
     reasons: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileSummarySymbolExample {
@@ -670,6 +760,7 @@ struct FileSummarySymbolExample {
     line: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileSummaryExample {
@@ -677,6 +768,7 @@ struct FileSummaryExample {
     symbols: Vec<FileSummarySymbolExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RenderSectionExample {
@@ -693,6 +785,7 @@ struct RenderSectionExample {
     provenance: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CandidateEditTargetsExample {
@@ -703,6 +796,7 @@ struct CandidateEditTargetsExample {
     spans: Vec<RankedEditSpanExample>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RankedEditSpanExample {
@@ -715,6 +809,7 @@ struct RankedEditSpanExample {
     reasons: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EditPlanSeedExample {
@@ -738,6 +833,7 @@ struct EditPlanSeedExample {
     rollback_risk: Option<f64>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EditPlanSeedConfidenceExample {
@@ -746,6 +842,7 @@ struct EditPlanSeedConfidenceExample {
     test: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EditPlanSpanExample {
@@ -753,6 +850,7 @@ struct EditPlanSpanExample {
     end_line: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RelatedEditSpanExample {
@@ -765,6 +863,7 @@ struct RelatedEditSpanExample {
     reasons: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ValidationPlanStepExample {
@@ -776,6 +875,7 @@ struct ValidationPlanStepExample {
     target: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContextPackExample {
@@ -796,6 +896,7 @@ struct ContextPackExample {
     related_paths: Vec<PathBuf>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContextEditPlanExample {
@@ -820,6 +921,7 @@ struct ContextEditPlanExample {
     edit_plan_seed: EditPlanSeedExample,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ContextRenderExample {
@@ -852,6 +954,7 @@ struct ContextRenderExample {
     rendered_context: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BlastRadiusRenderExample {
@@ -890,6 +993,7 @@ struct BlastRadiusRenderExample {
     rendered_caller_tree: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BlastRadiusPlanExample {
@@ -920,6 +1024,7 @@ struct BlastRadiusPlanExample {
     rendered_caller_tree: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SessionOpenExample {
@@ -930,6 +1035,7 @@ struct SessionOpenExample {
     symbol_count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SessionContextExample {
@@ -984,7 +1090,7 @@ fn test_docs_examples_match_v1_schema() {
 
     for path in &example_paths {
         match example_file_name(path) {
-            "search.json" | "index_search.json" => assert_search_example(path),
+            "search.json" | "index_search.json" | "ast_run.json" => assert_search_example(path),
             "rulesets.json" => assert_rulesets_example(path),
             "ruleset_scan.json" => assert_ruleset_scan_example(path),
             "rewrite_plan.json" => assert_rewrite_plan_example(path),
@@ -1135,6 +1241,65 @@ fn assert_search_example(path: &Path) {
             "{} match missing text",
             path.display()
         );
+        if let Some(range) = &matched.range {
+            assert!(
+                range.byte_offset.end > range.byte_offset.start,
+                "{} match range must span at least one byte",
+                path.display()
+            );
+            assert!(
+                range.end.line > range.start.line || range.end.column >= range.start.column,
+                "{} match range end must not precede start",
+                path.display()
+            );
+        }
+        if let Some(meta_variables) = &matched.meta_variables {
+            for capture in meta_variables.single.values() {
+                assert!(
+                    !capture.text.is_empty(),
+                    "{} single metavariable text must not be empty",
+                    path.display()
+                );
+                assert!(
+                    capture.range.byte_offset.end > capture.range.byte_offset.start,
+                    "{} single metavariable range must span bytes",
+                    path.display()
+                );
+            }
+            for captures in meta_variables.multi.values() {
+                assert!(
+                    !captures.is_empty(),
+                    "{} multi metavariable list must not be empty",
+                    path.display()
+                );
+                for capture in captures {
+                    assert!(
+                        !capture.text.is_empty(),
+                        "{} multi metavariable text must not be empty",
+                        path.display()
+                    );
+                    assert!(
+                        capture.range.byte_offset.end > capture.range.byte_offset.start,
+                        "{} multi metavariable range must span bytes",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    if example.routing_backend == "AstBackend" {
+        for matched in &example.matches {
+            assert!(
+                matched.range.is_some(),
+                "{} AST matches must include range metadata",
+                path.display()
+            );
+            assert!(
+                matched.meta_variables.is_some(),
+                "{} AST matches must include metavariable metadata",
+                path.display()
+            );
+        }
     }
 }
 
@@ -2744,6 +2909,7 @@ fn assert_context_pack_example(path: &Path) {
     }
 }
 
+#[allow(dead_code)]
 fn assert_edit_plan_common(
     path: &Path,
     candidate_edit_targets: &CandidateEditTargetsExample,

@@ -249,3 +249,105 @@ def test_select_ast_backend_name_for_pattern_should_use_wrapper_for_ast_grep_pat
     from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
 
     assert _select_ast_backend_name_for_pattern("def $FUNC():", "python") == "AstGrepWrapperBackend"
+
+
+def test_run_command_should_fall_back_for_unencodable_ast_output(monkeypatch):
+    import tensor_grep.cli.ast_workflows as ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+    from tensor_grep.core.result import MatchLine
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            return SearchResult(
+                matches=[MatchLine(line_number=1, text="def 漢():", file="sample.py")],
+                matched_file_paths=["sample.py"],
+                total_files=1,
+                total_matches=1,
+            )
+
+    class _Buffer:
+        def __init__(self):
+            self.payload = bytearray()
+
+        def write(self, data: bytes) -> int:
+            self.payload.extend(data)
+            return len(data)
+
+        def flush(self) -> None:
+            return None
+
+    class _Cp1252Stdout:
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.buffer = _Buffer()
+            self.text_writes: list[str] = []
+
+        def write(self, text: str) -> int:
+            text.encode(self.encoding)
+            self.text_writes.append(text)
+            return len(text)
+
+        def flush(self) -> None:
+            return None
+
+    stdout = _Cp1252Stdout()
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
+    monkeypatch.setattr(ast_workflows.sys, "stdout", stdout)
+
+    exit_code = run_command("def $FUNC():", path="sample.py", lang="python")
+
+    assert exit_code == 0
+    assert any("Executing ast-grep structural matching run..." in chunk for chunk in stdout.text_writes)
+    assert stdout.buffer.payload.decode("utf-8") == "1:def 漢():\n"
+
+
+def test_run_command_should_escape_unencodable_ast_output_without_binary_buffer(monkeypatch):
+    import tensor_grep.cli.ast_workflows as ast_workflows
+    from tensor_grep.cli.ast_workflows import run_command
+    from tensor_grep.core.result import MatchLine
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            return SearchResult(
+                matches=[MatchLine(line_number=1, text="def 漢():", file="sample.py")],
+                matched_file_paths=["sample.py"],
+                total_files=1,
+                total_matches=1,
+            )
+
+    class _Cp1252TextOnlyStdout:
+        encoding = "cp1252"
+
+        def __init__(self):
+            self.text_writes: list[str] = []
+
+        def write(self, text: str) -> int:
+            text.encode(self.encoding)
+            self.text_writes.append(text)
+            return len(text)
+
+        def flush(self) -> None:
+            return None
+
+    stdout = _Cp1252TextOnlyStdout()
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
+    monkeypatch.setattr(ast_workflows.sys, "stdout", stdout)
+
+    exit_code = run_command("def $FUNC():", path="sample.py", lang="python")
+
+    assert exit_code == 0
+    assert any("Executing ast-grep structural matching run..." in chunk for chunk in stdout.text_writes)
+    assert "1:def \\u6f22():\n" in stdout.text_writes

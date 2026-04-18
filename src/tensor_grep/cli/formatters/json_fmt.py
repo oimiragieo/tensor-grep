@@ -8,6 +8,15 @@ JSON_OUTPUT_VERSION = 1
 
 class JsonFormatter(OutputFormatter):
     def format(self, result: SearchResult) -> str:
+        matches = []
+        for match in result.matches:
+            payload = {"file": match.file, "line_number": match.line_number, "text": match.text}
+            if match.range is not None:
+                payload["range"] = match.range
+            if match.meta_variables is not None:
+                payload["metaVariables"] = match.meta_variables
+            matches.append(payload)
+
         data = {
             "version": JSON_OUTPUT_VERSION,
             "total_matches": result.total_matches,
@@ -24,9 +33,6 @@ class JsonFormatter(OutputFormatter):
             ],
             "routing_distributed": result.routing_distributed,
             "routing_worker_count": result.routing_worker_count,
-            "matches": [
-                {"file": m.file, "line_number": m.line_number, "text": m.text}
-                for m in result.matches
-            ],
+            "matches": matches,
         }
         return json.dumps(data)

@@ -1814,6 +1814,47 @@ fn test_rust_control_plane_no_ignore() {
 }
 
 #[test]
+fn test_rust_control_plane_case_insensitive_search_dispatches_to_ripgrep() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("-i")
+        .arg("warning")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_max_count_search_dispatches_to_ripgrep() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("search")
+        .arg("-m")
+        .arg("5")
+        .arg("ERROR")
+        .arg(dir.path())
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
 fn test_rust_control_plane_version() {
     let output_v_long = tg().arg("--version").output().unwrap();
     assert!(String::from_utf8_lossy(&output_v_long.stdout).contains("tg 0.2.0"));

@@ -16,6 +16,7 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--files-with-matches",
     "--files-without-match",
     "--format",
+    "--generate",
     "--glob",
     "--gpu-device-ids",
     "--json",
@@ -89,6 +90,8 @@ def _requires_full_cli(search_args: list[str]) -> bool:
     for arg in search_args:
         if arg in {"--help", "-h"}:
             return True
+        if arg in {"--show-completion", "--install-completion"}:
+            return True
         if arg in _TG_ONLY_SEARCH_FLAGS:
             return True
         if arg.startswith(_TG_ONLY_SEARCH_FLAG_PREFIXES):
@@ -156,6 +159,9 @@ def main_entry() -> None:
         raise SystemExit(0)
 
     if argv and argv[0] in {"run", "scan", "test"}:
+        if argv[0] == "scan" and "--inline-rules" in argv:
+            _run_full_cli()
+            return
         _run_ast_workflow_cli(argv)
         return
 

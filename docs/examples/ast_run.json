@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "routing_backend": "AstBackend",
+  "routing_reason": "ast-native",
+  "sidecar_used": false,
+  "query": "def $F($$$ARGS): $$$BODY",
+  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\ast\\ast_fixture.py",
+  "total_matches": 1,
+  "matches": [
+    {
+      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\ast\\ast_fixture.py",
+      "line": 1,
+      "text": "def add(a, b):\n    return a + b",
+      "range": {
+        "byteOffset": {
+          "start": 0,
+          "end": 31
+        },
+        "start": {
+          "line": 0,
+          "column": 0
+        },
+        "end": {
+          "line": 1,
+          "column": 16
+        }
+      },
+      "metaVariables": {
+        "single": {
+          "F": {
+            "text": "add",
+            "range": {
+              "byteOffset": {
+                "start": 4,
+                "end": 7
+              },
+              "start": {
+                "line": 0,
+                "column": 4
+              },
+              "end": {
+                "line": 0,
+                "column": 7
+              }
+            }
+          }
+        },
+        "multi": {
+          "ARGS": [
+            {
+              "text": "a",
+              "range": {
+                "byteOffset": {
+                  "start": 8,
+                  "end": 9
+                },
+                "start": {
+                  "line": 0,
+                  "column": 8
+                },
+                "end": {
+                  "line": 0,
+                  "column": 9
+                }
+              }
+            },
+            {
+              "text": ",",
+              "range": {
+                "byteOffset": {
+                  "start": 9,
+                  "end": 10
+                },
+                "start": {
+                  "line": 0,
+                  "column": 9
+                },
+                "end": {
+                  "line": 0,
+                  "column": 10
+                }
+              }
+            },
+            {
+              "text": "b",
+              "range": {
+                "byteOffset": {
+                  "start": 11,
+                  "end": 12
+                },
+                "start": {
+                  "line": 0,
+                  "column": 11
+                },
+                "end": {
+                  "line": 0,
+                  "column": 12
+                }
+              }
+            }
+          ],
+          "BODY": [
+            {
+              "text": "return a + b",
+              "range": {
+                "byteOffset": {
+                  "start": 19,
+                  "end": 31
+                },
+                "start": {
+                  "line": 1,
+                  "column": 4
+                },
+                "end": {
+                  "line": 1,
+                  "column": 16
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

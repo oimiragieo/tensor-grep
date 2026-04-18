@@ -443,6 +443,28 @@ def _describe_ast_backend_modes(backend_names: set[str]) -> str:
     return "adaptive AST routing"
 
 
+def _safe_stdout_line(text: str) -> None:
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        payload = f"{text}\n".encode("utf-8", errors="replace")
+        buffer = getattr(sys.stdout, "buffer", None)
+        if buffer is not None:
+            buffer.write(payload)
+            flush = getattr(buffer, "flush", None)
+            if callable(flush):
+                flush()
+            return
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        escaped_text = f"{text}\n".encode(encoding, errors="backslashreplace").decode(
+            encoding, errors="ignore"
+        )
+        sys.stdout.write(escaped_text)
+        flush = getattr(sys.stdout, "flush", None)
+        if callable(flush):
+            flush()
+
+
 def run_command(
     pattern: str,
     path: str | None = None,
@@ -492,7 +514,7 @@ def run_command(
             test_cmd=test_cmd,
             policy=policy,
         )
-        print(rewrite_json)
+        _safe_stdout_line(rewrite_json)
         return exit_code
 
     del rewrite, config, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
@@ -503,7 +525,7 @@ def run_command(
     backend_name = type(backend).__name__
 
     if not json_output:
-        print(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
+        _safe_stdout_line(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
 
         if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
             print(
@@ -536,6 +558,7 @@ def run_command(
     if json_output:
         import json
 
+        matches_payload: list[dict[str, object]] = []
         payload = {
             "version": 1,
             "routing_backend": backend_name,
@@ -544,17 +567,21 @@ def run_command(
             "query": pattern,
             "path": search_path,
             "total_matches": all_results.total_matches,
-            "matches": [
-                {"file": match.file, "line": match.line_number, "text": match.text}
-                for match in all_results.matches
-            ],
+            "matches": matches_payload,
         }
-        print(json.dumps(payload))
+        for match in all_results.matches:
+            match_payload = {"file": match.file, "line": match.line_number, "text": match.text}
+            if match.range is not None:
+                match_payload["range"] = match.range
+            if match.meta_variables is not None:
+                match_payload["metaVariables"] = match.meta_variables
+            matches_payload.append(match_payload)
+        _safe_stdout_line(json.dumps(payload))
         return 0
 
     from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 
-    print(RipgrepFormatter().format(all_results))
+    _safe_stdout_line(RipgrepFormatter().format(all_results))
     return 0
 
 

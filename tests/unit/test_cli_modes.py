@@ -4,11 +4,13 @@ import json
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
+from typer.completion import get_completion_script
 from typer.testing import CliRunner
 
 from tensor_grep.cli import repo_map
@@ -328,6 +330,136 @@ def test_files_mode_lists_candidates(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout.strip().splitlines() == ["a.py", "b.py"]
+
+
+def test_files_mode_lists_candidates_without_pattern(monkeypatch):
+    global _FAKE_WALK
+    _FAKE_WALK = {".": ["a.py", "b.py"]}
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "--files", "."])
+
+    assert result.exit_code == 0
+    assert result.stdout.strip().splitlines() == ["a.py", "b.py"]
+
+
+def test_glob_case_insensitive_matches_case_folded_paths(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    if not RipgrepBackend().is_available():
+        pytest.skip("rg is not available")
+
+    target = tmp_path / "sample.TXT"
+    target.write_text("hello\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["search", "hello", str(tmp_path), "--glob-case-insensitive", "--glob", "*.txt"],
+    )
+    captured = capfd.readouterr()
+
+    assert result.exit_code == 0
+    assert "sample.TXT" in captured.out
+
+
+def test_debug_passthrough_keeps_stdout_match_only(tmp_path: Path):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    if not RipgrepBackend().is_available():
+        pytest.skip("rg is not available")
+
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tensor_grep.cli.main", "search", "hello", str(target), "--debug"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "hello\n"
+    assert "routing.backend=RipgrepBackend" not in result.stdout
+
+
+def test_stats_passthrough_matches_ripgrep_stdout_contract(tmp_path: Path):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+
+    if not RipgrepBackend().is_available():
+        pytest.skip("rg is not available")
+
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+    rg_binary = resolve_ripgrep_binary()
+    assert rg_binary is not None
+
+    expected = subprocess.run(
+        [str(rg_binary), "--stats", "hello", str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "tensor_grep.cli.main", "search", "hello", str(target), "--stats"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    def _normalize_stats_timing(text: str) -> str:
+        normalized_lines: list[str] = []
+        for line in text.splitlines():
+            if line.endswith(" seconds spent searching"):
+                normalized_lines.append("<SEARCH_TIME>")
+                continue
+            if re.fullmatch(r"\d+\.\d+ seconds", line):
+                normalized_lines.append("<TOTAL_TIME>")
+                continue
+            normalized_lines.append(line)
+        return "\n".join(normalized_lines)
+
+    assert result.returncode == expected.returncode == 0
+    assert _normalize_stats_timing(result.stdout) == _normalize_stats_timing(expected.stdout)
+    assert result.stderr == expected.stderr
+
+
+@pytest.mark.parametrize(
+    ("generator", "shell"),
+    [
+        ("complete-bash", "bash"),
+        ("complete-zsh", "zsh"),
+        ("complete-fish", "fish"),
+        ("complete-powershell", "powershell"),
+    ],
+)
+def test_search_generate_should_emit_shell_completion_script(
+    generator: str, shell: str
+) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["search", "--generate", generator], prog_name="tg")
+
+    assert result.exit_code == 0
+    assert result.output.strip() == get_completion_script(
+        prog_name="tg",
+        complete_var="_TG_COMPLETE",
+        shell=shell,
+    )
+
+
+def test_search_generate_should_reject_unsupported_generator() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["search", "--generate", "complete-elvish"], prog_name="tg")
+
+    assert result.exit_code == 2
+    assert "Unsupported --generate value 'complete-elvish'." in result.output
 
 
 def test_session_daemon_help_lists_lifecycle_commands() -> None:
@@ -1551,6 +1683,10 @@ def test_cli_stats_should_respect_count_only_ripgrep_results(monkeypatch):
     _FAKE_WALK = {".": ["a.py", "b.py"]}
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeRipgrepPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
 
     runner = CliRunner()
     result = runner.invoke(app, ["search", "ERROR", ".", "--stats", "-c"])
@@ -1592,6 +1728,54 @@ def test_files_without_match_lists_unmatched_files(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "b.py"
+
+
+def test_files_without_match_respects_scanned_candidates_for_hidden_relative_root(
+    monkeypatch,
+):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    if not RipgrepBackend().is_available():
+        pytest.skip("rg is not available")
+
+    with tempfile.TemporaryDirectory(dir=Path.cwd(), prefix=".fixture-") as temp_dir:
+        hidden_root = Path(temp_dir)
+        (hidden_root / "large.txt").write_text("NEEDLE\n" * 5, encoding="utf-8")
+        (hidden_root / "empty.txt").write_text("other\n", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "tensor_grep.cli.main",
+                "search",
+                "NEEDLE",
+                hidden_root.name,
+                "--files-without-match",
+            ],
+            cwd=Path.cwd(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0
+        assert result.stdout.strip() == str(Path(hidden_root.name) / "empty.txt")
+
+
+def test_files_with_matches_null_outputs_nul_separator(tmp_path: Path):
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tensor_grep.cli.main", "search", "hello", str(target), "-l", "-0"],
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.endswith(b"\x00")
+    assert b"\r\n" not in result.stdout
 
 
 def test_only_matching_outputs_token_not_whole_line(monkeypatch):
@@ -1745,6 +1929,91 @@ def test_cli_disables_ripgrep_passthrough_for_short_replace_mode(monkeypatch):
 
     assert result.exit_code == 0
     assert called["passthrough"] is False
+
+
+def test_cli_replaces_rg_capture_groups_in_output(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="abc123", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "(?P<letters>[a-z]+)(?P<digits>[0-9]+)",
+            ".",
+            "--replace",
+            "$digits-${letters}-$1-$2-$$-$0-${1}a-$1a",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "123-abc-abc-123-$-abc123-abca-"
+
+
+def test_cli_replaces_rg_capture_groups_for_fixed_strings(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="hello world", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["search", "hello", ".", "-F", "--replace", "$0-${1}a-$1-$$"],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == "hello-a--$ world"
+
+
+def test_cli_keeps_non_ascii_replacement_tokens_literal(monkeypatch):
+    arabic_digit_one = "\u0661"
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="abc123", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "(?P<letters>[a-z]+)(?P<digits>[0-9]+)",
+            ".",
+            "--replace",
+            f"$digits-$ébar-${arabic_digit_one}-$$",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"123-$ébar-${arabic_digit_one}-$"
 
 
 def test_upgrade_uses_uv_when_available(monkeypatch):
@@ -2010,7 +2279,7 @@ def test_cli_debug_prints_pipeline_routing_reason(monkeypatch):
     assert "[debug] routing.backend=FakeBackend reason=unit_test_fake_pipeline" in result.output
 
 
-def test_cli_debug_prints_passthrough_routing_reason(monkeypatch):
+def test_cli_debug_passthrough_does_not_emit_tg_routing_banner(monkeypatch):
     def _fake_passthrough(self, paths, pattern, config=None):
         return 0
 
@@ -2026,10 +2295,7 @@ def test_cli_debug_prints_passthrough_routing_reason(monkeypatch):
     result = runner.invoke(app, ["search", "ERROR", ".", "--debug"])
 
     assert result.exit_code == 0
-    assert (
-        "[debug] routing.backend=RipgrepBackend reason=rg_passthrough_cli_fast_path"
-        in result.output
-    )
+    assert "routing.backend=RipgrepBackend" not in result.output
 
 
 def test_cli_stats_prints_summary_when_matches_found(monkeypatch):
@@ -2194,6 +2460,51 @@ def test_cli_json_output_should_include_aggregated_matched_file_metadata(monkeyp
     payload = json.loads(result.output)
     assert sorted(payload["matched_file_paths"]) == ["a.log", "b.log"]
     assert payload["match_counts_by_file"] == {"a.log": 1, "b.log": 1}
+
+
+def test_cli_json_output_should_preserve_ast_range_and_meta_variables(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.py"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.py": SearchResult(
+                matches=[
+                    MatchLine(
+                        line_number=1,
+                        text="def hello(name):",
+                        file="a.py",
+                        range={
+                            "byteOffset": {"start": 0, "end": 16},
+                            "start": {"line": 0, "column": 0},
+                            "end": {"line": 0, "column": 16},
+                        },
+                        meta_variables={
+                            "single": {"F": {"text": "hello"}},
+                            "multi": {"ARGS": [{"text": "name"}]},
+                        },
+                    )
+                ],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "def $F($$$ARGS):", ".", "--ast", "--format", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["matches"][0]["range"] == {
+        "byteOffset": {"start": 0, "end": 16},
+        "start": {"line": 0, "column": 0},
+        "end": {"line": 0, "column": 16},
+    }
+    assert payload["matches"][0]["metaVariables"] == {
+        "single": {"F": {"text": "hello"}},
+        "multi": {"ARGS": [{"text": "name"}]},
+    }
 
 
 def test_cli_json_output_should_prefer_runtime_backend_metadata_over_pipeline_selection(
@@ -2823,6 +3134,28 @@ def test_scan_builtin_ruleset_can_emit_evidence_snippets(monkeypatch):
     assert payload["findings"][0]["evidence"][0]["snippets"] == [
         {"text": "hashlib.md5(", "truncated": True}
     ]
+
+
+def test_scan_supports_inline_rules_text(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    inline_rules = "\n".join(
+        [
+            "id: no-print",
+            "language: python",
+            "rule:",
+            "  pattern: print($A)",
+        ]
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["scan", "--inline-rules", inline_rules, "--path", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0
+    assert "[scan] rule=no-print lang=python matches=1 files=1" in result.output
+    assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
 def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):

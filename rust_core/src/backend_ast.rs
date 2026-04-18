@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use ast_grep_core::{
-    matcher::NodeMatch, meta_var::MetaVariable, tree_sitter::LanguageExt, Pattern,
+    matcher::NodeMatch, meta_var::MetaVariable, tree_sitter::LanguageExt, Node, Pattern,
 };
 use ast_grep_language::SupportLang;
 use ignore::{
@@ -62,11 +62,24 @@ pub struct EditCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstMetaVariableCapture {
+    pub text: String,
+    pub byte_range: Range<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AstMetaVariables {
+    pub single: BTreeMap<String, AstMetaVariableCapture>,
+    pub multi: BTreeMap<String, Vec<AstMetaVariableCapture>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstMatch {
     pub file: PathBuf,
     pub line: usize,
     pub matched_text: String,
     pub candidate: EditCandidate,
+    pub meta_variables: AstMetaVariables,
 }
 
 impl AstMatch {
@@ -90,6 +103,20 @@ pub struct AstCliMatch {
 pub struct AstCliFileMatches {
     pub file: PathBuf,
     pub matches: Vec<AstCliMatch>,
+}
+
+#[derive(Clone)]
+struct CompiledAstPattern {
+    pattern: Pattern,
+    rust_function_signature_fallback: Option<RustFunctionSignatureFallback>,
+}
+
+#[derive(Clone)]
+struct RustFunctionSignatureFallback {
+    visibility: Option<String>,
+    name_pattern: Pattern,
+    parameters_pattern: Option<Pattern>,
+    raw_params: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -348,7 +375,7 @@ impl AstBackend {
         let language = resolve_language(lang)?;
         let compiled_pattern = compile_ast_pattern(pattern, language)?;
 
-        let prefilter_literal = extract_prefilter_literal(&compiled_pattern);
+        let prefilter_literal = extract_prefilter_literal(&compiled_pattern.pattern);
 
         let per_file_matches: Result<Vec<Vec<AstCliMatch>>> = files
             .par_iter()
@@ -767,7 +794,7 @@ impl AstBackend {
     }
 
     fn search_file_static(
-        pattern: &Pattern,
+        pattern: &CompiledAstPattern,
         lang: SupportLang,
         prefilter_literal: Option<&str>,
         file: &Path,
@@ -784,16 +811,29 @@ impl AstBackend {
         let mut line_starts: Option<Vec<usize>> = None;
         let mut matches = Vec::new();
 
-        for matched in ast.root().find_all(pattern.clone()) {
+        for matched in ast.root().find_all(pattern.pattern.clone()) {
             let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
             matches.push(build_match(&file_owned, &source, ls, matched));
+        }
+
+        if let Some(fallback) = &pattern.rust_function_signature_fallback {
+            let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+            for fallback_match in
+                collect_rust_function_signature_matches(fallback, ast.root(), file, &source, ls)
+            {
+                if !matches.iter().any(|existing| {
+                    existing.candidate.byte_range == fallback_match.candidate.byte_range
+                }) {
+                    matches.push(fallback_match);
+                }
+            }
         }
 
         Ok(matches)
     }
 
     fn search_file_for_cli_static(
-        pattern: &Pattern,
+        pattern: &CompiledAstPattern,
         lang: SupportLang,
         prefilter_literal: Option<&str>,
         file: &Path,
@@ -809,12 +849,29 @@ impl AstBackend {
         let mut line_starts: Option<Vec<usize>> = None;
         let mut matches = Vec::new();
 
-        for matched in ast.root().find_all(pattern.clone()) {
+        for matched in ast.root().find_all(pattern.pattern.clone()) {
             let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
             matches.push(AstCliMatch {
                 line: line_number_for_byte(ls, matched.range().start),
                 matched_text: matched.text().to_string(),
             });
+        }
+
+        if let Some(fallback) = &pattern.rust_function_signature_fallback {
+            let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+            for fallback_match in
+                collect_rust_function_signature_matches(fallback, ast.root(), file, &source, ls)
+            {
+                if !matches.iter().any(|existing| {
+                    existing.line == fallback_match.line
+                        && existing.matched_text == fallback_match.matched_text
+                }) {
+                    matches.push(AstCliMatch {
+                        line: fallback_match.line,
+                        matched_text: fallback_match.matched_text,
+                    });
+                }
+            }
         }
 
         Ok(matches)
@@ -830,6 +887,7 @@ fn build_match<'tree>(
     let byte_range = matched.range();
     let matched_text = matched.text().to_string();
     let file_path = file.to_path_buf();
+    let meta_variables = extract_structured_meta_variables(matched.get_env());
     let candidate = EditCandidate {
         file: file_path.clone(),
         byte_range: byte_range.clone(),
@@ -841,20 +899,191 @@ fn build_match<'tree>(
         line: line_number_for_byte(line_starts, byte_range.start),
         matched_text,
         candidate,
+        meta_variables,
     }
 }
 
-fn compile_ast_pattern(pattern: &str, language: SupportLang) -> Result<Pattern> {
+fn compile_ast_pattern(pattern: &str, language: SupportLang) -> Result<CompiledAstPattern> {
     let compiled_pattern = Pattern::try_new(pattern, language)
         .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
-    if compiled_pattern.has_error() {
+
+    let fallback = build_rust_function_signature_fallback(pattern, language);
+
+    if compiled_pattern.has_error() && fallback.is_none() {
         anyhow::bail!("Invalid pattern: parse error");
     }
-    Ok(compiled_pattern)
+
+    Ok(CompiledAstPattern {
+        pattern: compiled_pattern,
+        rust_function_signature_fallback: fallback,
+    })
+}
+
+fn build_rust_function_signature_fallback(
+    pattern: &str,
+    language: SupportLang,
+) -> Option<RustFunctionSignatureFallback> {
+    if language != SupportLang::Rust {
+        return None;
+    }
+
+    let trimmed = pattern.trim();
+    if trimmed.contains('{')
+        || trimmed.contains('}')
+        || trimmed.contains("->")
+        || trimmed.contains("where")
+        || trimmed.contains('<')
+        || trimmed.contains(';')
+    {
+        return None;
+    }
+
+    let (visibility, remainder) = if let Some(rest) = trimmed.strip_prefix("pub ") {
+        (Some(String::from("pub")), rest.trim_start())
+    } else {
+        (None, trimmed)
+    };
+
+    let remainder = remainder.strip_prefix("fn ")?;
+    let remainder = remainder.trim_end();
+    let open_paren = remainder.find('(')?;
+    if !remainder.ends_with(')') {
+        return None;
+    }
+
+    let name = remainder[..open_paren].trim();
+    if name.is_empty() {
+        return None;
+    }
+    let params = &remainder[open_paren + 1..remainder.len() - 1];
+
+    let name_pattern = match Pattern::try_new(name, language) {
+        Ok(p) => p,
+        Err(_) => return None,
+    };
+
+    let raw_params = params.trim().to_string();
+    let parameters_pattern = if raw_params == "$$$ARGS" || raw_params.is_empty() {
+        None
+    } else {
+        match Pattern::contextual(
+            &format!("fn placeholder({params}) {{}}"),
+            "parameters",
+            language,
+        ) {
+            Ok(p) => Some(p),
+            Err(_) => return None,
+        }
+    };
+
+    Some(RustFunctionSignatureFallback {
+        visibility,
+        name_pattern,
+        parameters_pattern,
+        raw_params,
+    })
+}
+
+fn merge_metavar_env(target: &mut HashMap<String, String>, additions: HashMap<String, String>) {
+    for (name, value) in additions {
+        target.insert(name, value);
+    }
+}
+
+fn collect_rust_function_signature_matches(
+    fallback: &RustFunctionSignatureFallback,
+    root: Node<'_, ast_grep_core::tree_sitter::StrDoc<SupportLang>>,
+    file: &Path,
+    source: &str,
+    line_starts: &[usize],
+) -> Vec<AstMatch> {
+    let file_path = file.to_path_buf();
+    let mut matches = Vec::new();
+
+    for node in root.dfs() {
+        if node.kind().as_ref() != "function_item" {
+            continue;
+        }
+
+        if let Some(expected_visibility) = fallback.visibility.as_deref() {
+            let Some(visibility_node) = node.field("visibility_modifier") else {
+                continue;
+            };
+            if visibility_node.text() != expected_visibility {
+                continue;
+            }
+        }
+
+        let Some(name_node) = node.field("name") else {
+            continue;
+        };
+        let Some(name_match) = name_node.find(fallback.name_pattern.clone()) else {
+            continue;
+        };
+
+        let Some(parameters_node) = node.field("parameters") else {
+            continue;
+        };
+
+        let mut metavar_env = extract_metavar_env(source, name_match.get_env());
+        let mut meta_variables = extract_structured_meta_variables(name_match.get_env());
+
+        if let Some(parameters_pattern) = &fallback.parameters_pattern {
+            let Some(parameters_match) = parameters_node.find(parameters_pattern.clone()) else {
+                continue;
+            };
+            merge_metavar_env(
+                &mut metavar_env,
+                extract_metavar_env(source, parameters_match.get_env()),
+            );
+            merge_structured_meta_variables(
+                &mut meta_variables,
+                extract_structured_meta_variables(parameters_match.get_env()),
+            );
+        } else if fallback.raw_params == "$$$ARGS" {
+            let text = parameters_node.text();
+            let mut inner = text.trim();
+            if inner.starts_with('(') && inner.ends_with(')') {
+                inner = &inner[1..inner.len() - 1];
+            }
+            metavar_env.insert("ARGS".to_string(), inner.to_string());
+            let parameter_range = parameters_node.range();
+            if parameter_range.end > parameter_range.start + 1 && !inner.is_empty() {
+                meta_variables.multi.insert(
+                    "ARGS".to_string(),
+                    vec![AstMetaVariableCapture {
+                        text: inner.to_string(),
+                        byte_range: (parameter_range.start + 1)..(parameter_range.end - 1),
+                    }],
+                );
+            }
+        } else if fallback.raw_params.is_empty() {
+            let text = parameters_node.text();
+            let inner = text.trim();
+            if inner != "()" {
+                continue;
+            }
+        }
+
+        let byte_range = node.range();
+        matches.push(AstMatch {
+            file: file_path.clone(),
+            line: line_number_for_byte(line_starts, byte_range.start),
+            matched_text: node.text().to_string(),
+            candidate: EditCandidate {
+                file: file_path.clone(),
+                byte_range,
+                metavar_env,
+            },
+            meta_variables,
+        });
+    }
+
+    matches
 }
 
 fn search_path_with_prefilter(
-    pattern: &Pattern,
+    pattern: &CompiledAstPattern,
     lang: SupportLang,
     path: &Path,
     prefilter_enabled: bool,
@@ -864,7 +1093,7 @@ fn search_path_with_prefilter(
     }
 
     let prefilter_literal = prefilter_enabled
-        .then(|| extract_prefilter_literal(pattern))
+        .then(|| extract_prefilter_literal(&pattern.pattern))
         .flatten();
 
     if path.is_file() {
@@ -887,7 +1116,7 @@ fn search_path_with_prefilter(
 }
 
 fn search_path_for_cli(
-    pattern: &Pattern,
+    pattern: &CompiledAstPattern,
     lang: SupportLang,
     path: &Path,
     prefilter_enabled: bool,
@@ -897,7 +1126,7 @@ fn search_path_for_cli(
     }
 
     let prefilter_literal = prefilter_enabled
-        .then(|| extract_prefilter_literal(pattern))
+        .then(|| extract_prefilter_literal(&pattern.pattern))
         .flatten();
 
     if path.is_file() {
@@ -1734,6 +1963,51 @@ fn extract_metavar_env(
     extracted
 }
 
+fn extract_structured_meta_variables(
+    env: &ast_grep_core::meta_var::MetaVarEnv<'_, ast_grep_core::tree_sitter::StrDoc<SupportLang>>,
+) -> AstMetaVariables {
+    let mut extracted = AstMetaVariables::default();
+
+    for variable in env.get_matched_variables() {
+        match variable {
+            MetaVariable::Capture(name, _) => {
+                if let Some(node) = env.get_match(&name) {
+                    extracted.single.insert(
+                        name,
+                        AstMetaVariableCapture {
+                            text: node.text().to_string(),
+                            byte_range: node.range(),
+                        },
+                    );
+                }
+            }
+            MetaVariable::MultiCapture(name) => {
+                let nodes = env.get_multiple_matches(&name);
+                let captures: Vec<AstMetaVariableCapture> = nodes
+                    .into_iter()
+                    .map(|node| AstMetaVariableCapture {
+                        text: node.text().to_string(),
+                        byte_range: node.range(),
+                    })
+                    .collect();
+                if !captures.is_empty() {
+                    extracted.multi.insert(name, captures);
+                }
+            }
+            MetaVariable::Dropped(_) | MetaVariable::Multiple => {}
+        }
+    }
+
+    extracted
+}
+
+fn merge_structured_meta_variables(target: &mut AstMetaVariables, other: AstMetaVariables) {
+    target.single.extend(other.single);
+    for (name, captures) in other.multi {
+        target.multi.entry(name).or_default().extend(captures);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2016,7 +2290,7 @@ mod tests {
     #[test]
     fn search_prefilter_falls_back_for_wildcard_only_patterns() {
         let pattern = compile_ast_pattern("$F($$$ARGS)", SupportLang::Python).unwrap();
-        assert_eq!(extract_prefilter_literal(&pattern), None);
+        assert_eq!(extract_prefilter_literal(&pattern.pattern), None);
 
         let dir = tempdir().unwrap();
         write_search_fixture(dir.path(), "calls.py", "first(a)\nsecond(b, c)\n");

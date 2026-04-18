@@ -3165,6 +3165,42 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     assert exit_code == 0
 
 
+def test_check_regression_should_report_rg_comparator_drift(monkeypatch, tmp_path, capsys):
+    module = _load_script_module("check_regression_script_rg_drift", "benchmarks/check_regression.py")
+    baseline_path = tmp_path / "baseline.json"
+    current_path = tmp_path / "current.json"
+    payload = {
+        "suite": "run_benchmarks",
+        "environment": {"platform": "windows", "machine": "amd64"},
+        "rows": [{"name": "x", "tg_time_s": 1.0, "rg_time_s": 0.9}],
+    }
+    baseline_path.write_text(json.dumps(payload), encoding="utf-8")
+    current_path.write_text(
+        json.dumps({
+            **payload,
+            "rows": [{"name": "x", "tg_time_s": 1.0, "rg_time_s": 1.2}],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_regression.py",
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+        ],
+    )
+
+    exit_code = module.main()
+    stdout = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "rg_time_s" in stdout
+    assert "drift" in stdout
+
+
 def test_check_regression_should_use_five_percent_default_threshold(monkeypatch, tmp_path):
     module = _load_script_module(
         "check_regression_script_default_threshold", "benchmarks/check_regression.py"
@@ -9020,3 +9056,214 @@ def test_build_external_agent_patch_driver_scorecard_cli_should_write_output(tmp
     written = json.loads(output_path.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert written["by_system"]["codex"]["validation_fit"] == "strong"
+
+
+def test_run_cold_path_attribution_should_write_output(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_cold_path_attribution_script",
+        "benchmarks/run_cold_path_attribution.py",
+    )
+
+    bench_dir = tmp_path / "bench_data_root"
+    generated: list[tuple[str, int, int]] = []
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: bench_dir)
+    monkeypatch.setattr(
+        module,
+        "generate_test_data",
+        lambda directory, num_files, lines_per_file: generated.append(
+            (directory, num_files, lines_per_file)
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda binary=None: (tmp_path / "tg.exe", "explicit_arg"),
+    )
+    timing_cmds: list[list[str]] = []
+    monkeypatch.setattr(
+        module,
+        "collect_timing_samples",
+        lambda cmd, *args, **kwargs: (timing_cmds.append(list(cmd)) or 0.123, [0.120, 0.123, 0.126]),
+    )
+
+    def fake_run_cmd_capture(cmd, *, env_overrides=None):
+        trace_path = Path(env_overrides["TG_STARTUP_TRACE_PATH"])
+        trace_path.write_text(
+            json.dumps({"phase": "startup", "marker": "trace-file"}),
+            encoding="utf-8",
+        )
+        return 0, "ignored stdout"
+
+    monkeypatch.setattr(module, "run_cmd_capture", fake_run_cmd_capture)
+
+    output_path = tmp_path / "cold-path.json"
+    exit_code = module.main(["--output", str(output_path)])
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["artifact"] == "bench_cold_path_attribution"
+    assert payload["suite"] == "cold_path_attribution"
+    assert {row["launcher_mode"] for row in payload["rows"]} == set(module.DEFAULT_LAUNCHER_MODES)
+    assert payload["rows"][0]["name"] == "1. Simple String Match [explicit_binary]"
+    assert payload["rows"][0]["phase_trace"] == {"phase": "startup", "marker": "trace-file"}
+    assert all(str(bench_dir) in cmd for cmd in timing_cmds)
+    assert generated == [(str(bench_dir), 2, 2_000_000)]
+
+
+def test_run_cold_path_attribution_should_keep_rg_baseline_per_scenario(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_cold_path_attribution_rg_script",
+        "benchmarks/run_cold_path_attribution.py",
+    )
+
+    bench_dir = tmp_path / "bench_data_root"
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: bench_dir)
+    monkeypatch.setattr(module, "generate_test_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda binary=None: (tmp_path / "tg.exe", "explicit_arg"),
+    )
+    timing_cmds: list[list[str]] = []
+    monkeypatch.setattr(
+        module,
+        "collect_timing_samples",
+        lambda cmd, *args, **kwargs: (timing_cmds.append(list(cmd)) or 0.200, [0.200, 0.201, 0.199]),
+    )
+
+    def fake_run_cmd_capture(cmd, *, env_overrides=None):
+        trace_path = Path(env_overrides["TG_STARTUP_TRACE_PATH"])
+        trace_path.write_text(
+            json.dumps({"phase": "startup", "marker": "trace-file"}),
+            encoding="utf-8",
+        )
+        return 0, "ignored stdout"
+
+    monkeypatch.setattr(module, "run_cmd_capture", fake_run_cmd_capture)
+
+    output_path = tmp_path / "cold-path.json"
+    module.main(["--output", str(output_path), "--launcher-mode", "explicit_binary"])
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert len(payload["rows"]) == len(module.SCENARIOS)
+    for row in payload["rows"]:
+        assert row["launcher_mode"] == "explicit_binary"
+        assert row["name"].endswith("[explicit_binary]")
+        assert row["phase_trace"] == {"phase": "startup", "marker": "trace-file"}
+        assert row["rg_time_s"] == 0.200
+    assert all(str(bench_dir) in cmd for cmd in timing_cmds)
+
+
+def test_run_cold_path_attribution_should_drop_stale_trace_files(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_cold_path_attribution_stale_trace_script",
+        "benchmarks/run_cold_path_attribution.py",
+    )
+
+    bench_dir = tmp_path / "bench_data_root"
+    scenario = {
+        "name": "1. Simple String Match",
+        "rg_args": ["rg", "ERROR", "bench_data"],
+        "tg_args": ["tg", "search", "ERROR", "bench_data"],
+    }
+    stale_trace = bench_dir / "1._simple_string_match-explicit_binary.json"
+    stale_trace.parent.mkdir(parents=True, exist_ok=True)
+    stale_trace.write_text(json.dumps({"phase": "startup", "marker": "stale"}), encoding="utf-8")
+
+    monkeypatch.setattr(module, "SCENARIOS", [scenario])
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: bench_dir)
+    monkeypatch.setattr(module, "generate_test_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda binary=None: (tmp_path / "tg.exe", "explicit_arg"),
+    )
+    monkeypatch.setattr(module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1]))
+    monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, "plain search stdout"))
+
+    output_path = tmp_path / "cold-path.json"
+    exit_code = module.main(["--output", str(output_path), "--launcher-mode", "explicit_binary"])
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["rows"][0]["phase_trace"] is None
+
+
+def test_run_benchmarks_should_record_host_provenance(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_benchmarks_script_host_provenance",
+        "benchmarks/run_benchmarks.py",
+    )
+    bench_dir = tmp_path / "bench_data"
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: bench_dir)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_tg_binary_with_source", lambda binary=None: (tg_binary, "explicit_arg"))
+    monkeypatch.setattr(module, "generate_test_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "build_benchmark_scenarios",
+        lambda **kwargs: [
+            {
+                "name": "1. Simple String Match",
+                "rg_cmd": ["rg", "ERROR", "bench_data"],
+                "tg_cmd": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "run_cmd_timing", lambda *args, **kwargs: 0.1)
+    monkeypatch.setattr(module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1, 0.1, 0.1]))
+    monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, ""))
+    monkeypatch.setattr(module, "compare_results", lambda *args, **kwargs: True)
+
+    output_path = tmp_path / "bench_run.json"
+    monkeypatch.setattr("sys.argv", ["run_benchmarks.py", "--output", str(output_path)])
+    exit_code = module.main()
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["benchmark_host_key"] == module.benchmark_host_key(payload["environment"])
+    assert payload["host_provenance"]["benchmark_host_key"] == payload["benchmark_host_key"]
+    assert payload["host_provenance"]["platform"] == payload["environment"]["platform"]
+
+
+def test_run_cold_path_attribution_should_record_host_provenance(monkeypatch, tmp_path):
+    module = _load_script_module(
+        "run_cold_path_attribution_script_host_provenance",
+        "benchmarks/run_cold_path_attribution.py",
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_tg_binary_with_source", lambda binary=None: (tg_binary, "explicit_arg"))
+    monkeypatch.setattr(module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1, 0.1, 0.1]))
+    monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, ""))
+    monkeypatch.setattr(
+        module,
+        "_scenario_commands",
+        lambda **kwargs: [
+            {
+                "scenario": "1. Simple String Match",
+                "launcher_mode": "explicit_binary",
+                "resolved_launcher_mode": "explicit_binary",
+                "rg_time_s": 0.1,
+                "rg_samples_s": [0.1, 0.1, 0.1],
+                "tg_time_s": 0.1,
+                "tg_samples_s": [0.1, 0.1, 0.1],
+                "phase_trace": None,
+            }
+        ],
+    )
+
+    output_path = tmp_path / "bench_cold.json"
+    exit_code = module.main(["--output", str(output_path)])
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["benchmark_host_key"] == module.benchmark_host_key(payload["environment"])
+    assert payload["host_provenance"]["benchmark_host_key"] == payload["benchmark_host_key"]
+    assert payload["host_provenance"]["tg_binary_source"] == "explicit_arg"

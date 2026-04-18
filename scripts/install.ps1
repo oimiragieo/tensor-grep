@@ -90,12 +90,20 @@ try {
     # Ensure AST runtime grammars are present explicitly across environments.
     & $uvPath pip install tree-sitter tree-sitter-python tree-sitter-javascript --python "$installDir\.venv\Scripts\python.exe"
 
-    # 5. Install PATH shims for profile-independent command resolution.
+    # 5. Install front-door wrapper and PATH shims for profile-independent command resolution.
+    $frontdoorDir = Join-Path $installDir "bin"
+    if (!(Test-Path $frontdoorDir)) {
+        New-Item -ItemType Directory -Path (Join-Path $installDir "bin") -Force | Out-Null
+    }
+    $frontdoorCmdPath = Join-Path $frontdoorDir "tg.cmd"
+    $frontdoorCmdContent = "@echo off`r`n`"$installDir\.venv\Scripts\python.exe`" -m tensor_grep %*`r`n"
+    Set-Content -Path $frontdoorCmdPath -Value $frontdoorCmdContent -Encoding ascii
+
     $shimDirs = @(
         "$env:USERPROFILE\.local\bin",
         "$env:USERPROFILE\bin"
     )
-    $cmdShimContent = "@echo off`r`n`"$installDir\.venv\Scripts\tg.exe`" %*`r`n"
+    $cmdShimContent = "@echo off`r`n`"$frontdoorCmdPath`" %*`r`n"
     $installedShimPaths = @()
     foreach ($shimDir in $shimDirs) {
         if (!(Test-Path $shimDir)) {
@@ -136,7 +144,7 @@ try {
         (Join-Path $docsPath "PowerShell\Microsoft.PowerShell_profile.ps1"),
         (Join-Path $docsPath "WindowsPowerShell\Microsoft.PowerShell_profile.ps1")
     )
-    $aliasCommand = "Set-Alias -Name tg -Value `"$installDir\.venv\Scripts\tg.exe`" -Scope Global"
+    $aliasCommand = "Set-Alias -Name tg -Value `"$frontdoorCmdPath`" -Scope Global"
     $aliasPattern = '(?m)^\s*Set-Alias\s+-Name\s+tg\s+-Value\s+.*$'
     foreach ($profilePath in $profilePaths) {
         $profileDir = Split-Path -Parent $profilePath
@@ -157,15 +165,16 @@ try {
         }
     }
 
-    # Ensure current session resolves tg to the newly installed binary immediately.
-    Set-Alias -Name tg -Value "$installDir\.venv\Scripts\tg.exe" -Scope Global -Force
+    # Ensure current session resolves tg to the newly installed front-door immediately.
+    Set-Alias -Name tg -Value $frontdoorCmdPath -Scope Global -Force
     Write-Host "Current session alias now points to: $((Get-Command tg).Source)"
     Write-Host "Installed PATH shims:"
+    Write-Host "  - $frontdoorCmdPath"
     $installedShimPaths | ForEach-Object { Write-Host "  - $_" }
 
     Write-Host "=========================================================="
     Write-Host " Installation complete! Try running: tg search `"ERROR`" ."
-    & "$installDir\.venv\Scripts\tg.exe" --version
+    & $frontdoorCmdPath --version
     Write-Host "=========================================================="
 }
 finally {

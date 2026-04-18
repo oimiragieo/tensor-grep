@@ -96,7 +96,14 @@ fi
 # Ensure AST runtime grammars are present explicitly across environments.
 uv pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .venv/bin/python
 
-# 5. Install PATH shims for profile-independent command resolution.
+# 5. Install front-door wrapper and PATH shims for profile-independent command resolution.
+mkdir -p "$INSTALL_DIR/bin"
+cat > "$INSTALL_DIR/bin/tg" << EOF
+#!/usr/bin/env bash
+"$INSTALL_DIR/.venv/bin/python" -m tensor_grep "\$@"
+EOF
+chmod +x "$INSTALL_DIR/bin/tg"
+
 SHIM_DIRS=("$HOME/.local/bin" "$HOME/bin")
 INSTALLED_SHIMS=()
 for SHIM_DIR in "${SHIM_DIRS[@]}"; do
@@ -104,7 +111,7 @@ for SHIM_DIR in "${SHIM_DIRS[@]}"; do
     SHIM_PATH="$SHIM_DIR/tg"
     cat > "$SHIM_PATH" << EOF
 #!/usr/bin/env bash
-"$INSTALL_DIR/.venv/bin/tg" "\$@"
+"$INSTALL_DIR/bin/tg" "\$@"
 EOF
     chmod +x "$SHIM_PATH"
     INSTALLED_SHIMS+=("$SHIM_PATH")
@@ -120,7 +127,7 @@ else
     PROFILE_FILE="$HOME/.profile"
 fi
 
-ALIAS_CMD="alias tg='$INSTALL_DIR/.venv/bin/tg'"
+ALIAS_CMD="alias tg='$INSTALL_DIR/bin/tg'"
 PATH_EXPORT_LOCAL='export PATH="$HOME/.local/bin:$PATH"'
 PATH_EXPORT_BIN='export PATH="$HOME/bin:$PATH"'
 
@@ -146,7 +153,7 @@ if ! grep -qF "$PATH_EXPORT_BIN" "$PROFILE_FILE"; then
 fi
 
 # Ensure the current shell session also resolves tg to the fresh install.
-alias tg="$INSTALL_DIR/.venv/bin/tg"
+alias tg="$INSTALL_DIR/bin/tg"
 export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
 echo "Current session alias now points to: $(command -v tg)"
 echo "Installed PATH shims:"
@@ -157,5 +164,5 @@ echo "If your shell doesn't apply aliases in non-interactive mode, run: source $
 
 echo "=========================================================="
 echo " Installation complete! Try running: tg search \"ERROR\" ."
-./.venv/bin/tg --version || true
+"$INSTALL_DIR/bin/tg" --version || true
 echo "=========================================================="
