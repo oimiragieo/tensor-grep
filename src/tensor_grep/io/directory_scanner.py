@@ -79,13 +79,20 @@ class DirectoryScanner:
         # Check explicit globs
         if self.config.glob:
             matched_glob = False
+            file_name = file_path.name
+            file_path_str = str(file_path)
+            if self.config.glob_case_insensitive:
+                file_name = file_name.lower()
+                file_path_str = file_path_str.lower()
             for g in self.config.glob:
                 # Simplistic handling: if it starts with !, it's an exclusion
                 is_exclude = g.startswith("!")
                 pattern = g[1:] if is_exclude else g
+                if self.config.glob_case_insensitive:
+                    pattern = pattern.lower()
 
-                if fnmatch.fnmatch(file_path.name, pattern) or fnmatch.fnmatch(
-                    str(file_path), pattern
+                if fnmatch.fnmatchcase(file_name, pattern) or fnmatch.fnmatchcase(
+                    file_path_str, pattern
                 ):
                     if is_exclude:
                         return False
