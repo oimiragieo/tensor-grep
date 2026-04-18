@@ -313,11 +313,7 @@ fn test_ast_backend_matches_rust_functions_with_types() {
     let backend = AstBackend::new();
 
     let matches = backend
-        .search(
-            "fn $F($$$ARGS)",
-            "rust",
-            file_path.to_str().unwrap(),
-        )
+        .search("fn $F($$$ARGS)", "rust", file_path.to_str().unwrap())
         .unwrap();
 
     let matched_lines: Vec<usize> = matches.iter().map(|m| m.line).collect();
