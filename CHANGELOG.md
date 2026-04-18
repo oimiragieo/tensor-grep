@@ -1,6 +1,82 @@
 # CHANGELOG
 
 
+## v1.3.0 (2026-04-18)
+
+### Bug Fixes
+
+- Honor case-insensitive glob filtering in directory scanner
+  ([`8465172`](https://github.com/oimiragieo/tensor-grep/commit/846517208b530e179a7114e9c90b34f46e9e0739))
+
+- **ast**: Resolve Rust function signature matching for typed parameters and return types
+  ([`c79ef37`](https://github.com/oimiragieo/tensor-grep/commit/c79ef37e4a475bd9a64898da2ca15468fe5682d0))
+
+- Targeted the remaining Rust AST miss where \n ()\ failed to match functions with typed parameters
+  (e.g. \x: i32\) or return types (e.g. \-> i32\). - Fixed the matcher logic in \ackend_ast.rs\ by
+  manually tracking the raw \$ARGS\ parameter and bypassing the rigid \Pattern::contextual\
+  matching, which failed to parse incomplete parameters. - Added a failing regression test to
+  \	est_ast_backend.rs\ to explicitly cover this behavior.
+
+### Chores
+
+- **test**: Silence dead_code warnings in test_schema_compat
+  ([`00efcd1`](https://github.com/oimiragieo/tensor-grep/commit/00efcd19c3e4659d15dc6e31a07e7ecf7a86c5be))
+
+- Added #![allow(dead_code)] to \	est_schema_compat.rs\ to eliminate noisy compiler warnings for
+  schema structures used primarily for deserialization validation.
+
+### Code Style
+
+- Normalize preview formatting for release gates
+  ([`136b831`](https://github.com/oimiragieo/tensor-grep/commit/136b831501b9719712e53360d6a83a527e246791))
+
+- **rust**: Apply rustfmt after main merge
+  ([`15763eb`](https://github.com/oimiragieo/tensor-grep/commit/15763eba6a0e3e0ffdc980ebaddf5397e7ad13c5))
+
+### Documentation
+
+- Add parity remediation execution plans
+  ([`099dcc2`](https://github.com/oimiragieo/tensor-grep/commit/099dcc23b723401c77e101ce25376cf491b89133))
+
+- Add parity remediation program spec
+  ([`6a12026`](https://github.com/oimiragieo/tensor-grep/commit/6a1202615804e195ae435afbd73ec281716475c7))
+
+- Add post-v1.3 safe release planning artifacts
+  ([`d7ff5db`](https://github.com/oimiragieo/tensor-grep/commit/d7ff5db1f964d7984a39532b9f361d8df196cb57))
+
+- Document count mode performance regression
+  ([`8cb42ca`](https://github.com/oimiragieo/tensor-grep/commit/8cb42ca02bc069d10ffc0ccf07de4f776d45de4d))
+
+- Explicitly recorded the regression observed on \-c\ (count matches) overhead vs \ipgrep\ in
+  \docs/PAPER.md\, treating it as a regression to unwind in a dedicated optimization pass, separated
+  from the AST correctness fix.
+
+### Features
+
+- Ship AST JSON parity and CLI contract fixes
+  ([`0f06e3c`](https://github.com/oimiragieo/tensor-grep/commit/0f06e3ceb36cbb810c922df5aa14dd6697cf8154))
+
+### Testing
+
+- Bind subprocess imports to active worktree
+  ([`954c073`](https://github.com/oimiragieo/tensor-grep/commit/954c0734f0acebf8398aa59ec4a0832edc152913))
+
+- Clean up pytest warnings and tighten rust dead_code suppression
+  ([`493fd04`](https://github.com/oimiragieo/tensor-grep/commit/493fd048312c41b5fc4668eb0039451568d400b8))
+
+- Refresh windows benchmark baseline governance
+  ([`5900eb6`](https://github.com/oimiragieo/tensor-grep/commit/5900eb603190d5bf5569404683351597601d7891))
+
+- Stabilize completion CI and align ruff formatting
+  ([`f2079e4`](https://github.com/oimiragieo/tensor-grep/commit/f2079e49a8a9a2006f531bbd706bc786dfe56e53))
+
+- Stabilize inline-rules scan CI coverage
+  ([`3a20a5d`](https://github.com/oimiragieo/tensor-grep/commit/3a20a5dc158e9ac1172c2582d6ff35d41b6b88b6))
+
+- Tolerate rich formatting in generator errors
+  ([`b0ea7ee`](https://github.com/oimiragieo/tensor-grep/commit/b0ea7eeda5fae75acbe6e5878e710f0a3aeeb9a3))
+
+
 ## v1.2.0 (2026-04-16)
 
 ### Bug Fixes
