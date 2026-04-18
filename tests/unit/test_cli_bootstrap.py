@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from typer._completion_shared import get_completion_script
 from typer.testing import CliRunner
 
 from tensor_grep.cli import bootstrap
@@ -308,12 +309,16 @@ def test_main_entry_should_delegate_ndjson_flag_to_native_tg(monkeypatch):
     assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--ndjson"]}
 
 
-def test_root_cli_should_generate_powershell_completion_script() -> None:
+def test_root_cli_should_generate_powershell_completion_script(monkeypatch) -> None:
+    monkeypatch.setenv("_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION", "1")
     result = CliRunner().invoke(app, ["--show-completion", "powershell"], prog_name="tg")
 
     assert result.exit_code == 0
-    assert "Register-ArgumentCompleter" in result.stdout
-    assert "tg" in result.stdout
+    assert result.stdout.strip() == get_completion_script(
+        prog_name="tg",
+        complete_var="_TG_COMPLETE",
+        shell="powershell",
+    )
 
 
 def test_main_entry_should_fallback_to_full_cli_for_show_completion(monkeypatch) -> None:

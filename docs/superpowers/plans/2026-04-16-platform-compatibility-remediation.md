@@ -23,9 +23,11 @@
 def test_ast_output_falls_back_when_stdout_encoding_cannot_encode(monkeypatch, capsys):
     class _Cp1252Stream:
         encoding = "cp1252"
+
         def write(self, text: str) -> int:
             text.encode("cp1252")
             return len(text)
+
     ...
 ```
 

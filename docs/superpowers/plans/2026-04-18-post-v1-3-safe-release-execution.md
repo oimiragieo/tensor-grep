@@ -158,8 +158,7 @@ def detect_comparator_drift(
     comparator_key: str = "rg_time_s",
     max_regression_pct: float = 10.0,
     min_baseline_time_s: float = 0.2,
-) -> list[str]:
-    ...
+) -> list[str]: ...
 ```
 
 Keep this helper read-only. It should annotate drift, not silently rewrite release decisions.

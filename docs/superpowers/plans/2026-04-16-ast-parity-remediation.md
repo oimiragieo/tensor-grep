@@ -156,7 +156,12 @@ git commit -m "fix(ast): preserve richer ast-grep json fields"
 def test_scan_supports_inline_rules_text(monkeypatch, tmp_path):
     result = CliRunner().invoke(
         app,
-        ["scan", "--inline-rules", "id: no-console\nlanguage: JavaScript\nrule:\n  pattern: console.log($A)", str(tmp_path)],
+        [
+            "scan",
+            "--inline-rules",
+            "id: no-console\nlanguage: JavaScript\nrule:\n  pattern: console.log($A)",
+            str(tmp_path),
+        ],
     )
     assert result.exit_code == 0
 ```
@@ -176,7 +181,9 @@ Run: `uv run pytest tests/unit/test_mcp_server.py -k inline_rules -q`
 - [ ] **Step 4: Implement inline rule plumbing only**
 
 ```python
-inline_rules: str | None = typer.Option(None, "--inline-rules", help="Pass ast-grep rule YAML directly.")
+inline_rules: str | None = typer.Option(
+    None, "--inline-rules", help="Pass ast-grep rule YAML directly."
+)
 ```
 
 Map the flag through the native workflow or wrapper path without widening built-in ruleset behavior.

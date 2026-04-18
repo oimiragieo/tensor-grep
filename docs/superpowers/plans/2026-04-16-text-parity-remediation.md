@@ -45,7 +45,7 @@ def test_replace_mode_expands_capture_groups_in_output(monkeypatch):
 - [ ] **Step 2: Write the failing e2e contract case**
 
 ```python
-("replace_capture_group_single_file", ["-r", "LINE=$1", r"line (\\d+)"], TEXT_FILE1_TARGET),
+(("replace_capture_group_single_file", ["-r", "LINE=$1", r"line (\\d+)"], TEXT_FILE1_TARGET),)
 ```
 
 Add fixture content containing at least one numeric capture so the expected snapshot proves `$1` expansion.
@@ -308,7 +308,9 @@ def test_should_include_file_honors_glob_case_insensitive():
 
 ```python
 def test_main_entry_routes_glob_case_insensitive_without_crashing(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["tg", "search", "hello", ".", "-g", "*.py", "--glob-case-insensitive"])
+    monkeypatch.setattr(
+        sys, "argv", ["tg", "search", "hello", ".", "-g", "*.py", "--glob-case-insensitive"]
+    )
     ...
 ```
 
