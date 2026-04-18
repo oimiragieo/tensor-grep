@@ -457,7 +457,9 @@ def test_search_generate_should_reject_unsupported_generator() -> None:
     result = runner.invoke(app, ["search", "--generate", "complete-elvish"], prog_name="tg")
 
     assert result.exit_code == 2
-    assert "Unsupported --generate value 'complete-elvish'." in result.output
+    assert "Unsupported" in result.output
+    assert "complete-elvish" in result.output
+    assert "complete-powershell" in result.output
 
 
 def test_session_daemon_help_lists_lifecycle_commands() -> None:
