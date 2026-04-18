@@ -91,9 +91,7 @@ class DirectoryScanner:
                 if self.config.glob_case_insensitive:
                     pattern = pattern.lower()
 
-                if fnmatch.fnmatchcase(file_name, pattern) or fnmatch.fnmatchcase(
-                    file_path_str, pattern
-                ):
+                if fnmatch.fnmatch(file_name, pattern) or fnmatch.fnmatch(file_path_str, pattern):
                     if is_exclude:
                         return False
                     matched_glob = True

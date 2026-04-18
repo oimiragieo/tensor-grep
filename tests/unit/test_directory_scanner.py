@@ -40,6 +40,22 @@ class TestDirectoryScanner:
 
         assert files == [str(file1)]
 
+    def test_should_preserve_recursive_glob_matching_when_case_folded(self, tmp_path):
+        nested = tmp_path / "sub"
+        nested.mkdir()
+        file1 = nested / "sample.TXT"
+        file2 = nested / "sample.py"
+
+        file1.write_text("a")
+        file2.write_text("a")
+
+        config = SearchConfig(glob=["**/sample.txt"], glob_case_insensitive=True)
+        scanner = DirectoryScanner(config)
+
+        files = list(scanner.walk(str(tmp_path)))
+
+        assert files == [str(file1)]
+
     def test_should_filterType_when_dashT_provided(self, tmp_path):
         import os
 
