@@ -438,9 +438,7 @@ def test_stats_passthrough_matches_ripgrep_stdout_contract(tmp_path: Path):
         ("complete-powershell", "powershell"),
     ],
 )
-def test_search_generate_should_emit_shell_completion_script(
-    generator: str, shell: str
-) -> None:
+def test_search_generate_should_emit_shell_completion_script(generator: str, shell: str) -> None:
     runner = CliRunner()
 
     result = runner.invoke(app, ["search", "--generate", generator], prog_name="tg")
@@ -3138,14 +3136,12 @@ def test_scan_builtin_ruleset_can_emit_evidence_snippets(monkeypatch):
 
 def test_scan_supports_inline_rules_text(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join(
-        [
-            "id: no-print",
-            "language: python",
-            "rule:",
-            "  pattern: print($A)",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "rule:",
+        "  pattern: print($A)",
+    ])
     runner = CliRunner()
 
     result = runner.invoke(

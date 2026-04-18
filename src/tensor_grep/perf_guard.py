@@ -80,7 +80,7 @@ def check_regressions(
                 regressions.append(
                     f"{name}: {metric_key} regressed by {pct_delta:.2f}% "
                     f"(baseline={base_time:.3f}s current={cur_time:.3f}s)"
-            )
+                )
     return regressions
 
 

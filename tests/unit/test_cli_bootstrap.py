@@ -165,9 +165,10 @@ def test_main_entry_preserves_files_mode_without_pattern(
     captured = capsys.readouterr()
 
     assert excinfo.value.code == 0
-    assert sorted(captured.out.strip().splitlines()) == sorted(
-        [str(project / "a.py"), str(project / "b.py")]
-    )
+    assert sorted(captured.out.strip().splitlines()) == sorted([
+        str(project / "a.py"),
+        str(project / "b.py"),
+    ])
 
 
 def test_main_entry_should_fallback_to_full_cli_for_glob_flag(monkeypatch):

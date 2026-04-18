@@ -3166,7 +3166,9 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
 
 
 def test_check_regression_should_report_rg_comparator_drift(monkeypatch, tmp_path, capsys):
-    module = _load_script_module("check_regression_script_rg_drift", "benchmarks/check_regression.py")
+    module = _load_script_module(
+        "check_regression_script_rg_drift", "benchmarks/check_regression.py"
+    )
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     payload = {
@@ -4995,7 +4997,12 @@ def test_run_tensor_grep_patch_driver_should_build_patch_ready_records(monkeypat
     monkeypatch.setattr(
         module.repo_map,
         "build_symbol_blast_radius_render",
-        lambda symbol, path, max_files=6, max_sources=6, max_symbols_per_file=6, semantic_provider="native": {
+        lambda symbol,
+        path,
+        max_files=6,
+        max_sources=6,
+        max_symbols_per_file=6,
+        semantic_provider="native": {
             "semantic_provider": semantic_provider,
             "rendered_context": "def create_invoice(total):\n    return total + 1\n",
             "token_estimate": 42,
@@ -8489,7 +8496,13 @@ def test_run_editor_profiling_should_pass_provider_to_blast_radius(monkeypatch, 
     monkeypatch.setattr(
         module.repo_map,
         "build_symbol_blast_radius_render",
-        lambda symbol, path, max_depth=3, max_files=6, max_sources=6, profile=True, semantic_provider="native": (
+        lambda symbol,
+        path,
+        max_depth=3,
+        max_files=6,
+        max_sources=6,
+        profile=True,
+        semantic_provider="native": (
             captured.update({"provider": semantic_provider})
             or {
                 "_profiling": {"total_elapsed_s": 0.2, "breakdown_pct": {}, "phases": []},
@@ -9071,9 +9084,11 @@ def test_run_cold_path_attribution_should_write_output(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "generate_test_data",
-        lambda directory, num_files, lines_per_file: generated.append(
-            (directory, num_files, lines_per_file)
-        ),
+        lambda directory, num_files, lines_per_file: generated.append((
+            directory,
+            num_files,
+            lines_per_file,
+        )),
     )
     monkeypatch.setattr(
         module,
@@ -9084,7 +9099,10 @@ def test_run_cold_path_attribution_should_write_output(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "collect_timing_samples",
-        lambda cmd, *args, **kwargs: (timing_cmds.append(list(cmd)) or 0.123, [0.120, 0.123, 0.126]),
+        lambda cmd, *args, **kwargs: (
+            timing_cmds.append(list(cmd)) or 0.123,
+            [0.120, 0.123, 0.126],
+        ),
     )
 
     def fake_run_cmd_capture(cmd, *, env_overrides=None):
@@ -9130,7 +9148,10 @@ def test_run_cold_path_attribution_should_keep_rg_baseline_per_scenario(monkeypa
     monkeypatch.setattr(
         module,
         "collect_timing_samples",
-        lambda cmd, *args, **kwargs: (timing_cmds.append(list(cmd)) or 0.200, [0.200, 0.201, 0.199]),
+        lambda cmd, *args, **kwargs: (
+            timing_cmds.append(list(cmd)) or 0.200,
+            [0.200, 0.201, 0.199],
+        ),
     )
 
     def fake_run_cmd_capture(cmd, *, env_overrides=None):
@@ -9182,7 +9203,9 @@ def test_run_cold_path_attribution_should_drop_stale_trace_files(monkeypatch, tm
         lambda binary=None: (tmp_path / "tg.exe", "explicit_arg"),
     )
     monkeypatch.setattr(module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1]))
-    monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, "plain search stdout"))
+    monkeypatch.setattr(
+        module, "run_cmd_capture", lambda *args, **kwargs: (0, "plain search stdout")
+    )
 
     output_path = tmp_path / "cold-path.json"
     exit_code = module.main(["--output", str(output_path), "--launcher-mode", "explicit_binary"])
@@ -9202,7 +9225,9 @@ def test_run_benchmarks_should_record_host_provenance(monkeypatch, tmp_path):
     tg_binary.write_text("binary", encoding="utf-8")
     monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: bench_dir)
     monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
-    monkeypatch.setattr(module, "resolve_tg_binary_with_source", lambda binary=None: (tg_binary, "explicit_arg"))
+    monkeypatch.setattr(
+        module, "resolve_tg_binary_with_source", lambda binary=None: (tg_binary, "explicit_arg")
+    )
     monkeypatch.setattr(module, "generate_test_data", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         module,
@@ -9216,7 +9241,9 @@ def test_run_benchmarks_should_record_host_provenance(monkeypatch, tmp_path):
         ],
     )
     monkeypatch.setattr(module, "run_cmd_timing", lambda *args, **kwargs: 0.1)
-    monkeypatch.setattr(module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1, 0.1, 0.1]))
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
     monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, ""))
     monkeypatch.setattr(module, "compare_results", lambda *args, **kwargs: True)
 
@@ -9239,8 +9266,12 @@ def test_run_cold_path_attribution_should_record_host_provenance(monkeypatch, tm
     tg_binary = tmp_path / "tg.exe"
     tg_binary.write_text("binary", encoding="utf-8")
     monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
-    monkeypatch.setattr(module, "resolve_tg_binary_with_source", lambda binary=None: (tg_binary, "explicit_arg"))
-    monkeypatch.setattr(module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1, 0.1, 0.1]))
+    monkeypatch.setattr(
+        module, "resolve_tg_binary_with_source", lambda binary=None: (tg_binary, "explicit_arg")
+    )
+    monkeypatch.setattr(
+        module, "collect_timing_samples", lambda *args, **kwargs: (0.1, [0.1, 0.1, 0.1])
+    )
     monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, ""))
     monkeypatch.setattr(
         module,

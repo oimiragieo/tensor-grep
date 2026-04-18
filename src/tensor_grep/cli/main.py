@@ -643,6 +643,7 @@ def _replace_lines(
             extracted.append(replace(match, text=new_text))
             continue
         if regex is not None:
+
             def _expand_match(current: re.Match[str], replacement: str = replacement) -> str:
                 return _expand_ripgrep_replacement(replacement, current)
 
@@ -910,7 +911,10 @@ def _load_inline_rule_specs(
                     "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
                     "pattern": pattern,
                     "language": str(
-                        item.get("language") or payload.get("language") or default_language or "python"
+                        item.get("language")
+                        or payload.get("language")
+                        or default_language
+                        or "python"
                     ),
                 })
             continue
@@ -2222,11 +2226,15 @@ def search_command(
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
     selected_gpu_device_ids = list(getattr(pipeline, "selected_gpu_device_ids", []) or [])
     selected_gpu_chunk_plan_mb = list(getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or [])
-    if can_passthrough_rg and stats and _selected_route_supports_rg_passthrough(
-        selected_backend_name=selected_backend_name,
-        selected_backend_reason=selected_backend_reason,
-        selected_gpu_device_ids=selected_gpu_device_ids,
-        selected_gpu_chunk_plan_mb=selected_gpu_chunk_plan_mb,
+    if (
+        can_passthrough_rg
+        and stats
+        and _selected_route_supports_rg_passthrough(
+            selected_backend_name=selected_backend_name,
+            selected_backend_reason=selected_backend_reason,
+            selected_gpu_device_ids=selected_gpu_device_ids,
+            selected_gpu_chunk_plan_mb=selected_gpu_chunk_plan_mb,
+        )
     ):
         with nvtx_range("search.passthrough_rg", color="green"):
             exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
@@ -2292,7 +2300,9 @@ def search_command(
     if backend.__class__.__name__ == "RipgrepBackend":
         rg_backend = cast(RipgrepBackend, backend)
         search_targets = (
-            candidate_files_ordered if (files_with_matches or files_without_match) else paths_to_search
+            candidate_files_ordered
+            if (files_with_matches or files_without_match)
+            else paths_to_search
         )
         span_ctx = (
             tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()

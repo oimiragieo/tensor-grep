@@ -1,4 +1,4 @@
-﻿# ruff: noqa: I001
+# ruff: noqa: I001
 from __future__ import annotations
 
 import argparse
@@ -52,9 +52,11 @@ def _scenario_commands(
     rg_binary = resolve_rg_binary()
 
     for scenario in SCENARIOS:
-        rg_cmd = [rg_binary, "--no-ignore", *[
-            str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]
-        ]]
+        rg_cmd = [
+            rg_binary,
+            "--no-ignore",
+            *[str(bench_dir) if arg == "bench_data" else arg for arg in scenario["rg_args"][1:]],
+        ]
         rg_time_s, rg_samples_s = collect_timing_samples(rg_cmd)
 
         for launcher_mode in launcher_modes:
@@ -68,7 +70,9 @@ def _scenario_commands(
                 launcher_mode=launcher_mode,
             )
             tg_time_s, tg_samples_s = collect_timing_samples(tg_cmd)
-            trace_path = bench_dir / f"{scenario['name'].replace(' ', '_').lower()}-{launcher_mode}.json"
+            trace_path = (
+                bench_dir / f"{scenario['name'].replace(' ', '_').lower()}-{launcher_mode}.json"
+            )
             trace_path.parent.mkdir(parents=True, exist_ok=True)
             if trace_path.exists():
                 trace_path.unlink()
@@ -145,9 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     tg_binary, tg_binary_source = resolve_tg_binary_with_source(args.binary)
     bench_dir = resolve_bench_data_dir()
     bench_dir.mkdir(parents=True, exist_ok=True)
-    generate_test_data(
-        str(bench_dir), num_files=2, lines_per_file=2_000_000
-    )
+    generate_test_data(str(bench_dir), num_files=2, lines_per_file=2_000_000)
 
     launcher_modes = _unique_launcher_modes(args.launcher_mode)
     rows = _scenario_commands(

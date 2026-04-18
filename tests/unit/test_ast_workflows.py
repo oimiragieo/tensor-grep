@@ -304,7 +304,9 @@ def test_run_command_should_fall_back_for_unencodable_ast_output(monkeypatch):
     exit_code = run_command("def $FUNC():", path="sample.py", lang="python")
 
     assert exit_code == 0
-    assert any("Executing ast-grep structural matching run..." in chunk for chunk in stdout.text_writes)
+    assert any(
+        "Executing ast-grep structural matching run..." in chunk for chunk in stdout.text_writes
+    )
     assert stdout.buffer.payload.decode("utf-8") == "1:def 漢():\n"
 
 
@@ -349,5 +351,7 @@ def test_run_command_should_escape_unencodable_ast_output_without_binary_buffer(
     exit_code = run_command("def $FUNC():", path="sample.py", lang="python")
 
     assert exit_code == 0
-    assert any("Executing ast-grep structural matching run..." in chunk for chunk in stdout.text_writes)
+    assert any(
+        "Executing ast-grep structural matching run..." in chunk for chunk in stdout.text_writes
+    )
     assert "1:def \\u6f22():\n" in stdout.text_writes
