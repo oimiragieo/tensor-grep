@@ -3136,7 +3136,44 @@ def test_scan_builtin_ruleset_can_emit_evidence_snippets(monkeypatch):
     ]
 
 
-def test_scan_supports_inline_rules_text(tmp_path: Path) -> None:
+def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
+            _ = config
+            matches: list[MatchLine] = []
+            matched_file_paths: list[str] = []
+
+            for file_path in file_paths:
+                candidate = Path(file_path)
+                expanded_paths = (
+                    sorted(str(path) for path in candidate.rglob("*") if path.is_file())
+                    if candidate.is_dir()
+                    else [file_path]
+                )
+                for expanded_path in expanded_paths:
+                    content = Path(expanded_path).read_text(encoding="utf-8")
+                    if pattern == "print($A)" and "print(" in content:
+                        matched_file_paths.append(expanded_path)
+                        matches.append(
+                            MatchLine(line_number=1, text="print('hello')", file=expanded_path)
+                        )
+
+            return SearchResult(
+                matches=matches,
+                matched_file_paths=matched_file_paths,
+                total_files=len(matched_file_paths),
+                total_matches=len(matches),
+                routing_backend="AstGrepWrapperBackend",
+                routing_reason="ast_grep_json",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
+    )
+
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
     inline_rules = "\n".join([
         "id: no-print",
