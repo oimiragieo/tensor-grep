@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.3.1 (2026-04-18)
+
+### Bug Fixes
+
+- Preserve recursive glob matching when case-folding
+  ([`9d76ba4`](https://github.com/oimiragieo/tensor-grep/commit/9d76ba4d5a48c39e52be01553af2d254c494e05c))
+
+
 ## v1.3.0 (2026-04-18)
 
 ### Bug Fixes
