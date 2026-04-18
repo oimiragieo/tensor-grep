@@ -37,7 +37,11 @@ def resolve_auto_baseline_path(current: dict, milestone: str | None) -> Path:
 
 
 def main() -> int:
-    from tensor_grep.perf_guard import check_regressions, detect_environment_mismatch
+    from tensor_grep.perf_guard import (
+        check_regressions,
+        detect_comparator_drift,
+        detect_environment_mismatch,
+    )
 
     parser = argparse.ArgumentParser(
         description="Compare current benchmark JSON against a baseline."
@@ -113,6 +117,18 @@ def main() -> int:
             "Use --allow-env-mismatch to override."
         )
         return 2
+
+    comparator_drifts = detect_comparator_drift(
+        baseline=baseline,
+        current=current,
+        comparator_key="rg_time_s",
+        max_regression_pct=args.max_regression_pct,
+        min_baseline_time_s=args.min_baseline_time_s,
+    )
+    if comparator_drifts:
+        print("Comparator drift detected:")
+        for msg in comparator_drifts:
+            print(f"- {msg}")
 
     regressions = check_regressions(
         baseline=baseline,

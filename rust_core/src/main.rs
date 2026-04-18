@@ -18,7 +18,9 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tensor_grep_rs::backend_ast::{AstBackend, BatchRewritePlan, BatchRewriteRule};
+use tensor_grep_rs::backend_ast::{
+    AstBackend, AstMatch, AstMetaVariables, BatchRewritePlan, BatchRewriteRule,
+};
 use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::crossover::{run_crossover_calibration, write_crossover_config};
 #[cfg(feature = "cuda")]
@@ -886,6 +888,30 @@ mod tests {
     }
 
     #[test]
+    fn default_search_frontdoor_accepts_case_insensitive_and_max_count_shapes() {
+        let ignore_case = ["tg", "search", "-i", "warning", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let max_count = ["tg", "search", "-m", "5", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let parsed_ignore_case = parse_default_search_frontdoor_args(&ignore_case)
+            .expect("expected default search frontdoor case-insensitive args to parse");
+        assert!(parsed_ignore_case.ignore_case);
+        assert_eq!(parsed_ignore_case.patterns, vec!["warning".to_string()]);
+        assert_eq!(parsed_ignore_case.path, "bench_data".to_string());
+
+        let parsed_max_count = parse_default_search_frontdoor_args(&max_count)
+            .expect("expected default search frontdoor max-count args to parse");
+        assert_eq!(parsed_max_count.max_count, Some(5));
+        assert_eq!(parsed_max_count.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(parsed_max_count.path, "bench_data".to_string());
+    }
+
+    #[test]
     fn default_search_frontdoor_rejects_structured_and_advanced_shapes() {
         let structured = ["tg", "search", "--json", "ERROR", "bench_data"]
             .into_iter()
@@ -1681,6 +1707,8 @@ fn collect_native_multi_pattern_matches(
             file: matched.path.to_string_lossy().into_owned(),
             line: matched.line_number.unwrap_or(0) as usize,
             text: matched.text,
+            range: None,
+            meta_variables: None,
             pattern_id: include_pattern_metadata.then_some(pattern_id),
             pattern_text: include_pattern_metadata.then(|| pattern.clone()),
         }));
@@ -2050,6 +2078,8 @@ fn run_index_query(
             file: result.file.to_string_lossy().into_owned(),
             line: result.line,
             text: result.text,
+            range: None,
+            meta_variables: None,
             pattern_id: include_pattern_metadata.then_some(pattern_id),
             pattern_text: include_pattern_metadata.then(|| pattern.clone()),
         }));
@@ -2276,9 +2306,52 @@ struct SearchMatchJson {
     line: usize,
     text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    range: Option<SearchRangeJson>,
+    #[serde(rename = "metaVariables", skip_serializing_if = "Option::is_none")]
+    meta_variables: Option<SearchMetaVariablesJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pattern_id: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pattern_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct SearchRangeJson {
+    #[serde(rename = "byteOffset")]
+    byte_offset: SearchByteOffsetJson,
+    start: SearchPositionJson,
+    end: SearchPositionJson,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct SearchByteOffsetJson {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct SearchPositionJson {
+    line: usize,
+    column: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct SearchMetaVariablesJson {
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    single: BTreeMap<String, SearchMetaVariableJson>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    multi: BTreeMap<String, Vec<SearchMetaVariableJson>>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+struct SearchMetaVariableJson {
+    text: String,
+    range: SearchRangeJson,
+}
+
+#[derive(Debug, Clone)]
+struct AstSourceContext {
+    line_starts: Vec<usize>,
 }
 
 #[derive(Serialize)]
@@ -2333,6 +2406,114 @@ fn run_batch_path(args: &RunArgs) -> anyhow::Result<&str> {
 fn run_pattern(args: &RunArgs) -> anyhow::Result<&str> {
     args.pattern.as_deref().ok_or_else(|| {
         anyhow::anyhow!("tg run requires PATTERN unless --batch-rewrite <config.json> is provided")
+    })
+}
+
+fn build_search_line_starts(source: &str) -> Vec<usize> {
+    let mut line_starts = vec![0];
+    for (index, byte) in source.as_bytes().iter().enumerate() {
+        if *byte == b'\n' {
+            line_starts.push(index + 1);
+        }
+    }
+    line_starts
+}
+
+fn zero_based_position_for_byte(line_starts: &[usize], byte_offset: usize) -> SearchPositionJson {
+    let line_index = line_starts
+        .partition_point(|start| *start <= byte_offset)
+        .saturating_sub(1);
+    SearchPositionJson {
+        line: line_index,
+        column: byte_offset - line_starts[line_index],
+    }
+}
+
+fn search_range_json(
+    line_starts: &[usize],
+    byte_range: &std::ops::Range<usize>,
+) -> SearchRangeJson {
+    SearchRangeJson {
+        byte_offset: SearchByteOffsetJson {
+            start: byte_range.start,
+            end: byte_range.end,
+        },
+        start: zero_based_position_for_byte(line_starts, byte_range.start),
+        end: zero_based_position_for_byte(line_starts, byte_range.end),
+    }
+}
+
+fn search_meta_variables_json(
+    meta_variables: &AstMetaVariables,
+    line_starts: &[usize],
+) -> Option<SearchMetaVariablesJson> {
+    if meta_variables.single.is_empty() && meta_variables.multi.is_empty() {
+        return None;
+    }
+
+    let single = meta_variables
+        .single
+        .iter()
+        .map(|(name, capture)| {
+            (
+                name.clone(),
+                SearchMetaVariableJson {
+                    text: capture.text.clone(),
+                    range: search_range_json(line_starts, &capture.byte_range),
+                },
+            )
+        })
+        .collect();
+    let multi = meta_variables
+        .multi
+        .iter()
+        .map(|(name, captures)| {
+            (
+                name.clone(),
+                captures
+                    .iter()
+                    .map(|capture| SearchMetaVariableJson {
+                        text: capture.text.clone(),
+                        range: search_range_json(line_starts, &capture.byte_range),
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+
+    Some(SearchMetaVariablesJson { single, multi })
+}
+
+fn ast_match_to_search_json(
+    matched: &AstMatch,
+    source_contexts: &mut BTreeMap<PathBuf, AstSourceContext>,
+) -> anyhow::Result<SearchMatchJson> {
+    if !source_contexts.contains_key(&matched.file) {
+        let source = std::fs::read_to_string(&matched.file).with_context(|| {
+            format!("failed to read AST source file {}", matched.file.display())
+        })?;
+        source_contexts.insert(
+            matched.file.clone(),
+            AstSourceContext {
+                line_starts: build_search_line_starts(&source),
+            },
+        );
+    }
+
+    let context = source_contexts
+        .get(&matched.file)
+        .expect("AST source context should be present");
+    Ok(SearchMatchJson {
+        file: matched.file.to_string_lossy().into_owned(),
+        line: matched.line,
+        text: matched.matched_text.clone(),
+        range: Some(search_range_json(
+            &context.line_starts,
+            &matched.candidate.byte_range,
+        )),
+        meta_variables: search_meta_variables_json(&matched.meta_variables, &context.line_starts),
+        pattern_id: None,
+        pattern_text: None,
     })
 }
 
@@ -3197,31 +3378,22 @@ fn handle_ast_run(args: RunArgs) -> anyhow::Result<()> {
     }
 
     let pattern = run_pattern(&args)?;
-    let matches = backend.search_for_cli(pattern, &args.lang, path)?;
 
     if args.json {
+        let matches = backend.search(pattern, &args.lang, path)?;
+        let mut source_contexts = BTreeMap::new();
         return emit_json_search_results(
             RoutingDecision::ast(),
             pattern,
             path,
             matches
-                .into_iter()
-                .flat_map(|file_matches| {
-                    let file = file_matches.file.to_string_lossy().into_owned();
-                    file_matches
-                        .matches
-                        .into_iter()
-                        .map(move |matched| SearchMatchJson {
-                            file: file.clone(),
-                            line: matched.line,
-                            text: matched.matched_text,
-                            pattern_id: None,
-                            pattern_text: None,
-                        })
-                })
-                .collect(),
+                .iter()
+                .map(|matched| ast_match_to_search_json(matched, &mut source_contexts))
+                .collect::<anyhow::Result<Vec<_>>>()?,
         );
     }
+
+    let matches = backend.search_for_cli(pattern, &args.lang, path)?;
 
     if args.verbose {
         emit_verbose_metadata(RoutingDecision::ast());
@@ -4107,6 +4279,8 @@ fn handle_gpu_sidecar_search(params: GpuSearchParams) -> anyhow::Result<()> {
                             file: entry.file,
                             line: entry.line_number,
                             text: entry.text,
+                            range: None,
+                            meta_variables: None,
                             pattern_id: entry.pattern_id,
                             pattern_text: entry.pattern_text,
                         })
@@ -4261,6 +4435,8 @@ fn gpu_native_match_json_entries(stats: &GpuNativeSearchStats) -> Vec<SearchMatc
             file: matched.path.to_string_lossy().into_owned(),
             line: matched.line_number,
             text: matched.text.clone(),
+            range: None,
+            meta_variables: None,
             pattern_id: (stats.pattern_count > 1).then_some(matched.pattern_id),
             pattern_text: (stats.pattern_count > 1).then(|| matched.pattern_text.clone()),
         })

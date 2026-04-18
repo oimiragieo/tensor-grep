@@ -1,6 +1,18 @@
+import os
 import shutil
+import sys
+from pathlib import Path
 
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+existing_pythonpath = os.environ.get("PYTHONPATH", "")
+pythonpath_entries = [entry for entry in existing_pythonpath.split(os.pathsep) if entry]
+if str(SRC_DIR) not in pythonpath_entries:
+    os.environ["PYTHONPATH"] = os.pathsep.join([str(SRC_DIR), *pythonpath_entries])
 
 
 def pytest_configure(config):

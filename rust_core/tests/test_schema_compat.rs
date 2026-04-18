@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 const EXPECTED_EXAMPLES: &[&str] = &[
     "attempt_ledger.json",
+    "ast_run.json",
     "audit_manifest_verify.json",
     "blast_radius.json",
     "blast_radius_plan.json",
@@ -399,6 +400,46 @@ struct SearchMatch {
     file: String,
     line: usize,
     text: String,
+    #[serde(default)]
+    range: Option<SearchRangeExample>,
+    #[serde(default, rename = "metaVariables")]
+    meta_variables: Option<SearchMetaVariablesExample>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchRangeExample {
+    #[serde(rename = "byteOffset")]
+    byte_offset: ByteRange,
+    start: SearchPositionExample,
+    end: SearchPositionExample,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchPositionExample {
+    line: usize,
+    column: usize,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchMetaVariablesExample {
+    #[serde(default)]
+    single: HashMap<String, SearchMetaVariableExample>,
+    #[serde(default)]
+    multi: HashMap<String, Vec<SearchMetaVariableExample>>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SearchMetaVariableExample {
+    text: String,
+    range: SearchRangeExample,
 }
 
 #[allow(dead_code)]
@@ -1050,7 +1091,7 @@ fn test_docs_examples_match_v1_schema() {
 
     for path in &example_paths {
         match example_file_name(path) {
-            "search.json" | "index_search.json" => assert_search_example(path),
+            "search.json" | "index_search.json" | "ast_run.json" => assert_search_example(path),
             "rulesets.json" => assert_rulesets_example(path),
             "ruleset_scan.json" => assert_ruleset_scan_example(path),
             "rewrite_plan.json" => assert_rewrite_plan_example(path),
@@ -1201,6 +1242,65 @@ fn assert_search_example(path: &Path) {
             "{} match missing text",
             path.display()
         );
+        if let Some(range) = &matched.range {
+            assert!(
+                range.byte_offset.end > range.byte_offset.start,
+                "{} match range must span at least one byte",
+                path.display()
+            );
+            assert!(
+                range.end.line > range.start.line || range.end.column >= range.start.column,
+                "{} match range end must not precede start",
+                path.display()
+            );
+        }
+        if let Some(meta_variables) = &matched.meta_variables {
+            for capture in meta_variables.single.values() {
+                assert!(
+                    !capture.text.is_empty(),
+                    "{} single metavariable text must not be empty",
+                    path.display()
+                );
+                assert!(
+                    capture.range.byte_offset.end > capture.range.byte_offset.start,
+                    "{} single metavariable range must span bytes",
+                    path.display()
+                );
+            }
+            for captures in meta_variables.multi.values() {
+                assert!(
+                    !captures.is_empty(),
+                    "{} multi metavariable list must not be empty",
+                    path.display()
+                );
+                for capture in captures {
+                    assert!(
+                        !capture.text.is_empty(),
+                        "{} multi metavariable text must not be empty",
+                        path.display()
+                    );
+                    assert!(
+                        capture.range.byte_offset.end > capture.range.byte_offset.start,
+                        "{} multi metavariable range must span bytes",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+    if example.routing_backend == "AstBackend" {
+        for matched in &example.matches {
+            assert!(
+                matched.range.is_some(),
+                "{} AST matches must include range metadata",
+                path.display()
+            );
+            assert!(
+                matched.meta_variables.is_some(),
+                "{} AST matches must include metavariable metadata",
+                path.display()
+            );
+        }
     }
 }
 

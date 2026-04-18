@@ -147,6 +147,71 @@ fn test_tg_run_json_metadata_uses_ast_backend_routing() {
 }
 
 #[test]
+fn test_tg_run_json_metadata_preserves_ast_match_details() {
+    let (_dir, file_path) = write_source_file("py", "def add(a, b):\n    return a + b\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--json")
+        .arg("def $F($$$ARGS): $$$BODY")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let matched = &payload["matches"][0];
+
+    assert_eq!(matched["range"]["byteOffset"]["start"], 0);
+    assert_eq!(matched["range"]["byteOffset"]["end"], 31);
+    assert_eq!(matched["range"]["start"]["line"], 0);
+    assert_eq!(matched["range"]["start"]["column"], 0);
+    assert_eq!(matched["range"]["end"]["line"], 1);
+    assert_eq!(matched["range"]["end"]["column"], 16);
+
+    assert_eq!(matched["metaVariables"]["single"]["F"]["text"], "add");
+    assert_eq!(
+        matched["metaVariables"]["single"]["F"]["range"]["byteOffset"]["start"],
+        4
+    );
+    assert_eq!(
+        matched["metaVariables"]["single"]["F"]["range"]["byteOffset"]["end"],
+        7
+    );
+
+    let args = matched["metaVariables"]["multi"]["ARGS"]
+        .as_array()
+        .expect("ARGS should be a multi metavariable array");
+    assert_eq!(args.len(), 3);
+    assert_eq!(args[0]["text"], "a");
+    assert_eq!(args[0]["range"]["byteOffset"]["start"], 8);
+    assert_eq!(args[0]["range"]["byteOffset"]["end"], 9);
+    assert_eq!(args[1]["text"], ",");
+    assert_eq!(args[1]["range"]["byteOffset"]["start"], 9);
+    assert_eq!(args[1]["range"]["byteOffset"]["end"], 10);
+    assert_eq!(args[2]["text"], "b");
+    assert_eq!(args[2]["range"]["byteOffset"]["start"], 11);
+    assert_eq!(args[2]["range"]["byteOffset"]["end"], 12);
+
+    let body = matched["metaVariables"]["multi"]["BODY"]
+        .as_array()
+        .expect("BODY should be a multi metavariable array");
+    assert_eq!(body.len(), 1);
+    assert_eq!(body[0]["text"], "return a + b");
+    assert_eq!(body[0]["range"]["byteOffset"]["start"], 19);
+    assert_eq!(body[0]["range"]["byteOffset"]["end"], 31);
+}
+
+#[test]
 fn test_tg_run_verbose_emits_ast_routing_metadata_and_match_output() {
     let (_dir, file_path) = write_source_file("py", "def add(a, b):\n    return a + b\n");
 

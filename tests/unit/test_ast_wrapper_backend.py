@@ -100,6 +100,67 @@ def test_ast_wrapper_backend_should_use_rule_file_for_multiline_patterns():
     assert cmd[-1] == "example.py"
 
 
+def test_ast_wrapper_backend_should_preserve_range_and_meta_variables():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.stdout = (
+        '[{"text":"def hello(name):",'
+        '"file":"example.py",'
+        '"range":{"byteOffset":{"start":0,"end":16},'
+        '"start":{"line":0,"column":0},'
+        '"end":{"line":0,"column":16}},'
+        '"metaVariables":{"single":{"F":{"text":"hello"}},"multi":{"ARGS":[{"text":"name"}]}}}]'
+    )
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        result = backend.search(
+            "example.py",
+            "def $F($$$ARGS):",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    assert result.total_matches == 1
+    assert result.matches[0].range == {
+        "byteOffset": {"start": 0, "end": 16},
+        "start": {"line": 0, "column": 0},
+        "end": {"line": 0, "column": 16},
+    }
+    assert result.matches[0].meta_variables == {
+        "single": {"F": {"text": "hello"}},
+        "multi": {"ARGS": [{"text": "name"}]},
+    }
+
+
+def test_ast_wrapper_backend_should_tolerate_non_mapping_range_payload():
+    backend = AstGrepWrapperBackend()
+
+    mock_result = MagicMock()
+    mock_result.stdout = (
+        '[{"text":"def hello():","file":"example.py","range":null,'
+        '"metaVariables":{"single":{"F":{"text":"hello"}}}}]'
+    )
+
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_get_binary_name", return_value="sg"),
+        patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
+    ):
+        result = backend.search(
+            "example.py",
+            "def $F():",
+            config=SearchConfig(ast=True, lang="python"),
+        )
+
+    assert result.total_matches == 1
+    assert result.matches[0].line_number == 1
+    assert result.matches[0].range is None
+
+
 def test_ast_wrapper_backend_should_group_project_scan_results_by_rule_id():
     backend = AstGrepWrapperBackend()
 

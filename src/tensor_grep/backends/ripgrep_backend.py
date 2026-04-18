@@ -205,9 +205,14 @@ class RipgrepBackend(ComputeBackend):
                     cmd.append("--no-line-number")
             if config.color:
                 cmd.extend(["--color", config.color])
+            if config.glob_case_insensitive:
+                cmd.append("--glob-case-insensitive")
             if config.glob:
                 for glob in config.glob:
                     cmd.extend(["-g", glob])
+            if config.iglob:
+                for glob in config.iglob:
+                    cmd.extend(["--iglob", glob])
 
             if config.context is not None:
                 cmd.extend(["-C", str(config.context)])
@@ -223,6 +228,12 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-c")
             if config.count_matches:
                 cmd.append("--count-matches")
+            if config.debug:
+                cmd.append("--debug")
+            if config.trace:
+                cmd.append("--trace")
+            if config.stats:
+                cmd.append("--stats")
             if config.threads > 0:
                 cmd.extend(["-j", str(config.threads)])
 

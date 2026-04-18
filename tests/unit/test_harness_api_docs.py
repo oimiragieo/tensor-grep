@@ -5,6 +5,7 @@ DOC_PATH = Path("docs/harness_api.md")
 EXAMPLES_DIR = Path("docs/examples")
 EXPECTED_EXAMPLES = {
     "search.json": ("total_matches", "matches"),
+    "ast_run.json": ("query", "total_matches", "matches"),
     "index_search.json": ("sidecar_used", "matches"),
     "rulesets.json": ("rulesets",),
     "ruleset_scan.json": ("ruleset", "findings", "total_matches"),
@@ -76,6 +77,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
 
     assert "# Harness API" in doc
     assert "## Search JSON" in doc
+    assert "## AST Run JSON" in doc
     assert "## Index Search JSON" in doc
     assert "## Rulesets JSON" in doc
     assert "## Ruleset Scan JSON" in doc

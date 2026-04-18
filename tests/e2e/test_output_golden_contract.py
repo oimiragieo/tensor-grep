@@ -40,6 +40,11 @@ GOLDEN_CASES = [
     ("count_matches_single_file", ["--count-matches", "hello"], TEXT_FILE1_TARGET),
     ("replace_multi_file", ["-r", "HI", "hello"], TEXT_DIR_TARGET),
     ("replace_single_file", ["-r", "HI", "hello"], TEXT_FILE1_TARGET),
+    (
+        "replace_capture_groups_single_file",
+        ["-r", "$2-$1", "(hello) (world)"],
+        TEXT_FILE1_TARGET,
+    ),
     ("line_number_multi_file", ["-n", "hello"], TEXT_DIR_TARGET),
     ("line_number_single_file", ["-n", "hello"], TEXT_FILE1_TARGET),
     ("binary_single_file", ["hello"], ["file3.bin"]),
@@ -47,6 +52,10 @@ GOLDEN_CASES = [
     ("json_multi_file", ["--json", "hello"], TEXT_DIR_TARGET),
     ("ndjson_multi_file", ["--ndjson", "hello"], TEXT_DIR_TARGET),
 ]
+
+EXACT_OUTPUT_CASES = {
+    "replace_capture_groups_single_file": "world-hello\n",
+}
 
 LAUNCHERS = ["python-m", "native"]
 
@@ -181,6 +190,9 @@ def test_output_golden_contract(golden_fixture_dir, snapshot, launcher, name, ar
     if launcher == "python-m" and "--ndjson" in args:
         pytest.skip("python -m tensor_grep requires native tg support for --ndjson")
     tg_stdout = run_tg(launcher, args + target, golden_fixture_dir)
+    if name in EXACT_OUTPUT_CASES:
+        assert tg_stdout == EXACT_OUTPUT_CASES[name]
+        return
     snapshot.assert_match(tg_stdout, f"{launcher}_{name}.txt")
 
 

@@ -22,6 +22,7 @@ These top-level fields are shared across every JSON shape documented here.
 | Shape | Trigger | Example |
 | --- | --- | --- |
 | Search JSON | `tg.exe search --json ...` | [`examples/search.json`](examples/search.json) |
+| AST Run JSON | `tg.exe run --lang <lang> --json ...` | [`examples/ast_run.json`](examples/ast_run.json) |
 | Index search JSON | `tg.exe search --index --json ...` | [`examples/index_search.json`](examples/index_search.json) |
 | Rulesets JSON | `tg.exe rulesets --json` | [`examples/rulesets.json`](examples/rulesets.json) |
 | Ruleset scan JSON | `tg.exe scan --ruleset <name> --json ...` | [`examples/ruleset_scan.json`](examples/ruleset_scan.json) |
@@ -74,6 +75,33 @@ Each `matches[]` object has:
 | `file` | `string` | Absolute path to the matching file. |
 | `line` | `integer` | 1-based line number. |
 | `text` | `string` | Full matching line text. |
+
+## AST Run JSON
+
+Emitted by native AST search when `tg.exe run --json` is set without `--rewrite`.
+
+Example: [`examples/ast_run.json`](examples/ast_run.json)
+
+The top-level envelope matches Search JSON and keeps the same `query`, `path`, `total_matches`, and `matches[]` fields.
+
+Each `matches[]` object keeps the standard search fields and additionally includes:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `range` | `object` | Zero-based AST span metadata with `byteOffset`, `start`, and `end`. |
+| `range.byteOffset` | `object` | Byte offsets with `start` and `end` exclusive. |
+| `range.start` | `object` | Zero-based `line` and `column` for the match start. |
+| `range.end` | `object` | Zero-based `line` and `column` for the match end. |
+| `metaVariables` | `object` | Captured AST metavariables from the native matcher. |
+| `metaVariables.single` | `object` | Single captures keyed by metavariable name. |
+| `metaVariables.multi` | `object` | Multi captures keyed by metavariable name, each value an ordered array of captures. |
+
+Each `metaVariables.single.<name>` or `metaVariables.multi[]` capture object uses:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `text` | `string` | Exact captured source text. |
+| `range` | `object` | Same zero-based span shape used by the parent match. |
 
 ## Index Search JSON
 

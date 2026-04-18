@@ -279,6 +279,8 @@ To enforce sustainable performance gains, we introduced a benchmark-governance l
 5. Regression checks now include benchmark environment signatures (platform/machine metadata) so cross-OS comparisons are rejected by default unless explicitly overridden.
 6. Release integrity checks now require `CHECKSUMS.txt` SHA256 entries to match GitHub release `asset.digest` metadata for each managed binary, tightening post-upload artifact parity.
 
+The 2026-04-18 Windows baseline refresh was a governance repair, not a performance claim. Fresh clean `origin/main` evidence on this host no longer passed the stale March line, so `benchmarks/baselines/run_benchmarks.windows.json` was promoted from clean `origin/main` evidence and now records `benchmark_host_key` plus `host_provenance` alongside `tg_binary_source` and `tg_launcher_mode`. The important rule did not move: `check_regression.py` policy remained unchanged. Historical roadmap sections that refer to the accepted Windows baseline should therefore be read against the accepted line in force for that batch.
+
 This turns performance claims into continuously verifiable constraints and enables objective rollback decisions when regressions are detected.
 
 ### 3.10 Optimization Ledger: Accepted Wins and Rejected Dead Ends

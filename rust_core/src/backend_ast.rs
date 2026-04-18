@@ -62,11 +62,24 @@ pub struct EditCandidate {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AstMetaVariableCapture {
+    pub text: String,
+    pub byte_range: Range<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AstMetaVariables {
+    pub single: BTreeMap<String, AstMetaVariableCapture>,
+    pub multi: BTreeMap<String, Vec<AstMetaVariableCapture>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstMatch {
     pub file: PathBuf,
     pub line: usize,
     pub matched_text: String,
     pub candidate: EditCandidate,
+    pub meta_variables: AstMetaVariables,
 }
 
 impl AstMatch {
@@ -874,6 +887,7 @@ fn build_match<'tree>(
     let byte_range = matched.range();
     let matched_text = matched.text().to_string();
     let file_path = file.to_path_buf();
+    let meta_variables = extract_structured_meta_variables(matched.get_env());
     let candidate = EditCandidate {
         file: file_path.clone(),
         byte_range: byte_range.clone(),
@@ -885,19 +899,17 @@ fn build_match<'tree>(
         line: line_number_for_byte(line_starts, byte_range.start),
         matched_text,
         candidate,
+        meta_variables,
     }
 }
 
 fn compile_ast_pattern(pattern: &str, language: SupportLang) -> Result<CompiledAstPattern> {
     let compiled_pattern = Pattern::try_new(pattern, language)
         .map_err(|err| anyhow::anyhow!("Invalid pattern: {err}"))?;
-    
     let fallback = build_rust_function_signature_fallback(pattern, language);
-    
     if compiled_pattern.has_error() && fallback.is_none() {
         anyhow::bail!("Invalid pattern: parse error");
     }
-    
     Ok(CompiledAstPattern {
         pattern: compiled_pattern,
         rust_function_signature_fallback: fallback,
@@ -946,7 +958,6 @@ fn build_rust_function_signature_fallback(
         Ok(p) => p,
         Err(_) => return None,
     };
-    
     let raw_params = params.trim().to_string();
     let parameters_pattern = if raw_params == "$$$ARGS" || raw_params.is_empty() {
         None
@@ -1011,6 +1022,7 @@ fn collect_rust_function_signature_matches(
         };
 
         let mut metavar_env = extract_metavar_env(source, name_match.get_env());
+        let mut meta_variables = extract_structured_meta_variables(name_match.get_env());
 
         if let Some(parameters_pattern) = &fallback.parameters_pattern {
             let Some(parameters_match) = parameters_node.find(parameters_pattern.clone()) else {
@@ -1020,6 +1032,10 @@ fn collect_rust_function_signature_matches(
                 &mut metavar_env,
                 extract_metavar_env(source, parameters_match.get_env()),
             );
+            merge_structured_meta_variables(
+                &mut meta_variables,
+                extract_structured_meta_variables(parameters_match.get_env()),
+            );
         } else if fallback.raw_params == "$$$ARGS" {
             let text = parameters_node.text();
             let mut inner = text.trim();
@@ -1027,6 +1043,16 @@ fn collect_rust_function_signature_matches(
                 inner = &inner[1..inner.len() - 1];
             }
             metavar_env.insert("ARGS".to_string(), inner.to_string());
+            let parameter_range = parameters_node.range();
+            if parameter_range.end > parameter_range.start + 1 && !inner.is_empty() {
+                meta_variables.multi.insert(
+                    "ARGS".to_string(),
+                    vec![AstMetaVariableCapture {
+                        text: inner.to_string(),
+                        byte_range: (parameter_range.start + 1)..(parameter_range.end - 1),
+                    }],
+                );
+            }
         } else if fallback.raw_params.is_empty() {
             let text = parameters_node.text();
             let inner = text.trim();
@@ -1045,6 +1071,7 @@ fn collect_rust_function_signature_matches(
                 byte_range,
                 metavar_env,
             },
+            meta_variables,
         });
     }
 
@@ -1930,6 +1957,51 @@ fn extract_metavar_env(
     }
 
     extracted
+}
+
+fn extract_structured_meta_variables(
+    env: &ast_grep_core::meta_var::MetaVarEnv<'_, ast_grep_core::tree_sitter::StrDoc<SupportLang>>,
+) -> AstMetaVariables {
+    let mut extracted = AstMetaVariables::default();
+
+    for variable in env.get_matched_variables() {
+        match variable {
+            MetaVariable::Capture(name, _) => {
+                if let Some(node) = env.get_match(&name) {
+                    extracted.single.insert(
+                        name,
+                        AstMetaVariableCapture {
+                            text: node.text().to_string(),
+                            byte_range: node.range(),
+                        },
+                    );
+                }
+            }
+            MetaVariable::MultiCapture(name) => {
+                let nodes = env.get_multiple_matches(&name);
+                let captures: Vec<AstMetaVariableCapture> = nodes
+                    .into_iter()
+                    .map(|node| AstMetaVariableCapture {
+                        text: node.text().to_string(),
+                        byte_range: node.range(),
+                    })
+                    .collect();
+                if !captures.is_empty() {
+                    extracted.multi.insert(name, captures);
+                }
+            }
+            MetaVariable::Dropped(_) | MetaVariable::Multiple => {}
+        }
+    }
+
+    extracted
+}
+
+fn merge_structured_meta_variables(target: &mut AstMetaVariables, other: AstMetaVariables) {
+    target.single.extend(other.single);
+    for (name, captures) in other.multi {
+        target.multi.entry(name).or_default().extend(captures);
+    }
 }
 
 #[cfg(test)]

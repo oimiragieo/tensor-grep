@@ -55,3 +55,22 @@ def test_benchmark_baselines_should_not_be_identical_across_operating_systems():
 
     # OS runner characteristics differ materially; identical baselines indicate stale copy/paste drift.
     assert ubuntu["rows"] != windows["rows"]
+
+
+def test_windows_benchmark_baseline_should_record_host_provenance():
+    root = Path(__file__).resolve().parents[2]
+    baseline = json.loads(
+        (root / "benchmarks" / "baselines" / "run_benchmarks.windows.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert baseline.get("benchmark_host_key") == "windows:amd64:py3.12"
+    host_provenance = baseline.get("host_provenance")
+    assert isinstance(host_provenance, dict)
+    assert host_provenance.get("benchmark_host_key") == "windows:amd64:py3.12"
+    assert host_provenance.get("platform") == "windows"
+    assert host_provenance.get("machine") == "amd64"
+    assert host_provenance.get("python_version") == "3.12.12"
+    assert host_provenance.get("tg_binary_source") == "default_binary_path"
+    assert host_provenance.get("tg_launcher_mode") == "explicit_binary"

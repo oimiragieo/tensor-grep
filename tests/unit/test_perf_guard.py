@@ -1,4 +1,9 @@
-from tensor_grep.perf_guard import check_regressions, detect_environment_mismatch
+from tensor_grep.perf_guard import (
+    benchmark_host_key,
+    check_regressions,
+    detect_comparator_drift,
+    detect_environment_mismatch,
+)
 
 
 def test_check_regressions_reports_slowdowns_over_threshold():
@@ -111,3 +116,28 @@ def test_detect_environment_mismatch_ignores_missing_metadata():
     mismatch = detect_environment_mismatch(baseline=baseline, current=current)
 
     assert mismatch is None
+
+
+def test_benchmark_host_key_is_stable_for_same_host_metadata():
+    environment = {
+        "platform": "windows",
+        "machine": "amd64",
+        "python_version": "3.13.1",
+    }
+
+    assert benchmark_host_key(environment) == "windows:amd64:py3.13"
+
+
+def test_detect_comparator_drift_reports_rg_time_s_changes():
+    baseline = {"rows": [{"name": "x", "rg_time_s": 1.0}]}
+    current = {"rows": [{"name": "x", "rg_time_s": 1.3}]}
+
+    drift = detect_comparator_drift(
+        baseline=baseline,
+        current=current,
+        comparator_key="rg_time_s",
+        max_regression_pct=10.0,
+    )
+
+    assert len(drift) == 1
+    assert "rg_time_s" in drift[0]

@@ -55,7 +55,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - Use `tg doctor --json` for system, GPU, cache, and daemon diagnostics.
 - Use `tg session --help` for cached edit-loop and daemon commands.""",
     no_args_is_help=True,
-    add_completion=False,
+    add_completion=True,
     rich_markup_mode="markdown",
 )
 checkpoint_app = typer.Typer(
@@ -522,6 +522,18 @@ def _collect_candidate_files(
     return ordered, seen
 
 
+def _write_path_list(paths: list[str], *, use_nul: bool) -> None:
+    if not paths:
+        return
+    if use_nul:
+        payload = b"\x00".join(os.fsencode(path) for path in paths) + b"\x00"
+        sys.stdout.buffer.write(payload)
+        sys.stdout.buffer.flush()
+        return
+    sys.stdout.write("\n".join(paths))
+    sys.stdout.write(os.linesep)
+
+
 def _sum_total_bytes(paths: list[str]) -> int:
     total = 0
     for p in paths:
@@ -558,8 +570,41 @@ def _can_passthrough_rg(
         and not files_with_matches
         and not files_without_match
         and not only_matching
-        and not stats_mode
     )
+
+
+def _selected_route_supports_rg_passthrough(
+    *,
+    selected_backend_name: str,
+    selected_backend_reason: str,
+    selected_gpu_device_ids: list[int],
+    selected_gpu_chunk_plan_mb: list[tuple[int, int]],
+) -> bool:
+    if selected_backend_name != "RipgrepBackend":
+        return False
+    if selected_gpu_device_ids or selected_gpu_chunk_plan_mb:
+        return False
+    return not selected_backend_reason.startswith("gpu_")
+
+
+def _generate_shell_completion_script(*, generator: str, prog_name: str = "tg") -> str:
+    shell_by_generator = {
+        "complete-bash": "bash",
+        "complete-zsh": "zsh",
+        "complete-fish": "fish",
+        "complete-powershell": "powershell",
+    }
+    shell = shell_by_generator.get(generator)
+    if shell is None:
+        supported_values = ", ".join(shell_by_generator)
+        raise typer.BadParameter(
+            f"Unsupported --generate value '{generator}'. Supported values: {supported_values}"
+        )
+
+    complete_var = f"_{prog_name.replace('-', '_').upper()}_COMPLETE"
+    from typer._completion_shared import get_completion_script
+
+    return str(get_completion_script(prog_name=prog_name, complete_var=complete_var, shell=shell))
 
 
 def _replace_lines(
@@ -573,7 +618,7 @@ def _replace_lines(
         flags |= re.IGNORECASE
 
     if config.fixed_strings:
-        regex = None
+        regex = re.compile(re.escape(pattern), flags)
     elif config.line_regexp:
         regex = re.compile(f"^{pattern}$", flags)
     elif config.word_regexp:
@@ -583,24 +628,88 @@ def _replace_lines(
 
     extracted: list[MatchLine] = []
     for match in matches:
-        if config.fixed_strings:
+        replacement = config.replace_str
+        if config.fixed_strings and "$" not in replacement:
             flags_val = flags
             if flags_val & re.IGNORECASE:
                 new_text = re.sub(
                     re.escape(pattern),
-                    config.replace_str.replace("\\", r"\\"),
+                    replacement.replace("\\", r"\\"),
                     match.text,
                     flags=re.IGNORECASE,
                 )
             else:
-                new_text = match.text.replace(pattern, config.replace_str)
+                new_text = match.text.replace(pattern, replacement)
+            extracted.append(replace(match, text=new_text))
+            continue
+        if regex is not None:
+
+            def _expand_match(current: re.Match[str], replacement: str = replacement) -> str:
+                return _expand_ripgrep_replacement(replacement, current)
+
+            new_text = regex.sub(
+                _expand_match,
+                match.text,
+            )
         else:
-            if regex is not None:
-                new_text = regex.sub(config.replace_str, match.text)
-            else:
-                new_text = match.text
+            new_text = match.text
         extracted.append(replace(match, text=new_text))
     return extracted
+
+
+def _expand_ripgrep_replacement(template: str, match: re.Match[str]) -> str:
+    def _is_ascii_digit(char: str) -> bool:
+        return "0" <= char <= "9"
+
+    def _is_ascii_ref_char(char: str) -> bool:
+        return char == "_" or ("0" <= char <= "9") or ("A" <= char <= "Z") or ("a" <= char <= "z")
+
+    def _resolve_token(token: str) -> str:
+        if not token:
+            return ""
+        try:
+            if all(_is_ascii_digit(char) for char in token):
+                group_value = match.group(int(token))
+            else:
+                group_value = match.group(token)
+        except Exception:
+            return ""
+        return "" if group_value is None else str(group_value)
+
+    result: list[str] = []
+    index = 0
+    while index < len(template):
+        char = template[index]
+        if char != "$" or index + 1 >= len(template):
+            result.append(char)
+            index += 1
+            continue
+
+        next_char = template[index + 1]
+        if next_char == "$":
+            result.append("$")
+            index += 2
+            continue
+
+        if next_char == "{":
+            end_index = template.find("}", index + 2)
+            if end_index != -1:
+                result.append(_resolve_token(template[index + 2 : end_index]))
+                index = end_index + 1
+                continue
+
+        if _is_ascii_ref_char(next_char):
+            end_index = index + 2
+            while end_index < len(template) and _is_ascii_ref_char(template[end_index]):
+                end_index += 1
+            result.append(_resolve_token(template[index + 1 : end_index]))
+            index = end_index
+            continue
+
+        result.append("$")
+        index += 1
+
+    return "".join(result)
 
 
 def _only_matching_lines(
@@ -768,6 +877,55 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
             "id": str(payload.get("id") or rule_file.stem),
             "pattern": pattern,
             "language": str(payload.get("language") or default_language),
+        })
+
+    return specs
+
+
+def _load_inline_rule_specs(
+    inline_rules_text: str, *, default_language: str | None = None
+) -> list[dict[str, str]]:
+    import yaml
+
+    loader = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+    specs: list[dict[str, str]] = []
+
+    for document_index, payload in enumerate(
+        yaml.load_all(inline_rules_text, Loader=loader),
+        start=1,
+    ):
+        if payload is None:
+            continue
+        if not isinstance(payload, dict):
+            raise ValueError("Inline rules YAML must contain mapping documents.")
+
+        raw_rules = payload.get("rules")
+        if isinstance(raw_rules, list):
+            for rule_index, item in enumerate(raw_rules, start=1):
+                if not isinstance(item, dict):
+                    continue
+                pattern = _extract_rule_pattern(item)
+                if not pattern:
+                    continue
+                specs.append({
+                    "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language")
+                        or payload.get("language")
+                        or default_language
+                        or "python"
+                    ),
+                })
+            continue
+
+        pattern = _extract_rule_pattern(payload)
+        if not pattern:
+            continue
+        specs.append({
+            "id": str(payload.get("id") or f"inline-rule-{document_index}"),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language or "python"),
         })
 
     return specs
@@ -1556,8 +1714,10 @@ Supports almost all ripgrep (rg) flags for drop-in compatibility.
 )
 def search_command(
     # POSITIONAL ARGUMENTS
-    pattern: str = typer.Argument(..., help="A regular expression used for searching."),
-    file_path: list[str] | None = typer.Argument(None, help="A file or directory to search."),
+    positionals: list[str] | None = typer.Argument(
+        None,
+        help="PATTERN followed by file paths, or just file paths when --files is set.",
+    ),
     # INPUT OPTIONS
     regexp: list[str] | None = typer.Option(
         None, "-e", "--regexp", help="A pattern to search for. Can be provided multiple times."
@@ -1870,14 +2030,28 @@ def search_command(
     """
     # Just forward to CPU backend for now as a stub.
     # Note: Full flag wiring will require mapping these dozens of parameters into the Pipeline/Core components.
-    if not file_path:
-        typer.echo("Error: Please provide at least one PATH to search.", err=True)
-        sys.exit(1)
+    args = positionals or []
+    pattern = ""
+    if generate is not None:
+        typer.echo(_generate_shell_completion_script(generator=generate))
+        raise typer.Exit(0)
+    if files:
+        if not args:
+            typer.echo("Error: Please provide at least one PATH to search.", err=True)
+            sys.exit(1)
+        paths_to_search = args
+    else:
+        if not args:
+            typer.echo("Error: Please provide a PATTERN to search.", err=True)
+            sys.exit(1)
+        pattern = args[0]
+        paths_to_search = args[1:]
+        if not paths_to_search:
+            typer.echo("Error: Please provide at least one PATH to search.", err=True)
+            sys.exit(1)
 
     if line_number is None:
         line_number = sys.stdout.isatty()
-
-    paths_to_search = file_path
 
     from tensor_grep.core.config import SearchConfig
 
@@ -2032,11 +2206,10 @@ def search_command(
         stats_mode=stats,
     )
     if can_passthrough_rg:
-        if debug:
-            typer.echo("[debug] routing.backend=RipgrepBackend reason=rg_passthrough_cli_fast_path")
-        with nvtx_range("search.passthrough_rg", color="green"):
-            exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
-        sys.exit(0 if exit_code == 0 else 1)
+        if not stats:
+            with nvtx_range("search.passthrough_rg", color="green"):
+                exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
+            sys.exit(0 if exit_code == 0 else 1)
 
     scanner = DirectoryScanner(config)
     candidate_files_ordered, candidate_files_set = _collect_candidate_files(
@@ -2053,6 +2226,19 @@ def search_command(
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
     selected_gpu_device_ids = list(getattr(pipeline, "selected_gpu_device_ids", []) or [])
     selected_gpu_chunk_plan_mb = list(getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or [])
+    if (
+        can_passthrough_rg
+        and stats
+        and _selected_route_supports_rg_passthrough(
+            selected_backend_name=selected_backend_name,
+            selected_backend_reason=selected_backend_reason,
+            selected_gpu_device_ids=selected_gpu_device_ids,
+            selected_gpu_chunk_plan_mb=selected_gpu_chunk_plan_mb,
+        )
+    ):
+        with nvtx_range("search.passthrough_rg", color="green"):
+            exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
+        sys.exit(0 if exit_code == 0 else 1)
     if debug:
         typer.echo(
             f"[debug] routing.backend={selected_backend_name} reason={selected_backend_reason}"
@@ -2065,7 +2251,7 @@ def search_command(
 
     if files:
         if candidate_files_ordered:
-            print("\n".join(candidate_files_ordered))
+            _write_path_list(candidate_files_ordered, use_nul=null)
             sys.exit(0)
         sys.exit(1)
 
@@ -2113,14 +2299,19 @@ def search_command(
     # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
         rg_backend = cast(RipgrepBackend, backend)
+        search_targets = (
+            candidate_files_ordered
+            if (files_with_matches or files_without_match)
+            else paths_to_search
+        )
         span_ctx = (
             tracer.start_as_current_span("search.file") if tracer is not None else nullcontext()
         )
         with span_ctx as span, nvtx_range("search.file", color="cyan"):
             if span is not None:
                 span.set_attribute("backend", backend.__class__.__name__)
-                span.set_attribute("path_count", len(paths_to_search))
-            result = rg_backend.search(paths_to_search, pattern, config=config)
+                span.set_attribute("path_count", len(search_targets))
+            result = rg_backend.search(search_targets, pattern, config=config)
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
@@ -2267,7 +2458,7 @@ def search_command(
     if files_with_matches:
         if matched_files:
             _emit_stats()
-            print("\n".join(sorted(matched_files)))
+            _write_path_list(sorted(matched_files), use_nul=null)
             sys.exit(0)
         _emit_stats()
         sys.exit(1)
@@ -2276,7 +2467,7 @@ def search_command(
         unmatched = sorted(candidate_files_set - matched_files)
         if unmatched:
             _emit_stats()
-            print("\n".join(unmatched))
+            _write_path_list(unmatched, use_nul=null)
             sys.exit(0)
         _emit_stats()
         sys.exit(1)
@@ -3709,6 +3900,11 @@ def scan(
         "--ruleset",
         help="Built-in security/compliance ruleset to scan without sgconfig.",
     ),
+    inline_rules: str | None = typer.Option(
+        None,
+        "--inline-rules",
+        help="Scan using inline ast-grep rule YAML without requiring sgconfig.",
+    ),
     path: str = typer.Option(
         ".",
         "--path",
@@ -3770,6 +3966,10 @@ def scan(
     """Scan and rewrite code by configuration."""
     from tensor_grep.cli.rule_packs import resolve_rule_pack
 
+    if ruleset and inline_rules:
+        typer.echo("Error: --inline-rules is incompatible with --ruleset.", err=True)
+        sys.exit(1)
+
     if ruleset:
         try:
             ruleset_meta, rules = resolve_rule_pack(ruleset, language)
@@ -3788,6 +3988,25 @@ def scan(
             f"{ruleset_meta['name']} ({ruleset_meta['language']})"
         )
         routing_reason = "builtin-ruleset-scan"
+    elif inline_rules is not None:
+        try:
+            rules = _load_inline_rule_specs(inline_rules, default_language=language)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        if not rules:
+            typer.echo("Error: No valid inline rules were found.", err=True)
+            sys.exit(1)
+        inferred_language = language or str(rules[0]["language"])
+        project_cfg = {
+            "config_path": "inline-rules",
+            "root_dir": Path(path).resolve(),
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": inferred_language,
+        }
+        scan_banner = "Scanning project using inline AST rules"
+        routing_reason = "ast-inline-rules-scan"
     else:
         try:
             project_cfg = _load_sg_project_config(config)

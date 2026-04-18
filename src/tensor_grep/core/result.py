@@ -6,6 +6,8 @@ class MatchLine:
     line_number: int
     text: str
     file: str
+    range: dict[str, object] | None = None
+    meta_variables: dict[str, object] | None = None
 
 
 @dataclass

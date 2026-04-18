@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from tensor_grep.cli import bootstrap
 from tensor_grep.cli.bootstrap import _KNOWN_COMMANDS
@@ -99,6 +100,75 @@ def test_main_entry_should_fallback_to_full_cli_for_tg_specific_flags(monkeypatc
     bootstrap.main_entry()
 
     assert called["full_cli"] is True
+
+
+def test_main_entry_should_fallback_to_full_cli_for_generate(monkeypatch) -> None:
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "--generate", "complete-bash"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_main_entry_should_fallback_to_full_cli_for_scan_inline_rules(monkeypatch) -> None:
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tg",
+            "scan",
+            "--inline-rules",
+            "id: no-print\nlanguage: python\nrule:\n  pattern: print($A)",
+            "--path",
+            ".",
+        ],
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_ast_workflow_cli",
+        lambda _argv: pytest.fail("ast workflow fast path should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
+
+
+def test_main_entry_preserves_files_mode_without_pattern(
+    monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("print(1)\n", encoding="utf-8")
+    (project / "b.py").write_text("print(2)\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["tg", "--files", str(project)])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    captured = capsys.readouterr()
+
+    assert excinfo.value.code == 0
+    assert sorted(captured.out.strip().splitlines()) == sorted([
+        str(project / "a.py"),
+        str(project / "b.py"),
+    ])
 
 
 def test_main_entry_should_fallback_to_full_cli_for_glob_flag(monkeypatch):
@@ -236,6 +306,32 @@ def test_main_entry_should_delegate_ndjson_flag_to_native_tg(monkeypatch):
 
     assert excinfo.value.code == 0
     assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--ndjson"]}
+
+
+def test_root_cli_should_generate_powershell_completion_script() -> None:
+    result = CliRunner().invoke(app, ["--show-completion", "powershell"], prog_name="tg")
+
+    assert result.exit_code == 0
+    assert "Register-ArgumentCompleter" in result.stdout
+    assert "tg" in result.stdout
+
+
+def test_main_entry_should_fallback_to_full_cli_for_show_completion(monkeypatch) -> None:
+    called = {"full_cli": False}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "--show-completion", "powershell"])
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_rg_passthrough",
+        lambda *_args, **_kwargs: pytest.fail("rg passthrough should not run"),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+
+    bootstrap.main_entry()
+
+    assert called["full_cli"] is True
 
 
 def test_main_entry_should_delegate_multi_pattern_gpu_search_to_native_tg(monkeypatch):
