@@ -4,6 +4,7 @@ import json
 import re
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -871,6 +872,97 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
     audit_job = jobs.get("audit")
     if not isinstance(audit_job, dict):
         errors.append("Audit workflow must define `audit` job")
+    else:
+        audit_steps = audit_job.get("steps")
+        if not isinstance(audit_steps, list):
+            errors.append("Audit workflow `audit` job must define steps")
+        else:
+            audit_steps_by_name: dict[str, dict[str, Any]] = {}
+            audit_runs_by_name: dict[str, str] = {}
+            audit_step_order: list[str] = []
+            for step in audit_steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                if not isinstance(name, str):
+                    continue
+                audit_step_order.append(name)
+                audit_steps_by_name[name] = step
+                run = step.get("run")
+                if isinstance(run, str):
+                    audit_runs_by_name[name] = run
+
+            install_uv_step = audit_steps_by_name.get("Install uv")
+            if install_uv_step is None:
+                errors.append("Audit workflow `audit` job must include step `Install uv`")
+            else:
+                uses_value = install_uv_step.get("uses")
+                if uses_value != "astral-sh/setup-uv@v8.0.0":
+                    errors.append(
+                        "Audit workflow `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
+                    )
+
+            setup_python_run = audit_runs_by_name.get("Setup Python")
+            if setup_python_run is None:
+                errors.append("Audit workflow `audit` job must include step `Setup Python`")
+            elif "uv python install 3.12" not in setup_python_run:
+                errors.append(
+                    "Audit workflow `Setup Python` step must invoke `uv python install 3.12`"
+                )
+
+            create_env_step = "Create Python audit environment"
+            create_env_run = audit_runs_by_name.get(create_env_step)
+            if create_env_run is None:
+                errors.append(
+                    "Audit workflow `audit` job must include step "
+                    "`Create Python audit environment`"
+                )
+            elif "uv venv --python 3.12" not in create_env_run:
+                errors.append(
+                    "Audit workflow `Create Python audit environment` step must invoke "
+                    "`uv venv --python 3.12`"
+                )
+
+            install_pip_audit_run = audit_runs_by_name.get("Install pip-audit")
+            if install_pip_audit_run is None:
+                errors.append("Audit workflow `audit` job must include step `Install pip-audit`")
+            elif "uv pip install pip-audit" not in install_pip_audit_run:
+                errors.append(
+                    "Audit workflow `Install pip-audit` step must invoke "
+                    "`uv pip install pip-audit`"
+                )
+
+            run_pip_audit_run = audit_runs_by_name.get("Run pip-audit")
+            if run_pip_audit_run is None:
+                errors.append("Audit workflow `audit` job must include step `Run pip-audit`")
+            elif "uv run pip-audit" not in run_pip_audit_run:
+                errors.append(
+                    "Audit workflow `Run pip-audit` step must invoke `uv run pip-audit`"
+                )
+
+            required_step_order = [
+                "Install uv",
+                "Setup Python",
+                create_env_step,
+                "Install pip-audit",
+                "Run pip-audit",
+            ]
+            if all(step_name in audit_step_order for step_name in required_step_order):
+                order_positions = {name: audit_step_order.index(name) for name in required_step_order}
+                if order_positions["Setup Python"] > order_positions[create_env_step]:
+                    errors.append(
+                        "Audit workflow `Create Python audit environment` step must run after "
+                        "`Setup Python`"
+                    )
+                if order_positions[create_env_step] > order_positions["Install pip-audit"]:
+                    errors.append(
+                        "Audit workflow `Create Python audit environment` step must run before "
+                        "`Install pip-audit`"
+                    )
+                if order_positions["Install pip-audit"] > order_positions["Run pip-audit"]:
+                    errors.append(
+                        "Audit workflow `Install pip-audit` step must run before `Run pip-audit`"
+                    )
 
     report_job = jobs.get("report-audit-status")
     if not isinstance(report_job, dict):

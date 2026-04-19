@@ -48,6 +48,9 @@ Runs dependency and license audits:
 - `cargo deny check`
 - `pip-audit`
 
+`pip-audit` runs inside a uv-created Python environment after `uv python install 3.12`.
+Do not invoke `uv pip install` in this workflow without creating that environment first, or the job will fail before the audit runs.
+
 The Rust license policy for `cargo deny check` is owned in-repo at `rust_core/deny.toml`. If the Rust dependency graph changes, update that policy and the audit workflow contract tests together rather than relying on cargo-deny defaults.
 
 Triggers:

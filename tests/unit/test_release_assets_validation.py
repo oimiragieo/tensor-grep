@@ -350,6 +350,82 @@ def test_should_require_audit_workflow_managed_issue_title_contract():
     assert "[Security Audit] Scheduled dependency audit failure" in joined_errors
 
 
+def test_should_require_audit_workflow_uv_environment_before_pip_audit_install():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = """
+    name: Security Audit
+    jobs:
+      audit:
+        name: Dependency & License Audit
+        runs-on: ubuntu-latest
+        steps:
+          - name: Install uv
+            uses: astral-sh/setup-uv@v8.0.0
+          - name: Setup Python
+            run: uv python install 3.12
+          - name: Install pip-audit
+            run: uv pip install pip-audit
+          - name: Run pip-audit
+            run: uv run pip-audit
+      report-audit-status:
+        if: always() && github.event_name == 'schedule'
+        needs: audit
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+          issues: write
+        steps:
+          - name: Create or update scheduled audit issue on failure
+            uses: actions/github-script@v8
+            with:
+              script: |
+                const title = "[Security Audit] Scheduled dependency audit failure";
+                github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title,
+                });
+                github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                });
+                github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                  body: title,
+                });
+          - name: Close scheduled audit issue on success
+            uses: actions/github-script@v8
+            with:
+              script: |
+                const title = "[Security Audit] Scheduled dependency audit failure";
+                github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                  body: title,
+                });
+                github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                  state: "closed",
+                });
+    """
+    errors = module.validate_audit_workflow_content(workflow_content=textwrap.dedent(workflow))
+    joined_errors = "\n".join(errors)
+    assert "Create Python audit environment" in joined_errors
+
+
 def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
