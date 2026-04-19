@@ -3,8 +3,12 @@ import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tensor_grep.core.config import SearchConfig
+
+if TYPE_CHECKING:
+    import pathspec
 
 # Attempt to load the blazing fast Rust PyO3 gitignore scanner
 try:
@@ -22,6 +26,19 @@ except (ImportError, ModuleNotFoundError):
 class DirectoryScanner:
     def __init__(self, config: SearchConfig | None = None):
         self.config = config or SearchConfig()
+
+    def _load_ignore_spec(self, base_path: Path) -> "pathspec.PathSpec | None":
+        if self.config.no_ignore or self.config.no_ignore_vcs or self.config.no_ignore_files:
+            return None
+
+        gitignore = base_path / ".gitignore"
+        if not gitignore.exists():
+            return None
+
+        import pathspec
+
+        patterns = gitignore.read_text(encoding="utf-8").splitlines()
+        return pathspec.GitIgnoreSpec.from_lines(patterns)
 
     def walk(self, path_str: str) -> Iterator[str]:
         base_path = Path(path_str)
@@ -54,6 +71,10 @@ class DirectoryScanner:
         # Python Fallback Path
         max_depth = self.config.max_depth
         base_depth = len(base_path.parts)
+        ignore_spec = self._load_ignore_spec(base_path)
+
+        def _relative_posix(path: Path) -> str:
+            return path.relative_to(base_path).as_posix()
 
         for root, dirs, files in os.walk(base_path):
             current_depth = len(Path(root).parts) - base_depth
@@ -66,12 +87,21 @@ class DirectoryScanner:
             if not self.config.hidden:
                 dirs[:] = [d for d in dirs if not d.startswith(".")]
 
+            if ignore_spec is not None:
+                dirs[:] = [
+                    directory
+                    for directory in dirs
+                    if not ignore_spec.match_file(f"{_relative_posix(Path(root) / directory)}/")
+                ]
+
             for file_name in files:
                 # Filter hidden files
                 if not self.config.hidden and file_name.startswith("."):
                     continue
 
                 file_path = Path(root) / file_name
+                if ignore_spec is not None and ignore_spec.match_file(_relative_posix(file_path)):
+                    continue
                 if self._should_include_file(file_path):
                     yield str(file_path)
 

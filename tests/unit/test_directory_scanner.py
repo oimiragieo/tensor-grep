@@ -3,6 +3,43 @@ from tensor_grep.io.directory_scanner import DirectoryScanner
 
 
 class TestDirectoryScanner:
+    def test_should_skip_gitignored_directories_by_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+        (tmp_path / ".gitignore").write_text("build/\nnode_modules/\n", encoding="utf-8")
+        src_dir = tmp_path / "src"
+        build_dir = tmp_path / "build"
+        node_dir = tmp_path / "node_modules"
+        src_dir.mkdir()
+        build_dir.mkdir()
+        node_dir.mkdir()
+
+        kept = src_dir / "keep.py"
+        ignored_build = build_dir / "ignored.py"
+        ignored_node = node_dir / "ignored.js"
+        kept.write_text("ok", encoding="utf-8")
+        ignored_build.write_text("ignore", encoding="utf-8")
+        ignored_node.write_text("ignore", encoding="utf-8")
+
+        files = list(DirectoryScanner(SearchConfig()).walk(str(tmp_path)))
+
+        assert files == [str(kept)]
+
+    def test_should_include_gitignored_directories_when_no_ignore_is_enabled(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+        (tmp_path / ".gitignore").write_text("build/\n", encoding="utf-8")
+        build_dir = tmp_path / "build"
+        build_dir.mkdir()
+        ignored_file = build_dir / "ignored.py"
+        ignored_file.write_text("ignore", encoding="utf-8")
+
+        files = list(DirectoryScanner(SearchConfig(no_ignore=True)).walk(str(tmp_path)))
+
+        assert str(ignored_file) in files
+
     def test_should_filterGlob_when_dashG_provided(self, tmp_path):
         import os
 
