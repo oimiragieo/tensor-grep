@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.4.2 (2026-04-19)
+
+### Bug Fixes
+
+- Harden search against binary reads and invalid input paths
+  ([#24](https://github.com/oimiragieo/tensor-grep/pull/24),
+  [`fbf0282`](https://github.com/oimiragieo/tensor-grep/commit/fbf0282a5d4c49545bb32b0f4002cf31895565aa))
+
+* fix: harden search against binary reads and invalid input paths
+
+* test: align CI formatter output for search path validation
+
+
 ## v1.4.1 (2026-04-19)
 
 ### Bug Fixes
