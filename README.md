@@ -123,6 +123,13 @@ Current AI handoff comparison snapshot:
 - mean overall score: `0.972222`
 - current read-group heuristic: same-directory related/test reads are prefetched into the primary phase when they stay local to the edit slice
 
+Current repo-map lexical retrieval snapshot:
+
+- baseline artifact: `artifacts/bench_repo_retrieval_lexical_base.json`
+- accepted feature artifact: `artifacts/bench_repo_retrieval_lexical_feature.json`
+- curated retrieval line moved from `recall_at_5 = 0.0`, `mrr_at_5 = 0.0`, `ndcg_at_5 = 0.0` on clean `origin/main` to `recall_at_5 = 1.0`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.333333`, `line_f1 = 0.222222`
+- current read: camelCase-to-snake_case symbol bridging and source-term fallback now recover the right planning file on the curated repo-map pack, while `context-render` and blast-radius remain in the same measured editor-plane band on this host instead of becoming a new cold-path speed claim
+
 Current benchmark-governed strengths:
 
 - host-local large-file comparator: `tg search --cpu 0.125s` versus default `tg search 0.240s` in [`artifacts/bench_tool_comparison.json`](artifacts/bench_tool_comparison.json)
@@ -157,6 +164,7 @@ Important constraint:
 - **Native AST search and rewrite.** `tg run` stays fully native for structural search, rewrite planning, diff, apply, and verify.
 - **Repeated-query acceleration.** The trigram index gives warm-query wins on unchanged corpora without changing the public search contract.
 - **Harness-first machine interfaces.** JSON, NDJSON, diff, batch rewrite, and MCP are documented and regression-tested. Start with [docs/harness_api.md](docs/harness_api.md) and [docs/harness_cookbook.md](docs/harness_cookbook.md).
+- **Lexical-first repo-map retrieval for AI planning.** Exact symbol queries stay anchored to definition files, camelCase queries bridge to snake_case symbols, and source-term fallback only engages when parser/path signals are weak.
 - **Smart routing with measured calibration.** `tg calibrate` writes the current CPU/GPU routing contract. The active routing rules are documented in [docs/routing_policy.md](docs/routing_policy.md).
 - **Benchmark-governed GPU path.** Native CUDA support exists, but route selection stays tied to measured crossover data. The current GPU story is documented in [docs/gpu_crossover.md](docs/gpu_crossover.md).
 - **Multi-pattern GPU search.** Pass multiple patterns with `-e pattern1 -e pattern2` for GPU-accelerated multi-pattern matching in a single pass.
@@ -490,7 +498,7 @@ The native CPU, AST, index, and primary GPU paths live in Rust. Python remains o
 
 The `v1.x` line is feature-complete for the current native search, AST, and editor-plane surface. The remaining work is intentionally narrow:
 
-- add semantic context compression for repo-map and render outputs so agent loops carry less low-value code without losing exact source anchors
+- add any lexical reranking or AST-shaped chunking only when it beats the accepted lexical-first repo-map line on both retrieval quality and editor-plane benchmarks
 - add tighter multi-agent signal surfaces on top of the existing JSON/NDJSON, session, and MCP contracts instead of inventing another parallel agent protocol
 - publish a broader reproducible comparator pack for tools such as `ag`, `ack`, `ugrep`, and GNU `grep` alongside the current `rg` and `git grep` rows
 - graduate or retire the experimental resident AST worker based on benchmark-governed evidence, not intuition

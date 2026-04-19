@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, NamedTuple
 
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
+from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
 JSON_OUTPUT_VERSION = 1
 ROUTING_BACKEND = "RepoMap"
@@ -37,6 +38,7 @@ _RENDER_PROFILES = {"full", "compact", "llm"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
 _VALIDATION_RUNNER_SCAN_LIMIT = 512
+_SOURCE_FALLBACK_SCAN_LIMIT = 8
 _JS_TS_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
 _RUST_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
 _EXTERNAL_LSP_PROVIDER_MANAGER = ExternalLSPProviderManager()
@@ -3438,7 +3440,21 @@ def build_repo_map_json(path: str | Path = ".") -> str:
 
 
 def _query_terms(query: str) -> list[str]:
-    return [term for term in re.split(r"[^A-Za-z0-9_]+", query.lower()) if term]
+    return [token.lower() for token in re.findall(r"[A-Za-z0-9_]+", query) if token]
+
+
+def _symbol_query_terms(query: str) -> list[str]:
+    expanded_terms: list[str] = []
+    for raw_token in re.findall(r"[A-Za-z0-9_]+", query):
+        normalized = raw_token.lower()
+        if normalized and normalized not in expanded_terms:
+            expanded_terms.append(normalized)
+        if "_" in raw_token:
+            continue
+        for term in split_terms(raw_token):
+            if term not in expanded_terms:
+                expanded_terms.append(term)
+    return expanded_terms
 
 
 def _score_text_terms(text: str, terms: list[str]) -> int:
@@ -3463,6 +3479,14 @@ def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:
     return (
         _score_file_path(str(entry["file"]), terms) + _score_text_terms(imports_joined, terms) * 2
     )
+
+
+def _score_file_source_terms(path: str, terms: list[str]) -> int:
+    try:
+        source = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0
+    return score_term_overlap(terms, source)
 
 
 def _append_reason(reason_map: dict[str, list[str]], path: str, reason: str) -> None:
@@ -3999,6 +4023,7 @@ def _build_context_pack_from_map(
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "context_scoring"):
         terms = _query_terms(query)
+        symbol_terms = _symbol_query_terms(query)
         all_symbols = [dict(symbol) for symbol in payload["symbols"]]
         imports_by_file = {
             str(entry["file"]): [str(item) for item in entry["imports"]]
@@ -4014,14 +4039,14 @@ def _build_context_pack_from_map(
 
         scored_symbols: list[dict[str, Any]] = []
         for symbol in payload["symbols"]:
-            score = _score_symbol(symbol, terms)
+            score = _score_symbol(symbol, symbol_terms)
             if score <= 0:
                 continue
             scored_symbol = dict(symbol)
             scored_symbol["score"] = score
             current_path = str(scored_symbol["file"])
             _append_reason(file_reasons, current_path, "definition")
-            if _score_text_terms(str(scored_symbol["name"]), terms) > 0:
+            if _score_text_terms(str(scored_symbol["name"]), symbol_terms) > 0:
                 _append_reason(file_reasons, current_path, "symbol")
             scored_symbols.append(scored_symbol)
         scored_symbols.sort(
@@ -4052,6 +4077,25 @@ def _build_context_pack_from_map(
             current = str(entry["file"])
             file_scores[current] = file_scores.get(current, 0) + int(entry["score"]) * 2
             _append_reason(file_reasons, current, "import")
+
+        source_candidates: list[str] = []
+        if not scored_symbols and not scored_imports:
+            source_candidates = [
+                current
+                for current, score in sorted(
+                    file_scores.items(),
+                    key=lambda item: (-int(item[1]), str(item[0])),
+                )
+                if score > 0
+            ][:_SOURCE_FALLBACK_SCAN_LIMIT]
+            if not source_candidates:
+                source_candidates = [str(current) for current in payload["files"]]
+        for current_path in source_candidates:
+            source_score = _score_file_source_terms(current_path, terms)
+            if source_score <= 0:
+                continue
+            file_scores[current_path] = file_scores.get(current_path, 0) + source_score * 2
+            _append_reason(file_reasons, current_path, "source")
 
         dependency_seed_files: list[str] = []
         for symbol in scored_symbols:
@@ -6466,6 +6510,18 @@ def _attach_edit_plan_metadata(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     with _profiling_phase(_profiling_collector, "edit_plan_assembly"):
+
+        def _ordered_candidate_files(
+            files: list[str],
+            primary_file: str | None,
+            *,
+            limit: int,
+        ) -> list[str]:
+            if primary_file is None:
+                return files[:limit]
+            ordered = [current for current in files if current != primary_file]
+            return [primary_file, *ordered][:limit]
+
         ranked_symbols = _sorted_ranked_symbols(list(payload.get("symbols", [])))
         edit_anchor_symbol = _preferred_edit_anchor_symbol(None, ranked_symbols)
         resolved_blast_radius_payload = blast_radius_payload
@@ -6492,8 +6548,13 @@ def _attach_edit_plan_metadata(
             if resolved_blast_radius_payload is not None
             else _graph_trust_summary([])
         )
+        primary_file = str(payload["edit_plan_seed"].get("primary_file") or "") or None
         payload["candidate_edit_targets"] = {
-            "files": list(payload.get("files", []))[:max_files],
+            "files": _ordered_candidate_files(
+                list(payload.get("files", [])),
+                primary_file,
+                limit=max_files,
+            ),
             "symbols": ranked_symbols[:max_symbols],
             "tests": list(payload.get("tests", []))[:max_files],
             "ranking_quality": str(
@@ -6513,7 +6574,6 @@ def _attach_edit_plan_metadata(
                 max_spans=max(max_files, max_symbols),
             ),
         }
-        primary_file = payload["edit_plan_seed"].get("primary_file")
         primary_file_match = next(
             (
                 match
@@ -6544,6 +6604,17 @@ def _attach_lightweight_navigation_metadata(
     max_files: int,
     max_symbols: int,
 ) -> dict[str, Any]:
+    def _ordered_candidate_files(
+        files: list[str],
+        primary_file: str | None,
+        *,
+        limit: int,
+    ) -> list[str]:
+        if primary_file is None:
+            return files[:limit]
+        ordered = [current for current in files if current != primary_file]
+        return [primary_file, *ordered][:limit]
+
     ranked_symbols = _sorted_ranked_symbols(list(payload.get("symbols", [])))
     primary_symbol = next(iter(ranked_symbols), None)
     primary_file = next(iter(payload.get("files", [])), None)
@@ -6626,7 +6697,11 @@ def _attach_lightweight_navigation_metadata(
     }
     lightweight_primary_symbol = dict(primary_symbol) if isinstance(primary_symbol, dict) else None
     payload["candidate_edit_targets"] = {
-        "files": list(payload.get("files", []))[:max_files],
+        "files": _ordered_candidate_files(
+            list(payload.get("files", [])),
+            str(primary_file) if primary_file is not None else None,
+            limit=max_files,
+        ),
         "symbols": ranked_symbols[:max_symbols],
         "tests": list(payload.get("tests", []))[:max_files],
         "ranking_quality": ranking_quality,
@@ -6799,9 +6874,12 @@ def build_context_render_from_map(
     top_files = {str(current) for current in context_payload.get("files", [])[:max_files]}
     sources: list[dict[str, Any]] = []
     seen_symbols: set[tuple[str, str]] = set()
+    seen_source_files: set[str] = set()
     for symbol in context_payload.get("symbols", []):
         current_file = str(symbol["file"])
         if current_file not in top_files:
+            continue
+        if current_file in seen_source_files:
             continue
         symbol_key = (current_file, str(symbol["name"]))
         if symbol_key in seen_symbols:
@@ -6823,6 +6901,7 @@ def build_context_render_from_map(
                     _profiling_collector=collector,
                 )
             )
+            seen_source_files.add(current_file)
             break
         if len(sources) >= max_sources:
             break
