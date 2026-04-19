@@ -2278,7 +2278,9 @@ def validate_all() -> list[str]:
     errors.extend(validate_readme_contract(readme_content=readme))
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
-    errors.extend(validate_uv_security_constraints(pyproject_content=_read(ROOT / "pyproject.toml")))
+    errors.extend(
+        validate_uv_security_constraints(pyproject_content=_read(ROOT / "pyproject.toml"))
+    )
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
     build_command = str(semantic_release.get("build_command", ""))
     if "scripts/stamp_release_assets.py" not in build_command:
