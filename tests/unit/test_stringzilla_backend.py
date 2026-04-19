@@ -57,6 +57,33 @@ def test_stringzilla_no_matches(backend, tmp_path):
     assert len(result.matches) == 0
 
 
+def test_stringzilla_skips_invalid_utf8_by_default(backend, tmp_path):
+    binary_file = tmp_path / "compiled.pyc"
+    binary_file.write_bytes(b"\x80\x81\x82needle\xff\xfe")
+
+    result = backend.search(str(binary_file), "needle", config=SearchConfig(fixed_strings=True))
+
+    assert result.total_matches == 0
+    assert result.matches == []
+    assert result.routing_backend == "StringZillaBackend"
+
+
+def test_stringzilla_can_search_binary_like_content_when_text_mode_enabled(backend, tmp_path):
+    binary_file = tmp_path / "compiled.pyc"
+    binary_file.write_bytes(b"\x80\x81needle\x00tail\xff")
+
+    result = backend.search(
+        str(binary_file),
+        "needle",
+        config=SearchConfig(fixed_strings=True, text=True),
+    )
+
+    assert result.total_matches == 1
+    assert len(result.matches) == 1
+    assert result.matches[0].line_number == 1
+    assert result.matches[0].file == str(binary_file)
+
+
 def test_stringzilla_reuses_persistent_trigram_index_across_instances(tmp_path, monkeypatch):
     cache_dir = tmp_path / "sz-cache"
     monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_DIR", str(cache_dir))

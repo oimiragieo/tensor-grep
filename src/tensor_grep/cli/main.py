@@ -2046,10 +2046,22 @@ def search_command(
             typer.echo("Error: Please provide a PATTERN to search.", err=True)
             sys.exit(1)
         pattern = args[0]
+        if pattern == "":
+            typer.echo("Error: PATTERN must not be empty.", err=True)
+            sys.exit(2)
         paths_to_search = args[1:]
         if not paths_to_search:
             typer.echo("Error: Please provide at least one PATH to search.", err=True)
             sys.exit(1)
+
+    if not files:
+        missing_paths = [
+            path for path in paths_to_search if path != "-" and not Path(path).exists()
+        ]
+        if missing_paths:
+            for missing_path in missing_paths:
+                typer.echo(f"Error: search path does not exist: {missing_path}", err=True)
+            sys.exit(2)
 
     if line_number is None:
         line_number = sys.stdout.isatty()
