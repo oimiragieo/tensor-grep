@@ -6,13 +6,17 @@ import pytest
 
 pytestmark = [pytest.mark.slow, pytest.mark.performance]
 
+_UNSET = object()
+
 
 def cpu_backend_throughput_floor(
-    github_actions: str | None = None,
-    platform_name: str | None = None,
+    github_actions: str | None | object = _UNSET,
+    platform_name: str | None | object = _UNSET,
 ) -> float | None:
-    github_actions = github_actions if github_actions is not None else os.getenv("GITHUB_ACTIONS")
-    platform_name = platform_name if platform_name is not None else sys.platform
+    if github_actions is _UNSET:
+        github_actions = os.getenv("GITHUB_ACTIONS")
+    if platform_name is _UNSET:
+        platform_name = sys.platform
 
     if github_actions and platform_name.startswith("win"):
         return None
