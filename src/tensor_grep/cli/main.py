@@ -52,6 +52,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 - Bare patterns are treated as `tg search`.
 - Use `tg search --help` for ripgrep-compatible flags.
 - `tg run --help` for AST rewrite flags.
+- Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, and daemon diagnostics.
 - Use `tg session --help` for cached edit-loop and daemon commands.""",
     no_args_is_help=True,

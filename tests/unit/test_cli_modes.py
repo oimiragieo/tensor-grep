@@ -4212,6 +4212,11 @@ def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     assert "tg blast-radius-render PATH --symbol" in result.stdout
     assert "tg session open PATH" in result.stdout
     assert "tg session daemon start PATH" in result.stdout
+    normalized_help = re.sub(r"\s+", " ", result.stdout)
+    assert (
+        "Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries."
+        in normalized_help
+    )
     assert "tg doctor --with-lsp" in result.stdout
     assert "upgrade" in result.stdout
     assert "doctor" in result.stdout
