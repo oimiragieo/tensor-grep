@@ -1,6 +1,21 @@
 # CHANGELOG
 
 
+## v1.4.1 (2026-04-19)
+
+### Bug Fixes
+
+- Strip ANSI styling from tg help assertion
+  ([#23](https://github.com/oimiragieo/tensor-grep/pull/23),
+  [`6b4bf6f`](https://github.com/oimiragieo/tensor-grep/commit/6b4bf6fdac1612be12b44486ed0b8643ec534775))
+
+### Documentation
+
+- Mention lexical repo-map retrieval in tg help
+  ([#22](https://github.com/oimiragieo/tensor-grep/pull/22),
+  [`e0b6e1c`](https://github.com/oimiragieo/tensor-grep/commit/e0b6e1c0003c00ad1c143a7ecf38a8d01943ea88))
+
+
 ## v1.4.0 (2026-04-19)
 
 ### Continuous Integration
