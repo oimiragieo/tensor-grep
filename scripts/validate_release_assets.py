@@ -227,7 +227,9 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
 
             benchmark_job = jobs.get("benchmark-regression")
             if not isinstance(benchmark_job, dict):
-                errors.append("CI workflow must define benchmark-regression job when release depends on it")
+                errors.append(
+                    "CI workflow must define benchmark-regression job when release depends on it"
+                )
             else:
                 benchmark_steps = benchmark_job.get("steps", [])
                 benchmark_run_by_name: dict[str, str] = {}
@@ -326,7 +328,10 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             "CI workflow benchmark-regression "
                             "`Run core benchmark suite` step must invoke `benchmarks/run_benchmarks.py`"
                         )
-                    if "--output artifacts/bench_run_benchmarks.head.json" not in run_core_benchmark:
+                    if (
+                        "--output artifacts/bench_run_benchmarks.head.json"
+                        not in run_core_benchmark
+                    ):
                         errors.append(
                             "CI workflow benchmark-regression "
                             "`Run core benchmark suite` step must emit `artifacts/bench_run_benchmarks.head.json`"
@@ -339,7 +344,10 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             "CI workflow benchmark-regression "
                             "`Run base benchmark suite` step must invoke `benchmarks/run_benchmarks.py`"
                         )
-                    if "--output artifacts/bench_run_benchmarks.base.json" not in run_base_benchmark:
+                    if (
+                        "--output artifacts/bench_run_benchmarks.base.json"
+                        not in run_base_benchmark
+                    ):
                         errors.append(
                             "CI workflow benchmark-regression "
                             "`Run base benchmark suite` step must emit `artifacts/bench_run_benchmarks.base.json`"
@@ -369,7 +377,10 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                             "`Enforce benchmark regression gate` step must compare against "
                             "`base-revision/artifacts/bench_run_benchmarks.base.json`"
                         )
-                    if "--current artifacts/bench_run_benchmarks.head.json" not in enforce_benchmark_gate_run:
+                    if (
+                        "--current artifacts/bench_run_benchmarks.head.json"
+                        not in enforce_benchmark_gate_run
+                    ):
                         errors.append(
                             "CI workflow benchmark-regression "
                             "`Enforce benchmark regression gate` step must compare current artifact "

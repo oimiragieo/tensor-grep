@@ -3369,12 +3369,10 @@ def test_check_regression_should_allow_same_environment_explicit_baseline_for_ca
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
-        json.dumps(
-            {
-                **payload,
-                "rows": [{"name": "x", "tg_time_s": 1.03, "rg_time_s": 0.81}],
-            }
-        ),
+        json.dumps({
+            **payload,
+            "rows": [{"name": "x", "tg_time_s": 1.03, "rg_time_s": 0.81}],
+        }),
         encoding="utf-8",
     )
 
