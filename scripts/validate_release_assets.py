@@ -914,8 +914,7 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
             create_env_run = audit_runs_by_name.get(create_env_step)
             if create_env_run is None:
                 errors.append(
-                    "Audit workflow `audit` job must include step "
-                    "`Create Python audit environment`"
+                    "Audit workflow `audit` job must include step `Create Python audit environment`"
                 )
             elif "uv venv --python 3.12" not in create_env_run:
                 errors.append(
@@ -928,17 +927,14 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
                 errors.append("Audit workflow `audit` job must include step `Install pip-audit`")
             elif "uv pip install pip-audit" not in install_pip_audit_run:
                 errors.append(
-                    "Audit workflow `Install pip-audit` step must invoke "
-                    "`uv pip install pip-audit`"
+                    "Audit workflow `Install pip-audit` step must invoke `uv pip install pip-audit`"
                 )
 
             run_pip_audit_run = audit_runs_by_name.get("Run pip-audit")
             if run_pip_audit_run is None:
                 errors.append("Audit workflow `audit` job must include step `Run pip-audit`")
             elif "uv run pip-audit" not in run_pip_audit_run:
-                errors.append(
-                    "Audit workflow `Run pip-audit` step must invoke `uv run pip-audit`"
-                )
+                errors.append("Audit workflow `Run pip-audit` step must invoke `uv run pip-audit`")
 
             required_step_order = [
                 "Install uv",
@@ -948,7 +944,9 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
                 "Run pip-audit",
             ]
             if all(step_name in audit_step_order for step_name in required_step_order):
-                order_positions = {name: audit_step_order.index(name) for name in required_step_order}
+                order_positions = {
+                    name: audit_step_order.index(name) for name in required_step_order
+                }
                 if order_positions["Setup Python"] > order_positions[create_env_step]:
                     errors.append(
                         "Audit workflow `Create Python audit environment` step must run after "
