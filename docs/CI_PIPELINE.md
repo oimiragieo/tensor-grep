@@ -50,6 +50,10 @@ Runs dependency and license audits:
 
 `pip-audit` runs inside a uv-created Python environment after `uv python install 3.12`.
 Do not invoke `uv pip install` in this workflow without creating that environment first, or the job will fail before the audit runs.
+The repo also owns `pyproject.toml` `tool.uv.constraint-dependencies` security floors for audited
+transitive packages. When `pip-audit` reports a vulnerable transitive dependency, update those
+constraints, refresh `uv.lock`, and extend the validator-backed tests instead of silently pinning
+the package as a new top-level runtime dependency.
 
 The Rust license policy for `cargo deny check` is owned in-repo at `rust_core/deny.toml`. If the Rust dependency graph changes, update that policy and the audit workflow contract tests together rather than relying on cargo-deny defaults.
 

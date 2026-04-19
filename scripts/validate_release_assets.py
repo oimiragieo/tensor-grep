@@ -2168,6 +2168,40 @@ def validate_homebrew_formula_contract(*, brew_content: str, py_version: str) ->
     return errors
 
 
+def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        pyproject_data = tomllib.loads(pyproject_content)
+    except tomllib.TOMLDecodeError as exc:
+        return [f"pyproject.toml is not valid TOML: {exc}"]
+
+    tool_config = pyproject_data.get("tool", {})
+    if not isinstance(tool_config, dict):
+        tool_config = {}
+    uv_config = tool_config.get("uv", {})
+    if not isinstance(uv_config, dict):
+        uv_config = {}
+    constraint_dependencies = uv_config.get("constraint-dependencies", [])
+    if not isinstance(constraint_dependencies, list):
+        return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
+
+    expected_constraints = {
+        "cryptography>=46.0.7",
+        "pygments>=2.20.0",
+        "python-multipart>=0.0.26",
+        "requests>=2.33.0",
+    }
+    missing_constraints = sorted(
+        expected_constraints - {str(entry) for entry in constraint_dependencies}
+    )
+    if missing_constraints:
+        errors.append(
+            "pyproject.toml [tool.uv].constraint-dependencies missing security floor entries: "
+            + ", ".join(missing_constraints)
+        )
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
@@ -2244,6 +2278,7 @@ def validate_all() -> list[str]:
     errors.extend(validate_readme_contract(readme_content=readme))
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
+    errors.extend(validate_uv_security_constraints(pyproject_content=_read(ROOT / "pyproject.toml")))
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
     build_command = str(semantic_release.get("build_command", ""))
     if "scripts/stamp_release_assets.py" not in build_command:

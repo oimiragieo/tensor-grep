@@ -426,6 +426,56 @@ def test_should_require_audit_workflow_uv_environment_before_pip_audit_install()
     assert "Create Python audit environment" in joined_errors
 
 
+def test_should_require_uv_security_floor_constraints_for_audited_transitive_dependencies():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+
+    [tool.uv]
+    constraint-dependencies = ["requests>=2.33.0"]
+    """
+    errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
+    joined_errors = "\n".join(errors)
+    assert "cryptography>=46.0.7" in joined_errors
+    assert "pygments>=2.20.0" in joined_errors
+    assert "python-multipart>=0.0.26" in joined_errors
+
+
+def test_should_accept_uv_security_floor_constraints_when_all_required_entries_present():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+
+    [tool.uv]
+    constraint-dependencies = [
+      "cryptography>=46.0.7",
+      "pygments>=2.20.0",
+      "python-multipart>=0.0.26",
+      "requests>=2.33.0",
+    ]
+    """
+    errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
+    assert errors == []
+
+
 def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

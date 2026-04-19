@@ -62,6 +62,14 @@ bench = [
 [project.scripts]
 tg = "tensor_grep.cli.bootstrap:main_entry"
 
+[tool.uv]
+constraint-dependencies = [
+    "cryptography>=46.0.7",
+    "pygments>=2.20.0",
+    "python-multipart>=0.0.26",
+    "requests>=2.33.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
