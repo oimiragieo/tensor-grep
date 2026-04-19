@@ -2055,7 +2055,9 @@ def search_command(
             sys.exit(1)
 
     if not files:
-        missing_paths = [path for path in paths_to_search if path != "-" and not Path(path).exists()]
+        missing_paths = [
+            path for path in paths_to_search if path != "-" and not Path(path).exists()
+        ]
         if missing_paths:
             for missing_path in missing_paths:
                 typer.echo(f"Error: search path does not exist: {missing_path}", err=True)
