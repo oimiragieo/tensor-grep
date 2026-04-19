@@ -17,6 +17,7 @@ These scripts and artifact paths are the accepted benchmark surface for the curr
 | AST rewrite plan/diff/apply | `benchmarks/run_ast_rewrite_benchmarks.py` | `artifacts/bench_ast_rewrite.json` |
 | AST workflow startup | `benchmarks/run_ast_workflow_benchmarks.py` | `artifacts/bench_run_ast_workflow_benchmarks.json` |
 | Provider-mode hardcase navigation | `benchmarks/run_provider_navigation_bakeoff.py` | `artifacts/bench_provider_navigation_click_hardcases.json` |
+| Repository planning retrieval | `benchmarks/run_repo_retrieval_benchmarks.py` | `artifacts/bench_repo_retrieval_benchmarks.json` |
 | Python GPU/NLP benchmark | `benchmarks/run_gpu_benchmarks.py` | `artifacts/bench_run_gpu_benchmarks.json` |
 | Native GPU crossover / throughput | `benchmarks/run_gpu_native_benchmarks.py` | `artifacts/bench_run_gpu_native_benchmarks.json` |
 | Harness loop | `benchmarks/run_harness_loop_benchmark.py` | `artifacts/bench_harness_loop.json` |
@@ -41,6 +42,17 @@ Environment blocks should at minimum record:
 - `python_version` when Python orchestrates the benchmark
 
 For `run_benchmarks.py`, the environment block should also record `tg_launcher_mode` so cold-path comparisons stay tied to an explicit entrypoint mode rather than inferred from the command line after the fact.
+
+For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieval-quality and context-efficiency keys explicitly:
+
+- `recall_at_k`
+- `precision_at_k`
+- `mrr_at_k`
+- `ndcg_at_k`
+- `file_f1`
+- `line_f1`
+- `p50_latency_ms`
+- `token_budget_mean`
 
 Current Roadmap 1 launcher-mode read on this host:
 
