@@ -2,6 +2,8 @@
 
 `tensor-grep` treats CI as part of the product contract, not a best-effort test runner. If you change workflow behavior, release behavior, package-manager behavior, or supply-chain automation, update the validator-backed tests in `scripts/validate_release_assets.py` and `tests/unit/test_release_assets_validation.py`.
 
+Release/package parity validation now includes the editable `tensor-grep` version recorded in `uv.lock`, not just `pyproject.toml`, `rust_core/Cargo.toml`, and `npm/package.json`.
+
 ## Workflow Overview
 
 ### `ci.yml`

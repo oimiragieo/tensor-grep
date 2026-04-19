@@ -33,6 +33,24 @@ def _version_from_npm() -> str:
     return str(data["version"])
 
 
+def _version_from_uv_lock() -> str:
+    data = tomllib.loads(_read(ROOT / "uv.lock"))
+    packages = data.get("package", [])
+    if not isinstance(packages, list):
+        raise ValueError("uv.lock package list is missing or invalid")
+
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        if str(package.get("name")) != "tensor-grep":
+            continue
+        source = package.get("source") or {}
+        if isinstance(source, dict) and source.get("editable") == ".":
+            return str(package["version"])
+
+    raise ValueError("Missing uv.lock editable tensor-grep package version")
+
+
 def validate_winget_manifest(*, winget_content: str, py_version: str) -> list[str]:
     errors: list[str] = []
     if f"PackageVersion: {py_version}" not in winget_content:
@@ -2229,6 +2247,7 @@ def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
     cargo_version = _version_from_cargo()
+    uv_lock_version = _version_from_uv_lock()
     npm_manifest = json.loads(_read(ROOT / "npm" / "package.json"))
     npm_version = str(npm_manifest["version"])
 
@@ -2238,6 +2257,11 @@ def validate_all() -> list[str]:
         )
     if npm_version != py_version:
         errors.append(f"Version mismatch: npm/package.json={npm_version} != pyproject={py_version}")
+    if uv_lock_version != py_version:
+        errors.append(
+            "uv.lock editable tensor-grep version does not match pyproject version: "
+            f"{uv_lock_version} != {py_version}"
+        )
 
     npm_repository_url = str((npm_manifest.get("repository") or {}).get("url") or "")
     expected_npm_repo_url = "git+https://github.com/oimiragieo/tensor-grep.git"
