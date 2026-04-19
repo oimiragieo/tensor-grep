@@ -17,7 +17,7 @@ class StringZillaBackend(ComputeBackend):
     """
 
     _shared_index_cache: ClassVar[
-        dict[tuple[str, bool], tuple[tuple[int, int], list[str], dict[str, list[int]]]]
+        dict[tuple[str, bool, bool], tuple[tuple[int, int], list[str], dict[str, list[int]]]]
     ] = {}
 
     @classmethod
@@ -57,9 +57,31 @@ class StringZillaBackend(ComputeBackend):
             return Path(xdg_cache_home) / "tensor-grep" / "string-index"
         return Path.home() / ".cache" / "tensor-grep" / "string-index"
 
-    def _get_index_cache_path(self, file_path: str, ignore_case: bool) -> Path:
+    @staticmethod
+    def _should_search_binary_as_text(config: SearchConfig | None) -> bool:
+        return bool(config and (config.text or config.binary))
+
+    @staticmethod
+    def _load_searchable_text(file_path: str, *, treat_binary_as_text: bool) -> str | None:
+        if treat_binary_as_text:
+            raw = Path(file_path).read_bytes()
+            return raw.decode("utf-8", errors="replace")
+
+        with open(file_path, "rb") as binary_handle:
+            if b"\x00" in binary_handle.read(4096):
+                return None
+
+        try:
+            with open(file_path, encoding="utf-8") as text_handle:
+                return text_handle.read()
+        except UnicodeDecodeError:
+            return None
+
+    def _get_index_cache_path(
+        self, file_path: str, ignore_case: bool, treat_binary_as_text: bool
+    ) -> Path:
         digest = hashlib.sha256(
-            f"{Path(file_path).resolve()}::{int(ignore_case)}".encode()
+            f"{Path(file_path).resolve()}::{int(ignore_case)}::{int(treat_binary_as_text)}".encode()
         ).hexdigest()
         return self._get_index_cache_dir() / f"{digest}.json"
 
@@ -127,9 +149,9 @@ class StringZillaBackend(ComputeBackend):
         return [pattern[i : i + 3] for i in range(len(pattern) - 2)]
 
     def _load_cached_index(
-        self, file_path: str, ignore_case: bool
+        self, file_path: str, ignore_case: bool, treat_binary_as_text: bool
     ) -> tuple[list[str], dict[str, list[int]]] | None:
-        cache_key = (file_path, ignore_case)
+        cache_key = (file_path, ignore_case, treat_binary_as_text)
         cache_signature = self._build_file_signature(file_path)
         cached = self._shared_index_cache.get(cache_key)
         if cached and cached[0] == cache_signature:
@@ -138,7 +160,7 @@ class StringZillaBackend(ComputeBackend):
         if not self._is_index_enabled():
             return None
 
-        cache_path = self._get_index_cache_path(file_path, ignore_case)
+        cache_path = self._get_index_cache_path(file_path, ignore_case, treat_binary_as_text)
         if not cache_path.exists():
             return None
 
@@ -169,15 +191,20 @@ class StringZillaBackend(ComputeBackend):
         self,
         file_path: str,
         ignore_case: bool,
+        treat_binary_as_text: bool,
         lines: list[str],
         trigram_index: dict[str, list[int]],
     ) -> None:
         cache_signature = self._build_file_signature(file_path)
-        self._shared_index_cache[(file_path, ignore_case)] = (cache_signature, lines, trigram_index)
+        self._shared_index_cache[(file_path, ignore_case, treat_binary_as_text)] = (
+            cache_signature,
+            lines,
+            trigram_index,
+        )
         if not self._is_index_enabled():
             return
 
-        cache_path = self._get_index_cache_path(file_path, ignore_case)
+        cache_path = self._get_index_cache_path(file_path, ignore_case, treat_binary_as_text)
         payload = {
             "file_signature": list(cache_signature),
             "lines": lines,
@@ -190,21 +217,40 @@ class StringZillaBackend(ComputeBackend):
             return
 
     def _search_with_index(
-        self, file_path: str, pattern: str, ignore_case: bool
+        self, file_path: str, pattern: str, config: SearchConfig | None, ignore_case: bool
     ) -> SearchResult | None:
         if len(pattern) < 3:
             return None
 
-        cached = self._load_cached_index(file_path, ignore_case)
+        treat_binary_as_text = self._should_search_binary_as_text(config)
+        cached = self._load_cached_index(file_path, ignore_case, treat_binary_as_text)
         routing_reason = "stringzilla_fixed_strings_index_cache"
         if cached is None:
-            with open(file_path, encoding="utf-8") as f_obj:
-                source_lines = f_obj.read().splitlines()
+            content = self._load_searchable_text(
+                file_path, treat_binary_as_text=treat_binary_as_text
+            )
+            if content is None:
+                return SearchResult(
+                    matches=[],
+                    total_files=0,
+                    total_matches=0,
+                    routing_backend="StringZillaBackend",
+                    routing_reason="stringzilla_fixed_strings_skipped_binary",
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                )
+            source_lines = content.splitlines()
             normalized_lines = (
                 [line.lower() for line in source_lines] if ignore_case else source_lines
             )
             trigram_index = self._build_line_trigram_index(normalized_lines)
-            self._persist_index(file_path, ignore_case, source_lines, trigram_index)
+            self._persist_index(
+                file_path,
+                ignore_case,
+                treat_binary_as_text,
+                source_lines,
+                trigram_index,
+            )
             routing_reason = "stringzilla_fixed_strings_index"
         else:
             source_lines, trigram_index = cached
@@ -251,14 +297,24 @@ class StringZillaBackend(ComputeBackend):
         try:
             ignore_case = bool(config and config.ignore_case)
             if config and config.fixed_strings:
-                indexed = self._search_with_index(file_path, pattern, ignore_case)
+                indexed = self._search_with_index(file_path, pattern, config, ignore_case)
                 if indexed is not None:
                     return indexed
 
-            # Read file via normal python IO for now, wrap in sz.Str
-            # In a real implementation we might memory-map directly.
-            with open(file_path, encoding="utf-8") as f_obj:
-                content = f_obj.read()
+            content = self._load_searchable_text(
+                file_path,
+                treat_binary_as_text=self._should_search_binary_as_text(config),
+            )
+            if content is None:
+                return SearchResult(
+                    matches=[],
+                    total_files=0,
+                    total_matches=0,
+                    routing_backend="StringZillaBackend",
+                    routing_reason="stringzilla_fixed_strings_skipped_binary",
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                )
 
             sz_str = sz.Str(content)
 

@@ -1796,6 +1796,28 @@ def test_files_without_match_skips_gitignored_directories(tmp_path: Path):
     assert str(ignored) not in result.stdout
 
 
+def test_search_rejects_empty_pattern(tmp_path: Path):
+    target = tmp_path / "sample.py"
+    target.write_text("print('hello')\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "", str(target)])
+
+    assert result.exit_code == 2
+    assert "PATTERN must not be empty" in result.output
+
+
+def test_search_reports_missing_input_paths(tmp_path: Path):
+    missing = tmp_path / "missing.py"
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "hello", str(missing)])
+
+    assert result.exit_code == 2
+    assert str(missing) in result.output
+    assert "does not exist" in result.output
+
+
 def test_files_with_matches_null_outputs_nul_separator(tmp_path: Path):
     target = tmp_path / "sample.txt"
     target.write_text("hello\n", encoding="utf-8")

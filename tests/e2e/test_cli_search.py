@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 
@@ -32,3 +33,23 @@ class TestCLISearch:
             text=True,
         )
         assert result.returncode == 1
+
+    def test_should_emit_json_without_hanging(self, sample_log_file):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "tensor_grep.cli.main",
+                "search",
+                "ERROR",
+                str(sample_log_file),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        assert payload["total_matches"] == 2
