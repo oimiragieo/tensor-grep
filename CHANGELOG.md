@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.3.2 (2026-04-19)
+
+### Bug Fixes
+
+- Honor ignore rules in files-without-match candidate collection
+  ([#17](https://github.com/oimiragieo/tensor-grep/pull/17),
+  [`5c25b75`](https://github.com/oimiragieo/tensor-grep/commit/5c25b75ba684bc418708fb5d7718a160478c81a7))
+
+### Continuous Integration
+
+- Fix preview formatter drift in benchmark validator follow-up
+  ([#16](https://github.com/oimiragieo/tensor-grep/pull/16),
+  [`ff691e4`](https://github.com/oimiragieo/tensor-grep/commit/ff691e4523ca8071992e5e9a0e8ccb5873135632))
+
+- Split benchmark gate into base-compare and baseline-drift reporting
+  ([#15](https://github.com/oimiragieo/tensor-grep/pull/15),
+  [`eae326b`](https://github.com/oimiragieo/tensor-grep/commit/eae326b7f29fafbd43718cf8b602e445fa3f807d))
+
+
 ## v1.3.1 (2026-04-18)
 
 ### Bug Fixes
