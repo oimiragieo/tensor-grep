@@ -3350,6 +3350,50 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     assert exit_code == 0
 
 
+def test_check_regression_should_allow_same_environment_explicit_baseline_for_candidate_gate(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "check_regression_script_same_env_candidate", "benchmarks/check_regression.py"
+    )
+    baseline_path = tmp_path / "base.json"
+    current_path = tmp_path / "head.json"
+    payload = {
+        "suite": "run_benchmarks",
+        "environment": {
+            "platform": "windows",
+            "machine": "amd64",
+            "python_version": "3.12.12",
+        },
+        "rows": [{"name": "x", "tg_time_s": 1.00, "rg_time_s": 0.80}],
+    }
+    baseline_path.write_text(json.dumps(payload), encoding="utf-8")
+    current_path.write_text(
+        json.dumps(
+            {
+                **payload,
+                "rows": [{"name": "x", "tg_time_s": 1.03, "rg_time_s": 0.81}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_regression.py",
+            "--baseline",
+            str(baseline_path),
+            "--current",
+            str(current_path),
+            "--max-regression-pct",
+            "5",
+        ],
+    )
+
+    assert module.main() == 0
+
+
 def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tmp_path):
     module = _load_script_module(
         "check_regression_script_auto_milestone", "benchmarks/check_regression.py"

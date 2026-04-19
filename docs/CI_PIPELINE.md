@@ -17,7 +17,7 @@ Primary responsibilities:
 - `search-golden-parity`: Windows routing parity guard
 - `native-build-smoke`: native binary smoke tests across platforms
 - `package-manager-readiness`: Homebrew/Winget/package-manager bundle validation
-- `benchmark-regression`: benchmark gate for accepted performance lines
+- `benchmark-regression`: blocking same-runner base-vs-head regression gate plus accepted-baseline drift reporting
 - `Semantic Release`: semantic-release on `main`
 - PyPI build, validation, and publish jobs when semantic-release emits a new version
 
@@ -28,6 +28,13 @@ Release behavior:
 - `fix:` / `perf:` => patch
 - `feat!:` / `fix!:` => major
 - `docs:` / `test:` / `ci:` / `chore:` / `build:` => no package release
+
+Benchmark behavior:
+
+- Pull requests benchmark the candidate checkout and the PR base revision in the same runner job; the explicit base-vs-head comparison is the blocking regression gate.
+- Pushes to `main` benchmark the current checkout and `${{ github.event.before }}` in the same runner job; that explicit comparison is the blocking regression gate before semantic-release.
+- Scheduled runs keep accepted-baseline drift reporting and summary generation, but do not block on a synthetic base-vs-head comparison.
+- Accepted baseline JSONs remain the public benchmark truth surface, but drift against them is reported separately from the release-blocking same-runner comparison.
 
 ### `release.yml`
 
