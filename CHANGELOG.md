@@ -1,6 +1,59 @@
 # CHANGELOG
 
 
+## v1.4.0 (2026-04-19)
+
+### Continuous Integration
+
+- Repair security audit workflow and dependency floors
+  ([#20](https://github.com/oimiragieo/tensor-grep/pull/20),
+  [`541f2f8`](https://github.com/oimiragieo/tensor-grep/commit/541f2f81baad2f5ea4111bf613443d0bdc961117))
+
+* ci: add explicit cargo-deny license policy for rust_core
+
+* ci: fix pip-audit uv bootstrap in security audit workflow
+
+* ci: format audit workflow validator changes
+
+* ci: enforce python audit security floors
+
+* ci: format preview formatter drift in audit branch
+
+* ci: pin ruff for formatter parity
+
+* ci: align tests with ruff 0.15.11 preview formatting
+
+* test: skip hosted Windows throughput smoke floor
+
+* test: fix hosted Windows throughput skip contract
+
+### Features
+
+- Improve repo-map lexical retrieval for planning and navigation
+  ([#21](https://github.com/oimiragieo/tensor-grep/pull/21),
+  [`d110dbf`](https://github.com/oimiragieo/tensor-grep/commit/d110dbf55fb3f5ffe5b91f83c1fc0b85f5bfdd8f))
+
+* feat: improve repo-map lexical retrieval for planning and navigation
+
+* test: align CI ruff formatter output
+
+### Testing
+
+- Add repository retrieval benchmark contract
+  ([#18](https://github.com/oimiragieo/tensor-grep/pull/18),
+  [`6a4fe05`](https://github.com/oimiragieo/tensor-grep/commit/6a4fe05dced351de38411e26845a8b65fc187e1d))
+
+- Validate editable uv lock version parity
+  ([#19](https://github.com/oimiragieo/tensor-grep/pull/19),
+  [`b08430d`](https://github.com/oimiragieo/tensor-grep/commit/b08430d765d223eecfd4178e16809e6a7ef77b3e))
+
+* test: validate editable uv lock version parity
+
+* test: align replayed tests with ruff 0.15.11 preview formatting
+
+* test: align replay formatter output with CI merge refs
+
+
 ## v1.3.2 (2026-04-19)
 
 ### Bug Fixes
