@@ -38,6 +38,9 @@ jobs:
       - name: Setup Python
         run: uv python install 3.12
 
+      - name: Create Python audit environment
+        run: uv venv --python 3.12
+
       - name: Install pip-audit
         run: uv pip install pip-audit
 

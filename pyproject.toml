@@ -36,7 +36,7 @@ dev = [
   "pytest>=8.0", "pytest-cov>=5.0", "pytest-mock>=3.14",
   "pytest-asyncio>=0.24", "pytest-snapshot>=0.9",
   "hypothesis>=6.100", "mutmut>=3.0",
-  "ruff>=0.6", "mypy>=1.11",
+  "ruff==0.15.11", "mypy>=1.11",
   "numpy>=1.26.0",
   "stringzilla>=4.0",
   "psutil",
@@ -61,6 +61,14 @@ bench = [
 
 [project.scripts]
 tg = "tensor_grep.cli.bootstrap:main_entry"
+
+[tool.uv]
+constraint-dependencies = [
+    "cryptography>=46.0.7",
+    "pygments>=2.20.0",
+    "python-multipart>=0.0.26",
+    "requests>=2.33.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

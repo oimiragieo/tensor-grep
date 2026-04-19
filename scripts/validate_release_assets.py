@@ -4,6 +4,7 @@ import json
 import re
 import tomllib
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -871,6 +872,95 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
     audit_job = jobs.get("audit")
     if not isinstance(audit_job, dict):
         errors.append("Audit workflow must define `audit` job")
+    else:
+        audit_steps = audit_job.get("steps")
+        if not isinstance(audit_steps, list):
+            errors.append("Audit workflow `audit` job must define steps")
+        else:
+            audit_steps_by_name: dict[str, dict[str, Any]] = {}
+            audit_runs_by_name: dict[str, str] = {}
+            audit_step_order: list[str] = []
+            for step in audit_steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name")
+                if not isinstance(name, str):
+                    continue
+                audit_step_order.append(name)
+                audit_steps_by_name[name] = step
+                run = step.get("run")
+                if isinstance(run, str):
+                    audit_runs_by_name[name] = run
+
+            install_uv_step = audit_steps_by_name.get("Install uv")
+            if install_uv_step is None:
+                errors.append("Audit workflow `audit` job must include step `Install uv`")
+            else:
+                uses_value = install_uv_step.get("uses")
+                if uses_value != "astral-sh/setup-uv@v8.0.0":
+                    errors.append(
+                        "Audit workflow `Install uv` step must use `astral-sh/setup-uv@v8.0.0`"
+                    )
+
+            setup_python_run = audit_runs_by_name.get("Setup Python")
+            if setup_python_run is None:
+                errors.append("Audit workflow `audit` job must include step `Setup Python`")
+            elif "uv python install 3.12" not in setup_python_run:
+                errors.append(
+                    "Audit workflow `Setup Python` step must invoke `uv python install 3.12`"
+                )
+
+            create_env_step = "Create Python audit environment"
+            create_env_run = audit_runs_by_name.get(create_env_step)
+            if create_env_run is None:
+                errors.append(
+                    "Audit workflow `audit` job must include step `Create Python audit environment`"
+                )
+            elif "uv venv --python 3.12" not in create_env_run:
+                errors.append(
+                    "Audit workflow `Create Python audit environment` step must invoke "
+                    "`uv venv --python 3.12`"
+                )
+
+            install_pip_audit_run = audit_runs_by_name.get("Install pip-audit")
+            if install_pip_audit_run is None:
+                errors.append("Audit workflow `audit` job must include step `Install pip-audit`")
+            elif "uv pip install pip-audit" not in install_pip_audit_run:
+                errors.append(
+                    "Audit workflow `Install pip-audit` step must invoke `uv pip install pip-audit`"
+                )
+
+            run_pip_audit_run = audit_runs_by_name.get("Run pip-audit")
+            if run_pip_audit_run is None:
+                errors.append("Audit workflow `audit` job must include step `Run pip-audit`")
+            elif "uv run pip-audit" not in run_pip_audit_run:
+                errors.append("Audit workflow `Run pip-audit` step must invoke `uv run pip-audit`")
+
+            required_step_order = [
+                "Install uv",
+                "Setup Python",
+                create_env_step,
+                "Install pip-audit",
+                "Run pip-audit",
+            ]
+            if all(step_name in audit_step_order for step_name in required_step_order):
+                order_positions = {
+                    name: audit_step_order.index(name) for name in required_step_order
+                }
+                if order_positions["Setup Python"] > order_positions[create_env_step]:
+                    errors.append(
+                        "Audit workflow `Create Python audit environment` step must run after "
+                        "`Setup Python`"
+                    )
+                if order_positions[create_env_step] > order_positions["Install pip-audit"]:
+                    errors.append(
+                        "Audit workflow `Create Python audit environment` step must run before "
+                        "`Install pip-audit`"
+                    )
+                if order_positions["Install pip-audit"] > order_positions["Run pip-audit"]:
+                    errors.append(
+                        "Audit workflow `Install pip-audit` step must run before `Run pip-audit`"
+                    )
 
     report_job = jobs.get("report-audit-status")
     if not isinstance(report_job, dict):
@@ -2078,6 +2168,63 @@ def validate_homebrew_formula_contract(*, brew_content: str, py_version: str) ->
     return errors
 
 
+def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        pyproject_data = tomllib.loads(pyproject_content)
+    except tomllib.TOMLDecodeError as exc:
+        return [f"pyproject.toml is not valid TOML: {exc}"]
+
+    tool_config = pyproject_data.get("tool", {})
+    if not isinstance(tool_config, dict):
+        tool_config = {}
+    uv_config = tool_config.get("uv", {})
+    if not isinstance(uv_config, dict):
+        uv_config = {}
+    constraint_dependencies = uv_config.get("constraint-dependencies", [])
+    if not isinstance(constraint_dependencies, list):
+        return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
+
+    expected_constraints = {
+        "cryptography>=46.0.7",
+        "pygments>=2.20.0",
+        "python-multipart>=0.0.26",
+        "requests>=2.33.0",
+    }
+    missing_constraints = sorted(
+        expected_constraints - {str(entry) for entry in constraint_dependencies}
+    )
+    if missing_constraints:
+        errors.append(
+            "pyproject.toml [tool.uv].constraint-dependencies missing security floor entries: "
+            + ", ".join(missing_constraints)
+        )
+    return errors
+
+
+def validate_dev_tooling_constraints(*, pyproject_content: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        pyproject_data = tomllib.loads(pyproject_content)
+    except tomllib.TOMLDecodeError as exc:
+        return [f"pyproject.toml is not valid TOML: {exc}"]
+
+    optional_dependencies = pyproject_data.get("project", {}).get("optional-dependencies", {})
+    if not isinstance(optional_dependencies, dict):
+        optional_dependencies = {}
+    dev_dependencies = optional_dependencies.get("dev", [])
+    if not isinstance(dev_dependencies, list):
+        return ["pyproject.toml [project.optional-dependencies].dev must be a list"]
+
+    expected_ruff_pin = "ruff==0.15.11"
+    if expected_ruff_pin not in {str(entry) for entry in dev_dependencies}:
+        errors.append(
+            "pyproject.toml [project.optional-dependencies].dev must pin "
+            f"`{expected_ruff_pin}` for CI/local formatter parity"
+        )
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
@@ -2154,6 +2301,12 @@ def validate_all() -> list[str]:
     errors.extend(validate_readme_contract(readme_content=readme))
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
+    errors.extend(
+        validate_uv_security_constraints(pyproject_content=_read(ROOT / "pyproject.toml"))
+    )
+    errors.extend(
+        validate_dev_tooling_constraints(pyproject_content=_read(ROOT / "pyproject.toml"))
+    )
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
     build_command = str(semantic_release.get("build_command", ""))
     if "scripts/stamp_release_assets.py" not in build_command:
