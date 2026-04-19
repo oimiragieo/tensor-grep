@@ -431,6 +431,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Install uv
         run: python -m pip install uv
@@ -448,42 +450,126 @@ jobs:
           uv venv --python 3.12
           uv pip install -e ".[bench,dev]"
 
+      - name: Determine benchmark base revision
+        if: github.event_name != 'schedule'
+        id: benchmark-base
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+          fi
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="$(git rev-parse HEAD^)"
+          fi
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout base revision for same-runner benchmark comparison
+        if: github.event_name != 'schedule'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.benchmark-base.outputs.base_sha }}
+          path: base-revision
+          fetch-depth: 0
+
+      - name: Install base benchmark dependencies
+        if: github.event_name != 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd base-revision
+          uv venv --python 3.12
+          uv pip install -e ".[bench,dev]"
+
       - name: Run core benchmark suite
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           mkdir -p artifacts
-          uv run python benchmarks/run_benchmarks.py | tee artifacts/bench_run_benchmarks.txt
+          uv run python benchmarks/run_benchmarks.py \
+            --output artifacts/bench_run_benchmarks.head.json \
+            | tee artifacts/bench_run_benchmarks.head.txt
+
+      - name: Run base benchmark suite
+        if: github.event_name != 'schedule'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p base-revision/artifacts
+          (
+            cd base-revision
+            uv run python benchmarks/run_benchmarks.py \
+              --output artifacts/bench_run_benchmarks.base.json
+          ) | tee base-revision/artifacts/bench_run_benchmarks.base.txt
 
       - name: Run hot-query benchmark suite
         shell: bash
         run: |
-          set -o pipefail
+          set -euo pipefail
           uv run python benchmarks/run_hot_query_benchmarks.py | tee artifacts/bench_hot_query_benchmarks.txt
 
       - name: Enforce benchmark regression gate
+        if: github.event_name != 'schedule'
         run: |
           uv run python benchmarks/check_regression.py \
-            --baseline auto \
-            --current artifacts/bench_run_benchmarks.json \
+            --baseline base-revision/artifacts/bench_run_benchmarks.base.json \
+            --current artifacts/bench_run_benchmarks.head.json \
             --max-regression-pct 20.0 \
             --min-baseline-time-s 0.2
 
-      - name: Build benchmark markdown summary
+      - name: Report accepted benchmark baseline drift
+        continue-on-error: true
+        shell: bash
         run: |
+          set -euo pipefail
+          uv run python benchmarks/check_regression.py \
+            --baseline auto \
+            --current artifacts/bench_run_benchmarks.head.json \
+            --max-regression-pct 20.0 \
+            --min-baseline-time-s 0.2 \
+            | tee artifacts/bench_run_benchmarks.accepted_drift.txt
+
+      - name: Build benchmark markdown summary
+        shell: bash
+        run: |
+          set -euo pipefail
           uv run python benchmarks/summarize_benchmarks.py \
             --baseline auto \
-            --current artifacts/bench_run_benchmarks.json \
+            --current artifacts/bench_run_benchmarks.head.json \
             --max-regression-pct 20.0 \
             --min-baseline-time-s 0.2 \
             --output artifacts/benchmark_summary.md
-          cat artifacts/benchmark_summary.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Same-runner benchmark gate"
+            echo ""
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              echo "Scheduled runs skip the base-vs-head blocking comparison."
+            else
+              echo "Blocking comparison uses:"
+              echo "- baseline: \`base-revision/artifacts/bench_run_benchmarks.base.json\`"
+              echo "- current: \`artifacts/bench_run_benchmarks.head.json\`"
+            fi
+            echo ""
+            echo "## Accepted baseline drift report"
+            echo ""
+            if [ -f artifacts/bench_run_benchmarks.accepted_drift.txt ]; then
+              cat artifacts/bench_run_benchmarks.accepted_drift.txt
+            else
+              echo "No accepted-baseline drift output was captured."
+            fi
+            echo ""
+            cat artifacts/benchmark_summary.md
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-artifacts-ci
-          path: artifacts/
+          path: |
+            artifacts/
+            base-revision/artifacts/
 
   release:
     name: Semantic Release

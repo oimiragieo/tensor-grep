@@ -497,7 +497,7 @@ def test_should_require_release_intent_job_to_be_pull_request_only():
     assert any("release-intent job must run only for pull_request events" in err for err in errors)
 
 
-def test_should_require_ci_benchmark_jobs_to_use_auto_baseline_resolution():
+def test_should_require_ci_benchmark_jobs_to_split_base_compare_and_drift_reporting():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -510,46 +510,113 @@ def test_should_require_ci_benchmark_jobs_to_use_auto_baseline_resolution():
     jobs:
       benchmark-regression:
         steps:
+          - name: Install benchmark dependencies
+            run: |
+              uv venv --python 3.12
+              uv pip install -e ".[bench,dev]"
+          - name: Run core benchmark suite
+            run: uv run python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.head.json
+          - name: Run hot-query benchmark suite
+            run: uv run python benchmarks/run_hot_query_benchmarks.py
           - run: |
               uv run python benchmarks/check_regression.py \
-                --baseline benchmarks/baselines/run_benchmarks.ubuntu.json \
-                --current artifacts/bench_run_benchmarks.json
-          - run: |
-              uv run python benchmarks/summarize_benchmarks.py \
-                --baseline benchmarks/baselines/run_benchmarks.ubuntu.json \
-                --current artifacts/bench_run_benchmarks.json \
-                --output artifacts/benchmark_summary.md
-    """
-    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
-    assert any("check_regression.py" in err and "--baseline auto" in err for err in errors)
-    assert any("summarize_benchmarks.py" in err and "--baseline auto" in err for err in errors)
-
-
-def test_should_require_auto_baseline_per_benchmark_command_invocation():
-    root = Path(__file__).resolve().parents[2]
-    script_path = root / "scripts" / "validate_release_assets.py"
-    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
-    assert spec is not None and spec.loader is not None
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    ci_workflow = """
-    jobs:
-      benchmark-regression:
-        steps:
-          - run: |
-              uv run python benchmarks/check_regression.py \
-                --current artifacts/bench_run_benchmarks.json
+                --baseline base-revision/artifacts/bench_run_benchmarks.base.json \
+                --current artifacts/bench_run_benchmarks.head.json
           - run: |
               uv run python benchmarks/summarize_benchmarks.py \
                 --baseline auto \
-                --current artifacts/bench_run_benchmarks.json \
+                --current artifacts/bench_run_benchmarks.head.json \
                 --output artifacts/benchmark_summary.md
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
-    assert any("check_regression.py" in err and "--baseline auto" in err for err in errors)
-    assert not any("summarize_benchmarks.py" in err and "--baseline auto" in err for err in errors)
+    assert any(
+        "benchmark-regression job must include step `Determine benchmark base revision`" in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression job must include step `Checkout base revision for same-runner benchmark comparison`"
+        in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression job must include step `Install base benchmark dependencies`" in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression job must include step `Run base benchmark suite`" in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression job must include step `Report accepted benchmark baseline drift`"
+        in err
+        for err in errors
+    )
+
+
+def test_should_require_explicit_base_artifact_for_blocking_benchmark_gate():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      benchmark-regression:
+        steps:
+          - name: Install benchmark dependencies
+            run: |
+              uv venv --python 3.12
+              uv pip install -e ".[bench,dev]"
+          - name: Determine benchmark base revision
+            run: echo "base_sha=deadbeef" >> "$GITHUB_OUTPUT"
+          - name: Checkout base revision for same-runner benchmark comparison
+            uses: actions/checkout@v6
+            with:
+              ref: deadbeef
+              path: base-revision
+          - name: Install base benchmark dependencies
+            run: |
+              cd base-revision
+              uv venv --python 3.12
+              uv pip install -e ".[bench,dev]"
+          - name: Run core benchmark suite
+            run: uv run python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.head.json
+          - name: Run base benchmark suite
+            run: |
+              cd base-revision
+              uv run python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.base.json
+          - name: Run hot-query benchmark suite
+            run: uv run python benchmarks/run_hot_query_benchmarks.py
+          - name: Enforce benchmark regression gate
+            run: |
+              uv run python benchmarks/check_regression.py \
+                --baseline auto \
+                --current artifacts/bench_run_benchmarks.head.json
+          - name: Report accepted benchmark baseline drift
+            run: |
+              uv run python benchmarks/check_regression.py \
+                --current artifacts/bench_run_benchmarks.json
+          - name: Build benchmark markdown summary
+            run: |
+              uv run python benchmarks/summarize_benchmarks.py \
+                --baseline auto \
+                --current artifacts/bench_run_benchmarks.head.json \
+                --output artifacts/benchmark_summary.md
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "benchmark-regression `Enforce benchmark regression gate` step must compare against "
+        "`base-revision/artifacts/bench_run_benchmarks.base.json`" in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression `Report accepted benchmark baseline drift` step must pass `--baseline auto`"
+        in err
+        for err in errors
+    )
 
 
 def test_should_require_structural_gpu_ci_steps_for_retry_and_gpu_pytest():
@@ -580,7 +647,7 @@ def test_should_require_structural_gpu_ci_steps_for_retry_and_gpu_pytest():
     )
 
 
-def test_should_require_structural_benchmark_regression_steps_with_auto_baseline():
+def test_should_require_structural_benchmark_regression_steps_for_base_compare_and_drift_reporting():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -596,19 +663,31 @@ def test_should_require_structural_benchmark_regression_steps_with_auto_baseline
         steps:
           - name: Enforce benchmark regression gate
             run: |
-              uv run python benchmarks/check_regression.py --current artifacts/bench_run_benchmarks.json
+              uv run python benchmarks/check_regression.py --current artifacts/bench_run_benchmarks.head.json
           - name: Build benchmark markdown summary
             run: |
-              uv run python benchmarks/summarize_benchmarks.py --current artifacts/bench_run_benchmarks.json
+              uv run python benchmarks/summarize_benchmarks.py --baseline auto --current artifacts/bench_run_benchmarks.head.json
     """
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any(
-        "benchmark-regression `Enforce benchmark regression gate` step must pass `--baseline auto`"
+        "benchmark-regression job must include step `Determine benchmark base revision`" in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression job must include step `Checkout base revision for same-runner benchmark comparison`"
         in err
         for err in errors
     )
     assert any(
-        "benchmark-regression `Build benchmark markdown summary` step must pass `--baseline auto`"
+        "benchmark-regression job must include step `Install base benchmark dependencies`" in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression job must include step `Run base benchmark suite`" in err
+        for err in errors
+    )
+    assert any(
+        "benchmark-regression job must include step `Report accepted benchmark baseline drift`"
         in err
         for err in errors
     )
@@ -675,6 +754,27 @@ def test_should_require_benchmark_regression_to_install_bench_and_dev_extras():
     errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
     assert any(
         "Install benchmark dependencies` step must install `.[bench,dev]`" in err for err in errors
+    )
+
+
+def test_should_require_benchmark_regression_job_to_exist_when_release_depends_on_it():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ci_workflow = """
+    jobs:
+      release:
+        needs: [benchmark-regression]
+    """
+    errors = module.validate_ci_workflow_content(ci_workflow=ci_workflow)
+    assert any(
+        "CI workflow must define benchmark-regression job when release depends on it" in err
+        for err in errors
     )
 
 

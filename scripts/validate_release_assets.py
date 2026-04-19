@@ -226,10 +226,13 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         )
 
             benchmark_job = jobs.get("benchmark-regression")
-            if isinstance(benchmark_job, dict):
+            if not isinstance(benchmark_job, dict):
+                errors.append("CI workflow must define benchmark-regression job when release depends on it")
+            else:
                 benchmark_steps = benchmark_job.get("steps", [])
                 benchmark_run_by_name: dict[str, str] = {}
                 benchmark_step_names: set[str] = set()
+                benchmark_step_by_name: dict[str, dict[str, object]] = {}
                 if isinstance(benchmark_steps, list):
                     for step in benchmark_steps:
                         if not isinstance(step, dict):
@@ -237,6 +240,7 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         name = step.get("name")
                         if isinstance(name, str):
                             benchmark_step_names.add(name)
+                            benchmark_step_by_name[name] = step
                         run = step.get("run")
                         if isinstance(name, str) and isinstance(run, str):
                             benchmark_run_by_name[name] = run
@@ -251,32 +255,186 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
                         "CI workflow benchmark-regression `Install benchmark dependencies` step "
                         "must install `.[bench,dev]`"
                     )
-                required_benchmark_step_names = {"Run hot-query benchmark suite"}
+                required_benchmark_step_names = {
+                    "Run hot-query benchmark suite",
+                    "Determine benchmark base revision",
+                    "Checkout base revision for same-runner benchmark comparison",
+                    "Install base benchmark dependencies",
+                    "Run base benchmark suite",
+                    "Report accepted benchmark baseline drift",
+                }
                 for step_name in required_benchmark_step_names:
                     if step_name not in benchmark_step_names:
                         errors.append(
                             f"CI workflow benchmark-regression job must include step `{step_name}`"
                         )
-                required_benchmark_steps = {
-                    "Enforce benchmark regression gate": "benchmarks/check_regression.py",
-                    "Build benchmark markdown summary": "benchmarks/summarize_benchmarks.py",
-                }
-                for step_name, command in required_benchmark_steps.items():
-                    run_script = benchmark_run_by_name.get(step_name)
-                    if run_script is None:
-                        errors.append(
-                            f"CI workflow benchmark-regression job must include step `{step_name}`"
-                        )
-                        continue
-                    if command not in run_script:
-                        errors.append(
-                            "CI workflow benchmark-regression "
-                            f"`{step_name}` step must invoke `{command}`"
-                        )
-                    if "--baseline auto" not in run_script:
+                base_revision_run = benchmark_run_by_name.get("Determine benchmark base revision")
+                if base_revision_run is not None:
+                    for expected in ("github.event.pull_request.base.sha", "github.event.before"):
+                        if expected not in base_revision_run:
+                            errors.append(
+                                "CI workflow benchmark-regression "
+                                "`Determine benchmark base revision` step must inspect "
+                                f"`{expected}`"
+                            )
+
+                checkout_base_step = benchmark_step_by_name.get(
+                    "Checkout base revision for same-runner benchmark comparison"
+                )
+                if checkout_base_step is not None:
+                    if checkout_base_step.get("uses") != "actions/checkout@v6":
                         errors.append(
                             "CI workflow benchmark-regression "
-                            f"`{step_name}` step must pass `--baseline auto`"
+                            "`Checkout base revision for same-runner benchmark comparison` "
+                            "step must use `actions/checkout@v6`"
+                        )
+                    with_block = checkout_base_step.get("with", {})
+                    if not isinstance(with_block, dict):
+                        with_block = {}
+                    if str(with_block.get("path")) != "base-revision":
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Checkout base revision for same-runner benchmark comparison` "
+                            "step must set `path: base-revision`"
+                        )
+                    if str(with_block.get("ref")) != "${{ steps.benchmark-base.outputs.base_sha }}":
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Checkout base revision for same-runner benchmark comparison` "
+                            "step must checkout `${{ steps.benchmark-base.outputs.base_sha }}`"
+                        )
+
+                install_base_benchmark_run = benchmark_run_by_name.get(
+                    "Install base benchmark dependencies"
+                )
+                if install_base_benchmark_run is not None:
+                    if '".[bench,dev]"' not in install_base_benchmark_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Install base benchmark dependencies` step must install `.[bench,dev]`"
+                        )
+                    if "base-revision" not in install_base_benchmark_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Install base benchmark dependencies` step must operate inside `base-revision`"
+                        )
+
+                run_core_benchmark = benchmark_run_by_name.get("Run core benchmark suite")
+                if run_core_benchmark is not None:
+                    if "benchmarks/run_benchmarks.py" not in run_core_benchmark:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Run core benchmark suite` step must invoke `benchmarks/run_benchmarks.py`"
+                        )
+                    if "--output artifacts/bench_run_benchmarks.head.json" not in run_core_benchmark:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Run core benchmark suite` step must emit `artifacts/bench_run_benchmarks.head.json`"
+                        )
+
+                run_base_benchmark = benchmark_run_by_name.get("Run base benchmark suite")
+                if run_base_benchmark is not None:
+                    if "benchmarks/run_benchmarks.py" not in run_base_benchmark:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Run base benchmark suite` step must invoke `benchmarks/run_benchmarks.py`"
+                        )
+                    if "--output artifacts/bench_run_benchmarks.base.json" not in run_base_benchmark:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Run base benchmark suite` step must emit `artifacts/bench_run_benchmarks.base.json`"
+                        )
+
+                enforce_benchmark_gate_run = benchmark_run_by_name.get(
+                    "Enforce benchmark regression gate"
+                )
+                if enforce_benchmark_gate_run is None:
+                    errors.append(
+                        "CI workflow benchmark-regression job must include step "
+                        "`Enforce benchmark regression gate`"
+                    )
+                else:
+                    if "benchmarks/check_regression.py" not in enforce_benchmark_gate_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Enforce benchmark regression gate` step must invoke "
+                            "`benchmarks/check_regression.py`"
+                        )
+                    if (
+                        "--baseline base-revision/artifacts/bench_run_benchmarks.base.json"
+                        not in enforce_benchmark_gate_run
+                    ):
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Enforce benchmark regression gate` step must compare against "
+                            "`base-revision/artifacts/bench_run_benchmarks.base.json`"
+                        )
+                    if "--current artifacts/bench_run_benchmarks.head.json" not in enforce_benchmark_gate_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Enforce benchmark regression gate` step must compare current artifact "
+                            "`artifacts/bench_run_benchmarks.head.json`"
+                        )
+                    if "--baseline auto" in enforce_benchmark_gate_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Enforce benchmark regression gate` step must not use `--baseline auto`"
+                        )
+
+                drift_report_run = benchmark_run_by_name.get(
+                    "Report accepted benchmark baseline drift"
+                )
+                drift_report_step = benchmark_step_by_name.get(
+                    "Report accepted benchmark baseline drift"
+                )
+                if drift_report_run is not None:
+                    if "benchmarks/check_regression.py" not in drift_report_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Report accepted benchmark baseline drift` step must invoke "
+                            "`benchmarks/check_regression.py`"
+                        )
+                    if "--baseline auto" not in drift_report_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Report accepted benchmark baseline drift` step must pass `--baseline auto`"
+                        )
+                    if "--current artifacts/bench_run_benchmarks.head.json" not in drift_report_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Report accepted benchmark baseline drift` step must compare current artifact "
+                            "`artifacts/bench_run_benchmarks.head.json`"
+                        )
+                if isinstance(drift_report_step, dict):
+                    if drift_report_step.get("continue-on-error") is not True:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Report accepted benchmark baseline drift` step must set `continue-on-error: true`"
+                        )
+
+                summary_run = benchmark_run_by_name.get("Build benchmark markdown summary")
+                if summary_run is None:
+                    errors.append(
+                        "CI workflow benchmark-regression job must include step "
+                        "`Build benchmark markdown summary`"
+                    )
+                else:
+                    if "benchmarks/summarize_benchmarks.py" not in summary_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Build benchmark markdown summary` step must invoke "
+                            "`benchmarks/summarize_benchmarks.py`"
+                        )
+                    if "--baseline auto" not in summary_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Build benchmark markdown summary` step must pass `--baseline auto`"
+                        )
+                    if "--current artifacts/bench_run_benchmarks.head.json" not in summary_run:
+                        errors.append(
+                            "CI workflow benchmark-regression "
+                            "`Build benchmark markdown summary` step must summarize "
+                            "`artifacts/bench_run_benchmarks.head.json`"
                         )
 
             publish_pypi_job = jobs.get("publish-pypi")
@@ -460,37 +618,6 @@ def validate_ci_workflow_content(*, ci_workflow: str) -> list[str]:
     if "uv run ruff format --check --preview ." not in ci_workflow:
         errors.append(
             "CI workflow must run formatter with `ruff format --check --preview .` to keep local/CI formatting semantics aligned"
-        )
-
-    def _command_invocations_have_flag(command: str, required: str) -> bool:
-        command_indexes = [m.start() for m in re.finditer(re.escape(command), ci_workflow)]
-        if not command_indexes:
-            return False
-
-        for idx in command_indexes:
-            # Restrict inspection to the current YAML step block; do not confuse
-            # command flags like `--baseline` with a new `- <step>` entry.
-            next_step_match = re.search(
-                r"\n\s{6,}-\s+(?:name|run|uses|if|with|env|id|working-directory|shell)\s*:",
-                ci_workflow[idx + len(command) :],
-            )
-            if next_step_match:
-                next_step_idx = idx + len(command) + next_step_match.start()
-            else:
-                next_step_idx = len(ci_workflow)
-            block = ci_workflow[idx:next_step_idx]
-            if required not in block:
-                return False
-        return True
-
-    if not _command_invocations_have_flag("benchmarks/check_regression.py", "--baseline auto"):
-        errors.append(
-            "CI workflow benchmark regression gate must pass `--baseline auto` to check_regression.py"
-        )
-
-    if not _command_invocations_have_flag("benchmarks/summarize_benchmarks.py", "--baseline auto"):
-        errors.append(
-            "CI workflow benchmark summary generation must pass `--baseline auto` to summarize_benchmarks.py"
         )
 
     action_versions = {
