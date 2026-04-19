@@ -54,6 +54,9 @@ The repo also owns `pyproject.toml` `tool.uv.constraint-dependencies` security f
 transitive packages. When `pip-audit` reports a vulnerable transitive dependency, update those
 constraints, refresh `uv.lock`, and extend the validator-backed tests instead of silently pinning
 the package as a new top-level runtime dependency.
+Formatter parity also depends on an exact Ruff dev pin. CI runs Ruff in preview mode, and Ruff's
+versioning allows formatter behavior to change across releases, so keep the repo-owned
+`ruff==0.15.11` pin and the validator tests in sync when intentionally upgrading the formatter.
 
 The Rust license policy for `cargo deny check` is owned in-repo at `rust_core/deny.toml`. If the Rust dependency graph changes, update that policy and the audit workflow contract tests together rather than relying on cargo-deny defaults.
 

@@ -476,6 +476,49 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     assert errors == []
 
 
+def test_should_require_exact_ruff_dev_pin_for_ci_format_parity():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+
+    [project.optional-dependencies]
+    dev = ["ruff>=0.6"]
+    """
+    errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
+    joined_errors = "\n".join(errors)
+    assert "ruff==0.15.11" in joined_errors
+
+
+def test_should_accept_exact_ruff_dev_pin_for_ci_format_parity():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+
+    [project.optional-dependencies]
+    dev = ["ruff==0.15.11"]
+    """
+    errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
+    assert errors == []
+
+
 def test_should_require_ci_package_manager_bundle_build_and_checksum_verification():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

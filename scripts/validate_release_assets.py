@@ -2202,6 +2202,29 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
     return errors
 
 
+def validate_dev_tooling_constraints(*, pyproject_content: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        pyproject_data = tomllib.loads(pyproject_content)
+    except tomllib.TOMLDecodeError as exc:
+        return [f"pyproject.toml is not valid TOML: {exc}"]
+
+    optional_dependencies = pyproject_data.get("project", {}).get("optional-dependencies", {})
+    if not isinstance(optional_dependencies, dict):
+        optional_dependencies = {}
+    dev_dependencies = optional_dependencies.get("dev", [])
+    if not isinstance(dev_dependencies, list):
+        return ["pyproject.toml [project.optional-dependencies].dev must be a list"]
+
+    expected_ruff_pin = "ruff==0.15.11"
+    if expected_ruff_pin not in {str(entry) for entry in dev_dependencies}:
+        errors.append(
+            "pyproject.toml [project.optional-dependencies].dev must pin "
+            f"`{expected_ruff_pin}` for CI/local formatter parity"
+        )
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
@@ -2280,6 +2303,9 @@ def validate_all() -> list[str]:
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     errors.extend(
         validate_uv_security_constraints(pyproject_content=_read(ROOT / "pyproject.toml"))
+    )
+    errors.extend(
+        validate_dev_tooling_constraints(pyproject_content=_read(ROOT / "pyproject.toml"))
     )
     semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
     build_command = str(semantic_release.get("build_command", ""))
