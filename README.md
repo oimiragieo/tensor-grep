@@ -289,6 +289,14 @@ Force all matches to be surrounded by word boundaries with `-w`:
 $ tg -w foobar
 ```
 
+List files that do not contain a match while still honoring ignore rules by default:
+
+```bash
+$ tg search foobar . --files-without-match
+```
+
+Add `--no-ignore` when you want ignored files and directories included in the candidate set for this mode.
+
 Search only Python and Javascript files:
 
 ```bash

@@ -1759,8 +1759,41 @@ def test_files_without_match_respects_scanned_candidates_for_hidden_relative_roo
             check=False,
         )
 
-        assert result.returncode == 0
-        assert result.stdout.strip() == str(Path(hidden_root.name) / "empty.txt")
+    assert result.returncode == 0
+    assert result.stdout.strip() == str(Path(hidden_root.name) / "empty.txt")
+
+
+def test_files_without_match_skips_gitignored_directories(tmp_path: Path):
+    (tmp_path / ".gitignore").write_text("build/\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "build").mkdir()
+
+    kept = tmp_path / "src" / "empty.txt"
+    ignored = tmp_path / "build" / "ignored.txt"
+    matched = tmp_path / "src" / "matched.txt"
+
+    kept.write_text("other\n", encoding="utf-8")
+    ignored.write_text("other\n", encoding="utf-8")
+    matched.write_text("NEEDLE\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tensor_grep.cli.main",
+            "search",
+            "NEEDLE",
+            str(tmp_path),
+            "--files-without-match",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert str(kept) in result.stdout
+    assert str(ignored) not in result.stdout
 
 
 def test_files_with_matches_null_outputs_nul_separator(tmp_path: Path):
