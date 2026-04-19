@@ -61,7 +61,7 @@ def test_should_require_uv_lock_editable_version_to_match_pyproject():
             )
         if path == module.ROOT / "uv.lock":
             return (
-                '[[package]]\n'
+                "[[package]]\n"
                 'name = "tensor-grep"\n'
                 'version = "1.3.1"\n'
                 'source = { editable = "." }\n'
