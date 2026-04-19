@@ -48,6 +48,8 @@ Runs dependency and license audits:
 - `cargo deny check`
 - `pip-audit`
 
+The Rust license policy for `cargo deny check` is owned in-repo at `rust_core/deny.toml`. If the Rust dependency graph changes, update that policy and the audit workflow contract tests together rather than relying on cargo-deny defaults.
+
 Triggers:
 
 - nightly schedule
