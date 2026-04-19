@@ -533,6 +533,24 @@ Recent work reinforces the current `tensor-grep` direction:
 
 The practical interpretation is straightforward: the repo is already betting on the right substrate. The next proof obligation is not more navigation surface area; it is an end-to-end patch benchmark showing that an agent using `tensor-grep` produces better final code changes than a generic search-and-reason loop.
 
+### 5.4.1 Lexical Repo-Map Retrieval Acceptance (2026-04-19)
+
+The next accepted repo-map change is deliberately lexical-first and narrowly scoped. It does **not** introduce dense retrieval, default semantic providers, or graph-default reranking. Instead, it closes three concrete planning misses that showed up in local harness work:
+
+* camelCase query to snake_case definition bridging
+* exact symbol queries over-ranking partial split matches such as `build_invoice`
+* source-term-only queries that lacked parser-backed filename or symbol hits
+
+On a curated three-scenario retrieval pack, clean `origin/main` scored zeros across the retrieval metrics (`recall_at_5 = 0.0`, `precision_at_5 = 0.0`, `mrr_at_5 = 0.0`, `ndcg_at_5 = 0.0`). The accepted lexical line moves that same pack to `recall_at_5 = 1.0`, `precision_at_5 = 0.2`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, with `file_f1 = 0.333333` and `line_f1 = 0.222222`.
+
+The implementation boundary is the important part:
+
+* split-term lexical expansion is used for symbol-aware matching when it closes camelCase/snake_case gaps
+* exact snake_case queries keep exact definitions ahead of partial lexical neighbors
+* file-body term scoring now runs only as a bounded fallback when parser/path evidence is weak, rather than as the default hot-path scorer
+
+This matches the current research read rather than fighting it. ContextBench-style evaluation says retrieval quality should be measured directly, and the accepted lexical line does exactly that. At the same time, the editor-plane benchmarks stay bounded rather than turning the change into an unjustified speed claim: `context-render` improves against the refreshed clean-head baseline on this host, while blast-radius remains in the same practical latency band after the exact-symbol correction.
+
 ### 5.5 User-Style Claude A/B and Observability
 
 The newest accepted benchmark shape tests the product more directly than the earlier cross-vendor patch runners: the same Claude CLI is run twice on the same repo-backed task pack, once as a plain baseline and once with the `tensor-grep` project skill plus a repo-local `CLAUDE.md`.

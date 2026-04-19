@@ -18,6 +18,8 @@ These scripts and artifact paths are the accepted benchmark surface for the curr
 | AST workflow startup | `benchmarks/run_ast_workflow_benchmarks.py` | `artifacts/bench_run_ast_workflow_benchmarks.json` |
 | Provider-mode hardcase navigation | `benchmarks/run_provider_navigation_bakeoff.py` | `artifacts/bench_provider_navigation_click_hardcases.json` |
 | Repository planning retrieval | `benchmarks/run_repo_retrieval_benchmarks.py` | `artifacts/bench_repo_retrieval_benchmarks.json` |
+| Editor-plane context render | `benchmarks/run_context_render_benchmarks.py` | `artifacts/bench_context_render.json` |
+| Blast-radius render latency | `benchmarks/run_blast_radius_benchmarks.py` | `artifacts/bench_blast_radius.json` |
 | Python GPU/NLP benchmark | `benchmarks/run_gpu_benchmarks.py` | `artifacts/bench_run_gpu_benchmarks.json` |
 | Native GPU crossover / throughput | `benchmarks/run_gpu_native_benchmarks.py` | `artifacts/bench_run_gpu_native_benchmarks.json` |
 | Harness loop | `benchmarks/run_harness_loop_benchmark.py` | `artifacts/bench_harness_loop.json` |
@@ -53,6 +55,30 @@ For `run_repo_retrieval_benchmarks.py`, the metrics block should expose retrieva
 - `line_f1`
 - `p50_latency_ms`
 - `token_budget_mean`
+
+## Accepted Repo-Map Lexical Retrieval Snapshot (2026-04-19)
+
+The current accepted repo-map retrieval change is a quality win, not a speed-marketing claim.
+
+Curated retrieval artifact line:
+
+- clean `origin/main` baseline artifact: `artifacts/bench_repo_retrieval_lexical_base.json`
+- accepted lexical feature artifact: `artifacts/bench_repo_retrieval_lexical_feature.json`
+- baseline metrics: `recall_at_5 = 0.0`, `precision_at_5 = 0.0`, `mrr_at_5 = 0.0`, `ndcg_at_5 = 0.0`
+- accepted feature metrics: `recall_at_5 = 1.0`, `precision_at_5 = 0.2`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.333333`, `line_f1 = 0.222222`
+
+Accepted implementation boundary:
+
+- camelCase queries can now recover snake_case definitions through symbol-aware lexical expansion
+- exact snake_case symbol queries stay anchored to exact definitions instead of over-ranking partial split matches such as `build_invoice`
+- source-term scanning is now a bounded fallback when parser/path evidence is weak, not the default hot path
+
+Editor-plane guardrails were rerun on the same host before accepting the line:
+
+- `context-render` improved against the refreshed clean-head baseline on all three fixture sizes (`small`, `medium`, `large`) in `artifacts/bench_context_render_v140.json` versus `artifacts/bench_context_render_base_refresh.json`
+- blast-radius remained in the same measured band after the exact-symbol correction in `artifacts/bench_blast_radius_v140.json` versus `artifacts/bench_blast_radius_base_refresh.json`; representative rows are `medium depth=2: 0.3508s vs 0.3417s` and `large depth=2: 1.4572s vs 1.4673s`
+
+The accepted product read is therefore narrow and explicit: lexical-first repo-map retrieval now fixes the curated planning misses without reopening the earlier cold-path or provider-default decisions.
 
 Current Roadmap 1 launcher-mode read on this host:
 

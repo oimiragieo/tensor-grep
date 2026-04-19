@@ -267,6 +267,30 @@ def test_primary_file_sections_are_prioritized_when_budget_is_tight(tmp_path: Pa
     assert any(section["file"] != primary_file for section in omitted_sections)
 
 
+def test_rendered_source_sections_are_deduplicated_per_file(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    module_path = project / "src" / "payments.py"
+    _write(
+        module_path,
+        "def create_invoice(total, tax):\n"
+        "    subtotal = total + tax\n"
+        "    return subtotal\n\n"
+        "def invoice_subtotal(total, tax):\n"
+        "    subtotal = total + tax\n"
+        "    return subtotal\n",
+    )
+
+    payload = repo_map.build_context_render(
+        "invoice subtotal tax",
+        project,
+        max_files=1,
+        max_sources=4,
+    )
+
+    source_sections = [section for section in payload["sections"] if section["kind"] == "source"]
+    assert [section["path"] for section in source_sections].count(str(module_path.resolve())) == 1
+
+
 @pytest.mark.parametrize("render_profile", ["full", "compact", "llm"])
 def test_max_tokens_works_for_each_render_profile(tmp_path: Path, render_profile: str) -> None:
     project = _build_project(tmp_path)["project"]

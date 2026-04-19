@@ -90,6 +90,17 @@ def test_planning_trust_fields_are_deterministic(tmp_path: Path) -> None:
     assert _planning_trust_view(first_edit_plan) == _planning_trust_view(second_edit_plan)
 
 
+def test_edit_plan_prefers_source_backed_primary_file_for_camel_case_query(
+    tmp_path: Path,
+) -> None:
+    project, module_path, _, _ = _write_planning_fixture(tmp_path)
+
+    payload = repo_map.build_context_edit_plan("createInvoice subtotal tax", project)
+
+    assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    assert payload["candidate_edit_targets"]["files"][0] == str(module_path.resolve())
+
+
 def test_cli_json_planning_surfaces_include_trust_metadata(tmp_path: Path) -> None:
     runner = CliRunner()
     project, _, _, _ = _write_planning_fixture(tmp_path)
