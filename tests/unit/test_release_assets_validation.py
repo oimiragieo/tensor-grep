@@ -40,6 +40,42 @@ def test_should_require_readme_canonical_doc_links_and_release_markers():
     assert any("README must link release checklist" in err for err in errors)
 
 
+def test_should_require_uv_lock_editable_version_to_match_pyproject():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    module._version_from_pyproject = lambda: "1.3.2"
+    module._version_from_cargo = lambda: "1.3.2"
+    real_read = module._read
+
+    def fake_read(path: Path) -> str:
+        if path == module.ROOT / "npm" / "package.json":
+            return (
+                '{"version": "1.3.2", '
+                '"repository": {"url": "git+https://github.com/oimiragieo/tensor-grep.git"}}'
+            )
+        if path == module.ROOT / "uv.lock":
+            return (
+                "[[package]]\n"
+                'name = "tensor-grep"\n'
+                'version = "1.3.1"\n'
+                'source = { editable = "." }\n'
+            )
+        return real_read(path)
+
+    module._read = fake_read
+    errors = module.validate_all()
+    assert any(
+        "uv.lock editable tensor-grep version does not match pyproject version" in err
+        for err in errors
+    )
+
+
 def test_should_accept_readme_when_public_contract_markers_exist():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
