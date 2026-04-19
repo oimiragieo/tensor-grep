@@ -575,17 +575,7 @@ def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path, monkeyp
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_render_json",
-        lambda symbol,
-        path,
-        max_depth=3,
-        max_files=3,
-        max_sources=5,
-        max_symbols_per_file=6,
-        max_render_chars=None,
-        optimize_context=False,
-        render_profile="full",
-        profile=False,
-        semantic_provider="native": (
+        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, semantic_provider="native": (
             json.dumps({
                 "symbol": symbol,
                 "path": str(path),
@@ -733,17 +723,7 @@ def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monk
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_blast_radius_render",
-        lambda symbol,
-        path,
-        max_depth=3,
-        max_files=3,
-        max_sources=5,
-        max_symbols_per_file=6,
-        max_render_chars=None,
-        optimize_context=False,
-        render_profile="full",
-        profile=False,
-        semantic_provider="native": {
+        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, semantic_provider="native": {
             "symbol": symbol,
             "path": str(path),
             "max_depth": max_depth,
