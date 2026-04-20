@@ -35,7 +35,7 @@ def build_tg_ast_workflow_cmd(args: list[str], binary: Path | None = None) -> li
 
 
 def build_sidecar_ast_workflow_cmd(args: list[str]) -> list[str]:
-    """Build command for Python bootstrap (used for ``scan``/``test`` which are sidecar-only)."""
+    """Build command for the Python bootstrap used by the current ``scan``/``test`` flow."""
     return [sys.executable, "-m", "tensor_grep.cli.bootstrap", *args]
 
 
@@ -154,10 +154,9 @@ def main() -> int:
     run_cmd = build_tg_ast_workflow_cmd(
         ["run", "--lang", "python", "def $FUNC():\n    $$$BODY", "."], binary=tg_binary
     )
-    # `scan` and `test` are sidecar-backed — the native Rust CLI currently
-    # accepts no args for these subcommands and forwards them to Python.
-    # Benchmark through the Python bootstrap which is what the sidecar
-    # dispatches to.
+    # `scan` and `test` currently exercise the Python bootstrap path.
+    # Keep benchmarking that path directly so the harness measures the same
+    # control-plane surface operators use today.
     scan_cmd = build_sidecar_ast_workflow_cmd(["scan", "--config", "sgconfig.yml"])
     test_cmd = build_sidecar_ast_workflow_cmd(["test", "--config", "sgconfig.yml"])
 

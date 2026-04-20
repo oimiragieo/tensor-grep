@@ -5,6 +5,11 @@ from functools import lru_cache
 from pathlib import Path
 
 
+def env_flag_enabled(name: str) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _current_python_bin_dirs() -> set[Path]:
     executable = Path(sys.executable)
     bin_dirs = {executable.parent}
@@ -34,7 +39,7 @@ def resolve_native_tg_binary() -> Path | None:
     repo_root = Path(__file__).resolve().parents[3]
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
 
-    if os.environ.get("TG_DISABLE_NATIVE_TG") in {"1", "true", "TRUE", "yes", "YES"}:
+    if env_flag_enabled("TG_DISABLE_NATIVE_TG"):
         return None
 
     # Priority 1: Exact explicit override

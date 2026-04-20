@@ -534,6 +534,9 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
         ],
     )
     monkeypatch.setenv("TG_RUST_EARLY_RG", "1")
+    monkeypatch.setenv("TG_RUST_EARLY_POSITIONAL_RG", "1")
+    monkeypatch.setenv("TG_FORCE_CPU", "1")
+    monkeypatch.setenv("TG_RESIDENT_AST", "1")
 
     runner = CliRunner()
     result = runner.invoke(app, ["doctor", str(tmp_path), "--json"])
@@ -544,6 +547,9 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["root"] == str(tmp_path.resolve())
     assert payload["native_tg_binary_exists"] is True
     assert payload["env"]["TG_RUST_EARLY_RG"] == "1"
+    assert payload["env"]["TG_RUST_EARLY_POSITIONAL_RG"] == "1"
+    assert payload["env"]["TG_FORCE_CPU"] == "1"
+    assert payload["env"]["TG_RESIDENT_AST"] == "1"
     assert payload["session_daemon"]["running"] is True
     assert payload["lsp"]["enabled"] is True
     assert payload["lsp"]["providers"][0]["language"] == "python"
@@ -672,6 +678,31 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
         ".",
     ]
     assert seen["check"] is False
+
+
+def test_cli_should_force_cpu_pipeline_when_env_override_is_enabled(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR", file="a.log")],
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _LAST_PIPELINE_CONFIG = None
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setenv("TG_FORCE_CPU", "1")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", "."])
+
+    assert result.exit_code == 0
+    assert _LAST_PIPELINE_CONFIG is not None
+    assert _LAST_PIPELINE_CONFIG.force_cpu is True
 
 
 def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_code(monkeypatch):

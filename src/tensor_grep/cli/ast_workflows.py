@@ -207,15 +207,7 @@ def _load_ast_project_data(
 
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     scanner = DirectoryScanner(cfg)
-    candidate_files, _, tree_dirs = _collect_candidate_files(scanner, [str(root_dir)])
-
-    # Collect mtimes for traversed directories
-    tree_dirs_meta = {}
-    for d in tree_dirs:
-        try:
-            tree_dirs_meta[d] = os.stat(d).st_mtime_ns
-        except OSError:
-            pass
+    candidate_files, _, _ = _collect_candidate_files(scanner, [str(root_dir)])
 
     # Precompute orchestration hints
     orchestration_hints = _precompute_orchestration_hints(project_cfg, rule_specs, test_data)
@@ -372,12 +364,25 @@ def _collect_candidate_files(
 ) -> tuple[list[str], set[str], set[str]]:
     ordered = []
     seen = set()
+    tree_dirs = set()
     for p in paths:
+        base_path = Path(p).resolve()
         for current_file in scanner.walk(p):
             if current_file not in seen:
                 seen.add(current_file)
                 ordered.append(current_file)
-    return ordered, seen, set()
+            if base_path.is_file():
+                continue
+            current_path = Path(current_file).resolve()
+            try:
+                current_path.relative_to(base_path)
+            except ValueError:
+                continue
+            for parent in current_path.parents:
+                tree_dirs.add(str(parent))
+                if parent == base_path:
+                    break
+    return ordered, seen, tree_dirs
 
 
 def _batch_search_snippets(
@@ -429,7 +434,7 @@ def _batch_search_snippets(
 
 def _describe_ast_backend_mode(backend_name: str) -> str:
     if backend_name == "AstBackend":
-        return "GPU-Accelerated GNNs"
+        return "native AST matching"
     if backend_name == "AstGrepWrapperBackend":
         return "ast-grep structural matching"
     return backend_name
@@ -730,7 +735,6 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
             )
 
     # Process other results (native or individual wrapper)
-    scanner = None
     for rule, rule_cfg, backend in other_resolved:
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
@@ -744,11 +748,6 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
             if not matched_files and result.total_files > 0:
                 matched_files.update(match.file for match in result.matches if match.file)
         else:
-            if scanner is None:
-                from tensor_grep.io.directory_scanner import DirectoryScanner
-
-                scanner = DirectoryScanner(cfg)
-
             rule_matches = 0
             for current_file in candidate_files:
                 result = backend.search(current_file, rule["pattern"], config=rule_cfg)

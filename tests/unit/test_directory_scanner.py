@@ -3,6 +3,34 @@ from tensor_grep.io.directory_scanner import DirectoryScanner
 
 
 class TestDirectoryScanner:
+    def test_should_delegate_directory_walks_to_rust_scanner_when_available(
+        self, tmp_path, monkeypatch
+    ):
+        seen: dict[str, object] = {}
+        rust_file = tmp_path / "from_rust.py"
+        rust_file.write_text("ok", encoding="utf-8")
+
+        class _FakeRustDirectoryScanner:
+            def __init__(self, *, hidden, max_depth):
+                seen["hidden"] = hidden
+                seen["max_depth"] = max_depth
+
+            def walk(self, path_str):
+                seen["path_str"] = path_str
+                yield str(rust_file)
+
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", True)
+        monkeypatch.setattr(
+            "tensor_grep.io.directory_scanner.RustDirectoryScanner",
+            _FakeRustDirectoryScanner,
+            raising=False,
+        )
+
+        files = list(DirectoryScanner(SearchConfig()).walk(str(tmp_path)))
+
+        assert files == [str(rust_file)]
+        assert seen == {"hidden": False, "max_depth": None, "path_str": str(tmp_path)}
+
     def test_should_skip_gitignored_directories_by_default(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
 

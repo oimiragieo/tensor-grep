@@ -17,6 +17,9 @@ The Resident AST Worker is an experimental feature designed to keep the AST meta
 Various environment variables allow forcing specific backends to bypass the standard routing logic. These are intentionally undocumented in `--help` to prevent users from breaking the optimal routing paths.
 
 - `TG_FORCE_CPU=1`: Bypasses GPU acceleration entirely. (Documented in [gpu-troubleshooting.md](runbooks/gpu-troubleshooting.md))
-- `TG_RUST_FIRST_SEARCH=1` / `TG_RUST_EARLY_RG=1`: Experimental backend routing rules used during the migration to the Rust core.
+- `TG_RUST_FIRST_SEARCH=1`: Prefer native Rust search delegation when the invocation stays on the supported cold-search surface.
+- `TG_RUST_EARLY_RG=1`: Prefer the early native ripgrep-compatible routing path during Rust-core migration testing.
+- `TG_RUST_EARLY_POSITIONAL_RG=1`: Extend the early native ripgrep-compatible routing path to bare positional search invocations.
+- `TG_RESIDENT_AST=1`: Enable the resident AST worker workflow described above.
 
 *Note: As `tensor-grep` stabilizes these features, they will either be graduated to public `sgconfig.yml` settings, converted into standard CLI flags, or formally deprecated.*
