@@ -15,18 +15,27 @@ def _current_python_bin_dirs() -> set[Path]:
     return bin_dirs
 
 
-def _looks_like_current_python_launcher(candidate: Path) -> bool:
-    """Reject console-entrypoint shims from the active Python environment.
+def _looks_like_python_scripts_launcher(candidate: Path) -> bool:
+    """Reject console-entrypoint shims from Python installation script dirs.
 
-    These PATH hits recurse back into `python -m tensor_grep...` and are not
-    native `tg` binaries.
+    The current environment check handles local venv shims. The Windows
+    installation layout additionally exposes console launchers under
+    ``...\\PythonXY\\Scripts\\``; those also recurse back into the Python CLI and
+    are never native `tg` binaries.
     """
     candidate_bin_dirs = {candidate.parent}
     try:
         candidate_bin_dirs.add(candidate.resolve().parent)
     except OSError:
         pass
-    return not _current_python_bin_dirs().isdisjoint(candidate_bin_dirs)
+    if not _current_python_bin_dirs().isdisjoint(candidate_bin_dirs):
+        return True
+
+    if sys.platform.startswith("win") and candidate.parent.name.lower() == "scripts":
+        python_root = candidate.parent.parent
+        return (python_root / "python.exe").is_file() or (python_root / "pythonw.exe").is_file()
+
+    return False
 
 
 @lru_cache(maxsize=1)
@@ -60,13 +69,13 @@ def resolve_native_tg_binary() -> Path | None:
     # Priority 3: PATH installations
     if which_tg := shutil.which(binary_name):
         resolved = Path(which_tg).resolve()
-        if not _looks_like_current_python_launcher(resolved):
+        if not _looks_like_python_scripts_launcher(resolved):
             return resolved
     if which_tensor_grep := shutil.which(
         "tensor-grep" + (".exe" if sys.platform.startswith("win") else "")
     ):
         resolved = Path(which_tensor_grep).resolve()
-        if not _looks_like_current_python_launcher(resolved):
+        if not _looks_like_python_scripts_launcher(resolved):
             return resolved
 
     return None

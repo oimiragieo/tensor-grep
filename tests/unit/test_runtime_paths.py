@@ -141,6 +141,41 @@ def test_resolve_native_tg_binary_ignores_current_python_launcher_when_python_re
     assert resolve_native_tg_binary() is None
 
 
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows launcher layout")
+def test_resolve_native_tg_binary_ignores_foreign_python_install_scripts_launcher(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    current_venv_dir = tmp_path / "current-venv" / "Scripts"
+    current_venv_dir.mkdir(parents=True, exist_ok=True)
+    current_python = current_venv_dir / "python.exe"
+    current_python.write_text("python\n", encoding="utf-8")
+
+    foreign_python_root = tmp_path / "Python314"
+    foreign_scripts_dir = foreign_python_root / "Scripts"
+    foreign_scripts_dir.mkdir(parents=True, exist_ok=True)
+    (foreign_python_root / "python.exe").write_text("python\n", encoding="utf-8")
+    foreign_tg = foreign_scripts_dir / "tg.exe"
+    foreign_tg.write_text("launcher\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.setattr(runtime_paths.sys, "executable", str(current_python))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setattr(
+        runtime_paths.shutil,
+        "which",
+        lambda name: str(foreign_tg) if name in {"tg", "tg.exe"} else None,
+    )
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() is None
+
+
 def test_resolve_ripgrep_binary_env_override(tmp_path):
     rg_path = tmp_path / ("rg.exe" if sys.platform.startswith("win") else "rg")
     rg_path.touch()

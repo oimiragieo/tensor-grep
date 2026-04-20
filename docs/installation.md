@@ -63,6 +63,8 @@ tg --help
 
 *Note: the Python package path is the one that supports `tg update` / `tg upgrade`. It requires a configured Python environment and may need additional GPU dependencies such as `cudf` and `torch`.*
 
+On Windows, the Python package installs a launcher shim under a Python `Scripts` directory. That shim is for invoking the Python CLI path, not for native delegation. If you need to force a native executable for bootstrap or MCP handoff, point `TG_NATIVE_TG_BINARY` at an explicit native `tg.exe` path or use a release binary / in-tree Rust build.
+
 ## Option 5: Package Managers
 
 - **Homebrew:** use the published formula for macOS and Linux rollout.
