@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.4.3 (2026-04-21)
+
+### Bug Fixes
+
+- Align native json routing and ast labels
+  ([`0850753`](https://github.com/oimiragieo/tensor-grep/commit/085075362d974c2d1b1c8d72292c6ec2e3224699))
+
+- Reject Python script shims as native tg binaries
+  ([`e5c451e`](https://github.com/oimiragieo/tensor-grep/commit/e5c451e977fb98d0753aa4885fd76b6634baaa46))
+
+- Repair release and runtime contract drift
+  ([`cb28936`](https://github.com/oimiragieo/tensor-grep/commit/cb28936aa82c9b25aec525a03e8f38d510c48d4c))
+
+- Repair search contract drift and reader reintegration
+  ([`173276e`](https://github.com/oimiragieo/tensor-grep/commit/173276e31c68a026aa41535dd94c3e864b745976))
+
+- Restore native replace bootstrap and ci format parity
+  ([`149d70c`](https://github.com/oimiragieo/tensor-grep/commit/149d70c82396dfe4cec11799e1a5bed39fd275f0))
+
+### Chores
+
+- Normalize python formatting
+  ([`5146f16`](https://github.com/oimiragieo/tensor-grep/commit/5146f16a464903a20d33725e587eafbf79720126))
+
+
 ## v1.4.2 (2026-04-19)
 
 ### Bug Fixes
