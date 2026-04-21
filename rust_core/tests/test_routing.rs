@@ -1856,9 +1856,11 @@ fn test_rust_control_plane_max_count_search_dispatches_to_ripgrep() {
 
 #[test]
 fn test_rust_control_plane_version() {
+    let expected = format!("tg {}", env!("CARGO_PKG_VERSION"));
+
     let output_v_long = tg().arg("--version").output().unwrap();
-    assert!(String::from_utf8_lossy(&output_v_long.stdout).contains("tg 0.2.0"));
+    assert!(String::from_utf8_lossy(&output_v_long.stdout).contains(&expected));
 
     let output_v_short = tg().arg("-V").output().unwrap();
-    assert!(String::from_utf8_lossy(&output_v_short.stdout).contains("tg 0.2.0"));
+    assert!(String::from_utf8_lossy(&output_v_short.stdout).contains(&expected));
 }

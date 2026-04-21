@@ -77,10 +77,36 @@ fn test_plain_text_replace_succeeds_with_invalid_pythonhome() {
     assert_success(&output);
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "Replaced matches with 'WARN'\n"
+        "WARN failed\nWARN timeout\n"
     );
     assert_eq!(
         fs::read_to_string(file_path).unwrap(),
-        "INFO ok\nWARN failed\nDEBUG trace\nWARN timeout\n"
+        "INFO ok\nERROR failed\nDEBUG trace\nERROR timeout\n"
+    );
+}
+
+#[test]
+fn test_search_subcommand_replace_succeeds_with_invalid_pythonhome() {
+    let (_dir, file_path) = write_log_file();
+    let bogus_python_home = tempdir().unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("search")
+        .arg("ERROR")
+        .arg(&file_path)
+        .arg("--replace")
+        .arg("WARN")
+        .env("PYTHONHOME", bogus_python_home.path())
+        .output()
+        .unwrap();
+
+    assert_success(&output);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "WARN failed\nWARN timeout\n"
+    );
+    assert_eq!(
+        fs::read_to_string(file_path).unwrap(),
+        "INFO ok\nERROR failed\nDEBUG trace\nERROR timeout\n"
     );
 }

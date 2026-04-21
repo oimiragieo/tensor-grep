@@ -65,14 +65,12 @@ def render_markdown(input_path: Path | list[Path]) -> str:
         )
     if ordered:
         winner = ordered[0]
-        lines.extend(
-            [
-                "",
-                "## Recommended Provider",
-                "",
-                f"- `{winner.get('provider', 'unknown')}` from `{winner.get('_source', 'unknown')}`",
-            ]
-        )
+        lines.extend([
+            "",
+            "## Recommended Provider",
+            "",
+            f"- `{winner.get('provider', 'unknown')}` from `{winner.get('_source', 'unknown')}`",
+        ])
     return "\n".join(lines) + "\n"
 
 

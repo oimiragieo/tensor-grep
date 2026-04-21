@@ -142,23 +142,21 @@ def build_external_eval_payload(
     aggregate_bucket_counts: dict[str, int] = {}
     for entry in manifest["packs"]:
         pack_result = run_pack(entry, profile=profile, provider=provider)
-        packs.append(
-            {
-                "name": pack_result["name"],
-                "language": pack_result["language"],
-                "scenario_pack": pack_result["scenario_pack"],
-                "scenario_count": pack_result["scenario_count"],
-                "summary": pack_result["summary"],
-                "analysis": {
-                    "bucket_counts": pack_result["analysis"].get("bucket_counts", {}),
-                    "mean_file_precision": pack_result["analysis"].get("mean_file_precision", 0.0),
-                    "scenarios_with_false_positives": pack_result["analysis"].get(
-                        "scenarios_with_false_positives", 0
-                    ),
-                },
-                "rows": pack_result["rows"],
-            }
-        )
+        packs.append({
+            "name": pack_result["name"],
+            "language": pack_result["language"],
+            "scenario_pack": pack_result["scenario_pack"],
+            "scenario_count": pack_result["scenario_count"],
+            "summary": pack_result["summary"],
+            "analysis": {
+                "bucket_counts": pack_result["analysis"].get("bucket_counts", {}),
+                "mean_file_precision": pack_result["analysis"].get("mean_file_precision", 0.0),
+                "scenarios_with_false_positives": pack_result["analysis"].get(
+                    "scenarios_with_false_positives", 0
+                ),
+            },
+            "rows": pack_result["rows"],
+        })
         for bucket, count in dict(pack_result["analysis"].get("bucket_counts", {})).items():
             aggregate_bucket_counts[str(bucket)] = aggregate_bucket_counts.get(
                 str(bucket), 0

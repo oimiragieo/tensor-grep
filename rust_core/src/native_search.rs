@@ -11,7 +11,9 @@ use ignore::{overrides::OverrideBuilder, WalkBuilder, WalkState};
 use memchr::{memchr, memchr_iter};
 use memmap2::MmapOptions;
 use rayon::prelude::*;
+use regex::RegexBuilder as OutputRegexBuilder;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -137,6 +139,7 @@ pub struct NativeSearchConfig {
     pub no_ignore: bool,
     pub line_number: bool,
     pub with_filename: bool,
+    pub replace: Option<String>,
     pub mmap: bool,
     pub json: bool,
     pub ndjson: bool,
@@ -173,6 +176,7 @@ impl Default for NativeSearchConfig {
             no_ignore: false,
             line_number: true,
             with_filename: false,
+            replace: None,
             mmap: true,
             json: false,
             ndjson: false,
@@ -183,6 +187,35 @@ impl Default for NativeSearchConfig {
             output_target: NativeOutputTarget::Stdout,
         }
     }
+}
+
+fn render_output_text<'a>(config: &NativeSearchConfig, text: &'a str) -> Result<Cow<'a, str>> {
+    let Some(replacement) = &config.replace else {
+        return Ok(Cow::Borrowed(text));
+    };
+
+    let mut pattern = if config.fixed_strings {
+        regex::escape(&config.pattern)
+    } else {
+        config.pattern.clone()
+    };
+    if config.word_boundary {
+        pattern = format!(r"\b(?:{pattern})\b");
+    }
+
+    let regex = OutputRegexBuilder::new(&pattern)
+        .case_insensitive(config.ignore_case)
+        .build()
+        .with_context(|| {
+            format!(
+                "failed to compile native replace pattern '{}'",
+                config.pattern
+            )
+        })?;
+
+    Ok(Cow::Owned(
+        regex.replace_all(text, replacement.as_str()).into_owned(),
+    ))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -350,12 +383,15 @@ impl ParallelWalkWorker {
         let output_buffer = &mut self.output_buffer;
         let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
             let trimmed_line = line.trim_end_matches(['\n', '\r']);
+            let rendered_text = render_output_text(&self.config, trimmed_line)
+                .map_err(io::Error::other)?
+                .into_owned();
             append_standard_match_bytes(
                 output_buffer,
                 &self.config,
                 &path_display,
                 line_number,
-                trimmed_line,
+                &rendered_text,
             )
             .map_err(io::Error::other)?;
             match_count = match_count.saturating_add(1);
@@ -363,7 +399,7 @@ impl ParallelWalkWorker {
                 matches.push(NativeSearchMatch {
                     path: path_buf.clone(),
                     line_number: Some(line_number),
-                    text: trimmed_line.to_string(),
+                    text: rendered_text,
                 });
             }
             Ok(true)
@@ -947,12 +983,15 @@ fn search_file_streaming_plain_sequential(
     let mut searcher = build_searcher(config, true);
     let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
         let trimmed_line = line.trim_end_matches(['\n', '\r']);
+        let rendered_text = render_output_text(config, trimmed_line)
+            .map_err(io::Error::other)?
+            .into_owned();
         append_standard_match_bytes(
             &mut pending_output,
             config,
             &path_display,
             line_number,
-            trimmed_line,
+            &rendered_text,
         )
         .map_err(io::Error::other)?;
         if flush_first_match_immediately && !emitted_first_chunk {
@@ -974,7 +1013,7 @@ fn search_file_streaming_plain_sequential(
             matches.push(NativeSearchMatch {
                 path: path_buf.clone(),
                 line_number: Some(line_number),
-                text: trimmed_line.to_string(),
+                text: rendered_text,
             });
         }
         Ok(true)
@@ -1371,10 +1410,13 @@ fn search_chunk(
             matcher,
             contents,
             Lossy(|line_number, line| {
+                let rendered_text = render_output_text(config, line.trim_end_matches(['\n', '\r']))
+                    .map_err(io::Error::other)?
+                    .into_owned();
                 matches.push(NativeSearchMatch {
                     path: path_buf.clone(),
                     line_number: Some(first_line_number + line_number - 1),
-                    text: line.trim_end_matches(['\n', '\r']).to_string(),
+                    text: rendered_text,
                 });
                 Ok(true)
             }),
@@ -1410,7 +1452,7 @@ fn search_chunk_count(
 }
 
 fn search_file_collect_matches_with_searcher(
-    _config: &NativeSearchConfig,
+    config: &NativeSearchConfig,
     matcher: &RegexMatcher,
     path: &Path,
     searcher: &mut Searcher,
@@ -1418,10 +1460,13 @@ fn search_file_collect_matches_with_searcher(
     let path_buf = path.to_path_buf();
     let mut matches = Vec::new();
     let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
+        let rendered_text = render_output_text(config, line.trim_end_matches(['\n', '\r']))
+            .map_err(io::Error::other)?
+            .into_owned();
         matches.push(NativeSearchMatch {
             path: path_buf.clone(),
             line_number: Some(line_number),
-            text: line.trim_end_matches(['\n', '\r']).to_string(),
+            text: rendered_text,
         });
         Ok(true)
     }));
@@ -1454,10 +1499,13 @@ fn search_file_ndjson_with_searcher(
     let path_buf = path.to_path_buf();
     let search_path = display_search_path(&config.paths);
     let mut sink = BinaryAwareSink::new(Lossy(|line_number, line| {
+        let rendered_text = render_output_text(config, line.trim_end_matches(['\n', '\r']))
+            .map_err(io::Error::other)?
+            .into_owned();
         let matched = NativeSearchMatch {
             path: path_buf.clone(),
             line_number: Some(line_number),
-            text: line.trim_end_matches(['\n', '\r']).to_string(),
+            text: rendered_text,
         };
         emit_ndjson_match(config, &search_path, &matched).map_err(io::Error::other)?;
         matches.push(matched);

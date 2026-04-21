@@ -74,16 +74,14 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
             yield
             return
         instructions_path.write_text(
-            "\n".join(
-                [
-                    "# Evaluation Instructions",
-                    "",
-                    "You are running inside an automated patch evaluation harness.",
-                    "Analyze this repository directly.",
-                    "Return only a unified diff patch that can be applied with git apply.",
-                    "Do not include markdown fences or explanations.",
-                ]
-            )
+            "\n".join([
+                "# Evaluation Instructions",
+                "",
+                "You are running inside an automated patch evaluation harness.",
+                "Analyze this repository directly.",
+                "Return only a unified diff patch that can be applied with git apply.",
+                "Do not include markdown fences or explanations.",
+            ])
             + "\n",
             encoding="utf-8",
         )

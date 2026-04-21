@@ -91,23 +91,21 @@ def _amplify_work_root(work_root: Path, *, target_file_count: int) -> int:
             f"AMPLIFY_{index:04d}_{inner:03d} = {index + inner}" for inner in range(240)
         )
         path.write_text(
-            "\n".join(
-                [
-                    f'"""Synthetic refresh corpus file {index:04d}."""',
-                    "",
-                    assignment_block,
-                    "",
-                    f"def amplify_{index:04d}_seed(value: int) -> int:",
-                    "    return value + 1",
-                    "",
-                    f"def amplify_{index:04d}_branch(value: int) -> int:",
-                    f"    return amplify_{index:04d}_seed(value) + 2",
-                    "",
-                    f"def amplify_{index:04d}_leaf(value: int) -> int:",
-                    f"    return amplify_{index:04d}_branch(value) + 3",
-                    "",
-                ]
-            ),
+            "\n".join([
+                f'"""Synthetic refresh corpus file {index:04d}."""',
+                "",
+                assignment_block,
+                "",
+                f"def amplify_{index:04d}_seed(value: int) -> int:",
+                "    return value + 1",
+                "",
+                f"def amplify_{index:04d}_branch(value: int) -> int:",
+                f"    return amplify_{index:04d}_seed(value) + 2",
+                "",
+                f"def amplify_{index:04d}_leaf(value: int) -> int:",
+                f"    return amplify_{index:04d}_branch(value) + 3",
+                "",
+            ]),
             encoding="utf-8",
         )
     return len(sorted(work_root.rglob("*.py")))
@@ -219,24 +217,22 @@ def benchmark_incremental_refresh_comparison(
         ratio = (
             round(incremental_refresh_s / full_rebuild_s, 4) if full_rebuild_s > 0 else float("inf")
         )
-        rows.append(
-            {
-                "fixture": str(fixture.get("name", Path(str(fixture["root"])).name)),
-                "file_count": int(fixture.get("file_count", 0)),
-                "comparison_file_count": actual_file_count,
-                "modified_file_count": modified_file_count,
-                "modified_paths": modified_paths,
-                "incremental_refresh_s": incremental_refresh_s,
-                "full_rebuild_s": full_rebuild_s,
-                "ratio": ratio,
-                "passed_ratio_gate": bool(
-                    full_rebuild_s > 0
-                    and incremental_refresh_s < (_REFRESH_RATIO_THRESHOLD * full_rebuild_s)
-                ),
-                "refresh_type": "incremental",
-                "full_refresh_type": "full",
-            }
-        )
+        rows.append({
+            "fixture": str(fixture.get("name", Path(str(fixture["root"])).name)),
+            "file_count": int(fixture.get("file_count", 0)),
+            "comparison_file_count": actual_file_count,
+            "modified_file_count": modified_file_count,
+            "modified_paths": modified_paths,
+            "incremental_refresh_s": incremental_refresh_s,
+            "full_rebuild_s": full_rebuild_s,
+            "ratio": ratio,
+            "passed_ratio_gate": bool(
+                full_rebuild_s > 0
+                and incremental_refresh_s < (_REFRESH_RATIO_THRESHOLD * full_rebuild_s)
+            ),
+            "refresh_type": "incremental",
+            "full_refresh_type": "full",
+        })
     return rows
 
 

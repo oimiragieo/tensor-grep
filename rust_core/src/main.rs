@@ -708,6 +708,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         globs: Vec::new(),
         no_ignore: false,
         color: None,
+        replace: None,
         patterns: Vec::new(),
         path: String::new(),
     };
@@ -985,16 +986,7 @@ mod tests {
 
 fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
     match cli.command {
-        Commands::Search(args) => {
-            if args.replace.is_some() {
-                let mut py_args: Vec<String> = std::env::args().skip(1).collect();
-                if py_args.first().map(|s| s.as_str()) != Some("search") {
-                    py_args.insert(0, "search".to_string());
-                }
-                return handle_python_passthrough("search", py_args.into_iter().skip(1).collect());
-            }
-            handle_ripgrep_search(args)
-        }
+        Commands::Search(args) => handle_ripgrep_search(args),
         Commands::Calibrate(args) => handle_calibrate_command(args),
         Commands::Upgrade => handle_python_passthrough("upgrade", vec![]),
         Commands::AuditVerify(args) => handle_audit_verify_command(args),
@@ -1211,14 +1203,6 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
     let pattern = cli.pattern.clone().unwrap();
     let path = cli.path.clone().unwrap();
-
-    if cli.replace.is_some() {
-        let mut py_args: Vec<String> = std::env::args().skip(1).collect();
-        if py_args.first().map(|s| s.as_str()) != Some("search") {
-            py_args.insert(0, "search".to_string());
-        }
-        return handle_python_passthrough("search", py_args.into_iter().skip(1).collect());
-    }
 
     let rg_available = ripgrep_is_available();
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
@@ -1562,6 +1546,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         globs: Vec::new(),
         no_ignore: true,
         color: cli.color.clone(),
+        replace: cli.replace.clone(),
         patterns: vec![pattern.to_string()],
         path: path.to_string(),
     }
@@ -1581,6 +1566,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         globs: args.globs.clone(),
         no_ignore: args.no_ignore,
         color: args.color.clone(),
+        replace: args.replace.clone(),
         patterns: request.patterns.clone(),
         path: request.path.clone(),
     }
@@ -1609,6 +1595,7 @@ fn native_search_config_for_positional(
         verbose: cli.verbose,
         line_number: cli.line_number,
         only_matching: cli.only_matching,
+        replace: cli.replace.clone(),
         ..NativeSearchConfig::default()
     }
 }
@@ -1640,6 +1627,7 @@ fn native_search_config_for_command(
         verbose: args.verbose,
         line_number: false,
         only_matching: args.only_matching,
+        replace: args.replace.clone(),
         ..NativeSearchConfig::default()
     }
 }

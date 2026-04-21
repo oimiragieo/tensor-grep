@@ -1349,12 +1349,10 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "vitest-project",
-                "devDependencies": {"vitest": "^1.0.0"},
-            }
-        ),
+        json.dumps({
+            "name": "vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+        }),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"
@@ -1410,13 +1408,11 @@ def test_edit_plan_json_discovers_ancestor_package_json_for_nested_ts_subdir(tmp
     tests_dir.mkdir(parents=True)
 
     (package_root / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "nested-vitest-project",
-                "devDependencies": {"vitest": "^1.0.0"},
-                "scripts": {"test": "vitest run"},
-            }
-        ),
+        json.dumps({
+            "name": "nested-vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+            "scripts": {"test": "vitest run"},
+        }),
         encoding="utf-8",
     )
     module_path = nested_src_dir / "glob.ts"
@@ -1528,13 +1524,11 @@ def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_with
     cli_dir = project / ".claude" / "tools" / "cli"
     cli_dir.mkdir(parents=True)
     (project / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "agent-studio-like",
-                "packageManager": "pnpm@10.0.0",
-                "scripts": {"test": "pnpm test"},
-            }
-        ),
+        json.dumps({
+            "name": "agent-studio-like",
+            "packageManager": "pnpm@10.0.0",
+            "scripts": {"test": "pnpm test"},
+        }),
         encoding="utf-8",
     )
     (project / "scripts").mkdir()
@@ -1707,14 +1701,12 @@ def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_p
     assert len(groups) == 1
     assert groups[0]["label"] == "primary"
     assert sorted(groups[0]["roles"]) == ["primary", "related", "related", "test"]
-    assert sorted(groups[0]["files"]) == sorted(
-        [
-            str(module_path.resolve()),
-            str(sibling_a.resolve()),
-            str(sibling_b.resolve()),
-            str(test_path.resolve()),
-        ]
-    )
+    assert sorted(groups[0]["files"]) == sorted([
+        str(module_path.resolve()),
+        str(sibling_a.resolve()),
+        str(sibling_b.resolve()),
+        str(test_path.resolve()),
+    ])
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
@@ -3326,14 +3318,12 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     )
 
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join(
-        [
-            "id: no-print",
-            "language: python",
-            "rule:",
-            "  pattern: print($A)",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "rule:",
+        "  pattern: print($A)",
+    ])
     runner = CliRunner()
 
     result = runner.invoke(

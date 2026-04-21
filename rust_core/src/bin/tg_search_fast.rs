@@ -30,6 +30,7 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         globs: Vec::new(),
         no_ignore: false,
         color: None,
+        replace: None,
         patterns: Vec::new(),
         path: String::new(),
     };

@@ -27,6 +27,7 @@ pub struct RipgrepSearchArgs {
     pub globs: Vec<String>,
     pub no_ignore: bool,
     pub color: Option<String>,
+    pub replace: Option<String>,
     pub patterns: Vec<String>,
     pub path: String,
 }
@@ -75,6 +76,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if let Some(color) = &args.color {
         command.arg("--color").arg(color);
+    }
+    if let Some(replacement) = &args.replace {
+        command.arg("--replace").arg(replacement);
     }
     for glob in &args.globs {
         command.arg("-g").arg(glob);

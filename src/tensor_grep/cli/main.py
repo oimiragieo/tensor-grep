@@ -251,12 +251,10 @@ def _doctor_gpu_status() -> dict[str, Any]:
         status["available"] = detector.has_gpu()
         status["device_count"] = detector.get_device_count()
         for device in detector.list_devices():
-            status["devices"].append(
-                {
-                    "id": device.device_id,
-                    "vram_total_mb": device.vram_capacity_mb,
-                }
-            )
+            status["devices"].append({
+                "id": device.device_id,
+                "vram_total_mb": device.vram_capacity_mb,
+            })
     except ImportError:
         status["error"] = "PyTorch/cuDF not installed"
     except Exception as e:
@@ -470,9 +468,10 @@ def _build_native_tg_search_command(
     if config.force_cpu:
         command.append("--cpu")
     elif config.gpu_device_ids:
-        command.extend(
-            ["--gpu-device-ids", ",".join(str(device_id) for device_id in config.gpu_device_ids)]
-        )
+        command.extend([
+            "--gpu-device-ids",
+            ",".join(str(device_id) for device_id in config.gpu_device_ids),
+        ])
 
     if config.ignore_case:
         command.append("-i")
@@ -872,27 +871,23 @@ def _load_rule_specs(project_cfg: dict[str, object]) -> list[dict[str, str]]:
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+        })
 
     return specs
 
@@ -922,30 +917,26 @@ def _load_inline_rule_specs(
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language")
-                            or payload.get("language")
-                            or default_language
-                            or "python"
-                        ),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language")
+                        or payload.get("language")
+                        or default_language
+                        or "python"
+                    ),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or f"inline-rule-{document_index}"),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language or "python"),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or f"inline-rule-{document_index}"),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language or "python"),
+        })
 
     return specs
 
@@ -1200,13 +1191,11 @@ def _apply_ruleset_baseline(
     suppression_justification: str | None = None,
 ) -> None:
     findings = cast(list[dict[str, object]], payload["findings"])
-    matched_fingerprints = sorted(
-        {
-            cast(str, finding["fingerprint"])
-            for finding in findings
-            if cast(int, finding["matches"]) > 0
-        }
-    )
+    matched_fingerprints = sorted({
+        cast(str, finding["fingerprint"])
+        for finding in findings
+        if cast(int, finding["matches"]) > 0
+    })
     if baseline_path is not None:
         baseline = _load_ruleset_baseline(baseline_path)
         baseline_fingerprints = set(cast(list[str], baseline["fingerprints"]))
@@ -1303,13 +1292,11 @@ def _apply_ruleset_baseline(
                 finding_inline_occurrences += 1
             else:
                 active_occurrences += 1
-            occurrence_rows.append(
-                {
-                    "file": occurrence_file,
-                    "line": occurrence_line,
-                    "status": occurrence_status,
-                }
-            )
+            occurrence_rows.append({
+                "file": occurrence_file,
+                "line": occurrence_line,
+                "status": occurrence_status,
+            })
         if not raw_occurrences and any(
             _suppression_entry_matches(
                 entry=entry,
@@ -1460,12 +1447,10 @@ def _run_ast_scan_payload(
                         match_counts_by_file.get(current_file, 0) + result.total_matches
                     )
                     for match in result.matches:
-                        rule_occurrences.append(
-                            {
-                                "file": match.file or current_file,
-                                "line": match.line_number,
-                            }
-                        )
+                        rule_occurrences.append({
+                            "file": match.file or current_file,
+                            "line": match.line_number,
+                        })
                     if include_evidence_snippets:
                         file_snippets = snippets_by_file.setdefault(current_file, [])
                         for match in result.matches:
@@ -1478,39 +1463,35 @@ def _run_ast_scan_payload(
         if rule_matches > 0:
             matched_rules += 1
         sorted_files = sorted(matched_files)
-        findings.append(
-            {
-                "rule_id": rule["id"],
-                "language": rule["language"],
-                "severity": rule.get("severity"),
-                "message": rule.get("message"),
-                "fingerprint": _ruleset_finding_fingerprint(
-                    rule_id=rule["id"],
-                    language=rule["language"],
-                    matched_files=sorted_files,
-                ),
-                "matches": rule_matches,
-                "files": sorted_files,
-                "evidence": [
-                    {
-                        "file": file_path,
-                        "match_count": match_counts_by_file.get(file_path, 0),
-                        **(
-                            {"snippets": snippets_by_file.get(file_path, [])}
-                            if include_evidence_snippets
-                            else {}
-                        ),
-                    }
-                    for file_path in sorted_files
-                ],
-                "_raw_occurrences": sorted(
-                    {
-                        (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
-                        for occurrence in rule_occurrences
-                    }
-                ),
-            }
-        )
+        findings.append({
+            "rule_id": rule["id"],
+            "language": rule["language"],
+            "severity": rule.get("severity"),
+            "message": rule.get("message"),
+            "fingerprint": _ruleset_finding_fingerprint(
+                rule_id=rule["id"],
+                language=rule["language"],
+                matched_files=sorted_files,
+            ),
+            "matches": rule_matches,
+            "files": sorted_files,
+            "evidence": [
+                {
+                    "file": file_path,
+                    "match_count": match_counts_by_file.get(file_path, 0),
+                    **(
+                        {"snippets": snippets_by_file.get(file_path, [])}
+                        if include_evidence_snippets
+                        else {}
+                    ),
+                }
+                for file_path in sorted_files
+            ],
+            "_raw_occurrences": sorted({
+                (cast(str, occurrence["file"]), cast(int, occurrence["line"]))
+                for occurrence in rule_occurrences
+            }),
+        })
         if findings[-1]["_raw_occurrences"]:
             findings[-1]["_raw_occurrences"] = [
                 {"file": file_path, "line": line_number}
@@ -4240,18 +4221,16 @@ def test(
                         temp_name.write_text(snippet, encoding="utf-8")
                         try:
                             result = backend.search(str(temp_name), pattern, config=case_cfg)
-                            evaluated_snippets.append(
-                                (
-                                    f"{test_file}:{case_id}",
-                                    snippet,
-                                    expected_match,
-                                    bool(
-                                        result.total_files > 0
-                                        or result.total_matches > 0
-                                        or result.matched_file_paths
-                                    ),
-                                )
-                            )
+                            evaluated_snippets.append((
+                                f"{test_file}:{case_id}",
+                                snippet,
+                                expected_match,
+                                bool(
+                                    result.total_files > 0
+                                    or result.total_matches > 0
+                                    or result.matched_file_paths
+                                ),
+                            ))
                         finally:
                             temp_name.unlink(missing_ok=True)
             except Exception as exc:

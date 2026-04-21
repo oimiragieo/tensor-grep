@@ -67,14 +67,12 @@ def render_markdown(paths: list[Path]) -> str:
         )
     if ordered:
         winner = ordered[0]
-        lines.extend(
-            [
-                "",
-                "## Recommended Next Default Probe",
-                "",
-                f"- `{winner.get('name', 'unknown')}` from `{winner.get('_source', 'unknown')}`",
-            ]
-        )
+        lines.extend([
+            "",
+            "## Recommended Next Default Probe",
+            "",
+            f"- `{winner.get('name', 'unknown')}` from `{winner.get('_source', 'unknown')}`",
+        ])
     return "\n".join(lines) + "\n"
 
 
