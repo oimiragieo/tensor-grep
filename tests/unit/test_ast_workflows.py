@@ -327,8 +327,8 @@ def test_ast_project_data_cache_should_invalidate_when_traversed_tree_dir_change
     added_file = nested_dir / "added.py"
     added_file.write_text("OLD_PATTERN\n", encoding="utf-8")
 
-    _project_cfg, _rule_specs, refreshed_candidate_files, _test_data, _hints = _load_ast_project_data(
-        str(config_path)
+    _project_cfg, _rule_specs, refreshed_candidate_files, _test_data, _hints = (
+        _load_ast_project_data(str(config_path))
     )
 
     assert str(added_file) in refreshed_candidate_files

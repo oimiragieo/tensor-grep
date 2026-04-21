@@ -113,15 +113,17 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
             yield
             return
         instructions_path.write_text(
-            "\n".join([
-                "# Evaluation Instructions",
-                "",
-                "You are running inside an automated competitor evaluation harness.",
-                "Analyze this repository directly.",
-                "Do not stop or complain because other AGENTS.md files are missing.",
-                "Do not mention AGENTS.md in the answer.",
-                "Return only the structured output requested by the prompt.",
-            ])
+            "\n".join(
+                [
+                    "# Evaluation Instructions",
+                    "",
+                    "You are running inside an automated competitor evaluation harness.",
+                    "Analyze this repository directly.",
+                    "Do not stop or complain because other AGENTS.md files are missing.",
+                    "Do not mention AGENTS.md in the answer.",
+                    "Return only the structured output requested by the prompt.",
+                ]
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -140,15 +142,17 @@ def _scenario_prompt(scenario: dict[str, Any]) -> str:
         "mode": scenario["mode"],
         "repo_root": str(repo_root),
     }
-    return " ".join([
-        "You are evaluating code-edit planning quality.",
-        "Analyze the repository and return exactly one JSON object.",
-        f"The object shape must be: {_expected_shape_description()}.",
-        "Do not include markdown, code fences, or explanations.",
-        "Use repository-relative paths.",
-        "If you are unsure, return your best high-precision guess rather than broad file lists.",
-        f"Scenario: {json.dumps(scenario_payload, separators=(',', ':'))}",
-    ])
+    return " ".join(
+        [
+            "You are evaluating code-edit planning quality.",
+            "Analyze the repository and return exactly one JSON object.",
+            f"The object shape must be: {_expected_shape_description()}.",
+            "Do not include markdown, code fences, or explanations.",
+            "Use repository-relative paths.",
+            "If you are unsure, return your best high-precision guess rather than broad file lists.",
+            f"Scenario: {json.dumps(scenario_payload, separators=(',', ':'))}",
+        ]
+    )
 
 
 def _extract_text_from_copilot_output(stdout: str) -> str:

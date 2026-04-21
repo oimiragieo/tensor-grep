@@ -1307,7 +1307,9 @@ def test_should_fail_when_native_cli_version_is_hardcoded():
         expected_version="1.4.2",
     )
 
-    assert any("must derive native CLI version from Cargo/package metadata" in err for err in errors)
+    assert any(
+        "must derive native CLI version from Cargo/package metadata" in err for err in errors
+    )
 
 
 def test_should_fail_when_npm_installer_contract_drifts():
@@ -1344,10 +1346,7 @@ def test_should_fail_when_ci_pipeline_doc_omits_benchmark_workflow_contract():
 
     errors = module.validate_ci_pipeline_doc_contract(
         ci_pipeline_content=(
-            "# CI Pipeline\n\n"
-            "## Workflow Overview\n\n"
-            "### `ci.yml`\n\n"
-            "- Semantic Release\n"
+            "# CI Pipeline\n\n## Workflow Overview\n\n### `ci.yml`\n\n- Semantic Release\n"
         ),
         benchmark_workflow_content="name: Benchmarks\non:\n  workflow_dispatch:\n",
     )

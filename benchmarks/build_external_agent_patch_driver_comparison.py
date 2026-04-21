@@ -86,18 +86,20 @@ def build_payload(summaries: list[tuple[str, Path]]) -> dict[str, Any]:
         )
         next_action = str(payload.get("ledger_next_action") or "run patch system")
         next_actions.add(next_action)
-        systems.append({
-            "system": system,
-            "instance_id": str(payload.get("instance_id") or ""),
-            "primary_file": str(payload.get("actual_primary_file") or ""),
-            "follow_up_count": len(follow_up_reads),
-            "follow_up_reads": follow_up_reads,
-            "parallel_read_group_count": parallel_phase_count,
-            "parallel_read_groups": parallel_read_groups,
-            "estimated_saved_read_steps": estimated_saved_read_steps,
-            "validation_commands": validation_commands,
-            "summary_artifact": str(path),
-        })
+        systems.append(
+            {
+                "system": system,
+                "instance_id": str(payload.get("instance_id") or ""),
+                "primary_file": str(payload.get("actual_primary_file") or ""),
+                "follow_up_count": len(follow_up_reads),
+                "follow_up_reads": follow_up_reads,
+                "parallel_read_group_count": parallel_phase_count,
+                "parallel_read_groups": parallel_read_groups,
+                "estimated_saved_read_steps": estimated_saved_read_steps,
+                "validation_commands": validation_commands,
+                "summary_artifact": str(path),
+            }
+        )
     return {
         "artifact": "external_agent_patch_driver_comparison",
         "generated_at_epoch_s": time.time(),

@@ -150,15 +150,17 @@ def _ephemeral_repo_instructions(repo_root: Path) -> contextlib.AbstractContextM
             yield
             return
         instructions_path.write_text(
-            "\n".join([
-                "# Evaluation Instructions",
-                "",
-                "You are running inside an automated patch evaluation harness.",
-                "Analyze this repository directly.",
-                "Return only a unified diff patch that can be applied with git apply.",
-                "Do not include markdown fences or explanations.",
-                "Do not ask clarifying questions or ask for confirmation in print mode.",
-            ])
+            "\n".join(
+                [
+                    "# Evaluation Instructions",
+                    "",
+                    "You are running inside an automated patch evaluation harness.",
+                    "Analyze this repository directly.",
+                    "Return only a unified diff patch that can be applied with git apply.",
+                    "Do not include markdown fences or explanations.",
+                    "Do not ask clarifying questions or ask for confirmation in print mode.",
+                ]
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -250,14 +252,16 @@ def install_skill_package(repo_root: Path, skill_dir: Path) -> Path:
 def write_claude_md(repo_root: Path) -> Path:
     guidance_path = repo_root / "CLAUDE.md"
     guidance_path.write_text(
-        "\n".join([
-            "# Claude Instructions",
-            "",
-            "Use the tensor-grep project skill for repository search, symbol lookup, blast-radius planning, and edit targeting.",
-            "The task is already specified in the prompt. Do not ask what task to perform; start working on it immediately.",
-            "When the tensor-grep skill is available, use it before editing if it will help identify the right file or span.",
-            "In non-interactive mode, do not ask for confirmation; make the change directly.",
-        ])
+        "\n".join(
+            [
+                "# Claude Instructions",
+                "",
+                "Use the tensor-grep project skill for repository search, symbol lookup, blast-radius planning, and edit targeting.",
+                "The task is already specified in the prompt. Do not ask what task to perform; start working on it immediately.",
+                "When the tensor-grep skill is available, use it before editing if it will help identify the right file or span.",
+                "In non-interactive mode, do not ask for confirmation; make the change directly.",
+            ]
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -270,25 +274,27 @@ def install_tg_trace_wrapper(run_root: Path) -> tuple[Path, Path]:
     log_path = run_root / "tg_trace.jsonl"
     wrapper_script = wrapper_dir / "tg.ps1"
     wrapper_script.write_text(
-        "\n".join([
-            "param(",
-            "  [Parameter(ValueFromRemainingArguments = $true)]",
-            "  [string[]] $Args",
-            ")",
-            "$ErrorActionPreference = 'Stop'",
-            "$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()",
-            "& $env:TENSOR_GREP_REAL @Args",
-            "$exitCode = $LASTEXITCODE",
-            "$stopwatch.Stop()",
-            "$record = @{",
-            "  argv = $Args",
-            "  exit_code = $exitCode",
-            "  duration_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 6)",
-            "  timestamp_epoch_s = [Math]::Round(([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0), 6)",
-            "} | ConvertTo-Json -Compress",
-            "Add-Content -Path $env:TENSOR_GREP_TRACE_LOG -Value $record",
-            "exit $exitCode",
-        ])
+        "\n".join(
+            [
+                "param(",
+                "  [Parameter(ValueFromRemainingArguments = $true)]",
+                "  [string[]] $Args",
+                ")",
+                "$ErrorActionPreference = 'Stop'",
+                "$stopwatch = [System.Diagnostics.Stopwatch]::StartNew()",
+                "& $env:TENSOR_GREP_REAL @Args",
+                "$exitCode = $LASTEXITCODE",
+                "$stopwatch.Stop()",
+                "$record = @{",
+                "  argv = $Args",
+                "  exit_code = $exitCode",
+                "  duration_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 6)",
+                "  timestamp_epoch_s = [Math]::Round(([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000.0), 6)",
+                "} | ConvertTo-Json -Compress",
+                "Add-Content -Path $env:TENSOR_GREP_TRACE_LOG -Value $record",
+                "exit $exitCode",
+            ]
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -550,53 +556,59 @@ def run_ab_record(
             and (before_root / path.relative_to(repo_root)).exists()
             and path.read_bytes() != (before_root / path.relative_to(repo_root)).read_bytes()
         )
-        rows.append({
-            "instance_id": str(record["instance_id"]),
-            "system": system_name,
-            "model_patch": patch_text,
-            "actual_test_files": list(record.get("actual_test_files", [])),
-            "actual_validation_commands": list(record.get("actual_validation_commands", [])),
-            "wall_clock_seconds": wall_clock_seconds,
-            "notes": notes,
-        })
+        rows.append(
+            {
+                "instance_id": str(record["instance_id"]),
+                "system": system_name,
+                "model_patch": patch_text,
+                "actual_test_files": list(record.get("actual_test_files", [])),
+                "actual_validation_commands": list(record.get("actual_validation_commands", [])),
+                "wall_clock_seconds": wall_clock_seconds,
+                "notes": notes,
+            }
+        )
         response_shape = classify_response_shape(notes, patch_text)
         if not changed_files:
             first_action["first_file_change_seconds"] = None
         if first_action["first_file_change_seconds"] is None and changed_files:
             first_action["first_file_change_seconds"] = timing["claude_seconds"]
-        trace_rows.append({
-            "instance_id": str(record["instance_id"]),
-            "system": system_name,
-            "use_skill": use_skill,
-            "enhanced_output_contract": enhanced_output_contract if use_skill else "baseline",
-            "enhanced_task_contract": enhanced_task_contract if use_skill else "baseline",
-            "effort": effort or "default",
-            "response_shape": response_shape,
-            "asked_meta_question": response_shape == "meta_question",
-            "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
-            "first_patch_seconds": timing["claude_seconds"] if patch_text.strip() else None,
-            "first_file_change_seconds": first_action["first_file_change_seconds"],
-            "post_edit_deliberation_seconds": post_edit_deliberation_seconds(
-                first_action["first_file_change_seconds"],
-                timing["claude_seconds"] if patch_text.strip() else None,
-            ),
-            "prompt_chars": len(prompt),
-            "prompt_lines": len(prompt.splitlines()),
-            "notes_chars": len(notes),
-            "patch_chars": len(patch_text),
-            "emitted_patch": bool(patch_text.strip()),
-            "changed_file_count": len(changed_files),
-            "changed_files": changed_files,
-            "tg_invocation_count": len(tg_trace_records),
-            "tg_seconds_total": round(
-                sum(float(record.get("duration_seconds", 0.0)) for record in tg_trace_records),
-                6,
-            ),
-            "tg_trace_records": tg_trace_records,
-            "actual_validation_command_count": len(record.get("actual_validation_commands", [])),
-            "actual_test_file_count": len(record.get("actual_test_files", [])),
-            "timing": {**timing, "total_seconds": wall_clock_seconds},
-        })
+        trace_rows.append(
+            {
+                "instance_id": str(record["instance_id"]),
+                "system": system_name,
+                "use_skill": use_skill,
+                "enhanced_output_contract": enhanced_output_contract if use_skill else "baseline",
+                "enhanced_task_contract": enhanced_task_contract if use_skill else "baseline",
+                "effort": effort or "default",
+                "response_shape": response_shape,
+                "asked_meta_question": response_shape == "meta_question",
+                "first_tg_seconds": first_tg_seconds(started_epoch_s, tg_trace_records),
+                "first_patch_seconds": timing["claude_seconds"] if patch_text.strip() else None,
+                "first_file_change_seconds": first_action["first_file_change_seconds"],
+                "post_edit_deliberation_seconds": post_edit_deliberation_seconds(
+                    first_action["first_file_change_seconds"],
+                    timing["claude_seconds"] if patch_text.strip() else None,
+                ),
+                "prompt_chars": len(prompt),
+                "prompt_lines": len(prompt.splitlines()),
+                "notes_chars": len(notes),
+                "patch_chars": len(patch_text),
+                "emitted_patch": bool(patch_text.strip()),
+                "changed_file_count": len(changed_files),
+                "changed_files": changed_files,
+                "tg_invocation_count": len(tg_trace_records),
+                "tg_seconds_total": round(
+                    sum(float(record.get("duration_seconds", 0.0)) for record in tg_trace_records),
+                    6,
+                ),
+                "tg_trace_records": tg_trace_records,
+                "actual_validation_command_count": len(
+                    record.get("actual_validation_commands", [])
+                ),
+                "actual_test_file_count": len(record.get("actual_test_files", [])),
+                "timing": {**timing, "total_seconds": wall_clock_seconds},
+            }
+        )
     return rows, trace_rows
 
 

@@ -185,12 +185,14 @@ def test_session_serve_streams_jsonl_requests_from_cached_session(
     )
 
     stdin = StringIO(
-        "\n".join([
-            json.dumps({"command": "repo_map"}),
-            json.dumps({"command": "context", "query": "invoice payment"}),
-            json.dumps({"command": "callers", "symbol": "create_invoice"}),
-            json.dumps({"command": "blast_radius", "symbol": "create_invoice", "max_depth": 1}),
-        ])
+        "\n".join(
+            [
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "context", "query": "invoice payment"}),
+                json.dumps({"command": "callers", "symbol": "create_invoice"}),
+                json.dumps({"command": "blast_radius", "symbol": "create_invoice", "max_depth": 1}),
+            ]
+        )
         + "\n"
     )
     stdout = StringIO()
@@ -374,11 +376,13 @@ def test_session_serve_reports_cache_stats(tmp_path: Path) -> None:
 
     opened = json.loads(CliRunner().invoke(app, ["session", "open", str(project), "--json"]).stdout)
     stdin = StringIO(
-        "\n".join([
-            json.dumps({"command": "repo_map"}),
-            json.dumps({"command": "repo_map"}),
-            json.dumps({"command": "stats"}),
-        ])
+        "\n".join(
+            [
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "stats"}),
+            ]
+        )
         + "\n"
     )
     stdout = StringIO()
@@ -451,16 +455,20 @@ def test_session_serve_reports_multi_root_stats_and_cache_provenance(tmp_path: P
     )
 
     stdin = StringIO(
-        "\n".join([
-            json.dumps({"command": "repo_map"}),
-            json.dumps({"command": "repo_map"}),
-            json.dumps({
-                "command": "repo_map",
-                "session_id": second_opened["session_id"],
-                "path": str(second_project),
-            }),
-            json.dumps({"command": "stats"}),
-        ])
+        "\n".join(
+            [
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "repo_map"}),
+                json.dumps(
+                    {
+                        "command": "repo_map",
+                        "session_id": second_opened["session_id"],
+                        "path": str(second_project),
+                    }
+                ),
+                json.dumps({"command": "stats"}),
+            ]
+        )
         + "\n"
     )
     stdout = StringIO()

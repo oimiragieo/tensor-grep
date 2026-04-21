@@ -58,16 +58,18 @@ def benchmark_blast_radius_fixture(
                 max_sources=6,
             )
             samples.append(round(time.perf_counter() - started, 6))
-        rows.append({
-            "fixture": str(fixture.get("name", root.name)),
-            "symbol": symbol,
-            "graph_depth": graph_depth,
-            "file_count": int(fixture.get("file_count", 0)),
-            "samples_s": samples,
-            "median_s": round(float(statistics.median(samples)), 6),
-            "returned_files": len(payload.get("files", [])) if payload else 0,
-            "returned_tests": len(payload.get("tests", [])) if payload else 0,
-        })
+        rows.append(
+            {
+                "fixture": str(fixture.get("name", root.name)),
+                "symbol": symbol,
+                "graph_depth": graph_depth,
+                "file_count": int(fixture.get("file_count", 0)),
+                "samples_s": samples,
+                "median_s": round(float(statistics.median(samples)), 6),
+                "returned_files": len(payload.get("files", [])) if payload else 0,
+                "returned_tests": len(payload.get("tests", [])) if payload else 0,
+            }
+        )
     return rows
 
 

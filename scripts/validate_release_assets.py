@@ -1217,8 +1217,13 @@ def validate_ci_pipeline_doc_contract(
     *, ci_pipeline_content: str, benchmark_workflow_content: str
 ) -> list[str]:
     errors: list[str] = []
-    if "name: Benchmarks" in benchmark_workflow_content and "benchmark.yml" not in ci_pipeline_content:
-        errors.append("docs/CI_PIPELINE.md must document the live benchmark workflow (`benchmark.yml`)")
+    if (
+        "name: Benchmarks" in benchmark_workflow_content
+        and "benchmark.yml" not in ci_pipeline_content
+    ):
+        errors.append(
+            "docs/CI_PIPELINE.md must document the live benchmark workflow (`benchmark.yml`)"
+        )
     if "name: Benchmarks" in benchmark_workflow_content and "Benchmarks" not in ci_pipeline_content:
         errors.append("docs/CI_PIPELINE.md must describe the Benchmarks workflow responsibilities")
     return errors

@@ -482,15 +482,17 @@ def _load_history_index(root: Path) -> list[dict[str, Any]] | None:
         file_path = _normalize_optional_str(raw.get("file_path"))
         if manifest_sha256 is None or file_path is None:
             continue
-        entries.append({
-            "manifest_sha256": manifest_sha256,
-            "kind": _normalize_optional_str(raw.get("kind")),
-            "created_at": _normalize_optional_str(raw.get("created_at")),
-            "file_path": file_path,
-            "previous_manifest_sha256": _normalize_optional_str(
-                raw.get("previous_manifest_sha256")
-            ),
-        })
+        entries.append(
+            {
+                "manifest_sha256": manifest_sha256,
+                "kind": _normalize_optional_str(raw.get("kind")),
+                "created_at": _normalize_optional_str(raw.get("created_at")),
+                "file_path": file_path,
+                "previous_manifest_sha256": _normalize_optional_str(
+                    raw.get("previous_manifest_sha256")
+                ),
+            }
+        )
     return entries
 
 
@@ -621,17 +623,19 @@ def list_audit_history(path: str | Path = ".") -> list[dict[str, Any]]:
         previous_manifest_sha256 = _normalize_optional_str(entry.get("previous_manifest_sha256"))
         created_at = _normalize_optional_str(entry.get("created_at"))
         file_path = str(entry["file_path"])
-        history.append({
-            "manifest_sha256": str(entry["manifest_sha256"]),
-            "kind": _normalize_optional_str(entry.get("kind")),
-            "created_at": created_at,
-            "file_path": file_path,
-            "previous_manifest_sha256": previous_manifest_sha256,
-            "missing_timestamp": created_at is None,
-            "chain_gap": previous_manifest_sha256 is not None
-            and previous_manifest_sha256 not in known_manifests,
-            "signature_kind": _load_signature_kind(file_path),
-        })
+        history.append(
+            {
+                "manifest_sha256": str(entry["manifest_sha256"]),
+                "kind": _normalize_optional_str(entry.get("kind")),
+                "created_at": created_at,
+                "file_path": file_path,
+                "previous_manifest_sha256": previous_manifest_sha256,
+                "missing_timestamp": created_at is None,
+                "chain_gap": previous_manifest_sha256 is not None
+                and previous_manifest_sha256 not in known_manifests,
+                "signature_kind": _load_signature_kind(file_path),
+            }
+        )
     return history
 
 
