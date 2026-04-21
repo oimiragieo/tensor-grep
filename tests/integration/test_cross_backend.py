@@ -219,7 +219,7 @@ def _native_search_json(
     )
 
 
-def _python_rg_search_json(corpus: Path, *, pattern: str, env: dict[str, str]) -> dict[str, object]:
+def _python_search_json(corpus: Path, *, pattern: str, env: dict[str, str]) -> dict[str, object]:
     command = [
         sys.executable,
         "-m",
@@ -281,12 +281,12 @@ def test_cross_backend_should_match_across_native_cpu_gpu_index_and_rg_passthrou
             env=command_env,
             extra_args=["--index", "--no-ignore"],
         )
-        rg_payload = _python_rg_search_json(corpus, pattern=pattern, env=command_env)
+        rg_payload = _python_search_json(corpus, pattern=pattern, env=command_env)
 
         _assert_envelope(cpu_payload, backend="NativeCpuBackend", sidecar_used=False)
         _assert_envelope(gpu_payload, backend="NativeGpuBackend", sidecar_used=False)
         _assert_envelope(index_payload, backend="TrigramIndex", sidecar_used=False)
-        _assert_envelope(rg_payload, backend="RipgrepBackend", sidecar_used=False)
+        _assert_envelope(rg_payload, backend="NativeCpuBackend", sidecar_used=False)
 
         expected_matches = _normalized_match_tuples(cpu_payload)
         assert _normalized_match_tuples(gpu_payload) == expected_matches, pattern
@@ -307,8 +307,8 @@ def test_cross_backend_should_emit_v1_json_envelopes_for_ast_and_rg_paths(
     corpus = _write_cross_backend_corpus(tmp_path / "search-corpus", file_count=4)
     python_file = _write_ast_fixture(tmp_path)
 
-    rg_payload = _python_rg_search_json(corpus, pattern=PATTERNS[0], env=command_env)
-    _assert_envelope(rg_payload, backend="RipgrepBackend", sidecar_used=False)
+    rg_payload = _python_search_json(corpus, pattern=PATTERNS[0], env=command_env)
+    _assert_envelope(rg_payload, backend="NativeCpuBackend", sidecar_used=False)
 
     ast_command = [
         str(native_tg_binary),

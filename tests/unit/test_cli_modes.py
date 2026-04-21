@@ -724,7 +724,47 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
     result = runner.invoke(app, ["search", "ERROR", ".", "--ndjson"])
 
     assert result.exit_code == 2
-    assert seen["cmd"] == ["tg.exe", "search", "--cpu", "--ndjson", "ERROR", "."]
+    assert seen["cmd"] == ["tg.exe", "search", "--ndjson", "ERROR", "."]
+
+
+def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
+    seen: dict[str, object] = {}
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        seen["check"] = check
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--json"])
+
+    assert result.exit_code == 0
+    assert seen["cmd"] == ["tg.exe", "search", "--json", "ERROR", "."]
+    assert seen["check"] is False
+
+
+def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatch):
+    seen: dict[str, object] = {}
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        seen["check"] = check
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--gpu-device-ids", "3,7,7"])
+
+    assert result.exit_code == 0
+    assert seen["cmd"] == ["tg.exe", "search", "--gpu-device-ids", "3,7", "ERROR", "."]
+    assert seen["check"] is False
 
 
 def test_map_json_emits_repo_inventory_envelope(tmp_path):
@@ -1309,10 +1349,12 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps({
-            "name": "vitest-project",
-            "devDependencies": {"vitest": "^1.0.0"},
-        }),
+        json.dumps(
+            {
+                "name": "vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+            }
+        ),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"
@@ -1368,11 +1410,13 @@ def test_edit_plan_json_discovers_ancestor_package_json_for_nested_ts_subdir(tmp
     tests_dir.mkdir(parents=True)
 
     (package_root / "package.json").write_text(
-        json.dumps({
-            "name": "nested-vitest-project",
-            "devDependencies": {"vitest": "^1.0.0"},
-            "scripts": {"test": "vitest run"},
-        }),
+        json.dumps(
+            {
+                "name": "nested-vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+                "scripts": {"test": "vitest run"},
+            }
+        ),
         encoding="utf-8",
     )
     module_path = nested_src_dir / "glob.ts"
@@ -1484,11 +1528,13 @@ def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_with
     cli_dir = project / ".claude" / "tools" / "cli"
     cli_dir.mkdir(parents=True)
     (project / "package.json").write_text(
-        json.dumps({
-            "name": "agent-studio-like",
-            "packageManager": "pnpm@10.0.0",
-            "scripts": {"test": "pnpm test"},
-        }),
+        json.dumps(
+            {
+                "name": "agent-studio-like",
+                "packageManager": "pnpm@10.0.0",
+                "scripts": {"test": "pnpm test"},
+            }
+        ),
         encoding="utf-8",
     )
     (project / "scripts").mkdir()
@@ -1661,12 +1707,14 @@ def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_p
     assert len(groups) == 1
     assert groups[0]["label"] == "primary"
     assert sorted(groups[0]["roles"]) == ["primary", "related", "related", "test"]
-    assert sorted(groups[0]["files"]) == sorted([
-        str(module_path.resolve()),
-        str(sibling_a.resolve()),
-        str(sibling_b.resolve()),
-        str(test_path.resolve()),
-    ])
+    assert sorted(groups[0]["files"]) == sorted(
+        [
+            str(module_path.resolve()),
+            str(sibling_a.resolve()),
+            str(sibling_b.resolve()),
+            str(test_path.resolve()),
+        ]
+    )
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
@@ -3020,6 +3068,23 @@ class _FakeDirectWrapperAstBackend:
         return True
 
 
+def _patch_direct_native_execution(monkeypatch):
+    FakeAvailableAstBackend = type(
+        "AstBackend",
+        (_FakeAstBackend,),
+        {"is_available": lambda self: True},
+    )
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        FakeAvailableAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _FakeUnavailableAstBackend,
+    )
+
+
 def _patch_direct_wrapper_selection(monkeypatch):
     monkeypatch.setattr(
         "tensor_grep.backends.ast_backend.AstBackend",
@@ -3261,12 +3326,14 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     )
 
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join([
-        "id: no-print",
-        "language: python",
-        "rule:",
-        "  pattern: print($A)",
-    ])
+    inline_rules = "\n".join(
+        [
+            "id: no-print",
+            "language: python",
+            "rule:",
+            "  pattern: print($A)",
+        ]
+    )
     runner = CliRunner()
 
     result = runner.invoke(
@@ -3680,6 +3747,24 @@ def test_run_should_use_native_first_ast_policy(monkeypatch):
     assert _CapturingAstPipeline.last_config.query_pattern == "ERROR"
 
 
+def test_run_should_report_native_ast_backend_mode_without_gnns(monkeypatch):
+    _patch_direct_native_execution(monkeypatch)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["run", "ERROR", "."])
+
+    assert result.exit_code == 0
+    assert "Executing native AST matching run..." in result.output
+    assert "GPU-Accelerated GNNs" not in result.output
+
+
 def test_ast_rust_language_support_matrix(monkeypatch):
     from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
 
@@ -3722,6 +3807,35 @@ def test_test_command_should_report_ast_wrapper_backend_mode(monkeypatch):
     assert result.exit_code == 0
     assert "Testing AST rules using ast-grep structural matching" in result.output
     assert AstGrepWrapperBackend.search_many_calls == 1
+
+
+def test_test_command_should_report_native_ast_backend_mode_without_gnns(monkeypatch):
+    _patch_direct_native_execution(monkeypatch)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\ntestDirs:\n  - tests\nlanguage: python\n",
+            encoding="utf-8",
+        )
+        Path("rules").mkdir()
+        Path("tests").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("tests/error.yml").write_text(
+            "id: error-test\nruleId: error-rule\nvalid:\n  - ok\ninvalid:\n  - ERROR in file\n",
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(app, ["test", "--config", "sgconfig.yml"])
+
+    assert result.exit_code == 0
+    assert "Testing AST rules using native AST matching" in result.output
+    assert "GPU-Accelerated GNNs" not in result.output
 
 
 def test_test_command_should_batch_wrapper_backend_once_per_case(monkeypatch):
