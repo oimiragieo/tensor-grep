@@ -21,7 +21,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tensor_grep_rs::backend_ast::{
     AstBackend, AstMatch, AstMetaVariables, BatchRewritePlan, BatchRewriteRule,
 };
-use tensor_grep_rs::backend_cpu::CpuBackend;
 use tensor_grep_rs::crossover::{run_crossover_calibration, write_crossover_config};
 #[cfg(feature = "cuda")]
 use tensor_grep_rs::gpu_native::{
@@ -51,7 +50,7 @@ const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
-#[command(version = "0.2.0")]
+#[command(version)]
 #[command(about = "tensor-grep: native search, rewrite, and repository analysis CLI")]
 #[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 pub struct CommandCli {
@@ -61,7 +60,7 @@ pub struct CommandCli {
 
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
-#[command(version = "0.2.0")]
+#[command(version)]
 #[command(about = "tensor-grep: native search, rewrite, and repository analysis CLI")]
 #[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
 pub struct PositionalCli {
@@ -1213,17 +1212,12 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     let pattern = cli.pattern.clone().unwrap();
     let path = cli.path.clone().unwrap();
 
-    if let Some(replacement) = cli.replace {
-        let backend = CpuBackend::new();
-        backend.replace_in_place(
-            &pattern,
-            &replacement,
-            &path,
-            cli.ignore_case,
-            cli.fixed_strings,
-        )?;
-        println!("Replaced matches with '{}'", replacement);
-        return Ok(());
+    if cli.replace.is_some() {
+        let mut py_args: Vec<String> = std::env::args().skip(1).collect();
+        if py_args.first().map(|s| s.as_str()) != Some("search") {
+            py_args.insert(0, "search".to_string());
+        }
+        return handle_python_passthrough("search", py_args.into_iter().skip(1).collect());
     }
 
     let rg_available = ripgrep_is_available();

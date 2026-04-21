@@ -265,9 +265,14 @@ While Rust natively traverses files blazing fast, the **bottleneck is the PyO3 F
 Consequently, `tensor-grep` retains pure Python standard library capabilities for massive directory traversal (unless natively routed via the static Rust embedded execution `tg.exe` which avoids the GIL altogether), firmly demonstrating that high-performance hybrid architectures must be critically mindful of serialization boundaries.
 
 ### 3.8 Highly-Scalable Find and Replace Mutations
-One of the longest-standing limitations of `ripgrep` is its strict adherence to pure search capabilities; it lacks native in-place log mutation or capture-group code refactoring natively. Developers typically pipeline `rg` outputs into `sed -i` or `awk`, crippling performance via IPC context switching overhead. 
+One of the longest-standing limitations of `ripgrep` is its strict adherence to pure search capabilities; it lacks native in-place log mutation or capture-group code refactoring natively. Developers typically pipeline `rg` outputs into `sed -i` or `awk`, crippling performance via IPC context switching overhead.
 
-To resolve this, we embedded a native `--replace` pipeline directly into the Rust memory-mapped engine. Because the entire log sequence is evaluated as a contiguous string slice natively inside the regex solver, we can seamlessly apply parameterized capture group mutations (e.g. `$1`, `${num}`) at speeds matching VSCode's native C++ text buffers but entirely via the CLI. Benchmarking the replacement of 100,000 function argument parameters across a synthetic python file, `tensor-grep-rs` safely applied complex parameterized Regex template replacements across all lines, and wrote the new file to disk in exactly **0.497 seconds**. This achieves what was previously an impossibility for pure `ripgrep` constraints while completely maintaining strict code formatting preservation.
+The current accepted `tensor-grep` contract now keeps these surfaces separate on purpose:
+
+- `tg search --replace` is a non-mutating output-rendering surface intended to mirror ripgrep-style replacement semantics.
+- real file edits live under the explicit rewrite/apply surfaces such as `tg run --rewrite ... --apply`.
+
+An earlier native positional in-place replacement path existed in the Rust front door, but that line was retired because it violated the stable search contract by mutating files from a search-style flag. The accepted design is therefore correctness-first rather than “native at any cost”: search replacement stays non-mutating, while rewrite/apply remains the only public file-edit surface.
 
 ### 3.9 Benchmark Regression Governance
 To enforce sustainable performance gains, we introduced a benchmark-governance layer:
@@ -677,9 +682,9 @@ The 2026-03 optimization line confirmed that the remaining performance gap to ra
 
 **What still holds:**
 - Repeated-query paths show real room for index-driven gains (hot-query acceleration confirmed)
-- AST workflow speed is materially better than earlier but remains a Python-controlled path
+- AST workflow speed is materially better than earlier, but the shipped `scan` / `test` path is still benchmarked through the Python/bootstrap control plane rather than a fully native end-to-end path
 - GPU paths remain valid for large-corpus semantic/NLP workloads
-- The Rust `--replace` zero-copy path delivers measurable throughput gains
+- Native AST rewrite/apply remains the measured file-mutation path; search-style `--replace` is intentionally non-mutating
 
 **What is now clear:**
 - The onefile Nuitka binary is not the speed path (extraction/packaging overhead dominates; onefile builds clock 1.1-1.2s vs Python bootstrap 0.33-0.48s for simple search)

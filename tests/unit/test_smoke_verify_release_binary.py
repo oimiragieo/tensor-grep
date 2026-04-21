@@ -34,6 +34,25 @@ def test_should_verify_linux_binary_version_output(tmp_path: Path):
     assert errors == []
 
 
+def test_should_accept_tg_version_prefix_for_linux_binary(tmp_path: Path):
+    module = _load_module()
+    binary = tmp_path / "binary-Linux-cpu" / "tg-linux-amd64-cpu"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_bytes(b"#!/bin/sh\n")
+
+    with patch.object(module.subprocess, "run") as mock_run:
+        mock_run.return_value.stdout = "tg 1.2.3\n"
+        mock_run.return_value.stderr = ""
+        mock_run.return_value.returncode = 0
+
+        errors = module.smoke_verify_linux_binary(
+            artifacts_dir=tmp_path,
+            expected_version="1.2.3",
+        )
+
+    assert errors == []
+
+
 def test_should_fail_when_linux_binary_missing(tmp_path: Path):
     module = _load_module()
     errors = module.smoke_verify_linux_binary(artifacts_dir=tmp_path, expected_version="1.2.3")

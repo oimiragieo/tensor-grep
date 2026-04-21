@@ -253,6 +253,8 @@ uv pip install "tensor-grep[ast,nlp]" cudf-cu12 --extra-index-url https://pypi.n
 npx tensor-grep search "ERROR" .
 ```
 
+The npm wrapper downloads the release-validated CPU binary for supported x64 platforms from GitHub Releases.
+
 ### Standalone Binaries (For IT/SecOps)
 If you cannot run the install scripts or prefer a managed binary rollout, use the GitHub release assets and checksum manifest from the tagged release.
 

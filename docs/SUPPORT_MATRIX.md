@@ -16,8 +16,8 @@ This document distinguishes CI-tested environments from best-effort compatibilit
 
 ## Python Versions
 - **CI-tested:** Python 3.11 and 3.12.
-- **Best-effort for source installs:** Python 3.9, 3.10, 3.13, and 3.14 when the dependency set resolves cleanly on the target host.
-- **Unsupported:** Python < 3.9.
+- **Source/package floor:** Python >= 3.11, matching `pyproject.toml`.
+- **Unsupported:** Python < 3.11.
 
 ## Rust Toolchain
 - **Maintainer baseline:** stable Rust 1.75+.

@@ -42,6 +42,19 @@ Benchmark behavior:
 
 Builds and verifies tagged release artifacts, publishes binary assets, docs, npm artifacts, SBOMs, provenance, and signing metadata. This workflow is the release artifact pipeline; `ci.yml` is the semantic-release decision and PyPI pipeline.
 
+### `benchmark.yml` (Benchmarks)
+
+Runs the standalone benchmark workflow on a schedule and via manual dispatch.
+
+Primary responsibilities:
+
+- run `benchmarks/run_benchmarks.py` and `benchmarks/run_ast_benchmarks.py`
+- optionally run `benchmarks/run_gpu_benchmarks.py` on manual dispatch
+- perform the OS-baseline regression check when a stored baseline exists
+- publish the benchmark markdown summary and artifacts
+
+This workflow is not the release-blocking same-runner regression gate from `ci.yml`; it is the canonical scheduled/manual benchmark automation surface and should stay documented and validator-backed.
+
 ### `audit.yml`
 
 Runs dependency and license audits:

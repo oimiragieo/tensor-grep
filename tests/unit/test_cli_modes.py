@@ -4363,6 +4363,38 @@ def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
     assert seen["argv"] == ["tg"]
 
 
+def test_bootstrap_main_entry_should_route_scan_ruleset_through_full_cli(monkeypatch):
+    from tensor_grep.cli import bootstrap as cli_bootstrap
+
+    seen: dict[str, object] = {}
+
+    def _fake_full_cli() -> None:
+        seen["full_cli"] = True
+
+    def _fake_ast_workflow_cli(argv: list[str]) -> None:
+        seen["ast_workflow_argv"] = list(argv)
+
+    monkeypatch.setattr(cli_bootstrap, "_run_full_cli", _fake_full_cli)
+    monkeypatch.setattr(cli_bootstrap, "_run_ast_workflow_cli", _fake_ast_workflow_cli)
+    monkeypatch.setattr(sys, "argv", ["tg", "scan", "--ruleset", "auth-safe"])
+
+    cli_bootstrap.main_entry()
+
+    assert seen == {"full_cli": True}
+
+
+def test_bootstrap_run_help_should_not_expose_config_option(monkeypatch, capsys):
+    from tensor_grep.cli import bootstrap as cli_bootstrap
+
+    monkeypatch.setattr(sys, "argv", ["tg", "run", "--help"])
+
+    with pytest.raises(SystemExit):
+        cli_bootstrap.main_entry()
+
+    help_text = capsys.readouterr().out
+    assert "--config" not in help_text
+
+
 def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
     runner = CliRunner()
 

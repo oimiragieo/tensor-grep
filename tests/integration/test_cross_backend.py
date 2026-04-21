@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -325,6 +326,44 @@ def test_cross_backend_should_emit_v1_json_envelopes_for_ast_and_rg_paths(
     )
     _assert_envelope(ast_payload, backend="AstBackend", sidecar_used=False)
     assert ast_payload["total_matches"] == 2
+
+
+def test_native_binary_should_report_pyproject_version(
+    native_tg_binary: Path,
+    command_env: dict[str, str],
+) -> None:
+    pyproject_data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    expected_version = pyproject_data["project"]["version"]
+
+    result = _run_command([str(native_tg_binary), "--version"], env=command_env)
+
+    _assert_success(result, context="native --version")
+    assert result.stdout.strip() in {f"tg {expected_version}", f"tensor-grep {expected_version}"}
+
+
+def test_positional_replace_should_not_mutate_files(
+    tmp_path: Path,
+    native_tg_binary: Path,
+    command_env: dict[str, str],
+) -> None:
+    target = tmp_path / "replace-target.txt"
+    original = "hello world\n"
+    target.write_text(original, encoding="utf-8")
+
+    result = _run_command(
+        [
+            str(native_tg_binary),
+            "--replace",
+            "hi",
+            "hello",
+            str(target),
+        ],
+        env=command_env,
+    )
+
+    _assert_success(result, context="positional replace")
+    assert target.read_text(encoding="utf-8") == original
+    assert "hi world" in result.stdout
 
 
 def test_cross_backend_gpu_batch_should_match_cpu_file_by_file_on_large_corpus(

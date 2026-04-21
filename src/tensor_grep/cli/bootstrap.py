@@ -41,6 +41,37 @@ _TG_ONLY_SEARCH_FLAG_PREFIXES = (
     "--replace=",
 )
 
+_SCAN_FULL_CLI_FLAGS = {
+    "--help",
+    "-h",
+    "--baseline",
+    "--include-evidence-snippets",
+    "--inline-rules",
+    "--json",
+    "--justification",
+    "--language",
+    "--max-evidence-snippet-chars",
+    "--max-evidence-snippets-per-file",
+    "--path",
+    "--ruleset",
+    "--suppressions",
+    "--write-baseline",
+    "--write-suppressions",
+}
+
+_SCAN_FULL_CLI_FLAG_PREFIXES = (
+    "--baseline=",
+    "--justification=",
+    "--language=",
+    "--max-evidence-snippet-chars=",
+    "--max-evidence-snippets-per-file=",
+    "--path=",
+    "--ruleset=",
+    "--suppressions=",
+    "--write-baseline=",
+    "--write-suppressions=",
+)
+
 
 def _prefer_rust_first_search() -> bool:
     value = os.environ.get("TG_RUST_FIRST_SEARCH", "").strip().lower()
@@ -162,6 +193,13 @@ def _run_ast_workflow_cli(argv: list[str]) -> None:
     ast_main_entry(argv)
 
 
+def _scan_requires_full_cli(scan_args: list[str]) -> bool:
+    return any(
+        arg in _SCAN_FULL_CLI_FLAGS or arg.startswith(_SCAN_FULL_CLI_FLAG_PREFIXES)
+        for arg in scan_args
+    )
+
+
 def main_entry() -> None:
     argv = sys.argv[1:]
     if argv and argv[0] in {"--version", "-V"}:
@@ -169,7 +207,7 @@ def main_entry() -> None:
         raise SystemExit(0)
 
     if argv and argv[0] in {"run", "scan", "test"}:
-        if argv[0] == "scan" and "--inline-rules" in argv:
+        if argv[0] == "scan" and _scan_requires_full_cli(argv[1:]):
             _run_full_cli()
             return
         _run_ast_workflow_cli(argv)

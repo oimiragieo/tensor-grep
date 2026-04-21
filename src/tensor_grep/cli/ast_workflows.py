@@ -958,7 +958,6 @@ def main_entry(argv: list[str] | None = None) -> None:
     run_parser.add_argument("path", nargs="?")
     run_parser.add_argument("--rewrite", "-r", default=None)
     run_parser.add_argument("--lang", "-l", default=None)
-    run_parser.add_argument("--config", "-c", default="sgconfig.yml")
     run_parser.add_argument("--apply", action="store_true")
     run_parser.add_argument("--verify", action="store_true")
     run_parser.add_argument("--json", action="store_true")
@@ -986,7 +985,6 @@ def main_entry(argv: list[str] | None = None) -> None:
                 args.path,
                 rewrite=args.rewrite,
                 lang=args.lang,
-                config=args.config,
                 apply=args.apply,
                 verify=args.verify,
                 json_output=args.json,

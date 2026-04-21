@@ -41,10 +41,12 @@ def smoke_verify_linux_binary(*, artifacts_dir: Path, expected_version: str) -> 
         return errors
 
     stdout = (proc.stdout or "").strip()
-    expected_prefix = f"tensor-grep {expected_version}"
-    if expected_prefix not in stdout:
+    expected_prefixes = (f"tensor-grep {expected_version}", f"tg {expected_version}")
+    if stdout not in expected_prefixes:
         errors.append(
-            f"Version output mismatch: expected substring '{expected_prefix}' in '{stdout}'"
+            "Version output mismatch: expected one of "
+            + ", ".join(f"'{prefix}'" for prefix in expected_prefixes)
+            + f" in '{stdout}'"
         )
 
     return errors

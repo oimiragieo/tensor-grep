@@ -15,6 +15,7 @@ MKDOCS_PATH = Path("mkdocs.yml")
 RESIDENT_WORKER_RUNBOOK_PATH = Path("docs/runbooks/resident-worker.md")
 GPU_RUNBOOK_PATH = Path("docs/runbooks/gpu-troubleshooting.md")
 CACHE_RUNBOOK_PATH = Path("docs/runbooks/cache-management.md")
+SECURITY_PATH = Path("SECURITY.md")
 
 
 def test_readme_should_point_to_enterprise_contract_docs() -> None:
@@ -35,8 +36,11 @@ def test_support_matrix_should_distinguish_ci_tested_from_best_effort() -> None:
     assert "Best-effort" in doc
     assert "3.11" in doc
     assert "3.12" in doc
-    assert "3.9" in doc
-    assert "3.14" in doc
+    assert "Python < 3.11" in doc
+    assert "3.9" not in doc
+    assert "3.10" not in doc
+    assert "3.13" not in doc
+    assert "3.14" not in doc
     assert "Apple Silicon" in doc
     assert "docs/EXPERIMENTAL.md" in doc
 
@@ -94,11 +98,20 @@ def test_ci_pipeline_doc_should_explain_release_and_supply_chain_automation() ->
     doc = CI_PIPELINE_PATH.read_text(encoding="utf-8")
 
     assert "Semantic Release" in doc
+    assert "benchmark.yml" in doc
+    assert "Benchmarks" in doc
     assert "Security Audit" in doc
     assert "Dependabot" in doc
     assert "auto-merge only for low-risk updates" in doc
     assert "[Security Audit] Scheduled dependency audit failure" in doc
     assert "scripts/validate_release_assets.py" in doc
+
+
+def test_security_doc_should_exist_when_readme_links_to_it() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert "[SECURITY.md](SECURITY.md)" in readme
+    assert SECURITY_PATH.exists()
 
 
 def test_docs_index_should_point_to_current_product_contracts() -> None:

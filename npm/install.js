@@ -1,33 +1,26 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
-const { execSync } = require('child_process');
+const packageJson = require('./package.json');
 
-const VERSION = 'v0.2.0';
-const GITHUB_REPO = 'tensor-grep/tensor-grep';
+const VERSION = `v${packageJson.version}`;
+const GITHUB_REPO = 'oimiragieo/tensor-grep';
 
-const PLATFORM_MAP = {
-  win32: 'windows',
-  darwin: 'macos',
-  linux: 'linux'
+const RELEASE_ASSET_MAP = {
+  'win32:x64': 'tg-windows-amd64-cpu.exe',
+  'linux:x64': 'tg-linux-amd64-cpu',
+  'darwin:x64': 'tg-macos-amd64-cpu'
 };
 
-const ARCH_MAP = {
-  x64: 'amd64',
-  arm64: 'arm64'
-};
+const assetName = RELEASE_ASSET_MAP[`${process.platform}:${process.arch}`];
 
-const platform = PLATFORM_MAP[process.platform];
-const arch = ARCH_MAP[process.arch];
-
-if (!platform || !arch) {
+if (!assetName) {
   console.error(`Unsupported platform/architecture: ${process.platform}/${process.arch}`);
   process.exit(1);
 }
 
-const exeExt = platform === 'windows' ? '.exe' : '';
-const binName = `tg-${platform}-${arch}${exeExt}`;
-const downloadUrl = `https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${binName}`;
+const exeExt = process.platform === 'win32' ? '.exe' : '';
+const downloadUrl = `https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${assetName}`;
 
 const binDir = path.join(__dirname, 'bin');
 const binPath = path.join(binDir, `tg${exeExt}`);
@@ -46,7 +39,7 @@ https.get(downloadUrl, (response) => {
       redirectResponse.pipe(file);
       file.on('finish', () => {
         file.close();
-        if (platform !== 'windows') {
+        if (process.platform !== 'win32') {
             fs.chmodSync(binPath, 0o755);
         }
         console.log('Download complete!');
@@ -60,7 +53,7 @@ https.get(downloadUrl, (response) => {
     response.pipe(file);
     file.on('finish', () => {
       file.close();
-      if (platform !== 'windows') {
+      if (process.platform !== 'win32') {
           fs.chmodSync(binPath, 0o755);
       }
       console.log('Download complete!');

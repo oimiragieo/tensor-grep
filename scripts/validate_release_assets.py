@@ -1182,6 +1182,48 @@ def validate_installation_docs(*, installation_content: str) -> list[str]:
     return errors
 
 
+def validate_native_cli_contract(*, main_rs_content: str, expected_version: str) -> list[str]:
+    errors: list[str] = []
+    if '#[command(version = "0.2.0")]' in main_rs_content:
+        errors.append(
+            "rust_core/src/main.rs must derive native CLI version from Cargo/package metadata instead of hardcoding 0.2.0"
+        )
+    if "#[command(version)]" not in main_rs_content:
+        errors.append("rust_core/src/main.rs must use #[command(version)] for Clap version output")
+    if expected_version not in _read(ROOT / "pyproject.toml"):
+        errors.append(f"Expected version {expected_version} was not found in pyproject.toml")
+    return errors
+
+
+def validate_npm_installer_contract(*, install_js_content: str, expected_version: str) -> list[str]:
+    errors: list[str] = []
+    if "require('./package.json')" not in install_js_content:
+        errors.append("npm/install.js must derive the release version from npm/package.json")
+    if "oimiragieo/tensor-grep" not in install_js_content:
+        errors.append("npm/install.js must download from oimiragieo/tensor-grep releases")
+    expected_asset_markers = (
+        "tg-windows-amd64-cpu.exe",
+        "tg-linux-amd64-cpu",
+        "tg-macos-amd64-cpu",
+    )
+    if not all(marker in install_js_content for marker in expected_asset_markers):
+        errors.append("npm/install.js must reference current release asset names")
+    if f"v{expected_version}" in install_js_content:
+        errors.append("npm/install.js must not hardcode the tagged version string")
+    return errors
+
+
+def validate_ci_pipeline_doc_contract(
+    *, ci_pipeline_content: str, benchmark_workflow_content: str
+) -> list[str]:
+    errors: list[str] = []
+    if "name: Benchmarks" in benchmark_workflow_content and "benchmark.yml" not in ci_pipeline_content:
+        errors.append("docs/CI_PIPELINE.md must document the live benchmark workflow (`benchmark.yml`)")
+    if "name: Benchmarks" in benchmark_workflow_content and "Benchmarks" not in ci_pipeline_content:
+        errors.append("docs/CI_PIPELINE.md must describe the Benchmarks workflow responsibilities")
+    return errors
+
+
 def validate_readme_contract(*, readme_content: str) -> list[str]:
     errors: list[str] = []
     for expected in (
@@ -2323,6 +2365,35 @@ def validate_all() -> list[str]:
     errors.extend(validate_installation_docs(installation_content=installation_docs))
     errors.extend(validate_benchmarks_docs(benchmarks_content=benchmarks_docs))
     errors.extend(validate_readme_contract(readme_content=readme))
+    errors.extend(
+        validate_native_cli_contract(
+            main_rs_content=_read(ROOT / "rust_core" / "src" / "main.rs"),
+            expected_version=py_version,
+        )
+    )
+    errors.extend(
+        validate_npm_installer_contract(
+            install_js_content=_read(ROOT / "npm" / "install.js"),
+            expected_version=py_version,
+        )
+    )
+    errors.extend(
+        validate_ci_pipeline_doc_contract(
+            ci_pipeline_content=_read(ROOT / "docs" / "CI_PIPELINE.md"),
+            benchmark_workflow_content=_read(ROOT / ".github" / "workflows" / "benchmark.yml"),
+        )
+    )
+    support_matrix = _read(ROOT / "docs" / "SUPPORT_MATRIX.md")
+    if "Python < 3.11" not in support_matrix:
+        errors.append("docs/SUPPORT_MATRIX.md must mark Python < 3.11 as unsupported")
+    for unsupported_minor in ("3.9", "3.10", "3.13", "3.14"):
+        if unsupported_minor in support_matrix:
+            errors.append(
+                "docs/SUPPORT_MATRIX.md must not advertise unsupported Python minors: "
+                f"found {unsupported_minor}"
+            )
+    if "[SECURITY.md](SECURITY.md)" in readme and not (ROOT / "SECURITY.md").exists():
+        errors.append("README links to SECURITY.md, but SECURITY.md is missing from the repo root")
 
     pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
     errors.extend(

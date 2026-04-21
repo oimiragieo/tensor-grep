@@ -217,6 +217,11 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
             1,
         )
 
+    raw_globs = payload.get("globs")
+    if raw_globs is None:
+        raw_globs = payload.get("glob")
+    glob_values = [str(item) for item in raw_globs] if isinstance(raw_globs, list) else None
+
     config = SearchConfig(
         ignore_case=bool(payload.get("ignore_case", False)),
         fixed_strings=bool(payload.get("fixed_strings", False)),
@@ -226,6 +231,7 @@ def _gpu_search(payload: dict[str, Any]) -> tuple[str, str, int]:
         max_count=payload.get("max_count"),
         word_regexp=bool(payload.get("word_regexp", False)),
         no_ignore=bool(payload.get("no_ignore", False)),
+        glob=glob_values,
         gpu_device_ids=requested_gpu_device_ids,
         query_pattern=search_patterns[0],
     )

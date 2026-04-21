@@ -106,6 +106,9 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
 
     let mut child = Command::new(&python);
     configure_python_module_path(&mut child);
+    if let Some(device_ids) = gpu_device_ids_env_value(&request) {
+        child.env("TENSOR_GREP_DEVICE_IDS", device_ids);
+    }
     match launch_target {
         PythonLaunchTarget::Module(module) => {
             child.arg("-m").arg(module);
@@ -376,6 +379,26 @@ fn merged_pythonpath(source_root: &Path, existing: Option<OsString>) -> OsString
     env::join_paths(&paths).unwrap_or_else(|_| source_root.as_os_str().to_os_string())
 }
 
+fn gpu_device_ids_env_value(request: &SidecarRequest) -> Option<OsString> {
+    if request.command != "gpu_search" {
+        return None;
+    }
+
+    let payload = request.payload.as_ref()?;
+    let gpu_device_ids = payload.get("gpu_device_ids")?.as_array()?;
+    let device_ids = gpu_device_ids
+        .iter()
+        .filter_map(|value| value.as_i64())
+        .map(|device_id| device_id.to_string())
+        .collect::<Vec<_>>();
+
+    if device_ids.is_empty() {
+        return None;
+    }
+
+    Some(OsString::from(device_ids.join(",")))
+}
+
 fn resolve_sidecar_target() -> PythonLaunchTarget {
     if let Some(script) = env::var_os("TG_SIDECAR_SCRIPT") {
         return PythonLaunchTarget::Script(PathBuf::from(script));
@@ -420,8 +443,13 @@ fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
 
 #[cfg(test)]
 mod tests {
-    use super::{merged_pythonpath, resolve_repo_source_root_relative_to_exe};
+    use super::{
+        gpu_device_ids_env_value, merged_pythonpath, resolve_repo_source_root_relative_to_exe,
+        SidecarRequest,
+    };
+    use serde_json::json;
     use std::env;
+    use std::ffi::OsString;
     use std::fs;
     use std::path::Path;
     use tempfile::tempdir;
@@ -472,5 +500,21 @@ mod tests {
         assert_eq!(paths[0], source_root);
         assert_eq!(paths[1], Path::new("beta"));
         assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn gpu_device_ids_env_value_serializes_request_gpu_ids() {
+        let request = SidecarRequest {
+            command: "gpu_search".to_string(),
+            args: vec![],
+            payload: Some(json!({
+                "gpu_device_ids": [0, 2, 4],
+            })),
+        };
+
+        assert_eq!(
+            gpu_device_ids_env_value(&request),
+            Some(OsString::from("0,2,4"))
+        );
     }
 }

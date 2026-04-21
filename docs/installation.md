@@ -31,6 +31,12 @@ If you have Node.js installed, you can use `npx` to download and run the correct
 npx tensor-grep search "ERROR" app.log
 ```
 
+Current npm wrapper notes:
+
+- downloads the current CPU release asset from `oimiragieo/tensor-grep`
+- supports Windows x64, Linux x64, and macOS x64
+- writes a local `tg` / `tg.exe` shim into the installed npm package
+
 To install it globally via npm:
 
 ```bash

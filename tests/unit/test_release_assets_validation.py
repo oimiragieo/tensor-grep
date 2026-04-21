@@ -1293,6 +1293,68 @@ def test_should_fail_when_npm_repository_url_is_not_canonical():
     assert any("npm/package.json repository.url must be" in err for err in errors)
 
 
+def test_should_fail_when_native_cli_version_is_hardcoded():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_native_cli_contract(
+        main_rs_content='#[command(version = "0.2.0")]\n#[command(version = "0.2.0")]\n',
+        expected_version="1.4.2",
+    )
+
+    assert any("must derive native CLI version from Cargo/package metadata" in err for err in errors)
+
+
+def test_should_fail_when_npm_installer_contract_drifts():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_npm_installer_contract(
+        install_js_content=(
+            "const VERSION = 'v0.2.0';\n"
+            "const GITHUB_REPO = 'tensor-grep/tensor-grep';\n"
+            "const binName = `tg-${platform}-${arch}${exeExt}`;\n"
+        ),
+        expected_version="1.4.2",
+    )
+
+    assert any("must derive the release version from npm/package.json" in err for err in errors)
+    assert any("must download from oimiragieo/tensor-grep releases" in err for err in errors)
+    assert any("must reference current release asset names" in err for err in errors)
+
+
+def test_should_fail_when_ci_pipeline_doc_omits_benchmark_workflow_contract():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_ci_pipeline_doc_contract(
+        ci_pipeline_content=(
+            "# CI Pipeline\n\n"
+            "## Workflow Overview\n\n"
+            "### `ci.yml`\n\n"
+            "- Semantic Release\n"
+        ),
+        benchmark_workflow_content="name: Benchmarks\non:\n  workflow_dispatch:\n",
+    )
+
+    assert any("must document the live benchmark workflow" in err for err in errors)
+
+
 def test_should_fail_ci_workflow_when_parity_gate_skips_package_managers():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
