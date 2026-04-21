@@ -236,6 +236,28 @@ def test_main_entry_should_delegate_cpu_flag_to_native_tg(monkeypatch):
     assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--cpu"]}
 
 
+def test_main_entry_should_delegate_force_cpu_env_to_native_tg(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "search", "ERROR", "."])
+    monkeypatch.setenv("TG_FORCE_CPU", "1")
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--cpu"]}
+
+
 def test_main_entry_should_delegate_plain_search_to_native_tg_when_rust_first_env_is_enabled(
     monkeypatch,
 ):

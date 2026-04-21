@@ -6,7 +6,11 @@ import sys
 from pathlib import Path
 
 from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
-from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
+from tensor_grep.cli.runtime_paths import (
+    env_flag_enabled,
+    resolve_native_tg_binary,
+    resolve_ripgrep_binary,
+)
 
 _TG_ONLY_SEARCH_FLAGS = {
     "--ast",
@@ -130,6 +134,12 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     )
 
 
+def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
+    if not env_flag_enabled("TG_FORCE_CPU") or "--cpu" in search_args:
+        return list(search_args)
+    return [*search_args, "--cpu"]
+
+
 def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
     result = subprocess.run([binary_name, "search", *search_args], check=False)
     return int(result.returncode)
@@ -167,14 +177,20 @@ def main_entry() -> None:
 
     search_args = _normalize_search_invocation(argv)
     if search_args is not None:
+        effective_search_args = _effective_native_tg_search_args(search_args)
         native_binary_path = resolve_native_tg_binary()
         native_binary = str(native_binary_path) if native_binary_path else None
 
         if native_binary is not None and (
-            _can_delegate_to_native_tg_search(search_args)
+            _can_delegate_to_native_tg_search(effective_search_args)
             or (_prefer_rust_first_search() and not _requires_full_cli(search_args))
         ):
-            raise SystemExit(_run_native_tg_search(native_binary, search_args))
+            command_args = (
+                effective_search_args
+                if _can_delegate_to_native_tg_search(effective_search_args)
+                else search_args
+            )
+            raise SystemExit(_run_native_tg_search(native_binary, command_args))
 
         if not _requires_full_cli(search_args):
             rg_binary_path = resolve_ripgrep_binary()

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -236,6 +237,101 @@ def test_ast_project_data_cache_invalidation(tmp_path, monkeypatch):
         str(config_path)
     )
     assert project_cfg["language"] == "javascript"
+
+
+def test_collect_candidate_files_should_include_traversed_tree_dirs(tmp_path, monkeypatch):
+    from tensor_grep.cli.ast_workflows import _collect_candidate_files
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+    nested_dir = tmp_path / "pkg" / "sub"
+    nested_dir.mkdir(parents=True)
+    nested_file = nested_dir / "example.py"
+    nested_file.write_text("print('ok')\n", encoding="utf-8")
+
+    scanner = DirectoryScanner(SearchConfig(ast=True, ast_prefer_native=True, lang="python"))
+    candidate_files, _, tree_dirs = _collect_candidate_files(scanner, [str(tmp_path)])
+
+    assert str(nested_file) in candidate_files
+    assert str(tmp_path / "pkg") in tree_dirs
+    assert str(nested_dir) in tree_dirs
+
+
+def test_ast_project_data_cache_should_invalidate_when_traversed_tree_dir_changes(
+    tmp_path, monkeypatch
+):
+    import time
+
+    from tensor_grep.cli.ast_workflows import (
+        _collect_candidate_files,
+        _get_cache_dir,
+        _load_ast_project_data,
+    )
+    from tensor_grep.core.config import SearchConfig
+    from tensor_grep.io.directory_scanner import DirectoryScanner
+
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+    config_path = tmp_path / "sgconfig.yml"
+    config_path.write_text(
+        "ruleDirs: [rules]\ntestDirs: [tests]\nlanguage: python\n", encoding="utf-8"
+    )
+
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+    rule_file = rules_dir / "rule.yml"
+    rule_file.write_text("id: rule1\npattern: OLD_PATTERN\n", encoding="utf-8")
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_file = tests_dir / "test.yml"
+    test_file.write_text("id: test1\nruleId: rule1\nvalid: [ok]\n", encoding="utf-8")
+
+    nested_dir = tmp_path / "pkg" / "sub"
+    nested_dir.mkdir(parents=True)
+    existing_file = nested_dir / "existing.py"
+    existing_file.write_text("OLD_PATTERN\n", encoding="utf-8")
+
+    project_cfg, rule_specs, candidate_files, test_data, hints = _load_ast_project_data(
+        str(config_path)
+    )
+
+    scanner = DirectoryScanner(SearchConfig(ast=True, ast_prefer_native=True, lang="python"))
+    _, _, tree_dirs = _collect_candidate_files(scanner, [str(tmp_path)])
+    tree_dirs_meta = {path: Path(path).stat().st_mtime_ns for path in tree_dirs}
+
+    cache_dir = _get_cache_dir(tmp_path)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "project_data_v6.json"
+    cache_payload = {
+        "project_cfg": {
+            **project_cfg,
+            "config_path": str(project_cfg["config_path"]),
+            "root_dir": str(project_cfg["root_dir"]),
+        },
+        "rule_specs": rule_specs,
+        "candidate_files": candidate_files,
+        "test_data": test_data,
+        "orchestration_hints": hints,
+        "validation_metadata": {
+            "rule_files": {str(rule_file): rule_file.stat().st_mtime_ns},
+            "test_files": {str(test_file): test_file.stat().st_mtime_ns},
+            "tree_dirs": tree_dirs_meta,
+        },
+    }
+    cache_file.write_text(json.dumps(cache_payload), encoding="utf-8")
+
+    time.sleep(0.1)
+    added_file = nested_dir / "added.py"
+    added_file.write_text("OLD_PATTERN\n", encoding="utf-8")
+
+    _project_cfg, _rule_specs, refreshed_candidate_files, _test_data, _hints = _load_ast_project_data(
+        str(config_path)
+    )
+
+    assert str(added_file) in refreshed_candidate_files
 
 
 def test_select_ast_backend_name_for_pattern_should_prefer_native_for_native_shapes():

@@ -17,7 +17,7 @@ import typer
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
-from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
+from tensor_grep.cli.runtime_paths import env_flag_enabled, resolve_native_tg_binary
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
@@ -331,6 +331,8 @@ def _build_doctor_payload(
     native_tg_binary = resolve_native_tg_binary()
     env_keys = [
         "TG_NATIVE_TG_BINARY",
+        "TG_FORCE_CPU",
+        "TG_RESIDENT_AST",
         "TG_RUST_FIRST_SEARCH",
         "TG_RUST_EARLY_RG",
         "TG_RUST_EARLY_POSITIONAL_RG",
@@ -2070,6 +2072,8 @@ def search_command(
 
     parsed_gpu_device_ids = _parse_gpu_device_ids_cli(gpu_device_ids)
 
+    effective_force_cpu = cpu or env_flag_enabled("TG_FORCE_CPU")
+
     config = SearchConfig(
         regexp=regexp,
         file_patterns=file,
@@ -2169,7 +2173,7 @@ def search_command(
         no_config=no_config,
         pcre2_version=pcre2_version,
         type_list=type_list,
-        force_cpu=cpu,
+        force_cpu=effective_force_cpu,
         format_type=format_type,
         ast=ast,
         lang=lang,
@@ -2233,7 +2237,7 @@ def search_command(
     from tensor_grep.core.pipeline import Pipeline
     from tensor_grep.core.result import SearchResult
 
-    pipeline = Pipeline(force_cpu=cpu, config=config)
+    pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")

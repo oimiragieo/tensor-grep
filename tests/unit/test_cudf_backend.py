@@ -37,6 +37,90 @@ class TestCuDFBackend:
 
         cudf.read_text.assert_called_once()
 
+    @patch.dict("sys.modules", {"cudf": MagicMock()})
+    @patch("os.path.getsize", return_value=1024)
+    def test_should_route_single_file_cudf_fallback_through_reader_helper(
+        self, mock_getsize, sample_log_file
+    ):
+        import cudf
+
+        mock_series = MagicMock()
+        mock_series.str.contains.return_value = MagicMock()
+        mock_matched = MagicMock()
+        mock_matched.index.to_pandas.return_value = []
+        mock_matched.to_pandas.return_value = []
+        mock_series.__getitem__.return_value = mock_matched
+        cudf.read_text.return_value = mock_series
+
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+
+        with patch.object(
+            CuDFBackend, "_read_text_series", create=True, return_value=mock_series
+        ) as mock_read_text_series:
+            with patch.dict("sys.modules", {"tensor_grep.rust_core": None}):
+                backend.search(str(sample_log_file), "ERROR")
+
+        mock_read_text_series.assert_called_once_with(str(sample_log_file))
+
+    def test_should_use_cudf_reader_before_raw_cudf_read_text(self, sample_log_file):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        mock_series = MagicMock()
+        cudf_reader = MagicMock()
+        cudf_reader.read_to_gpu.return_value = mock_series
+        cudf_module = types.ModuleType("cudf")
+        cudf_module.read_text = MagicMock()
+
+        with patch.dict("sys.modules", {"cudf": cudf_module}):
+            with patch("tensor_grep.io.reader_cudf.CuDFReader", return_value=cudf_reader):
+                series = backend._read_text_series(str(sample_log_file))
+
+        assert series is mock_series
+        cudf_reader.read_to_gpu.assert_called_once_with(str(sample_log_file))
+        cudf_module.read_text.assert_not_called()
+
+    def test_should_fall_back_to_raw_cudf_read_text_when_cudf_reader_unavailable(
+        self, sample_log_file
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        mock_series = MagicMock()
+        cudf_module = types.ModuleType("cudf")
+        cudf_module.read_text = MagicMock(return_value=mock_series)
+
+        with patch.dict("sys.modules", {"cudf": cudf_module}):
+            with patch("tensor_grep.io.reader_cudf.CuDFReader", side_effect=ImportError):
+                series = backend._read_text_series(str(sample_log_file))
+
+        assert series is mock_series
+        cudf_module.read_text.assert_called_once_with(
+            str(sample_log_file),
+            delimiter="\n",
+            strip_delimiters=True,
+        )
+
+    def test_should_raise_cudf_reader_runtime_errors_instead_of_silently_falling_back(
+        self, sample_log_file
+    ):
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        backend = CuDFBackend()
+        cudf_reader = MagicMock()
+        cudf_reader.read_to_gpu.side_effect = AttributeError("broken reader seam")
+        cudf_module = types.ModuleType("cudf")
+        cudf_module.read_text = MagicMock()
+
+        with patch.dict("sys.modules", {"cudf": cudf_module}):
+            with patch("tensor_grep.io.reader_cudf.CuDFReader", return_value=cudf_reader):
+                with pytest.raises(AttributeError, match="broken reader seam"):
+                    backend._read_text_series(str(sample_log_file))
+
+        cudf_module.read_text.assert_not_called()
+
     def test_should_use_byte_range_for_large_files(self, tmp_path):
         from tensor_grep.backends.cudf_backend import CuDFBackend
 

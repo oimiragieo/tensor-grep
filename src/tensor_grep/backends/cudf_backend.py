@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
@@ -100,6 +100,17 @@ class CuDFBackend(ComputeBackend):
         self.device_ids = device_ids or list(range(len(self.chunk_sizes_mb)))
 
     @staticmethod
+    def _read_text_series(file_path: str) -> Any:
+        try:
+            from tensor_grep.io.reader_cudf import CuDFReader
+
+            return CuDFReader().read_to_gpu(file_path)
+        except ImportError:
+            import cudf
+
+            return cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
+
+    @staticmethod
     def _normalize_device_chunks(
         device_chunks_mb: list[tuple[int, int]],
     ) -> list[tuple[int, int]]:
@@ -179,9 +190,9 @@ class CuDFBackend(ComputeBackend):
         config: SearchConfig | None,
     ) -> tuple[list[MatchLine], int]:
         matches: list[MatchLine] = []
-        normalized_device_chunks = self._normalize_device_chunks([
-            (device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb
-        ])
+        normalized_device_chunks = self._normalize_device_chunks(
+            [(device_id, chunk_mb) for device_id, chunk_mb in device_chunks_mb]
+        )
         execution_plan = self._build_execution_plan(
             file_size=file_size,
             device_chunks_mb=normalized_device_chunks,
@@ -313,7 +324,7 @@ class CuDFBackend(ComputeBackend):
             except ImportError:
                 # Fallback to cuDF's native text reader if the rust bridge isn't compiled
                 # or if the PyCapsule conversion fails during testing environments
-                series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
+                series = self._read_text_series(file_path)
                 mask = series.str.contains(pattern, regex=True, flags=flags)
                 if config and config.invert_match:
                     mask = ~mask
@@ -328,7 +339,7 @@ class CuDFBackend(ComputeBackend):
                     file_path,
                     exc,
                 )
-                series = cudf.read_text(file_path, delimiter="\n", strip_delimiters=True)
+                series = self._read_text_series(file_path)
                 mask = series.str.contains(pattern, regex=True, flags=flags)
                 if config and config.invert_match:
                     mask = ~mask

@@ -146,6 +146,14 @@ def test_experimental_docs_and_runbooks_should_warn_about_worker_support_boundar
     assert "tg worker --stop" in runbook
 
 
+def test_experimental_docs_should_list_runtime_env_flags() -> None:
+    experimental = EXPERIMENTAL_PATH.read_text(encoding="utf-8")
+
+    assert "TG_FORCE_CPU=1" in experimental
+    assert "TG_RUST_EARLY_POSITIONAL_RG=1" in experimental
+    assert "TG_RESIDENT_AST=1" in experimental
+
+
 def test_operational_runbooks_should_include_windows_safe_commands() -> None:
     gpu = GPU_RUNBOOK_PATH.read_text(encoding="utf-8")
     cache = CACHE_RUNBOOK_PATH.read_text(encoding="utf-8")

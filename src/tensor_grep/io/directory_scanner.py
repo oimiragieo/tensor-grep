@@ -57,10 +57,8 @@ class DirectoryScanner:
             and not self.config.glob
             and not self.config.file_type
             and not self.config.type_not
-            and not base_path.is_file()  # fallback to python for direct files until rust walker fully handles them safely
         ):
-            # Note: We fallback to python if specific python-side flag filters like glob/type are set
-            # to preserve compatibility until those are fully mapped to Rust builder.
+            # Keep Python-side walking only for direct files or Python-only filters.
             scanner = RustDirectoryScanner(
                 hidden=self.config.hidden, max_depth=self.config.max_depth
             )
