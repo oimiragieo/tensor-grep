@@ -476,7 +476,6 @@ def run_command(
     *,
     rewrite: str | None = None,
     lang: str | None = None,
-    config: str | None = "sgconfig.yml",
     apply: bool = False,
     verify: bool = False,
     json_output: bool = False,
@@ -522,7 +521,7 @@ def run_command(
         _safe_stdout_line(rewrite_json)
         return exit_code
 
-    del rewrite, config, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
+    del rewrite, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
 
     search_path = path or "."
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=lang, query_pattern=pattern)

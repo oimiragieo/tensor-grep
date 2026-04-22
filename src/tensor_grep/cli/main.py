@@ -1377,6 +1377,8 @@ def _run_ast_scan_payload(
     rules: list[dict[str, str]],
     *,
     routing_reason: str,
+    candidate_files: list[str] | None = None,
+    project_scan_fast_path: bool = False,
     ruleset_name: str | None = None,
     baseline_path: str | None = None,
     write_baseline_path: str | None = None,
@@ -1388,6 +1390,7 @@ def _run_ast_scan_payload(
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.core.config import SearchConfig
+    from tensor_grep.core.result import SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     cfg = SearchConfig(
@@ -1397,68 +1400,25 @@ def _run_ast_scan_payload(
     )
     root_dir = cast(Path, project_cfg["root_dir"])
     scanner: DirectoryScanner | None = None
-    candidate_files: list[str] | None = None
+    resolved_candidate_files = list(candidate_files) if candidate_files is not None else None
     backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
     backend_names_used: set[str] = set()
 
     total_matches = 0
     matched_rules = 0
     findings: list[dict[str, object]] = []
-    for rule in rules:
-        rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
-        backend_names_used.add(type(backend).__name__)
-        matched_files: set[str] = set()
-        match_counts_by_file: dict[str, int] = {}
-        snippets_by_file: dict[str, list[dict[str, object]]] = {}
-        rule_occurrences: list[dict[str, object]] = []
-        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
-            rule_matches = result.total_matches
-            matched_files.update(result.matched_file_paths)
-            for file_path, count in result.match_counts_by_file.items():
-                match_counts_by_file[file_path] = match_counts_by_file.get(file_path, 0) + count
-            for match in result.matches:
-                if match.file:
-                    match_counts_by_file[match.file] = match_counts_by_file.get(match.file, 0) + 1
-                    rule_occurrences.append({"file": match.file, "line": match.line_number})
-                    if (
-                        include_evidence_snippets
-                        and len(snippets_by_file.get(match.file, []))
-                        < max_evidence_snippets_per_file
-                    ):
-                        snippets_by_file.setdefault(match.file, []).append(
-                            _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
-                        )
-            if not matched_files and result.total_files > 0:
-                matched_files.update(match.file for match in result.matches if match.file)
-        else:
-            if scanner is None:
-                scanner = DirectoryScanner(cfg)
-            if candidate_files is None:
-                candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
-            rule_matches = 0
-            for current_file in candidate_files:
-                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    matched_files.add(current_file)
-                    match_counts_by_file[current_file] = (
-                        match_counts_by_file.get(current_file, 0) + result.total_matches
-                    )
-                    for match in result.matches:
-                        rule_occurrences.append({
-                            "file": match.file or current_file,
-                            "line": match.line_number,
-                        })
-                    if include_evidence_snippets:
-                        file_snippets = snippets_by_file.setdefault(current_file, [])
-                        for match in result.matches:
-                            if len(file_snippets) >= max_evidence_snippets_per_file:
-                                break
-                            file_snippets.append(
-                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
-                            )
+
+    def _append_finding(
+        *,
+        rule: dict[str, str],
+        rule_matches: int,
+        matched_files: set[str],
+        match_counts_by_file: dict[str, int],
+        snippets_by_file: dict[str, list[dict[str, object]]],
+        rule_occurrences: list[dict[str, object]],
+    ) -> None:
+        nonlocal total_matches, matched_rules
+
         total_matches += rule_matches
         if rule_matches > 0:
             matched_rules += 1
@@ -1499,6 +1459,134 @@ def _run_ast_scan_payload(
                     list[tuple[str, int]], findings[-1]["_raw_occurrences"]
                 )
             ]
+
+    wrapper_rules: list[tuple[dict[str, str], SearchConfig]] = []
+    other_resolved: list[tuple[dict[str, str], SearchConfig, ComputeBackend]] = []
+    wrapper_backend: object | None = None
+    for rule in rules:
+        rule_cfg = replace(cfg, lang=rule["language"])
+        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        if project_scan_fast_path and type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
+            backend, "search_project"
+        ):
+            wrapper_rules.append((rule, rule_cfg))
+            if wrapper_backend is None:
+                wrapper_backend = backend
+            continue
+        other_resolved.append((rule, rule_cfg, backend))
+
+    wrapper_project_results: dict[str, SearchResult] | None = None
+    if wrapper_rules and wrapper_backend is not None:
+        backend_names_used.add(type(wrapper_backend).__name__)
+        try:
+            wrapper_project_results = cast(Any, wrapper_backend).search_project(
+                str(root_dir), str(project_cfg["config_path"])
+            )
+        except Exception:
+            for rule, rule_cfg in wrapper_rules:
+                other_resolved.append((rule, rule_cfg, cast(ComputeBackend, wrapper_backend)))
+            wrapper_rules = []
+
+    for rule, _rule_cfg in wrapper_rules:
+        result = (
+            wrapper_project_results.get(
+                rule["id"],
+                SearchResult(matches=[], total_files=0, total_matches=0),
+            )
+            if wrapper_project_results is not None
+            else SearchResult(matches=[], total_files=0, total_matches=0)
+        )
+        matched_files = set(result.matched_file_paths)
+        match_counts_by_file = dict(result.match_counts_by_file)
+        snippets_by_file: dict[str, list[dict[str, object]]] = {}
+        rule_occurrences: list[dict[str, object]] = []
+        for match in result.matches:
+            if match.file:
+                match_counts_by_file[match.file] = match_counts_by_file.get(match.file, 0) + 1
+                rule_occurrences.append({"file": match.file, "line": match.line_number})
+                if (
+                    include_evidence_snippets
+                    and len(snippets_by_file.get(match.file, [])) < max_evidence_snippets_per_file
+                ):
+                    snippets_by_file.setdefault(match.file, []).append(
+                        _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                    )
+        if not matched_files and result.total_files > 0:
+            matched_files.update(match.file for match in result.matches if match.file)
+        _append_finding(
+            rule=rule,
+            rule_matches=result.total_matches,
+            matched_files=matched_files,
+            match_counts_by_file=match_counts_by_file,
+            snippets_by_file=snippets_by_file,
+            rule_occurrences=rule_occurrences,
+        )
+
+    for rule, rule_cfg, backend in other_resolved:
+        backend_names_used.add(type(backend).__name__)
+        resolved_matched_files: set[str] = set()
+        resolved_match_counts_by_file: dict[str, int] = {}
+        resolved_snippets_by_file: dict[str, list[dict[str, object]]] = {}
+        resolved_rule_occurrences: list[dict[str, object]] = []
+        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
+            result = backend.search_many([str(root_dir)], rule["pattern"], config=rule_cfg)
+            rule_matches = result.total_matches
+            resolved_matched_files.update(result.matched_file_paths)
+            for file_path, count in result.match_counts_by_file.items():
+                resolved_match_counts_by_file[file_path] = (
+                    resolved_match_counts_by_file.get(file_path, 0) + count
+                )
+            for match in result.matches:
+                if match.file:
+                    resolved_match_counts_by_file[match.file] = (
+                        resolved_match_counts_by_file.get(match.file, 0) + 1
+                    )
+                    resolved_rule_occurrences.append({"file": match.file, "line": match.line_number})
+                    if (
+                        include_evidence_snippets
+                        and len(resolved_snippets_by_file.get(match.file, []))
+                        < max_evidence_snippets_per_file
+                    ):
+                        resolved_snippets_by_file.setdefault(match.file, []).append(
+                            _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                        )
+            if not resolved_matched_files and result.total_files > 0:
+                resolved_matched_files.update(match.file for match in result.matches if match.file)
+        else:
+            if scanner is None:
+                scanner = DirectoryScanner(cfg)
+            if resolved_candidate_files is None:
+                resolved_candidate_files, _ = _collect_candidate_files(scanner, [str(root_dir)])
+            rule_matches = 0
+            for current_file in resolved_candidate_files:
+                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                rule_matches += result.total_matches
+                if result.total_files > 0 or result.total_matches > 0:
+                    resolved_matched_files.add(current_file)
+                    resolved_match_counts_by_file[current_file] = (
+                        resolved_match_counts_by_file.get(current_file, 0) + result.total_matches
+                    )
+                    for match in result.matches:
+                        resolved_rule_occurrences.append({
+                            "file": match.file or current_file,
+                            "line": match.line_number,
+                        })
+                    if include_evidence_snippets:
+                        file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
+                        for match in result.matches:
+                            if len(file_snippets) >= max_evidence_snippets_per_file:
+                                break
+                            file_snippets.append(
+                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                            )
+        _append_finding(
+            rule=rule,
+            rule_matches=rule_matches,
+            matched_files=resolved_matched_files,
+            match_counts_by_file=resolved_match_counts_by_file,
+            snippets_by_file=resolved_snippets_by_file,
+            rule_occurrences=resolved_rule_occurrences,
+        )
 
     payload = {
         "version": _json_output_version(),
@@ -3845,9 +3933,6 @@ def run(
     path: str | None = typer.Argument(None, help="Path to search"),
     rewrite: str | None = typer.Option(None, "--rewrite", "-r", help="Rewrite matching code"),
     lang: str | None = typer.Option(None, "--lang", "-l", help="Language to parse"),
-    config: str | None = typer.Option(
-        "sgconfig.yml", "--config", "-c", help="Path to ast-grep root config"
-    ),
 ) -> None:
     """Run one-time AST search or rewrite in command line."""
     if not path:
@@ -3994,6 +4079,8 @@ def scan(
         typer.echo("Error: --inline-rules is incompatible with --ruleset.", err=True)
         sys.exit(1)
 
+    candidate_files: list[str] | None = None
+    project_scan_fast_path = False
     if ruleset:
         try:
             ruleset_meta, rules = resolve_rule_pack(ruleset, language)
@@ -4032,18 +4119,20 @@ def scan(
         scan_banner = "Scanning project using inline AST rules"
         routing_reason = "ast-inline-rules-scan"
     else:
+        from tensor_grep.cli.ast_workflows import _load_ast_project_data
+
         try:
-            project_cfg = _load_sg_project_config(config)
+            project_cfg, rules, candidate_files, _test_data, _hints = _load_ast_project_data(config)
         except (FileNotFoundError, ValueError) as exc:
             typer.echo(f"Error: {exc}", err=True)
             sys.exit(1)
 
-        rules = _load_rule_specs(project_cfg)
         if not rules:
             typer.echo("Error: No valid rules found in configured rule directories.", err=True)
             sys.exit(1)
         scan_banner = "Scanning project using adaptive AST routing"
         routing_reason = "ast-project-scan"
+        project_scan_fast_path = True
 
     if not json_output:
         typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
@@ -4052,6 +4141,8 @@ def scan(
             project_cfg,
             rules,
             routing_reason=routing_reason,
+            candidate_files=candidate_files,
+            project_scan_fast_path=project_scan_fast_path,
             ruleset_name=ruleset_meta["name"] if ruleset else None,
             baseline_path=baseline,
             write_baseline_path=write_baseline,

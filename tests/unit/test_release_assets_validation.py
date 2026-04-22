@@ -484,6 +484,7 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     assert "cryptography>=46.0.7" in joined_errors
     assert "pygments>=2.20.0" in joined_errors
     assert "python-multipart>=0.0.26" in joined_errors
+    assert "python-dotenv>=1.2.2" in joined_errors
 
 
 def test_should_accept_uv_security_floor_constraints_when_all_required_entries_present():
@@ -505,6 +506,7 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
       "cryptography>=46.0.7",
       "pygments>=2.20.0",
       "python-multipart>=0.0.26",
+      "python-dotenv>=1.2.2",
       "requests>=2.33.0",
     ]
     """
@@ -1333,6 +1335,76 @@ def test_should_fail_when_npm_installer_contract_drifts():
     assert any("must derive the release version from npm/package.json" in err for err in errors)
     assert any("must download from oimiragieo/tensor-grep releases" in err for err in errors)
     assert any("must reference current release asset names" in err for err in errors)
+
+
+def test_should_fail_when_npm_manifest_declares_js_main_entrypoint():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_npm_manifest_contract(
+        package_json_content='{"bin":{"tg":"bin/tg.js"},"main":"index.js"}',
+        available_paths={"bin/tg.js", "install.js", "package.json"},
+    )
+
+    assert any("must not declare `main`" in err for err in errors)
+
+
+def test_should_fail_when_npm_manifest_bin_target_is_missing():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_npm_manifest_contract(
+        package_json_content='{"bin":{"tg":"bin/tg.js"}}',
+        available_paths={"install.js", "package.json"},
+    )
+
+    assert any("bin target must exist in npm/" in err for err in errors)
+
+
+def test_should_fail_when_npm_manifest_declares_runtime_dependencies_for_wrapper():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_npm_manifest_contract(
+        package_json_content='{"bin":{"tg":"bin/tg.js"},"dependencies":{"axios":"^1.6.0"}}',
+        available_paths={"bin/tg.js", "install.js", "package.json"},
+    )
+
+    assert any("wrapper runtime dependencies must be empty" in err for err in errors)
+
+
+def test_should_accept_dependency_free_npm_wrapper_manifest():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    errors = module.validate_npm_manifest_contract(
+        package_json_content=(
+            '{"bin":{"tensor-grep":"bin/tg.js","tg":"bin/tg.js"},"dependencies":{}}'
+        ),
+        available_paths={"bin/tg.js", "install.js", "package.json"},
+    )
+
+    assert errors == []
 
 
 def test_should_fail_when_ci_pipeline_doc_omits_benchmark_workflow_contract():
