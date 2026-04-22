@@ -9,11 +9,10 @@ from packaging.version import Version
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_npm_lock_should_pin_tar_above_drive_relative_symlink_fix_floor() -> None:
+def test_npm_lock_should_keep_wrapper_dependency_free() -> None:
     package_lock = json.loads((ROOT / "npm" / "package-lock.json").read_text(encoding="utf-8"))
-    tar_version = package_lock["packages"]["node_modules/tar"]["version"]
 
-    assert Version(tar_version) >= Version("7.5.11")
+    assert set(package_lock["packages"]) == {""}
 
 
 def test_uv_lock_should_pin_pyjwt_above_unknown_crit_header_fix_floor() -> None:

@@ -3648,9 +3648,38 @@ def test_scan_should_not_claim_gnns_when_ast_wrapper_backend_selected(monkeypatc
 
     assert result.exit_code == 0
     assert "GPU-Accelerated GNNs" not in result.output
-    assert AstGrepWrapperBackend.search_project_calls == 0
-    assert AstGrepWrapperBackend.search_many_calls == 1
-    assert _FakeAstScanner.walk_calls == 0
+    assert AstGrepWrapperBackend.search_project_calls == 1
+    assert AstGrepWrapperBackend.search_many_calls == 0
+    assert _FakeAstScanner.walk_calls == 1
+
+
+def test_scan_json_should_use_wrapper_project_fast_path(monkeypatch):
+    _patch_direct_wrapper_selection(monkeypatch)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+    AstGrepWrapperBackend.search_many_calls = 0
+    AstGrepWrapperBackend.search_project_calls = 0
+    _FakeAstScanner.walk_calls = 0
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("sgconfig.yml").write_text(
+            "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
+        )
+        Path("rules").mkdir()
+        Path("rules/error.yml").write_text(
+            "id: error-rule\nlanguage: python\nrule:\n  pattern: ERROR\n",
+            encoding="utf-8",
+        )
+        Path("a.py").write_text("ERROR in file\n", encoding="utf-8")
+
+        result = runner.invoke(app, ["scan", "--config", "sgconfig.yml", "--json"])
+
+    assert result.exit_code == 0
+    assert AstGrepWrapperBackend.search_project_calls == 1
+    assert AstGrepWrapperBackend.search_many_calls == 0
+    assert _FakeAstScanner.walk_calls == 1
 
 
 def test_scan_should_count_files_from_count_only_ast_results(monkeypatch):
@@ -4383,6 +4412,15 @@ def test_bootstrap_run_help_should_not_expose_config_option(monkeypatch, capsys)
 
     help_text = capsys.readouterr().out
     assert "--config" not in help_text
+
+
+def test_full_cli_run_help_should_not_expose_config_option() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--config" not in _strip_ansi(result.stdout)
 
 
 def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():

@@ -1213,6 +1213,49 @@ def validate_npm_installer_contract(*, install_js_content: str, expected_version
     return errors
 
 
+def validate_npm_manifest_contract(
+    *, package_json_content: str, available_paths: set[str]
+) -> list[str]:
+    errors: list[str] = []
+    try:
+        npm_manifest = json.loads(package_json_content)
+    except json.JSONDecodeError as exc:
+        return [f"npm/package.json is not valid JSON: {exc}"]
+    if not isinstance(npm_manifest, dict):
+        return ["npm/package.json must decode to an object"]
+
+    if "main" in npm_manifest:
+        errors.append("npm/package.json must not declare `main`; the package ships a CLI wrapper only")
+
+    bin_field = npm_manifest.get("bin")
+    if isinstance(bin_field, str):
+        bin_targets = [bin_field]
+    elif isinstance(bin_field, dict):
+        bin_targets = [str(target) for target in bin_field.values()]
+    else:
+        errors.append("npm/package.json must declare a `bin` mapping for the CLI wrapper")
+        bin_targets = []
+
+    normalized_paths = {str(path).replace("\\", "/").lstrip("./") for path in available_paths}
+    for target in sorted(set(bin_targets)):
+        normalized_target = target.replace("\\", "/").lstrip("./")
+        if normalized_target not in normalized_paths:
+            errors.append(f"npm/package.json bin target must exist in npm/: {normalized_target}")
+
+    dependencies = npm_manifest.get("dependencies", {})
+    if dependencies is None:
+        dependencies = {}
+    if not isinstance(dependencies, dict):
+        errors.append("npm/package.json dependencies must be an object when present")
+    elif dependencies:
+        errors.append(
+            "npm/package.json wrapper runtime dependencies must be empty: "
+            + ", ".join(sorted(str(name) for name in dependencies))
+        )
+
+    return errors
+
+
 def validate_ci_pipeline_doc_contract(
     *, ci_pipeline_content: str, benchmark_workflow_content: str
 ) -> list[str]:
@@ -2254,6 +2297,7 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         "cryptography>=46.0.7",
         "pygments>=2.20.0",
         "python-multipart>=0.0.26",
+        "python-dotenv>=1.2.2",
         "requests>=2.33.0",
     }
     missing_constraints = sorted(
@@ -2295,6 +2339,7 @@ def validate_all() -> list[str]:
     py_version = _version_from_pyproject()
     cargo_version = _version_from_cargo()
     uv_lock_version = _version_from_uv_lock()
+    npm_root = ROOT / "npm"
     npm_manifest = json.loads(_read(ROOT / "npm" / "package.json"))
     npm_version = str(npm_manifest["version"])
 
@@ -2374,6 +2419,16 @@ def validate_all() -> list[str]:
         validate_native_cli_contract(
             main_rs_content=_read(ROOT / "rust_core" / "src" / "main.rs"),
             expected_version=py_version,
+        )
+    )
+    errors.extend(
+        validate_npm_manifest_contract(
+            package_json_content=_read(npm_root / "package.json"),
+            available_paths={
+                path.relative_to(npm_root).as_posix()
+                for path in npm_root.rglob("*")
+                if path.is_file()
+            },
         )
     )
     errors.extend(

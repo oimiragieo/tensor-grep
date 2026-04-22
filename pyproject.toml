@@ -67,6 +67,7 @@ constraint-dependencies = [
     "cryptography>=46.0.7",
     "pygments>=2.20.0",
     "python-multipart>=0.0.26",
+    "python-dotenv>=1.2.2",
     "requests>=2.33.0",
 ]
 
