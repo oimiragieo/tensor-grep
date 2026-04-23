@@ -102,6 +102,8 @@ The automation workflow `.github/workflows/dependabot-automation.yml` applies la
 - patch/minor GitHub Actions updates
 - patch/minor non-production (`direct:development`) or indirect dependency updates
 
+The Dependabot automation workflow intentionally runs without a checkout step. Every `gh` CLI call in that workflow must target the repository explicitly via job-level `GH_REPO: ${{ github.repository }}` and `--repo "$GH_REPO"` on each command, or label/PR automation will fail outside a git worktree.
+
 It does **not** auto-merge:
 
 - semver-major updates

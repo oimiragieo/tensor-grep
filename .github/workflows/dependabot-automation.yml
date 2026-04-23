@@ -14,6 +14,8 @@ jobs:
     name: dependabot-triage
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    env:
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
@@ -25,21 +27,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh label create dependencies --color 0366d6 --description "Dependency maintenance" --force
-          gh label create "bot:dependabot" --color 5319e7 --description "Automated Dependabot pull request" --force
-          gh label create "supply-chain" --color 1d76db --description "Supply-chain maintenance workflow" --force
-          gh label create "python" --color 0e8a16 --description "Python dependency update" --force
-          gh label create "rust" --color b60205 --description "Rust dependency update" --force
-          gh label create "npm" --color fbca04 --description "npm dependency update" --force
-          gh label create "github-actions" --color 5319e7 --description "GitHub Actions dependency update" --force
-          gh label create "deps:production" --color b60205 --description "Direct production dependency update" --force
-          gh label create "deps:development" --color 0e8a16 --description "Development dependency update" --force
-          gh label create "deps:indirect" --color c2e0c6 --description "Indirect dependency update" --force
-          gh label create "deps:major" --color b60205 --description "Semver-major dependency update" --force
-          gh label create "deps:minor" --color fbca04 --description "Semver-minor dependency update" --force
-          gh label create "deps:patch" --color 0e8a16 --description "Semver-patch dependency update" --force
-          gh label create "automerge:eligible" --color 0e8a16 --description "Safe dependency update eligible for auto-merge" --force
-          gh label create "manual-review" --color d93f0b --description "Dependency update requires human review" --force
+          gh label create dependencies --repo "$GH_REPO" --color 0366d6 --description "Dependency maintenance" --force
+          gh label create "bot:dependabot" --repo "$GH_REPO" --color 5319e7 --description "Automated Dependabot pull request" --force
+          gh label create "supply-chain" --repo "$GH_REPO" --color 1d76db --description "Supply-chain maintenance workflow" --force
+          gh label create "python" --repo "$GH_REPO" --color 0e8a16 --description "Python dependency update" --force
+          gh label create "rust" --repo "$GH_REPO" --color b60205 --description "Rust dependency update" --force
+          gh label create "npm" --repo "$GH_REPO" --color fbca04 --description "npm dependency update" --force
+          gh label create "github-actions" --repo "$GH_REPO" --color 5319e7 --description "GitHub Actions dependency update" --force
+          gh label create "deps:production" --repo "$GH_REPO" --color b60205 --description "Direct production dependency update" --force
+          gh label create "deps:development" --repo "$GH_REPO" --color 0e8a16 --description "Development dependency update" --force
+          gh label create "deps:indirect" --repo "$GH_REPO" --color c2e0c6 --description "Indirect dependency update" --force
+          gh label create "deps:major" --repo "$GH_REPO" --color b60205 --description "Semver-major dependency update" --force
+          gh label create "deps:minor" --repo "$GH_REPO" --color fbca04 --description "Semver-minor dependency update" --force
+          gh label create "deps:patch" --repo "$GH_REPO" --color 0e8a16 --description "Semver-patch dependency update" --force
+          gh label create "automerge:eligible" --repo "$GH_REPO" --color 0e8a16 --description "Safe dependency update eligible for auto-merge" --force
+          gh label create "manual-review" --repo "$GH_REPO" --color d93f0b --description "Dependency update requires human review" --force
 
       - name: Apply dependency labels
         env:
@@ -52,25 +54,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          gh pr edit "$PR_URL" --add-label "dependencies" --add-label "bot:dependabot" --add-label "supply-chain"
+          gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "dependencies" --add-label "bot:dependabot" --add-label "supply-chain"
 
           case "$PACKAGE_ECOSYSTEM" in
-            uv) gh pr edit "$PR_URL" --add-label "python" ;;
-            cargo) gh pr edit "$PR_URL" --add-label "rust" ;;
-            npm) gh pr edit "$PR_URL" --add-label "npm" ;;
-            github-actions) gh pr edit "$PR_URL" --add-label "github-actions" ;;
+            uv) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "python" ;;
+            cargo) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "rust" ;;
+            npm) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "npm" ;;
+            github-actions) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "github-actions" ;;
           esac
 
           case "$DEPENDENCY_TYPE" in
-            direct:production) gh pr edit "$PR_URL" --add-label "deps:production" ;;
-            direct:development) gh pr edit "$PR_URL" --add-label "deps:development" ;;
-            indirect) gh pr edit "$PR_URL" --add-label "deps:indirect" ;;
+            direct:production) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "deps:production" ;;
+            direct:development) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "deps:development" ;;
+            indirect) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "deps:indirect" ;;
           esac
 
           case "$UPDATE_TYPE" in
-            version-update:semver-major) gh pr edit "$PR_URL" --add-label "deps:major" ;;
-            version-update:semver-minor) gh pr edit "$PR_URL" --add-label "deps:minor" ;;
-            version-update:semver-patch) gh pr edit "$PR_URL" --add-label "deps:patch" ;;
+            version-update:semver-major) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "deps:major" ;;
+            version-update:semver-minor) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "deps:minor" ;;
+            version-update:semver-patch) gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "deps:patch" ;;
           esac
 
       - name: Determine automerge policy
@@ -104,21 +106,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr edit "$PR_URL" --add-label "automerge:eligible"
+        run: gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "automerge:eligible"
 
       - name: Mark manual review updates
         if: steps.policy.outputs.safe != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr edit "$PR_URL" --add-label "manual-review"
+        run: gh pr edit "$PR_URL" --repo "$GH_REPO" --add-label "manual-review"
 
       - name: Approve safe updates
         if: steps.policy.outputs.safe == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr review "$PR_URL" --approve --body "Auto-approved safe Dependabot update." || true
+        run: gh pr review "$PR_URL" --repo "$GH_REPO" --approve --body "Auto-approved safe Dependabot update." || true
 
       - name: Enable auto-merge for safe updates
         if: steps.policy.outputs.safe == 'true'
@@ -128,7 +130,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh pr merge --auto --squash "$PR_URL"; then
+          if gh pr merge --repo "$GH_REPO" --auto --squash "$PR_URL"; then
             echo "Enabled auto-merge for $PR_URL"
           else
             echo "Unable to enable auto-merge for $PR_URL. Check repository auto-merge settings."

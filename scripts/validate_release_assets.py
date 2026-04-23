@@ -758,9 +758,10 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
         "github.actor == 'dependabot[bot]'",
         "dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7",
         "gh label create dependencies",
-        'gh pr edit "$PR_URL" --add-label "dependencies"',
-        'gh pr review "$PR_URL" --approve',
-        'gh pr merge --auto --squash "$PR_URL"',
+        'gh pr edit "$PR_URL"',
+        'gh pr review "$PR_URL"',
+        "gh pr merge",
+        '--repo "$GH_REPO"',
         "automerge:eligible",
         "manual-review",
     ):
@@ -795,6 +796,13 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
     if triage.get("if") != "github.actor == 'dependabot[bot]'":
         errors.append(
             "Dependabot automation workflow `dependabot-triage` job must only run for dependabot[bot]"
+        )
+
+    job_env = triage.get("env")
+    if not isinstance(job_env, dict) or job_env.get("GH_REPO") != "${{ github.repository }}":
+        errors.append(
+            "Dependabot automation workflow `dependabot-triage` job must define "
+            "`GH_REPO: ${{ github.repository }}`"
         )
 
     steps = triage.get("steps")
@@ -840,16 +848,40 @@ def validate_dependabot_automation_workflow_content(*, workflow_content: str) ->
             errors.append(f"Dependabot automation workflow `{name}` step must use `{required_use}`")
 
     enable_merge_run = runs_by_name.get("Enable auto-merge for safe updates")
-    if enable_merge_run is None or 'gh pr merge --auto --squash "$PR_URL"' not in enable_merge_run:
+    if (
+        enable_merge_run is None
+        or "gh pr merge" not in enable_merge_run
+        or '--repo "$GH_REPO"' not in enable_merge_run
+        or '--auto --squash "$PR_URL"' not in enable_merge_run
+    ):
         errors.append(
-            'Dependabot automation workflow `Enable auto-merge for safe updates` must invoke `gh pr merge --auto --squash "$PR_URL"`'
+            "Dependabot automation workflow `Enable auto-merge for safe updates` must invoke "
+            '`gh pr merge --repo "$GH_REPO" --auto --squash "$PR_URL"`'
         )
 
     approve_run = runs_by_name.get("Approve safe updates")
-    if approve_run is None or 'gh pr review "$PR_URL" --approve' not in approve_run:
+    if (
+        approve_run is None
+        or 'gh pr review "$PR_URL"' not in approve_run
+        or '--repo "$GH_REPO"' not in approve_run
+        or "--approve" not in approve_run
+    ):
         errors.append(
-            'Dependabot automation workflow `Approve safe updates` must invoke `gh pr review "$PR_URL" --approve`'
+            "Dependabot automation workflow `Approve safe updates` must invoke "
+            '`gh pr review "$PR_URL" --repo "$GH_REPO" --approve`'
         )
+
+    for name, run in runs_by_name.items():
+        gh_lines = [
+            line.strip()
+            for line in run.splitlines()
+            if "gh " in line and not line.strip().startswith("#")
+        ]
+        if gh_lines and any('--repo "$GH_REPO"' not in line for line in gh_lines):
+            errors.append(
+                f"Dependabot automation workflow step `{name}` must pass "
+                '`--repo "$GH_REPO"` to every `gh` command'
+            )
 
     return errors
 
@@ -1225,7 +1257,9 @@ def validate_npm_manifest_contract(
         return ["npm/package.json must decode to an object"]
 
     if "main" in npm_manifest:
-        errors.append("npm/package.json must not declare `main`; the package ships a CLI wrapper only")
+        errors.append(
+            "npm/package.json must not declare `main`; the package ships a CLI wrapper only"
+        )
 
     bin_field = npm_manifest.get("bin")
     if isinstance(bin_field, str):

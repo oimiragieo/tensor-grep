@@ -296,7 +296,55 @@ def test_should_require_dependabot_automation_automerge_contract():
     joined_errors = "\n".join(errors)
     assert "Ensure dependency labels exist" in joined_errors
     assert "Approve safe updates" in joined_errors
-    assert "gh pr merge --auto --squash" in joined_errors
+    assert "gh pr merge" in joined_errors
+
+
+def test_should_require_dependabot_automation_explicit_repo_targeting():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = """
+    name: Dependabot Automation
+    on:
+      pull_request_target:
+        types: [opened]
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    jobs:
+      dependabot-triage:
+        if: github.actor == 'dependabot[bot]'
+        runs-on: ubuntu-latest
+        steps:
+          - name: Fetch Dependabot metadata
+            uses: dependabot/fetch-metadata@d7267f607e9d3fb96fc2fbe83e0af444713e90b7
+          - name: Ensure dependency labels exist
+            run: gh label create dependencies --color 0366d6 --description "Dependency maintenance" --force
+          - name: Apply dependency labels
+            run: gh pr edit "$PR_URL" --add-label "dependencies"
+          - name: Determine automerge policy
+            run: echo "safe=false" >> "$GITHUB_OUTPUT"
+          - name: Mark safe updates
+            run: gh pr edit "$PR_URL" --add-label "automerge:eligible"
+          - name: Mark manual review updates
+            run: gh pr edit "$PR_URL" --add-label "manual-review"
+          - name: Approve safe updates
+            run: gh pr review "$PR_URL" --approve
+          - name: Enable auto-merge for safe updates
+            run: gh pr merge --auto --squash "$PR_URL"
+    """
+    errors = module.validate_dependabot_automation_workflow_content(
+        workflow_content=textwrap.dedent(workflow)
+    )
+    joined_errors = "\n".join(errors)
+    assert "must define `GH_REPO: ${{ github.repository }}`" in joined_errors
+    assert 'must pass `--repo "$GH_REPO"` to every `gh` command' in joined_errors
 
 
 def test_should_require_audit_workflow_issue_remediation_contract():

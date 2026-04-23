@@ -1466,8 +1466,10 @@ def _run_ast_scan_payload(
     for rule in rules:
         rule_cfg = replace(cfg, lang=rule["language"])
         backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
-        if project_scan_fast_path and type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
-            backend, "search_project"
+        if (
+            project_scan_fast_path
+            and type(backend).__name__ == "AstGrepWrapperBackend"
+            and hasattr(backend, "search_project")
         ):
             wrapper_rules.append((rule, rule_cfg))
             if wrapper_backend is None:
@@ -1541,7 +1543,10 @@ def _run_ast_scan_payload(
                     resolved_match_counts_by_file[match.file] = (
                         resolved_match_counts_by_file.get(match.file, 0) + 1
                     )
-                    resolved_rule_occurrences.append({"file": match.file, "line": match.line_number})
+                    resolved_rule_occurrences.append({
+                        "file": match.file,
+                        "line": match.line_number,
+                    })
                     if (
                         include_evidence_snippets
                         and len(resolved_snippets_by_file.get(match.file, []))
