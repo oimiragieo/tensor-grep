@@ -1,11 +1,52 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
+
+PUBLIC_TOP_LEVEL_COMMANDS = {
+    "search",
+    "calibrate",
+    "upgrade",
+    "update",
+    "audit-verify",
+    "mcp",
+    "classify",
+    "run",
+    "scan",
+    "test",
+    "new",
+    "defs",
+    "refs",
+    "source",
+    "impact",
+    "callers",
+    "blast-radius",
+    "blast-radius-render",
+    "blast-radius-plan",
+    "edit-plan",
+    "context-render",
+    "rulesets",
+    "audit-history",
+    "audit-diff",
+    "review-bundle",
+    "devices",
+    "context",
+    "lsp",
+    "map",
+    "session",
+    "doctor",
+    "checkpoint",
+}
 
 
 def _get_native_binary() -> str | None:
@@ -17,6 +58,58 @@ def _get_native_binary() -> str | None:
     if debug_path.exists():
         return str(debug_path.resolve())
     return None
+
+
+def _resolve_cargo_exe() -> Path | None:
+    cargo_name = "cargo.exe" if sys.platform == "win32" else "cargo"
+    cargo_which = shutil.which("cargo")
+    if cargo_which:
+        resolved = Path(cargo_which)
+        if resolved.name.lower() == cargo_name:
+            return resolved
+    fallback = Path.home() / ".cargo" / "bin" / cargo_name
+    if fallback.exists():
+        return fallback
+    return None
+
+
+def _run_native_front_door(
+    args: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    native_binary = _get_native_binary()
+    if native_binary is not None:
+        return subprocess.run(
+            [native_binary, *args],
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+    cargo_exe = _resolve_cargo_exe()
+    if cargo_exe is None:
+        pytest.skip("native front door not available in this environment")
+
+    manifest_path = Path(__file__).resolve().parents[2] / "rust_core" / "Cargo.toml"
+    return subprocess.run(
+        [
+            str(cargo_exe),
+            "run",
+            "--quiet",
+            "--manifest-path",
+            str(manifest_path),
+            "--bin",
+            "tg",
+            "--",
+            *args,
+        ],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _skip_if_native_binary_missing(launcher: str) -> None:
@@ -88,6 +181,42 @@ def no_check(out: str):
     pass
 
 
+def _strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
+def _extract_visible_help_commands(stdout: str) -> set[str]:
+    commands: set[str] = set()
+    mode: str | None = None
+    for raw_line in stdout.splitlines():
+        line = _strip_ansi(raw_line)
+        stripped = line.strip()
+        if stripped == "Commands:":
+            mode = "plain"
+            continue
+        if "Commands" in stripped and (stripped.startswith("┌") or stripped.startswith("+")):
+            mode = "box"
+            continue
+        if mode is None:
+            continue
+        if mode == "plain":
+            if stripped in {"Options:", "Environment overrides:"}:
+                break
+            cleaned = line.lstrip()
+        else:
+            if stripped.startswith(("└", "+")):
+                break
+            if not stripped.startswith(("│", "|")):
+                continue
+            cleaned = stripped.strip("│|").strip()
+        if not cleaned:
+            continue
+        match = re.match(r"^([a-z][a-z0-9-]*)\s{2,}", cleaned)
+        if match:
+            commands.add(match.group(1))
+    return commands
+
+
 # We check which layer handled it.
 # For native rust, search is usually native unless it falls back to python.
 # `run` etc. usually fall back to python.
@@ -96,6 +225,7 @@ def no_check(out: str):
 COMMAND_CASES = [
     # --- search ---
     (["search", "--help"], 0, assert_text_lines, no_check),
+    (["apple", "target.txt"], 0, assert_text_lines, no_check),
     (["search", "apple", "target.txt"], 0, assert_text_lines, no_check),
     (["search", "apple", "target.txt", "--json"], 0, assert_json, no_check),
     (["search", "apple", "target.txt", "--ndjson"], 0, assert_ndjson, no_check),
@@ -259,3 +389,95 @@ def test_routing_parity_glob_skips_native_when_binary_is_missing(monkeypatch, pa
 
     with pytest.raises(pytest.skip.Exception, match="Native binary not built"):
         _skip_if_native_binary_missing("native")
+
+
+def test_search_help_exposes_required_public_flags(parity_env):
+    python_help = run_command("python-m", ["search", "--help"], cwd=parity_env)
+    native_help = _run_native_front_door(["search", "--help"], cwd=parity_env)
+
+    assert python_help.returncode == 0
+    assert native_help.returncode == 0
+
+    for flag in PUBLIC_SEARCH_HELP_FLAGS:
+        assert flag in python_help.stdout, f"Missing {flag} in python-m search --help"
+        assert flag in native_help.stdout, f"Missing {flag} in native search --help"
+
+
+def test_top_level_help_visible_commands_match_public_contract(parity_env):
+    python_help = run_command("python-m", ["--help"], cwd=parity_env)
+    native_help = _run_native_front_door(["--help"], cwd=parity_env)
+
+    assert python_help.returncode == 0
+    assert native_help.returncode == 0
+    python_commands = _extract_visible_help_commands(python_help.stdout)
+    native_commands = _extract_visible_help_commands(native_help.stdout)
+
+    assert python_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
+
+
+def test_empty_invocation_visible_commands_match_public_contract(parity_env):
+    python_help = run_command("python-m", [], cwd=parity_env)
+    native_help = _run_native_front_door([], cwd=parity_env)
+
+    assert python_help.returncode == 0
+    assert native_help.returncode == 0
+    python_commands = _extract_visible_help_commands(python_help.stdout)
+    native_commands = _extract_visible_help_commands(native_help.stdout)
+    assert python_commands == PUBLIC_TOP_LEVEL_COMMANDS
+    assert native_commands == PUBLIC_TOP_LEVEL_COMMANDS
+
+
+def test_public_help_falls_back_to_native_when_python_passthrough_is_broken(parity_env):
+    if sys.platform == "win32":
+        broken_python = str(shutil.which("powershell.exe"))
+    else:
+        broken_python = "/bin/sh"
+    env = dict(**os.environ, TG_SIDECAR_PYTHON=broken_python)
+
+    native_help = _run_native_front_door(["search", "--help"], cwd=parity_env, env=env)
+
+    assert native_help.returncode == 0
+    assert "Usage:" in native_help.stdout
+    assert "search" in native_help.stdout
+    assert native_help.stderr.strip() == ""
+
+
+def test_public_help_falls_back_to_native_when_python_passthrough_times_out(parity_env):
+    if sys.platform == "win32":
+        wrapper = parity_env / "wedged-python.cmd"
+        wrapper.write_text("@echo off\r\nping -n 6 127.0.0.1 >nul\r\n", encoding="utf-8")
+    else:
+        wrapper = parity_env / "wedged-python.sh"
+        wrapper.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+        wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
+
+    env = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper))
+
+    started = __import__("time").perf_counter()
+    native_help = _run_native_front_door(["search", "--help"], cwd=parity_env, env=env)
+    elapsed = __import__("time").perf_counter() - started
+
+    assert elapsed < 4.0, f"public help timeout fallback took too long: {elapsed:.2f}s"
+    assert native_help.returncode == 0
+    assert "Usage:" in native_help.stdout
+    assert "search" in native_help.stdout
+    assert native_help.stderr.strip() == ""
+
+
+def test_unknown_first_token_without_explicit_path_behaves_like_bare_search(parity_env):
+    search_cwd = parity_env / "bare_token_cwd"
+    search_cwd.mkdir()
+    (search_cwd / "sample.txt").write_text("help\nother\n", encoding="utf-8")
+
+    default_result = _run_native_front_door(["help"], cwd=search_cwd)
+    early_rg_result = _run_native_front_door(
+        ["help"],
+        cwd=search_cwd,
+        env={**os.environ, "TG_RUST_EARLY_POSITIONAL_RG": "1"},
+    )
+
+    for native_result in (default_result, early_rg_result):
+        assert native_result.returncode == 0
+        assert "Usage:" not in native_result.stdout
+        assert "help" in native_result.stdout

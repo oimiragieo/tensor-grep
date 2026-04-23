@@ -26,6 +26,21 @@ The current public comparison story is anchored to rerunnable artifacts, not one
 | Policy and security scanning | `Semgrep` | `Semgrep` remains the stronger ecosystem baseline today. | [benchmarks.md](benchmarks.md) |
 | Indexed search at repository scale | `Zoekt` | `Zoekt` remains the search-at-scale baseline. `tg` currently publishes local repeated-query wins rather than an accepted direct Zoekt bakeoff. | [benchmarks.md](benchmarks.md) |
 
+## Validated `rg` Contract Snapshot
+
+The `v1.4.5` contract work adds a deterministic parity corpus plus a contract-driven benchmark artifact for the validated rg-compatible surface.
+
+- parity suite: `tests/e2e/test_rg_parity_matrix.py`
+- benchmark artifact: `artifacts/bench_run_rg_parity_benchmarks.json`
+- current semantic result: all 22 validated rows match pinned `rg` on the deterministic corpus
+- current timing result on this Windows host: every benchmarked validated row is slower than pinned `rg`
+
+This is the intended read:
+
+- `rg` remains the cold text-search baseline
+- `tg` now has a narrower but explicit, measured compatibility claim for the common search rows it validates
+- `ast-grep` remains the structural comparator for `run`, `scan`, `test`, and `new`, not the cold text-search comparator
+
 ## Host-Local Command Snapshot
 
 These are the current rerunnable rows from `artifacts/bench_tool_comparison.json`.

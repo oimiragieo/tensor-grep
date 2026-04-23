@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
+from tensor_grep.cli.commands import PYTHON_FULL_HELP_COMMANDS as _PYTHON_FULL_HELP_COMMANDS
 from tensor_grep.cli.runtime_paths import (
     env_flag_enabled,
     resolve_native_tg_binary,
@@ -119,6 +120,14 @@ def _normalize_search_invocation(argv: list[str]) -> list[str] | None:
     return argv
 
 
+def _is_public_help_invocation(argv: list[str]) -> bool:
+    if len(argv) == 1 and argv[0] in {"--help", "-h"}:
+        return True
+    if len(argv) == 2 and argv[0] in _PYTHON_FULL_HELP_COMMANDS and argv[1] in {"--help", "-h"}:
+        return True
+    return False
+
+
 def _requires_full_cli(search_args: list[str]) -> bool:
     if not search_args:
         return True
@@ -205,6 +214,9 @@ def main_entry() -> None:
     if argv and argv[0] in {"--version", "-V"}:
         _print_version()
         raise SystemExit(0)
+    if _is_public_help_invocation(argv):
+        _run_full_cli()
+        return
 
     if argv and argv[0] in {"run", "scan", "test"}:
         if argv[0] == "scan" and _scan_requires_full_cli(argv[1:]):

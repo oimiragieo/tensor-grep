@@ -33,7 +33,8 @@ use tensor_grep_rs::native_search::{
     run_native_search, NativeOutputTarget, NativeSearchConfig, SearchStats,
 };
 use tensor_grep_rs::python_sidecar::{
-    execute_python_passthrough_command, execute_sidecar_command, SidecarError,
+    execute_python_passthrough_command, execute_python_passthrough_command_captured,
+    execute_sidecar_command, SidecarError,
 };
 use tensor_grep_rs::rg_passthrough::{
     execute_ripgrep_search, ripgrep_is_available, RipgrepSearchArgs,
@@ -53,6 +54,7 @@ const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
 #[command(version)]
 #[command(about = "tensor-grep: native search, rewrite, and repository analysis CLI")]
 #[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
+#[command(disable_help_subcommand = true)]
 pub struct CommandCli {
     #[command(subcommand)]
     pub command: Commands,
@@ -63,6 +65,7 @@ pub struct CommandCli {
 #[command(version)]
 #[command(about = "tensor-grep: native search, rewrite, and repository analysis CLI")]
 #[command(after_help = ENVIRONMENT_OVERRIDES_HELP)]
+#[command(disable_help_subcommand = true)]
 pub struct PositionalCli {
     /// The search pattern (regex or string)
     pub pattern: Option<String>,
@@ -317,12 +320,12 @@ pub struct AuditVerifyArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Search for a regex pattern with ripgrep-compatible flags
+    /// Search for a regex pattern with the validated rg-compatible surface
     Search(SearchArgs),
     /// Measure CPU vs GPU crossover thresholds and persist smart-routing calibration
     Calibrate(CalibrateArgs),
     /// Upgrade tensor-grep via the managed Python package path
-    #[command(alias = "update")]
+    #[command(visible_alias = "update")]
     Upgrade,
     /// Verify a rewrite audit manifest digest, chain, and optional signature
     #[command(name = "audit-verify")]
@@ -580,10 +583,19 @@ fn main() -> anyhow::Result<()> {
     let raw_args: Vec<OsString> = std::env::args_os().collect();
 
     if raw_args.len() <= 1 {
-        use clap::CommandFactory;
+        if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
+            if exit_code != 0 {
+                std::process::exit(exit_code.max(1));
+            }
+            return Ok(());
+        }
+        return print_native_top_level_help();
+    }
 
-        let mut cmd = CommandCli::command();
-        cmd.print_help()?;
+    if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
         return Ok(());
     }
 
@@ -617,6 +629,14 @@ fn main() -> anyhow::Result<()> {
     run_command_cli(cli)
 }
 
+fn print_native_top_level_help() -> anyhow::Result<()> {
+    use clap::CommandFactory;
+
+    let mut cmd = CommandCli::command();
+    cmd.print_help()?;
+    Ok(())
+}
+
 fn env_flag_enabled(name: &str) -> bool {
     env::var(name)
         .map(|value| {
@@ -626,6 +646,46 @@ fn env_flag_enabled(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn parse_public_help_passthrough(raw_args: &[OsString]) -> Option<(&str, Vec<String>)> {
+    if raw_args.len() == 1 {
+        return Some(("--help", Vec::new()));
+    }
+
+    let first = raw_args.get(1)?.to_str()?;
+    match (
+        first,
+        raw_args.get(2).and_then(|arg| arg.to_str()),
+        raw_args.len(),
+    ) {
+        ("--help" | "-h", None, 2) => Some((first, Vec::new())),
+        ("search", Some("--help" | "-h"), 3) => {
+            Some(("search", vec![raw_args[2].to_string_lossy().into_owned()]))
+        }
+        _ => None,
+    }
+}
+
+fn try_public_help_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
+    let (command, args) = match parse_public_help_passthrough(raw_args) {
+        Some(invocation) => invocation,
+        None => return Ok(None),
+    };
+
+    match execute_python_passthrough_command_captured(command, args) {
+        Ok(result) if result.exit_code == 0 => {
+            if !result.stdout.is_empty() {
+                print!("{}", result.stdout);
+            }
+            if !result.stderr.is_empty() {
+                eprint!("{}", result.stderr);
+            }
+            Ok(Some(0))
+        }
+        Ok(_) => Ok(None),
+        Err(_) => Ok(None),
+    }
 }
 
 fn try_early_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Result<Option<i32>> {
@@ -778,7 +838,7 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let cli = PositionalCli::try_parse_from(raw_args).ok()?;
     let pattern = cli.pattern.clone()?;
-    let path = cli.path.clone()?;
+    let path = cli.path.clone().unwrap_or_else(|| ".".to_string());
 
     if cli.replace.is_some() || cli.force_cpu || !cli.gpu_device_ids.is_empty() {
         return None;
@@ -1194,7 +1254,7 @@ fn handle_audit_verify_command(args: AuditVerifyArgs) -> anyhow::Result<()> {
 }
 
 fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
-    if cli.pattern.is_none() || cli.path.is_none() {
+    if cli.pattern.is_none() {
         use clap::CommandFactory;
         let mut cmd = PositionalCli::command();
         cmd.print_help()?;
@@ -1202,7 +1262,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     }
 
     let pattern = cli.pattern.clone().unwrap();
-    let path = cli.path.clone().unwrap();
+    let path = cli.path.clone().unwrap_or_else(|| ".".to_string());
 
     let rg_available = ripgrep_is_available();
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]

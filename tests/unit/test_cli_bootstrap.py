@@ -429,20 +429,27 @@ def test_main_entry_should_fallback_to_full_cli_when_rg_is_unavailable(monkeypat
     assert called["full_cli"] is True
 
 
-def test_main_entry_should_fallback_to_full_cli_for_help(monkeypatch):
+def test_main_entry_should_exit_cleanly_for_help(monkeypatch):
     called = {"full_cli": False}
 
     monkeypatch.setattr(sys, "argv", ["tg", "--help"])
     monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(bootstrap, "resolve_ripgrep_binary", lambda: "rg")
     monkeypatch.setattr(
         bootstrap,
         "_run_rg_passthrough",
         lambda binary_name, search_args: pytest.fail("rg passthrough should not run"),
     )
-    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: called.__setitem__("full_cli", True))
+    def _fake_full_cli() -> None:
+        called["full_cli"] = True
+        raise SystemExit(0)
 
-    bootstrap.main_entry()
+    monkeypatch.setattr(bootstrap, "_run_full_cli", _fake_full_cli)
 
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
     assert called["full_cli"] is True
 
 

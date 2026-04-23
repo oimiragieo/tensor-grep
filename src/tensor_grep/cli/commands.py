@@ -1,5 +1,10 @@
-# This file is the single source of truth for all tensor-grep top-level commands.
-# It is read by both the Python Typer application and the Rust native front-door.
+# `KNOWN_COMMANDS` is the shared top-level command contract read by both the
+# Python Typer application and the Rust native front-door. Python-only help
+# routing hints live here too, but Rust maintains its own narrower help probe.
+
+PYTHON_FULL_HELP_COMMANDS = {
+    "search",
+}
 
 KNOWN_COMMANDS = {
     "search",

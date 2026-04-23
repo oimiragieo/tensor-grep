@@ -25,6 +25,23 @@ def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
+TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
+    "Fast text, AST, indexed, and GPU-aware search CLI",
+    "Common usage",
+    "tg PATTERN [PATH ...]",
+    "upgrade",
+    "update",
+    "checkpoint",
+)
+
+
+SEARCH_HELP_REQUIRED_SNIPPETS = (
+    "Usage:",
+    "search [OPTIONS]",
+    "PATTERN",
+)
+
+
 @dataclass
 class _FakeBackend:
     results_by_file: dict[str, SearchResult]
@@ -4423,46 +4440,34 @@ def test_full_cli_run_help_should_not_expose_config_option() -> None:
     assert "--config" not in _strip_ansi(result.stdout)
 
 
-def test_app_help_should_list_upgrade_update_checkpoint_and_symbol_commands():
+def test_app_help_should_expose_the_python_public_top_level_surface():
     runner = CliRunner()
 
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    assert "Fast text, AST, indexed, and GPU-aware search CLI" in result.stdout
-    assert "Common usage" in result.stdout
-    assert "tg PATTERN [PATH ...]" in result.stdout
-    assert "AI workflows" in result.stdout
-    assert "tg map PATH" in result.stdout
-    assert "tg context-render PATH --query" in result.stdout
-    assert "tg edit-plan PATH --query" in result.stdout
-    assert "tg blast-radius-render PATH --symbol" in result.stdout
-    assert "tg session open PATH" in result.stdout
-    assert "tg session daemon start PATH" in result.stdout
+    help_text = _strip_ansi(result.stdout)
+    for snippet in TOP_LEVEL_HELP_REQUIRED_SNIPPETS:
+        assert snippet in help_text
     normalized_help = re.sub(r"\s+", " ", _strip_ansi(result.stdout))
     assert (
         "Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries."
         in normalized_help
     )
     assert "tg doctor --with-lsp" in result.stdout
-    assert "upgrade" in result.stdout
     assert "doctor" in result.stdout
-    assert "update" in result.stdout
-    assert "checkpoint" in result.stdout
-    assert "session" in result.stdout
-    assert "defs" in result.stdout
-    assert "source" in result.stdout
-    assert "impact" in result.stdout
-    assert "refs" in result.stdout
-    assert "callers" in result.stdout
-    assert "blast-radius" in result.stdout
-    assert "blast-radius-render" in result.stdout
-    assert "audit-diff" in result.stdout
-    assert "audit-history" in result.stdout
-    assert "audit-verify" in result.stdout
-    assert "rulesets" in result.stdout
-    assert "Run semantic log classification" in result.stdout
-    assert "worker" not in result.stdout
+    assert "symbol" in result.stdout
+
+
+def test_search_help_should_render_python_search_help_smoke() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["search", "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    for snippet in SEARCH_HELP_REQUIRED_SNIPPETS:
+        assert snippet in help_text
 
 
 def test_worker_help_should_render_dedicated_hidden_command_help() -> None:

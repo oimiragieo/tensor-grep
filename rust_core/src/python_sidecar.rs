@@ -16,6 +16,7 @@ const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
 const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
 const TG_SIDECAR_TIMEOUT_MS_ENV: &str = "TG_SIDECAR_TIMEOUT_MS";
 const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_HELP_PROBE_TIMEOUT_MS: u64 = 1_500;
 const MAX_SOURCE_ROOT_ANCESTOR_DEPTH: usize = 4;
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +38,13 @@ pub struct SidecarCommandResult {
 pub struct SidecarError {
     pub exit_code: i32,
     pub message: String,
+    pub stderr: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PythonPassthroughResult {
+    pub exit_code: i32,
+    pub stdout: String,
     pub stderr: String,
 }
 
@@ -92,6 +100,88 @@ pub fn execute_python_passthrough_command(
         .map_err(|err| map_python_spawn_error(&python, err))?;
 
     Ok(status.code().unwrap_or(1))
+}
+
+pub fn execute_python_passthrough_command_captured(
+    command: &str,
+    args: Vec<String>,
+) -> Result<PythonPassthroughResult, SidecarError> {
+    let python = resolve_python_command();
+    let passthrough_timeout = resolve_help_probe_timeout();
+
+    let mut child = Command::new(&python);
+    configure_python_module_path(&mut child);
+    child
+        .arg("-m")
+        .arg(DEFAULT_TENSOR_GREP_MODULE)
+        .arg(command)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = child
+        .spawn()
+        .map_err(|err| map_python_spawn_error(&python, err))?;
+
+    let stdout = child.stdout.take().ok_or_else(|| SidecarError {
+        exit_code: 1,
+        message: "Python passthrough stdout pipe was unavailable".to_string(),
+        stderr: String::new(),
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| SidecarError {
+        exit_code: 1,
+        message: "Python passthrough stderr pipe was unavailable".to_string(),
+        stderr: String::new(),
+    })?;
+
+    let stdout_reader = read_all_thread(stdout);
+    let stderr_reader = read_all_thread(stderr);
+    let wait_outcome = wait_for_passthrough_or_kill(&mut child, passthrough_timeout)?;
+
+    let stdout_bytes = stdout_reader.join().map_err(|_| SidecarError {
+        exit_code: 1,
+        message: "Python passthrough stdout reader thread panicked".to_string(),
+        stderr: String::new(),
+    })?;
+    let stderr_bytes = stderr_reader.join().map_err(|_| SidecarError {
+        exit_code: 1,
+        message: "Python passthrough stderr reader thread panicked".to_string(),
+        stderr: String::new(),
+    })?;
+
+    let stderr_text = bytes_to_string(stderr_bytes.map_err(|err| SidecarError {
+        exit_code: 1,
+        message: format!("Failed to read Python passthrough stderr: {err}"),
+        stderr: String::new(),
+    })?);
+    let stdout_text = bytes_to_string(stdout_bytes.map_err(|err| SidecarError {
+        exit_code: 1,
+        message: format!("Failed to read Python passthrough stdout: {err}"),
+        stderr: stderr_text.clone(),
+    })?);
+
+    if matches!(wait_outcome, SidecarWaitOutcome::TimedOut) {
+        return Err(SidecarError {
+            exit_code: 124,
+            message: format!(
+                "Python passthrough timed out after {} ms and was terminated",
+                passthrough_timeout.as_millis()
+            ),
+            stderr: stderr_text,
+        });
+    }
+
+    let status = match wait_outcome {
+        SidecarWaitOutcome::Exited(status) => status,
+        SidecarWaitOutcome::TimedOut => unreachable!("timed out passthrough handled above"),
+    };
+
+    Ok(PythonPassthroughResult {
+        exit_code: status.code().unwrap_or(1),
+        stdout: stdout_text,
+        stderr: stderr_text,
+    })
 }
 
 pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, SidecarError> {
@@ -265,6 +355,32 @@ fn wait_for_sidecar_or_kill(
     }
 }
 
+fn wait_for_passthrough_or_kill(
+    child: &mut Child,
+    timeout: Duration,
+) -> Result<SidecarWaitOutcome, SidecarError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(SidecarWaitOutcome::Exited(status)),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    terminate_passthrough_process(child)?;
+                    return Ok(SidecarWaitOutcome::TimedOut);
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => {
+                return Err(SidecarError {
+                    exit_code: 1,
+                    message: format!("Failed while waiting for Python passthrough: {err}"),
+                    stderr: String::new(),
+                });
+            }
+        }
+    }
+}
+
 fn terminate_sidecar_process(child: &mut Child) -> Result<(), SidecarError> {
     if let Err(err) = child.kill() {
         if err.kind() != io::ErrorKind::InvalidInput {
@@ -279,6 +395,56 @@ fn terminate_sidecar_process(child: &mut Child) -> Result<(), SidecarError> {
     child.wait().map_err(|err| SidecarError {
         exit_code: 1,
         message: format!("Failed to reap timed-out Python sidecar: {err}"),
+        stderr: String::new(),
+    })?;
+
+    Ok(())
+}
+
+fn terminate_passthrough_process(child: &mut Child) -> Result<(), SidecarError> {
+    #[cfg(windows)]
+    {
+        let pid = child.id().to_string();
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        match status {
+            Ok(status) if status.success() => {}
+            Ok(_) | Err(_) => {
+                if let Err(err) = child.kill() {
+                    if err.kind() != io::ErrorKind::InvalidInput {
+                        return Err(SidecarError {
+                            exit_code: 1,
+                            message: format!(
+                                "Failed to terminate timed-out Python passthrough tree: {err}"
+                            ),
+                            stderr: String::new(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Err(err) = child.kill() {
+            if err.kind() != io::ErrorKind::InvalidInput {
+                return Err(SidecarError {
+                    exit_code: 1,
+                    message: format!("Failed to terminate timed-out Python passthrough: {err}"),
+                    stderr: String::new(),
+                });
+            }
+        }
+    }
+
+    child.wait().map_err(|err| SidecarError {
+        exit_code: 1,
+        message: format!("Failed to reap timed-out Python passthrough: {err}"),
         stderr: String::new(),
     })?;
 
@@ -416,6 +582,10 @@ fn resolve_sidecar_timeout() -> Duration {
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_SIDECAR_TIMEOUT_MS);
     Duration::from_millis(timeout_ms)
+}
+
+fn resolve_help_probe_timeout() -> Duration {
+    Duration::from_millis(DEFAULT_HELP_PROBE_TIMEOUT_MS)
 }
 
 fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {

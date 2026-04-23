@@ -1803,7 +1803,7 @@ def _select_ast_backend_for_pattern(
 @app.command(
     name="search",
     help="""Search files for a regex pattern, with GPU acceleration when applicable.
-Supports almost all ripgrep (rg) flags for drop-in compatibility.
+The stable text-search contract is the validated rg-compatible surface documented in docs/CONTRACTS.md.
 
 **Other Available Subcommands:**
 - `tg calibrate`: Measure CPU vs GPU crossover thresholds
@@ -2129,7 +2129,7 @@ def search_command(
 ) -> None:
     """
     Search files for a regex pattern, with GPU acceleration when applicable.
-    Supports almost all ripgrep (rg) flags for drop-in compatibility.
+    The stable text-search contract is the validated rg-compatible surface documented in docs/CONTRACTS.md.
     """
     # Just forward to CPU backend for now as a stub.
     # Note: Full flag wiring will require mapping these dozens of parameters into the Pipeline/Core components.
