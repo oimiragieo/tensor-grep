@@ -22,6 +22,8 @@ pub struct RipgrepSearchArgs {
     pub line_number: bool,
     pub only_matching: bool,
     pub context: Option<usize>,
+    pub before_context: Option<usize>,
+    pub after_context: Option<usize>,
     pub max_count: Option<usize>,
     pub word_regexp: bool,
     pub globs: Vec<String>,
@@ -64,6 +66,13 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if let Some(context) = args.context {
         command.arg("-C").arg(context.to_string());
+    } else {
+        if let Some(before_context) = args.before_context {
+            command.arg("-B").arg(before_context.to_string());
+        }
+        if let Some(after_context) = args.after_context {
+            command.arg("-A").arg(after_context.to_string());
+        }
     }
     if let Some(max_count) = args.max_count {
         command.arg("-m").arg(max_count.to_string());

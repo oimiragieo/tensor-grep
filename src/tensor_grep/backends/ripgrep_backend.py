@@ -198,7 +198,7 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-o")
             if config.text:
                 cmd.append("-a")
-            if config.line_number is not None:
+            if config.line_number is not None and not json_mode:
                 if config.line_number:
                     cmd.append("-n")
                 else:

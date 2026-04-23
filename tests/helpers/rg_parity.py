@@ -378,8 +378,47 @@ def _command_env(rg_binary: Path) -> dict[str, str]:
         )
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["TG_RG_PATH"] = str(rg_binary)
+    native_tg = resolve_native_tg_binary()
+    if native_tg is not None:
+        env["TG_NATIVE_TG_BINARY"] = str(native_tg)
     env.setdefault("PYTHONIOENCODING", "utf-8")
     return env
+
+
+def resolve_native_tg_binary() -> Path | None:
+    exe_name = "tg.exe" if sys.platform == "win32" else "tg"
+    for worktree_root in _candidate_repo_roots():
+        release_path = worktree_root / "rust_core" / "target" / "release" / exe_name
+        if release_path.exists():
+            return release_path.resolve()
+        debug_path = worktree_root / "rust_core" / "target" / "debug" / exe_name
+        if debug_path.exists():
+            return debug_path.resolve()
+    return None
+
+
+def _candidate_repo_roots() -> tuple[Path, ...]:
+    roots: list[Path] = [REPO_ROOT]
+    try:
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            encoding="utf-8",
+        )
+    except OSError:
+        return tuple(roots)
+    if result.returncode != 0:
+        return tuple(roots)
+    for line in result.stdout.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        candidate = Path(line.removeprefix("worktree ").strip())
+        if candidate not in roots:
+            roots.append(candidate)
+    return tuple(roots)
 
 
 def _run_command(

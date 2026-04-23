@@ -25,6 +25,8 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         line_number: false,
         only_matching: false,
         context: None,
+        before_context: None,
+        after_context: None,
         max_count: None,
         word_regexp: false,
         globs: Vec::new(),
@@ -59,6 +61,24 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
                     .parse::<usize>()
                     .context("invalid context value")?;
                 args.context = Some(value);
+            }
+            "-A" | "--after-context" => {
+                index += 1;
+                let value = tokens
+                    .get(index)
+                    .context("missing value for after-context")?
+                    .parse::<usize>()
+                    .context("invalid after-context value")?;
+                args.after_context = Some(value);
+            }
+            "-B" | "--before-context" => {
+                index += 1;
+                let value = tokens
+                    .get(index)
+                    .context("missing value for before-context")?
+                    .parse::<usize>()
+                    .context("invalid before-context value")?;
+                args.before_context = Some(value);
             }
             "-m" | "--max-count" => {
                 index += 1;

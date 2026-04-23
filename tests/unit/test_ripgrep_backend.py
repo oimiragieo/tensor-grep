@@ -133,6 +133,32 @@ def test_search_should_emit_runtime_routing_metadata():
     assert result.routing_worker_count == 1
 
 
+def test_search_should_keep_line_numbers_in_json_mode():
+    backend = RipgrepBackend()
+    config = SearchConfig(line_number=False)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = (
+        '{"type":"match","data":{"path":{"text":"a.log"},"lines":{"text":"ERROR one\\n"},'
+        '"line_number":2}}\n'
+    )
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search("a.log", "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--json" in cmd
+    assert "--no-line-number" not in cmd
+    assert result.matches[0].line_number == 2
+
+
 def test_search_should_parse_plain_count_output_without_json():
     backend = RipgrepBackend()
     config = SearchConfig(count=True)

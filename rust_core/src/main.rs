@@ -160,6 +160,14 @@ pub struct SearchArgs {
     #[arg(short = 'C', long)]
     pub context: Option<usize>,
 
+    /// Show NUM context lines after each match
+    #[arg(short = 'A', long = "after-context")]
+    pub after_context: Option<usize>,
+
+    /// Show NUM context lines before each match
+    #[arg(short = 'B', long = "before-context")]
+    pub before_context: Option<usize>,
+
     /// Stop after NUM matching lines per file
     #[arg(short = 'm', long)]
     pub max_count: Option<usize>,
@@ -763,6 +771,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         line_number: false,
         only_matching: false,
         context: None,
+        after_context: None,
+        before_context: None,
         max_count: None,
         word_regexp: false,
         globs: Vec::new(),
@@ -795,6 +805,16 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 index += 1;
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
                 args.context = Some(value);
+            }
+            "-A" | "--after-context" => {
+                index += 1;
+                let value = tokens.get(index)?.parse::<usize>().ok()?;
+                args.after_context = Some(value);
+            }
+            "-B" | "--before-context" => {
+                index += 1;
+                let value = tokens.get(index)?.parse::<usize>().ok()?;
+                args.before_context = Some(value);
             }
             "-m" | "--max-count" => {
                 index += 1;
@@ -1465,7 +1485,7 @@ fn detect_warm_index_state(
 ) -> IndexRoutingState {
     if args.index
         || args.invert_match
-        || args.context.is_some()
+        || search_has_context(args)
         || args.max_count.is_some()
         || args.word_regexp
         || !args.globs.is_empty()
@@ -1601,6 +1621,8 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         line_number: cli.line_number,
         only_matching: cli.only_matching,
         context: None,
+        before_context: None,
+        after_context: None,
         max_count: cli.max_count,
         word_regexp: false,
         globs: Vec::new(),
@@ -1621,6 +1643,8 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         line_number: args.line_number,
         only_matching: args.only_matching,
         context: args.context,
+        before_context: args.before_context,
+        after_context: args.after_context,
         max_count: args.max_count,
         word_regexp: args.word_regexp,
         globs: args.globs.clone(),
@@ -1630,6 +1654,28 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         patterns: request.patterns.clone(),
         path: request.path.clone(),
     }
+}
+
+fn search_has_context(args: &SearchArgs) -> bool {
+    args.context.is_some() || args.before_context.is_some() || args.after_context.is_some()
+}
+
+fn search_before_context(args: &SearchArgs) -> usize {
+    args.before_context.or(args.context).unwrap_or(0)
+}
+
+fn search_after_context(args: &SearchArgs) -> usize {
+    args.after_context.or(args.context).unwrap_or(0)
+}
+
+fn search_effective_context(args: &SearchArgs) -> Option<usize> {
+    args.context
+        .or_else(|| match (args.before_context, args.after_context) {
+            (Some(before), Some(after)) => Some(before.max(after)),
+            (Some(before), None) => Some(before),
+            (None, Some(after)) => Some(after),
+            (None, None) => None,
+        })
 }
 
 fn native_search_config_for_positional(
@@ -1676,8 +1722,8 @@ fn native_search_config_for_command(
         fixed_strings: args.fixed_strings,
         word_boundary: args.word_regexp,
         invert_match: args.invert_match,
-        before_context: args.context.unwrap_or(0),
-        after_context: args.context.unwrap_or(0),
+        before_context: search_before_context(args),
+        after_context: search_after_context(args),
         max_count: args.max_count.map(|value| value as u64),
         glob: args.globs.clone(),
         count: args.count,
@@ -1846,7 +1892,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         fixed_strings: args.fixed_strings,
         invert_match: args.invert_match,
         count: args.count,
-        context: args.context,
+        context: search_effective_context(&args),
         max_count: args.max_count,
         word_regexp: args.word_regexp,
         globs: args.globs.clone(),
@@ -1882,7 +1928,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             rg_available,
             corpus_bytes,
             gpu_auto_supported,
-            prefer_rg_passthrough: args.context.is_some() && !args.json && !args.ndjson,
+            prefer_rg_passthrough: search_has_context(&args) && !args.json && !args.ndjson,
         },
         calibration.as_ref(),
         index_state,
@@ -1906,7 +1952,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 fixed_strings: args.fixed_strings,
                 invert_match: args.invert_match,
                 count: args.count,
-                context: args.context,
+                context: search_effective_context(&args),
                 max_count: args.max_count,
                 word_regexp: args.word_regexp,
                 globs: args.globs.clone(),
@@ -4253,6 +4299,8 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 line_number: params.line_number,
                                 only_matching: false,
                                 context: params.context,
+                                before_context: None,
+                                after_context: None,
                                 max_count: params.max_count,
                                 word_regexp: params.word_regexp,
                                 globs: params.globs.clone(),

@@ -1,21 +1,21 @@
 {
   "artifact": "bench_run_rg_parity_benchmarks",
   "suite": "run_rg_parity_benchmarks",
-  "generated_at_epoch_s": 1776982750.4773457,
+  "generated_at_epoch_s": 1776988127.5815058,
   "timing_samples_per_case": 3,
   "warmup_runs": 1,
-  "rg_binary": "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+  "rg_binary": "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
   "cases": [
     {
       "id": "ignore-case",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--ignore-case",
         "alphabeta sentinel",
         "case-insensitive.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -24,31 +24,31 @@
         "case-insensitive.txt"
       ],
       "rg_samples_s": [
-        0.21387580002192408,
-        0.14243200002238154,
-        0.16608180000912398
+        0.2373733000131324,
+        0.2579156000283547,
+        0.21124330000020564
       ],
       "tg_samples_s": [
-        0.3270003999932669,
-        0.3051046000327915,
-        0.37388410000130534
+        0.5117152000311762,
+        0.4890305000008084,
+        0.4769679000019096
       ],
-      "rg_seconds": 0.16608180000912398,
-      "tg_seconds": 0.3270003999932669,
-      "ratio_vs_rg": 1.9689117048063218,
+      "rg_seconds": 0.2373733000131324,
+      "tg_seconds": 0.4890305000008084,
+      "ratio_vs_rg": 2.060174838424344,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "invert-match",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--invert-match",
         "omit-me",
         "invert.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -57,32 +57,32 @@
         "invert.txt"
       ],
       "rg_samples_s": [
-        0.1531723999651149,
-        0.15943429997423664,
-        0.1537240999750793
+        0.2216189000173472,
+        0.27338919998146594,
+        0.23118829994928092
       ],
       "tg_samples_s": [
-        0.34758169995620847,
-        0.3450052999542095,
-        0.2991277999826707
+        0.5454752999939956,
+        0.475553399999626,
+        0.48861759999999776
       ],
-      "rg_seconds": 0.1537240999750793,
-      "tg_seconds": 0.3450052999542095,
-      "ratio_vs_rg": 2.244314977353189,
+      "rg_seconds": 0.23118829994928092,
+      "tg_seconds": 0.48861759999999776,
+      "ratio_vs_rg": 2.113504879387031,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "context",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--context",
         "2",
         "context sentinel",
         "context.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -92,32 +92,32 @@
         "context.txt"
       ],
       "rg_samples_s": [
-        0.19315539998933673,
-        0.1813706000102684,
-        0.15428309998242185
+        0.19816889998037368,
+        0.20304769999347627,
+        0.20100549998460338
       ],
       "tg_samples_s": [
-        0.30122830002801493,
-        0.29975990002276376,
-        0.2817977000377141
+        0.473983500036411,
+        0.4762612000340596,
+        0.482002500037197
       ],
-      "rg_seconds": 0.1813706000102684,
-      "tg_seconds": 0.29975990002276376,
-      "ratio_vs_rg": 1.652748019832281,
+      "rg_seconds": 0.20100549998460338,
+      "tg_seconds": 0.4762612000340596,
+      "ratio_vs_rg": 2.3693938726579136,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "after-context",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--after-context",
         "2",
         "context sentinel",
         "context.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -127,32 +127,32 @@
         "context.txt"
       ],
       "rg_samples_s": [
-        0.15568999998504296,
-        0.15158160001737997,
-        0.1495373999932781
+        0.20256990002235398,
+        0.20535070000914857,
+        0.22284190001664683
       ],
       "tg_samples_s": [
-        0.274054299981799,
-        0.3104116999893449,
-        0.28917749994434416
+        0.45084140001563355,
+        0.5511664999648929,
+        0.45998509996570647
       ],
-      "rg_seconds": 0.15158160001737997,
-      "tg_seconds": 0.28917749994434416,
-      "ratio_vs_rg": 1.9077348432209964,
+      "rg_seconds": 0.20535070000914857,
+      "tg_seconds": 0.45998509996570647,
+      "ratio_vs_rg": 2.2399977207051824,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "before-context",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--before-context",
         "2",
         "context sentinel",
         "context.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -162,32 +162,32 @@
         "context.txt"
       ],
       "rg_samples_s": [
-        0.242623400001321,
-        0.31989310000790283,
-        0.3861922000069171
+        0.20551200001500547,
+        0.24035290000028908,
+        0.20953480002935976
       ],
       "tg_samples_s": [
-        0.9231946999789216,
-        0.6367112000007182,
-        0.6147350000101142
+        0.46875250001903623,
+        0.45785490004345775,
+        0.455944899993483
       ],
-      "rg_seconds": 0.31989310000790283,
-      "tg_seconds": 0.6367112000007182,
-      "ratio_vs_rg": 1.9903874137484945,
+      "rg_seconds": 0.20953480002935976,
+      "tg_seconds": 0.45785490004345775,
+      "ratio_vs_rg": 2.1851019495535047,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "glob",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--glob",
         "*.py",
         "glob sentinel",
         "types"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -197,32 +197,32 @@
         "types"
       ],
       "rg_samples_s": [
-        0.24454839999089018,
-        0.25127369997790083,
-        0.26823399995919317
+        0.21335889998590574,
+        0.2082731999689713,
+        0.24890129995765164
       ],
       "tg_samples_s": [
-        0.7023834999999963,
-        0.6710340999998152,
-        0.8035013000480831
+        0.6893724999972619,
+        0.733182099997066,
+        0.7247998000239022
       ],
-      "rg_seconds": 0.25127369997790083,
-      "tg_seconds": 0.7023834999999963,
-      "ratio_vs_rg": 2.795292543794953,
+      "rg_seconds": 0.21335889998590574,
+      "tg_seconds": 0.7247998000239022,
+      "ratio_vs_rg": 3.3970919425989807,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "files-with-matches",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--files-with-matches",
         "files match sentinel",
         "files/nested/match.txt",
         "files/miss.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -232,32 +232,32 @@
         "files/miss.txt"
       ],
       "rg_samples_s": [
-        0.23397239996120334,
-        0.27001579996431246,
-        0.27906949998578057
+        0.213784699968528,
+        0.22479760000715032,
+        0.24303439998766407
       ],
       "tg_samples_s": [
-        0.9141144000459462,
-        0.9328841000096872,
-        0.8818126999540254
+        0.8605757000041194,
+        0.896748099999968,
+        0.8247370999888517
       ],
-      "rg_seconds": 0.27001579996431246,
-      "tg_seconds": 0.9141144000459462,
-      "ratio_vs_rg": 3.3854107802830917,
+      "rg_seconds": 0.22479760000715032,
+      "tg_seconds": 0.8605757000041194,
+      "ratio_vs_rg": 3.8282245894829234,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "files-without-match",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--files-without-match",
         "files match sentinel",
         "files/match.txt",
         "files/nested/miss.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -267,31 +267,31 @@
         "files/nested/miss.txt"
       ],
       "rg_samples_s": [
-        0.2284061000100337,
-        0.30030830000760034,
-        0.3915466000325978
+        0.2400158999953419,
+        0.23291650001192465,
+        0.21672550000948831
       ],
       "tg_samples_s": [
-        1.262651500001084,
-        0.9996849000453949,
-        0.891784799983725
+        0.8716578999883495,
+        0.8890356000047177,
+        1.013069499982521
       ],
-      "rg_seconds": 0.30030830000760034,
-      "tg_seconds": 0.9996849000453949,
-      "ratio_vs_rg": 3.3288620395110438,
+      "rg_seconds": 0.23291650001192465,
+      "tg_seconds": 0.8890356000047177,
+      "ratio_vs_rg": 3.8169713178722917,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "fixed-strings",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--fixed-strings",
         "literal.*chars",
         "literal.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -300,31 +300,31 @@
         "literal.txt"
       ],
       "rg_samples_s": [
-        0.22383049997733906,
-        0.2517578999977559,
-        0.23603140003979206
+        0.21454989997437224,
+        0.23859889997402206,
+        0.23199930001283064
       ],
       "tg_samples_s": [
-        0.45225969998864457,
-        0.569645399984438,
-        0.5572273000143468
+        0.5296136999968439,
+        0.4711049000034109,
+        0.41274699999485165
       ],
-      "rg_seconds": 0.23603140003979206,
-      "tg_seconds": 0.5572273000143468,
-      "ratio_vs_rg": 2.36081851787688,
+      "rg_seconds": 0.23199930001283064,
+      "tg_seconds": 0.4711049000034109,
+      "ratio_vs_rg": 2.0306306957708777,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "word-regexp",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--word-regexp",
         "word",
         "words.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -333,32 +333,32 @@
         "words.txt"
       ],
       "rg_samples_s": [
-        0.2523335999576375,
-        0.2504247999750078,
-        0.24694719997933134
+        0.20991559996036813,
+        0.20885769999586046,
+        0.20891780004603788
       ],
       "tg_samples_s": [
-        0.5089470000239089,
-        0.45886460004840046,
-        0.46820619999198243
+        0.45418549998430535,
+        0.4215398000087589,
+        0.42600570002105087
       ],
-      "rg_seconds": 0.2504247999750078,
-      "tg_seconds": 0.46820619999198243,
-      "ratio_vs_rg": 1.8696478944525825,
+      "rg_seconds": 0.20891780004603788,
+      "tg_seconds": 0.42600570002105087,
+      "ratio_vs_rg": 2.0391067679593347,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "max-count",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--max-count",
         "10",
         "max-count sentinel",
         "max-count.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -368,32 +368,32 @@
         "max-count.txt"
       ],
       "rg_samples_s": [
-        0.17473949998384342,
-        0.1886915999930352,
-        0.19526589999441057
+        0.2270462999586016,
+        0.20918549998896196,
+        0.20888700004434213
       ],
       "tg_samples_s": [
-        0.3645375000196509,
-        0.38458600000012666,
-        0.3239550999714993
+        0.4684076000121422,
+        0.43367669999133795,
+        0.46278820000588894
       ],
-      "rg_seconds": 0.1886915999930352,
-      "tg_seconds": 0.3645375000196509,
-      "ratio_vs_rg": 1.9319222479066709,
+      "rg_seconds": 0.20918549998896196,
+      "tg_seconds": 0.46278820000588894,
+      "ratio_vs_rg": 2.212334029033125,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "type",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--type",
         "py",
         "type sentinel",
         "types"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -403,31 +403,31 @@
         "types"
       ],
       "rg_samples_s": [
-        0.19081719999667257,
-        0.2363270999630913,
-        0.2206929000094533
+        0.213594600034412,
+        0.21684010000899434,
+        0.21253219997743145
       ],
       "tg_samples_s": [
-        0.43842969997785985,
-        0.3699397000018507,
-        0.36306850000983104
+        0.44313839997630566,
+        0.46767459996044636,
+        0.4276590999797918
       ],
-      "rg_seconds": 0.2206929000094533,
-      "tg_seconds": 0.3699397000018507,
-      "ratio_vs_rg": 1.6762646192333532,
+      "rg_seconds": 0.213594600034412,
+      "tg_seconds": 0.44313839997630566,
+      "ratio_vs_rg": 2.074670426616179,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "hidden",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--hidden",
         "hidden sentinel",
         "."
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -436,31 +436,31 @@
         "."
       ],
       "rg_samples_s": [
-        0.16253020003205165,
-        0.20000589999835938,
-        0.2034272999735549
+        0.23857410001801327,
+        0.22339189995545894,
+        0.2173991000163369
       ],
       "tg_samples_s": [
-        0.3659434999572113,
-        0.3805626999819651,
-        0.36493939999490976
+        0.41614129999652505,
+        0.4155136999906972,
+        0.431859300006181
       ],
-      "rg_seconds": 0.20000589999835938,
-      "tg_seconds": 0.3659434999572113,
-      "ratio_vs_rg": 1.829663524727086,
+      "rg_seconds": 0.22339189995545894,
+      "tg_seconds": 0.41614129999652505,
+      "ratio_vs_rg": 1.8628307475763333,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "follow",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--follow",
         "follow sentinel",
         "links"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -469,31 +469,31 @@
         "links"
       ],
       "rg_samples_s": [
-        0.2265686999890022,
-        0.1754060999955982,
-        0.20075700001325458
+        0.206359000003431,
+        0.2052347999997437,
+        0.2286362000158988
       ],
       "tg_samples_s": [
-        0.4015069999732077,
-        0.3883485000114888,
-        0.3624957000138238
+        0.45389720000093803,
+        0.45031890005338937,
+        0.4387647000257857
       ],
-      "rg_seconds": 0.20075700001325458,
-      "tg_seconds": 0.3883485000114888,
-      "ratio_vs_rg": 1.9344207175134558,
+      "rg_seconds": 0.206359000003431,
+      "tg_seconds": 0.45031890005338937,
+      "ratio_vs_rg": 2.1822110983572425,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "smart-case",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--smart-case",
         "smartcase sentinel",
         "smart-case.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -502,31 +502,31 @@
         "smart-case.txt"
       ],
       "rg_samples_s": [
-        0.1808776999823749,
-        0.17977970000356436,
-        0.19410329998936504
+        0.20237800001632422,
+        0.23887599998852238,
+        0.2152326999930665
       ],
       "tg_samples_s": [
-        0.29439969995291904,
-        0.3294055000296794,
-        0.3551053000264801
+        0.4192049000412226,
+        0.4485277000349015,
+        0.4854880000348203
       ],
-      "rg_seconds": 0.1808776999823749,
-      "tg_seconds": 0.3294055000296794,
-      "ratio_vs_rg": 1.8211504240808973,
+      "rg_seconds": 0.2152326999930665,
+      "tg_seconds": 0.4485277000349015,
+      "ratio_vs_rg": 2.0839198692826435,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "line-number",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--line-number",
         "line number sentinel",
         "line-number.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -535,31 +535,31 @@
         "line-number.txt"
       ],
       "rg_samples_s": [
-        0.20350530004361644,
-        0.21483760001137853,
-        0.22124699997948483
+        0.20562329998938367,
+        0.23934959998587146,
+        0.2132151999976486
       ],
       "tg_samples_s": [
-        0.3341307999799028,
-        0.3043146000127308,
-        0.3226673000026494
+        0.4582261000177823,
+        0.437085899990052,
+        0.45020279998425394
       ],
-      "rg_seconds": 0.21483760001137853,
-      "tg_seconds": 0.3226673000026494,
-      "ratio_vs_rg": 1.501912607409317,
+      "rg_seconds": 0.2132151999976486,
+      "tg_seconds": 0.45020279998425394,
+      "ratio_vs_rg": 2.1114948652310854,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "column",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--column",
         "column sentinel",
         "column.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -568,32 +568,32 @@
         "column.txt"
       ],
       "rg_samples_s": [
-        0.202162999950815,
-        0.20299249998060986,
-        0.18998560000909492
+        0.2508506000158377,
+        0.2440006000106223,
+        0.26145199994789436
       ],
       "tg_samples_s": [
-        0.37105969997355714,
-        0.3065286999917589,
-        0.31215859996154904
+        0.45334389997879043,
+        0.47397669998463243,
+        0.4526151000172831
       ],
-      "rg_seconds": 0.202162999950815,
-      "tg_seconds": 0.31215859996154904,
-      "ratio_vs_rg": 1.5440936276049293,
+      "rg_seconds": 0.2508506000158377,
+      "tg_seconds": 0.45334389997879043,
+      "ratio_vs_rg": 1.807226691704816,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "count",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--count",
         "count sentinel",
         "counts/a.txt",
         "counts/b.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -603,31 +603,31 @@
         "counts/b.txt"
       ],
       "rg_samples_s": [
-        0.20529670000541955,
-        0.17208259995095432,
-        0.1620697000180371
+        0.23590560001321137,
+        0.22748960001626983,
+        0.24073790002148598
       ],
       "tg_samples_s": [
-        0.3037579000229016,
-        0.2852273000171408,
-        0.30159940000157803
+        0.4811629999894649,
+        0.4902038999716751,
+        0.4659164000186138
       ],
-      "rg_seconds": 0.17208259995095432,
-      "tg_seconds": 0.30159940000157803,
-      "ratio_vs_rg": 1.7526432078986347,
+      "rg_seconds": 0.23590560001321137,
+      "tg_seconds": 0.4811629999894649,
+      "ratio_vs_rg": 2.0396421278787717,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "count-matches",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--count-matches",
         "count-match sentinel",
         "count-matches.txt"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -636,31 +636,31 @@
         "count-matches.txt"
       ],
       "rg_samples_s": [
-        0.1406971999676898,
-        0.14385479997145012,
-        0.1432323000044562
+        0.22395759995561093,
+        0.24295149999670684,
+        0.2320923000224866
       ],
       "tg_samples_s": [
-        0.29723299999022856,
-        0.312215699988883,
-        0.3121209000237286
+        0.4906192000489682,
+        0.46656450000591576,
+        0.48686159995850176
       ],
-      "rg_seconds": 0.1432323000044562,
-      "tg_seconds": 0.3121209000237286,
-      "ratio_vs_rg": 2.179123703340783,
+      "rg_seconds": 0.2320923000224866,
+      "tg_seconds": 0.48686159995850176,
+      "ratio_vs_rg": 2.097706817121169,
       "semantic_parity": true,
       "status": "regression"
     },
     {
       "id": "text",
       "rg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
+        "C:\\wt\\tgmerge145\\benchmarks\\ripgrep-14.1.0-x86_64-pc-windows-msvc\\rg.exe",
         "--text",
         "text sentinel",
         "binary.bin"
       ],
       "tg_command": [
-        "C:\\Users\\oimir\\.config\\superpowers\\worktrees\\tensor-grep\\rg-parity-help-contract\\.venv\\Scripts\\python.exe",
+        "C:\\wt\\tgmerge145\\.venv\\Scripts\\python.exe",
         "-m",
         "tensor_grep",
         "search",
@@ -669,18 +669,18 @@
         "binary.bin"
       ],
       "rg_samples_s": [
-        0.17304830002831295,
-        0.14225979999173433,
-        0.17580790002830327
+        0.19469309999840334,
+        0.20014420000370592,
+        0.20590729999821633
       ],
       "tg_samples_s": [
-        0.2859695000224747,
-        0.29447040002560243,
-        0.3016937000211328
+        0.4448678999906406,
+        0.4377007999573834,
+        0.43914400000358
       ],
-      "rg_seconds": 0.17304830002831295,
-      "tg_seconds": 0.29447040002560243,
-      "ratio_vs_rg": 1.7016659509363758,
+      "rg_seconds": 0.20014420000370592,
+      "tg_seconds": 0.43914400000358,
+      "ratio_vs_rg": 2.1941380264601658,
       "semantic_parity": true,
       "status": "regression"
     }
