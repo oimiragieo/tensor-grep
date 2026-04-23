@@ -224,6 +224,7 @@ struct FileSearchResult {
     match_count: usize,
     binary_detected: bool,
     binary_match_detected: bool,
+    binary_byte_offset: Option<u64>,
     used_chunk_parallel: bool,
 }
 
@@ -231,6 +232,7 @@ struct FileSearchResult {
 struct BinaryAwareSink<S> {
     inner: S,
     saw_binary: bool,
+    first_binary_byte_offset: Option<u64>,
 }
 
 impl<S> BinaryAwareSink<S> {
@@ -238,11 +240,16 @@ impl<S> BinaryAwareSink<S> {
         Self {
             inner,
             saw_binary: false,
+            first_binary_byte_offset: None,
         }
     }
 
     fn saw_binary(&self) -> bool {
         self.saw_binary
+    }
+
+    fn binary_byte_offset(&self) -> Option<u64> {
+        self.first_binary_byte_offset
     }
 
     fn into_inner(self) -> S {
@@ -278,6 +285,9 @@ where
         binary_byte_offset: u64,
     ) -> Result<bool, Self::Error> {
         self.saw_binary = true;
+        if self.first_binary_byte_offset.is_none() {
+            self.first_binary_byte_offset = Some(binary_byte_offset);
+        }
         self.inner.binary_data(searcher, binary_byte_offset)
     }
 
@@ -343,6 +353,7 @@ impl ParallelWalkWorker {
             match_count,
             binary_detected,
             binary_match_detected,
+            binary_byte_offset,
             ..
         } = file_result;
 
@@ -350,7 +361,12 @@ impl ParallelWalkWorker {
         if binary_detected {
             self.local_stats.skipped_binary_files += 1;
             if binary_match_detected {
-                emit_binary_match_warning(path)?;
+                emit_binary_match_warning(
+                    &self.config.output_target,
+                    path,
+                    binary_byte_offset,
+                    self.config.json || self.config.ndjson,
+                )?;
                 self.local_stats.binary_match_files += 1;
             }
             self.output_buffer.clear();
@@ -415,6 +431,7 @@ impl ParallelWalkWorker {
             })?;
 
         let binary_detected = sink.saw_binary();
+        let binary_byte_offset = sink.binary_byte_offset();
         let binary_match_detected =
             binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if binary_detected {
@@ -428,6 +445,7 @@ impl ParallelWalkWorker {
             match_count,
             binary_detected,
             binary_match_detected,
+            binary_byte_offset,
             used_chunk_parallel: false,
         })
     }
@@ -457,6 +475,7 @@ impl ParallelWalkWorker {
             .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
 
         let binary_detected = sink.saw_binary();
+        let binary_byte_offset = sink.binary_byte_offset();
         let binary_match_detected =
             binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if binary_detected {
@@ -470,6 +489,7 @@ impl ParallelWalkWorker {
             match_count,
             binary_detected,
             binary_match_detected,
+            binary_byte_offset,
             used_chunk_parallel: false,
         })
     }
@@ -486,6 +506,7 @@ impl ParallelWalkWorker {
             .with_context(|| format!("native count output search failed for {}", path.display()))?;
 
         let binary_detected = sink.saw_binary();
+        let binary_byte_offset = sink.binary_byte_offset();
         let binary_match_detected =
             binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
         if !binary_detected {
@@ -499,6 +520,7 @@ impl ParallelWalkWorker {
             match_count,
             binary_detected,
             binary_match_detected,
+            binary_byte_offset,
             used_chunk_parallel: false,
         })
     }
@@ -714,6 +736,7 @@ fn run_native_search_files(
             match_count,
             binary_detected,
             binary_match_detected,
+            binary_byte_offset,
             used_chunk_parallel,
         } = file_result;
 
@@ -721,7 +744,12 @@ fn run_native_search_files(
         if binary_detected {
             stats.skipped_binary_files += 1;
             if binary_match_detected {
-                emit_binary_match_warning(&file_path)?;
+                emit_binary_match_warning(
+                    &config.output_target,
+                    &file_path,
+                    binary_byte_offset,
+                    config.json || config.ndjson,
+                )?;
                 stats.binary_match_files += 1;
             }
             continue;
@@ -927,7 +955,7 @@ fn search_file_streaming_standard_sequential(
 
     let mut printer = builder.build_no_color(writer);
     let mut searcher = build_searcher(config, config.line_number);
-    let (matches, binary_detected) = {
+    let (matches, binary_detected, binary_byte_offset) = {
         let sink = CollectingSink::new(printer.sink_with_path(matcher, path), path.to_path_buf());
         let mut sink = BinaryAwareSink::new(sink);
         searcher
@@ -939,8 +967,9 @@ fn search_file_streaming_standard_sequential(
                 )
             })?;
         let binary_detected = sink.saw_binary();
+        let binary_byte_offset = sink.binary_byte_offset();
         let matches = sink.into_inner().into_matches();
-        (matches, binary_detected)
+        (matches, binary_detected, binary_byte_offset)
     };
     printer.get_mut().get_mut().finish()?;
 
@@ -957,6 +986,7 @@ fn search_file_streaming_standard_sequential(
         matches,
         binary_detected,
         binary_match_detected,
+        binary_byte_offset,
         used_chunk_parallel: false,
     })
 }
@@ -1029,6 +1059,7 @@ fn search_file_streaming_plain_sequential(
 
     let binary_detected = sink.saw_binary();
     let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
+    let binary_byte_offset = sink.binary_byte_offset();
     if binary_detected {
         matches.clear();
         match_count = 0;
@@ -1044,6 +1075,7 @@ fn search_file_streaming_plain_sequential(
         match_count,
         binary_detected,
         binary_match_detected,
+        binary_byte_offset,
         used_chunk_parallel: false,
     })
 }
@@ -1273,6 +1305,7 @@ fn search_file_chunk_parallel(
             match_count,
             binary_detected: false,
             binary_match_detected: false,
+            binary_byte_offset: None,
             used_chunk_parallel: true,
         });
     }
@@ -1300,6 +1333,7 @@ fn search_file_chunk_parallel(
         matches,
         binary_detected: false,
         binary_match_detected: false,
+        binary_byte_offset: None,
         used_chunk_parallel: true,
     })
 }
@@ -1475,6 +1509,7 @@ fn search_file_collect_matches_with_searcher(
         .with_context(|| format!("native search failed for {}", path.display()))?;
 
     let binary_detected = sink.saw_binary();
+    let binary_byte_offset = sink.binary_byte_offset();
     let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
     if binary_detected {
         matches.clear();
@@ -1485,6 +1520,7 @@ fn search_file_collect_matches_with_searcher(
         matches,
         binary_detected,
         binary_match_detected,
+        binary_byte_offset,
         used_chunk_parallel: false,
     })
 }
@@ -1516,6 +1552,7 @@ fn search_file_ndjson_with_searcher(
         .with_context(|| format!("native NDJSON search failed for {}", path.display()))?;
 
     let binary_detected = sink.saw_binary();
+    let binary_byte_offset = sink.binary_byte_offset();
     let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
     if binary_detected {
         matches.clear();
@@ -1526,6 +1563,7 @@ fn search_file_ndjson_with_searcher(
         matches,
         binary_detected,
         binary_match_detected,
+        binary_byte_offset,
         used_chunk_parallel: false,
     })
 }
@@ -1547,11 +1585,29 @@ fn binary_file_matches_pattern(
     }
 }
 
-fn emit_binary_match_warning(path: &Path) -> Result<()> {
-    let mut stderr = io::stderr().lock();
-    writeln!(stderr, "Binary file {} matches", path.display())?;
-    stderr.flush()?;
-    Ok(())
+fn emit_binary_match_warning(
+    output_target: &NativeOutputTarget,
+    path: &Path,
+    binary_byte_offset: Option<u64>,
+    structured_output: bool,
+) -> Result<()> {
+    let mut bytes = Vec::new();
+    if structured_output {
+        writeln!(bytes, "Binary file {} matches", path.display())?;
+        let mut stderr = io::stderr().lock();
+        stderr.write_all(&bytes)?;
+        stderr.flush()?;
+        Ok(())
+    } else {
+        match binary_byte_offset {
+            Some(offset) => writeln!(
+                bytes,
+                "binary file matches (found \"/0\" byte around offset {offset})"
+            )?,
+            None => writeln!(bytes, "binary file matches")?,
+        }
+        output_target.write_all(&bytes)
+    }
 }
 
 fn count_matches_with_searcher(

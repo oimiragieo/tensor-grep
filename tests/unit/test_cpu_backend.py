@@ -160,6 +160,75 @@ class TestCPUBackend:
         assert result.routing_backend == "CPUBackend"
         assert result.routing_reason == "cpu_rust_regex"
 
+    def test_should_strip_line_terminators_from_rust_backend_matches(self, tmp_path):
+        log = tmp_path / "rust_newlines.log"
+        log.write_text("apple\nbanana\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                return [(1, "apple\r\n")]
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "apple")
+
+        assert result.total_matches == 1
+        assert result.matches[0].line_number == 1
+        assert result.matches[0].text == "apple"
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_rust_regex"
+
+    def test_should_honor_max_count_on_rust_backend_fast_path(self, tmp_path):
+        log = tmp_path / "rust_max_count.log"
+        log.write_text("apple\napple banana\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                return [(1, "apple"), (2, "apple banana")]
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "apple", config=SearchConfig(max_count=1))
+
+        assert result.total_matches == 1
+        assert result.total_files == 1
+        assert [(match.line_number, match.text) for match in result.matches] == [(1, "apple")]
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_rust_regex"
+
+    def test_should_skip_rust_fast_path_when_context_is_requested(self, tmp_path, caplog):
+        log = tmp_path / "rust_context.log"
+        log.write_text("before\napple\nafter\n", encoding="utf-8")
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FakeRustBackend:
+            def search(self, **kwargs):
+                raise AssertionError("context searches should bypass the Rust fast path")
+
+        rust_mod.RustBackend = FakeRustBackend
+
+        backend = CPUBackend()
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            result = backend.search(str(log), "apple", config=SearchConfig(context=1))
+
+        assert [(match.line_number, match.text) for match in result.matches] == [
+            (1, "before"),
+            (2, "apple"),
+            (3, "after"),
+        ]
+        assert "Rust backend failed" not in caplog.text
+        assert result.routing_backend == "CPUBackend"
+        assert result.routing_reason == "cpu_python_regex"
+
     def test_should_match_ltl_eventually_sequence_when_ordered(self, tmp_path):
         from tensor_grep.core.config import SearchConfig
 

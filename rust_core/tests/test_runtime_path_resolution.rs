@@ -144,9 +144,9 @@ fn pythonpath_validating_passthrough_wrapper_script(
             dir,
             "pythonpath-validating-wrapper.cmd",
             &format!(
-                "@echo off\r\nsetlocal\r\necho %PYTHONPATH%>\"{}\"\r\necho %PYTHONPATH% | findstr /C:\"{}\" >nul\r\nif errorlevel 1 exit /b 1\r\necho Usage: tensor_grep defs\r\nexit /b 0\r\n",
-                marker.display(),
-                expected_src.display()
+                "@echo off\r\nsetlocal\r\nset \"CURRENT=%PYTHONPATH%\"\r\nset \"EXPECTED={}\"\r\necho %CURRENT%>\"{}\"\r\ncall set \"FOUND=%%CURRENT:%EXPECTED%=%%\"\r\nif \"%FOUND%\"==\"%CURRENT%\" exit /b 1\r\necho Usage: tensor_grep defs\r\nexit /b 0\r\n",
+                expected_src.display(),
+                marker.display()
             ),
         )
     } else {

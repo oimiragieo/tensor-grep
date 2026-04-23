@@ -1015,16 +1015,14 @@ fn test_search_single_binary_file_emits_stderr_warning_and_exit_zero() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        output.stdout.is_empty(),
+        String::from_utf8_lossy(&output.stdout).trim()
+            == "binary file matches (found \"/0\" byte around offset 0)",
         "stdout={}",
         String::from_utf8_lossy(&output.stdout)
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        stderr.trim(),
-        format!("Binary file {} matches", binary_path.display())
-    );
+    assert!(stderr.trim().is_empty(), "stderr={stderr}");
 }
 
 #[test]

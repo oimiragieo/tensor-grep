@@ -219,65 +219,68 @@ class CPUBackend(ComputeBackend):
         # Instead of using Python's standard `re` module (which uses backtracking and is vulnerable
         # to ReDoS attacks), we route complex pure-python CPU requests to the native Rust `regex` crate.
         # Rust's regex engine uses Finite Automata which mathematically guarantees O(m) linear time execution.
-        try:
-            from tensor_grep.rust_core import RustBackend
-
-            rust_backend = RustBackend()
+        rust_semantics_supported = not (
+            getattr(config, "context", False)
+            or getattr(config, "before_context", False)
+            or getattr(config, "after_context", False)
+            or getattr(config, "line_regexp", False)
+            or getattr(config, "word_regexp", False)
+        )
+        if rust_semantics_supported:
             try:
-                rust_results = rust_backend.search(
-                    pattern=pattern,
-                    path=file_path,
-                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
-                    fixed_strings=config.fixed_strings,
-                    invert_match=config.invert_match,
-                )
-            except TypeError:
-                rust_results = rust_backend.search(
-                    pattern=pattern,
-                    path=file_path,
-                    ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
-                    fixed_strings=config.fixed_strings,
-                )
+                from tensor_grep.rust_core import RustBackend
 
-            # If Rust returns no matches on a file that is not valid UTF-8, fall back to Python
-            # decoding path (latin-1/replace) for compatibility.
-            if not rust_results:
+                rust_backend = RustBackend()
                 try:
-                    Path(file_path).read_text(encoding="utf-8")
-                except UnicodeDecodeError as exc:
-                    raise RuntimeError(
-                        "Rust backend UTF-8 decode mismatch, using Python fallback"
-                    ) from exc
+                    rust_results = rust_backend.search(
+                        pattern=pattern,
+                        path=file_path,
+                        ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
+                        fixed_strings=config.fixed_strings,
+                        invert_match=config.invert_match,
+                    )
+                except TypeError:
+                    rust_results = rust_backend.search(
+                        pattern=pattern,
+                        path=file_path,
+                        ignore_case=config.ignore_case or (config.smart_case and pattern.islower()),
+                        fixed_strings=config.fixed_strings,
+                    )
 
-            # Since the Rust backend currently just returns `(line_num, string)`, we need to adapt it
-            # context lines (like -C 2) aren't fully implemented in the Rust bridging yet, but we will
-            # return the matched lines securely.
-            if (
-                getattr(config, "context", False)
-                or getattr(config, "before_context", False)
-                or getattr(config, "after_context", False)
-            ):
-                raise NotImplementedError(
-                    "Rust backend does not support context lines yet, fallback to python"
+                # If Rust returns no matches on a file that is not valid UTF-8, fall back to Python
+                # decoding path (latin-1/replace) for compatibility.
+                if not rust_results:
+                    try:
+                        Path(file_path).read_text(encoding="utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise RuntimeError(
+                            "Rust backend UTF-8 decode mismatch, using Python fallback"
+                        ) from exc
+
+                if config.max_count is not None:
+                    rust_results = rust_results[: config.max_count]
+
+                matches = [
+                    MatchLine(line_number=r[0], text=str(r[1]).rstrip("\n\r"), file=file_path)
+                    for r in rust_results
+                ]
+
+                return SearchResult(
+                    matches=matches,
+                    total_files=1 if matches else 0,
+                    total_matches=len(matches),
+                    routing_backend="CPUBackend",
+                    routing_reason="cpu_rust_regex",
+                    routing_distributed=False,
+                    routing_worker_count=1,
                 )
 
-            matches = [MatchLine(line_number=r[0], text=r[1], file=file_path) for r in rust_results]
-
-            return SearchResult(
-                matches=matches,
-                total_files=1 if matches else 0,
-                total_matches=len(matches),
-                routing_backend="CPUBackend",
-                routing_reason="cpu_rust_regex",
-                routing_distributed=False,
-                routing_worker_count=1,
-            )
-
-        except Exception as exc:
-            # Fallback to python `re` only if `tensor_grep.rust_core` is entirely broken or not supporting the feature
-            logger.warning(
-                "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
-            )
+            except Exception as exc:
+                # Fallback to python `re` only if `tensor_grep.rust_core` is entirely broken or
+                # not supporting the feature.
+                logger.warning(
+                    "Rust backend failed for %s, falling back to Python regex: %s", file_path, exc
+                )
 
         matches = []
         flags = 0

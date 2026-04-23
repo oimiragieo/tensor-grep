@@ -59,6 +59,29 @@ def test_rust_backend_respects_invert_and_skips_count_fast_path(monkeypatch, tmp
     assert result.routing_reason == "rust_regex"
 
 
+def test_rust_backend_honors_max_count(monkeypatch, tmp_path: Path):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    class FakeNativeRustBackend:
+        def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
+            return [(1, "apple"), (2, "apple banana")]
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "max_count.log"
+    log_file.write_text("apple\napple banana\n")
+    result = backend.search(str(log_file), "apple", config=SearchConfig(max_count=1))
+
+    assert result.total_matches == 1
+    assert result.total_files == 1
+    assert [(match.line_number, match.text) for match in result.matches] == [(1, "apple")]
+    assert result.routing_backend == "RustCoreBackend"
+    assert result.routing_reason == "rust_regex"
+
+
 def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_path: Path):
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.core.config import SearchConfig

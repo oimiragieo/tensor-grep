@@ -1625,7 +1625,7 @@ fn native_search_config_for_command(
         json: args.json,
         ndjson: args.ndjson,
         verbose: args.verbose,
-        line_number: false,
+        line_number: args.line_number,
         only_matching: args.only_matching,
         replace: args.replace.clone(),
         ..NativeSearchConfig::default()

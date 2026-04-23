@@ -85,6 +85,9 @@ class RustCoreBackend(ComputeBackend):
                 routing_worker_count=1,
             )
 
+        if config and config.max_count is not None:
+            results = results[: config.max_count]
+
         matches = []
         for line_num, text in results:
             clean_text = text.rstrip("\r\n")

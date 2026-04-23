@@ -1722,9 +1722,9 @@ fn group_edits_by_file(edits: &[RewriteEdit]) -> Vec<(&Path, Vec<&RewriteEdit>)>
     }
 
     let mut files: Vec<(&Path, Vec<&RewriteEdit>)> = edits_by_file.into_iter().collect();
-    files.sort_by(|(left, _), (right, _)| left.cmp(right));
+    files.sort_by_key(|(left, _)| *left);
     for (_, file_edits) in &mut files {
-        file_edits.sort_by(|left, right| left.byte_range.start.cmp(&right.byte_range.start));
+        file_edits.sort_by_key(|left| left.byte_range.start);
     }
     files
 }

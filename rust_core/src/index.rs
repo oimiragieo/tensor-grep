@@ -930,9 +930,8 @@ fn extract_file_trigrams(path: &Path) -> Result<Vec<([u8; 3], u32)>> {
 
     let mmap = unsafe { MmapOptions::new().map(&file)? };
     let mut trigrams = Vec::new();
-    let mut line_num: u32 = 1;
 
-    for line_bytes in mmap.split(|&b| b == b'\n') {
+    for (line_num, line_bytes) in (1_u32..).zip(mmap.split(|&b| b == b'\n')) {
         let line = if line_bytes.last() == Some(&b'\r') {
             &line_bytes[..line_bytes.len() - 1]
         } else {
@@ -949,7 +948,6 @@ fn extract_file_trigrams(path: &Path) -> Result<Vec<([u8; 3], u32)>> {
                 }
             }
         }
-        line_num += 1;
     }
 
     Ok(trigrams)
