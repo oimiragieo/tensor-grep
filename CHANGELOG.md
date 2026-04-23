@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.4.4 (2026-04-23)
+
+### Bug Fixes
+
+- Repair audit parity and front-door contracts
+  ([`4783c27`](https://github.com/oimiragieo/tensor-grep/commit/4783c27f6854f0513d57a843ebe7274681b9db72))
+
+- Repair audit parity and front-door contracts
+  ([`8f65460`](https://github.com/oimiragieo/tensor-grep/commit/8f65460355deefdd716f217ee5bce2b233046e86))
+
+- Restore dependabot repo context and ci format parity
+  ([`f491213`](https://github.com/oimiragieo/tensor-grep/commit/f491213a221fe3387be1d74fffd43a74c83db95d))
+
+- Restore native parity and ci stability
+  ([`0fc3dbc`](https://github.com/oimiragieo/tensor-grep/commit/0fc3dbc22e65b631bc4f54eea0324788cb2cc415))
+
+
 ## v1.4.3 (2026-04-21)
 
 ### Bug Fixes
