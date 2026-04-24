@@ -404,9 +404,12 @@ def test_search_help_exposes_required_public_flags(parity_env):
     assert python_help.returncode == 0
     assert native_help.returncode == 0
 
+    python_stdout = _strip_ansi(python_help.stdout)
+    native_stdout = _strip_ansi(native_help.stdout)
+
     for flag in PUBLIC_SEARCH_HELP_FLAGS:
-        assert flag in python_help.stdout, f"Missing {flag} in python-m search --help"
-        assert flag in native_help.stdout, f"Missing {flag} in native search --help"
+        assert flag in python_stdout, f"Missing {flag} in python-m search --help"
+        assert flag in native_stdout, f"Missing {flag} in native search --help"
 
 
 def test_top_level_help_visible_commands_match_public_contract(parity_env):

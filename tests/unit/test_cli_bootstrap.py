@@ -440,6 +440,7 @@ def test_main_entry_should_exit_cleanly_for_help(monkeypatch):
         "_run_rg_passthrough",
         lambda binary_name, search_args: pytest.fail("rg passthrough should not run"),
     )
+
     def _fake_full_cli() -> None:
         called["full_cli"] = True
         raise SystemExit(0)

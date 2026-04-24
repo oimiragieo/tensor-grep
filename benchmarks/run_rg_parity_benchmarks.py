@@ -44,7 +44,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def benchmarkable_cases():
-    return tuple(case for case in build_rg_parity_cases(RG_CONTRACT_ROWS) if case.row["benchmarkable"])
+    return tuple(
+        case for case in build_rg_parity_cases(RG_CONTRACT_ROWS) if case.row["benchmarkable"]
+    )
 
 
 def _run_timed_command(argv: tuple[str, ...], *, cwd: Path, env: dict[str, str]) -> float:
@@ -62,7 +64,9 @@ def _run_timed_command(argv: tuple[str, ...], *, cwd: Path, env: dict[str, str])
     )
     elapsed = time.perf_counter() - started
     if completed.returncode not in {0, 1}:
-        raise RuntimeError(f"Command failed with exit code {completed.returncode}: {' '.join(argv)}")
+        raise RuntimeError(
+            f"Command failed with exit code {completed.returncode}: {' '.join(argv)}"
+        )
     return elapsed
 
 
@@ -87,10 +91,12 @@ def run_contract_benchmark(case, *, corpus, rg_binary: Path) -> dict[str, Any]:
         _run_timed_command(tg_argv, cwd=corpus.root, env=env)
 
     rg_samples = [
-        _run_timed_command(rg_argv, cwd=corpus.root, env=env) for _ in range(TIMING_SAMPLES_PER_CASE)
+        _run_timed_command(rg_argv, cwd=corpus.root, env=env)
+        for _ in range(TIMING_SAMPLES_PER_CASE)
     ]
     tg_samples = [
-        _run_timed_command(tg_argv, cwd=corpus.root, env=env) for _ in range(TIMING_SAMPLES_PER_CASE)
+        _run_timed_command(tg_argv, cwd=corpus.root, env=env)
+        for _ in range(TIMING_SAMPLES_PER_CASE)
     ]
 
     parity_result = run_parity_case(case=case, corpus=corpus, rg_binary=rg_binary)
@@ -115,7 +121,9 @@ def run_contract_benchmark(case, *, corpus, rg_binary: Path) -> dict[str, Any]:
         "tg_seconds": tg_seconds,
         "ratio_vs_rg": (tg_seconds / rg_seconds) if rg_seconds else None,
         "semantic_parity": semantic_parity,
-        "status": "mismatch" if not semantic_parity else _timing_status(rg_seconds=rg_seconds, tg_seconds=tg_seconds),
+        "status": "mismatch"
+        if not semantic_parity
+        else _timing_status(rg_seconds=rg_seconds, tg_seconds=tg_seconds),
     }
 
 
@@ -129,7 +137,10 @@ def main() -> int:
         raise SystemExit("ripgrep binary not found for rg contract benchmark")
 
     corpus = create_rg_parity_corpus(ROOT_DIR / "artifacts" / "rg_parity_corpus")
-    rows = [run_contract_benchmark(case, corpus=corpus, rg_binary=rg_binary) for case in benchmarkable_cases()]
+    rows = [
+        run_contract_benchmark(case, corpus=corpus, rg_binary=rg_binary)
+        for case in benchmarkable_cases()
+    ]
 
     payload = {
         "artifact": "bench_run_rg_parity_benchmarks",

@@ -139,18 +139,15 @@ def create_rg_parity_corpus(root: Path) -> RGParityCorpus:
 
     _write_text(
         root / "context.txt",
-        "line one\n"
-        "line two\n"
-        "context sentinel\n"
-        "line four\n"
-        "line five\n"
-        "line six\n",
+        "line one\nline two\ncontext sentinel\nline four\nline five\nline six\n",
     )
     locations["context.txt"] = root / "context.txt"
 
     types_dir = root / "types"
     types_dir.mkdir()
-    _write_text(types_dir / "match.py", "def match_py():\n    return 'glob sentinel type sentinel'\n")
+    _write_text(
+        types_dir / "match.py", "def match_py():\n    return 'glob sentinel type sentinel'\n"
+    )
     _write_text(types_dir / "skip.txt", "glob sentinel but not python\n")
     locations["types"] = types_dir
 
@@ -212,7 +209,10 @@ def create_rg_parity_corpus(root: Path) -> RGParityCorpus:
     )
     locations["max-count.txt"] = root / "max-count.txt"
 
-    _write_text(root / "smart-case.txt", "SmartCase Sentinel\n",)
+    _write_text(
+        root / "smart-case.txt",
+        "SmartCase Sentinel\n",
+    )
     locations["smart-case.txt"] = root / "smart-case.txt"
 
     _write_text(
@@ -374,7 +374,9 @@ def _command_env(rg_binary: Path) -> dict[str, str]:
     existing_pythonpath = env.get("PYTHONPATH", "")
     if existing_pythonpath:
         pythonpath_entries.extend(
-            entry for entry in existing_pythonpath.split(os.pathsep) if entry and entry != str(SRC_DIR)
+            entry
+            for entry in existing_pythonpath.split(os.pathsep)
+            if entry and entry != str(SRC_DIR)
         )
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["TG_RG_PATH"] = str(rg_binary)
@@ -477,36 +479,30 @@ def _normalize_machine_output(
     if tool == "tg":
         if len(rows) == 1 and isinstance(rows[0], dict) and "matches" in rows[0]:
             for match in rows[0]["matches"]:
-                matches.append(
-                    (
-                        _normalize_path(str(match["file"]), corpus=corpus),
-                        int(match.get("line", match.get("line_number"))),
-                        str(match["text"]).rstrip("\r\n"),
-                    )
-                )
+                matches.append((
+                    _normalize_path(str(match["file"]), corpus=corpus),
+                    int(match.get("line", match.get("line_number"))),
+                    str(match["text"]).rstrip("\r\n"),
+                ))
             return {"matches": sorted(matches)}
 
         for row in rows:
-            matches.append(
-                (
-                    _normalize_path(str(row["file"]), corpus=corpus),
-                    int(row.get("line", row.get("line_number"))),
-                    str(row["text"]).rstrip("\r\n"),
-                )
-            )
+            matches.append((
+                _normalize_path(str(row["file"]), corpus=corpus),
+                int(row.get("line", row.get("line_number"))),
+                str(row["text"]).rstrip("\r\n"),
+            ))
         return {"matches": sorted(matches)}
 
     for row in rows:
         if row.get("type") != "match":
             continue
         data = row["data"]
-        matches.append(
-            (
-                _normalize_path(str(data["path"]["text"]), corpus=corpus),
-                int(data["line_number"]),
-                str(data["lines"]["text"]).rstrip("\r\n"),
-            )
-        )
+        matches.append((
+            _normalize_path(str(data["path"]["text"]), corpus=corpus),
+            int(data["line_number"]),
+            str(data["lines"]["text"]).rstrip("\r\n"),
+        ))
     return {"matches": sorted(matches)}
 
 
