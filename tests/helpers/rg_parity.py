@@ -292,6 +292,12 @@ def run_parity_case(*, case: RGParityCase, corpus: RGParityCorpus, rg_binary: Pa
     )
 
 
+def skip_reason_for_case(case: RGParityCase) -> str | None:
+    if "--ndjson" in case.tg_args and resolve_native_tg_binary() is None:
+        return "--ndjson parity requires the native tg binary"
+    return None
+
+
 def build_case_commands(
     *,
     case: RGParityCase,

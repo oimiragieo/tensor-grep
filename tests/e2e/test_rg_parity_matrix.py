@@ -35,6 +35,10 @@ def test_rg_contract_row_matches_tg(case, tmp_path: Path) -> None:
     if case.needs_follow and not corpus.follow_supported:
         pytest.skip("symlink support is unavailable for follow parity coverage on this machine")
 
+    skip_reason = helpers.skip_reason_for_case(case)
+    if skip_reason is not None:
+        pytest.skip(skip_reason)
+
     result = helpers.run_parity_case(case=case, corpus=corpus, rg_binary=rg_binary)
 
     assert result.tg.returncode == result.rg.returncode, helpers.format_parity_mismatch(
@@ -64,4 +68,18 @@ def test_rg_contract_row_matches_tg(case, tmp_path: Path) -> None:
         result=result,
         corpus=corpus,
         detail="stdout mismatch",
+    )
+
+
+def test_ndjson_case_requires_native_tg_binary_when_not_available(monkeypatch) -> None:
+    helpers = _helpers()
+    ndjson_case = next(
+        case for case in helpers.build_rg_parity_cases(RG_CONTRACT_ROWS) if case.row["id"] == "ndjson"
+    )
+
+    monkeypatch.setattr(helpers, "resolve_native_tg_binary", lambda: None)
+
+    assert (
+        helpers.skip_reason_for_case(ndjson_case)
+        == "--ndjson parity requires the native tg binary"
     )
