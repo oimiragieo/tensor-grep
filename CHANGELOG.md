@@ -1,6 +1,35 @@
 # CHANGELOG
 
 
+## v1.4.5 (2026-04-24)
+
+### Bug Fixes
+
+- Close merged rg parity contract gaps
+  ([`84f5996`](https://github.com/oimiragieo/tensor-grep/commit/84f5996ce86b66c19ed4a8f3470fb21da7b03bfa))
+
+- Format rg parity matrix tests
+  ([`54a80b5`](https://github.com/oimiragieo/tensor-grep/commit/54a80b5004ed05938531bd4ad7f396714afc3738))
+
+- Harden help fallback and native rg parity
+  ([`51bd994`](https://github.com/oimiragieo/tensor-grep/commit/51bd994c4a2ea0b24f37a4cdca352cda2ccacbc0))
+
+- Harden help parser for rich unicode output
+  ([`5932d57`](https://github.com/oimiragieo/tensor-grep/commit/5932d57c58892b31c948deec635c50c0f989d86c))
+
+- Harden tg help contract and rg parity surface
+  ([`ab5a932`](https://github.com/oimiragieo/tensor-grep/commit/ab5a9324d74a1ab212a22a91206c3519098702a6))
+
+- Skip ndjson parity without native tg
+  ([`445a39c`](https://github.com/oimiragieo/tensor-grep/commit/445a39c68900e40292c6bbfcdc50c4930149a09d))
+
+- Stabilize help parity checks in ci
+  ([`f75236b`](https://github.com/oimiragieo/tensor-grep/commit/f75236b48ad4e4239ab8b1b23ed91eb8a17d43a2))
+
+- Terminate stalled help passthrough trees on unix
+  ([`aa50146`](https://github.com/oimiragieo/tensor-grep/commit/aa50146b74b2f7c18eb3cb560d8bacec7b726a64))
+
+
 ## v1.4.4 (2026-04-23)
 
 ### Bug Fixes
