@@ -188,13 +188,16 @@ def _strip_ansi(text: str) -> str:
 def _extract_visible_help_commands(stdout: str) -> set[str]:
     commands: set[str] = set()
     mode: str | None = None
+    box_header_prefixes = ("┌", "╭", "┏", "+")
+    box_footer_prefixes = ("└", "╰", "┗", "+")
+    box_verticals = "│┃║╎┆|"
     for raw_line in stdout.splitlines():
         line = _strip_ansi(raw_line)
         stripped = line.strip()
         if stripped == "Commands:":
             mode = "plain"
             continue
-        if "Commands" in stripped and (stripped.startswith("┌") or stripped.startswith("+")):
+        if "Commands" in stripped and stripped.startswith(box_header_prefixes):
             mode = "box"
             continue
         if mode is None:
@@ -204,11 +207,11 @@ def _extract_visible_help_commands(stdout: str) -> set[str]:
                 break
             cleaned = line.lstrip()
         else:
-            if stripped.startswith(("└", "+")):
+            if stripped.startswith(box_footer_prefixes):
                 break
-            if not stripped.startswith(("│", "|")):
+            if not stripped.startswith(tuple(box_verticals)):
                 continue
-            cleaned = stripped.strip("│|").strip()
+            cleaned = stripped.strip(box_verticals).strip()
         if not cleaned:
             continue
         match = re.match(r"^([a-z][a-z0-9-]*)\s{2,}", cleaned)
@@ -221,6 +224,18 @@ def _extract_visible_help_commands(stdout: str) -> set[str]:
                     if re.match(r"^[a-z][a-z0-9-]*$", normalized):
                         commands.add(normalized)
     return commands
+
+
+def test_extract_visible_help_commands_handles_unicode_box_help() -> None:
+    stdout = """
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ search               Search files for a regex pattern.                      │
+│ doctor               Print diagnostics.                                     │
+│ upgrade              Upgrade tensor-grep to the latest version.             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+"""
+
+    assert _extract_visible_help_commands(stdout) == {"search", "doctor", "upgrade"}
 
 
 # We check which layer handled it.
