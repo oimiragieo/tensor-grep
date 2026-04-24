@@ -54,7 +54,11 @@ persisted repeated-query acceleration, and optional GPU routing.
 - `tg run --help` for AST rewrite flags.
 - Lexical repo-map retrieval bridges camelCase, snake_case, and source-term planning queries.
 - Use `tg doctor --json` for system, GPU, cache, and daemon diagnostics.
-- Use `tg session --help` for cached edit-loop and daemon commands.""",
+- Use `tg session --help` for cached edit-loop and daemon commands.
+
+**Environment overrides**
+- `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
+- `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.""",
     no_args_is_help=True,
     add_completion=True,
     rich_markup_mode="markdown",
