@@ -542,6 +542,32 @@ fn test_routing_early_positional_rg_env_preserves_max_count_contract() {
 }
 
 #[test]
+fn test_routing_early_positional_rg_env_preserves_word_regexp_contract() {
+    let dir = tempdir().unwrap();
+    write_text_corpus(dir.path());
+    let rg_wrapper = write_rg_wrapper(dir.path());
+
+    let output = tg()
+        .arg("-w")
+        .arg("hello")
+        .arg(dir.path())
+        .env("TG_RUST_EARLY_POSITIONAL_RG", "1")
+        .env("TG_RG_PATH", &rg_wrapper)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        format!("{RG_SENTINEL}\n")
+    );
+}
+
+#[test]
 fn test_routing_early_positional_rg_env_falls_back_for_unsupported_shapes() {
     let dir = tempdir().unwrap();
     write_text_corpus(dir.path());
@@ -1703,6 +1729,33 @@ fn test_rust_control_plane_plain_positional() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(RG_SENTINEL));
+}
+
+#[test]
+fn test_rust_control_plane_positional_word_regexp_uses_word_boundaries() {
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("words.txt");
+    fs::write(&file, "word\nwordplay\nsword\nword\n").unwrap();
+
+    let output = tg()
+        .arg("--cpu")
+        .arg("-w")
+        .arg("word")
+        .arg(&file)
+        .env("TG_DISABLE_RG", "1")
+        .env("PATH", "")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        normalize_newlines(&String::from_utf8_lossy(&output.stdout)),
+        "word\nword\n"
+    );
 }
 
 #[test]

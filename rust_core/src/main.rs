@@ -105,6 +105,10 @@ pub struct PositionalCli {
     #[arg(short = 'i', long)]
     pub ignore_case: bool,
 
+    /// Show matches with word boundaries
+    #[arg(short = 'w', long)]
+    pub word_regexp: bool,
+
     /// Replace matches in emitted output (ripgrep-style)
     #[arg(short = 'r', long)]
     pub replace: Option<String>,
@@ -991,6 +995,29 @@ mod tests {
     }
 
     #[test]
+    fn early_positional_ripgrep_args_parse_word_regexp_shape() {
+        let short_args = ["tg", "-w", "word", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+        let long_args = ["tg", "--word-regexp", "word", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let short = parse_early_positional_ripgrep_args(&short_args)
+            .expect("expected early positional rg word-regexp args to parse");
+        let long = parse_early_positional_ripgrep_args(&long_args)
+            .expect("expected early positional rg long word-regexp args to parse");
+
+        for parsed in [short, long] {
+            assert!(parsed.word_regexp);
+            assert_eq!(parsed.patterns, vec!["word".to_string()]);
+            assert_eq!(parsed.path, "bench_data".to_string());
+        }
+    }
+
+    #[test]
     fn early_positional_ripgrep_args_reject_structured_and_force_cpu_shapes() {
         let structured = ["tg", "--json", "warning", "bench_data"]
             .into_iter()
@@ -1360,7 +1387,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
         count: cli.count,
         context: None,
         max_count: cli.max_count,
-        word_regexp: false,
+        word_regexp: cli.word_regexp,
         globs: Vec::new(),
         no_ignore: true,
         gpu_device_ids: &auto_gpu_ids,
@@ -1419,7 +1446,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                 count: cli.count,
                 context: None,
                 max_count: cli.max_count,
-                word_regexp: false,
+                word_regexp: cli.word_regexp,
                 globs: Vec::new(),
                 no_ignore: true,
                 gpu_device_ids,
@@ -1679,7 +1706,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         before_context: None,
         after_context: None,
         max_count: cli.max_count,
-        word_regexp: false,
+        word_regexp: cli.word_regexp,
         smart_case: false,
         globs: Vec::new(),
         no_ignore: true,
@@ -1777,6 +1804,7 @@ fn native_search_config_for_positional(
         sidecar_used: decision.sidecar_used(),
         ignore_case: cli.ignore_case,
         fixed_strings: cli.fixed_strings,
+        word_boundary: cli.word_regexp,
         invert_match: cli.invert_match,
         count: cli.count,
         max_count: cli.max_count.map(|value| value as u64),
