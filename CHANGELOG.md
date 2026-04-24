@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.4.8 (2026-04-24)
+
+### Bug Fixes
+
+- Apply ruff formatting to benchmark test
+  ([`61a5cf4`](https://github.com/oimiragieo/tensor-grep/commit/61a5cf452e1dfd56e54039f6d48901f79b88c332))
+
+- Format native benchmark env test
+  ([`c2127d3`](https://github.com/oimiragieo/tensor-grep/commit/c2127d3616ffe849f520dbe970af817eaa1111ae))
+
+### Performance Improvements
+
+- Avoid duplicate native count search
+  ([`f280d0c`](https://github.com/oimiragieo/tensor-grep/commit/f280d0c7af42e02e90e1a3b3043c9a1523f6fda2))
+
+
 ## v1.4.7 (2026-04-24)
 
 ### Bug Fixes
