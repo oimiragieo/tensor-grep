@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.4.7 (2026-04-24)
+
+### Bug Fixes
+
+- Sync uv lock release version
+  ([`8192a04`](https://github.com/oimiragieo/tensor-grep/commit/8192a04bd1d03cfb1902ddeb35d40e2950a5499f))
+
+
 ## v1.4.6 (2026-04-24)
 
 ### Bug Fixes
