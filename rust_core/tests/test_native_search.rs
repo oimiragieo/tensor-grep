@@ -307,7 +307,7 @@ fn test_native_search_fixed_string_treats_meta_characters_literally() {
 fn test_native_search_count_mode_outputs_per_file_counts() {
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("count.log");
-    fs::write(&file_path, "ERROR one\nINFO\nERROR two\n").unwrap();
+    fs::write(&file_path, "ERROR one ERROR again\nINFO\nERROR two\n").unwrap();
 
     let (target, buffer) = buffer_target();
     let mut config = base_config("ERROR", &file_path, target);
@@ -318,6 +318,10 @@ fn test_native_search_count_mode_outputs_per_file_counts() {
     let output = read_buffer(&buffer);
 
     assert_eq!(stats.total_matches, 2);
+    assert!(
+        stats.matches.is_empty(),
+        "count mode should not retain full match payloads"
+    );
     assert_eq!(output, "2\n");
 }
 

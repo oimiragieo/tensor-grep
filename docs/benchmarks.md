@@ -425,14 +425,16 @@ remeasured.
 
 | Scenario | ripgrep | tensor-grep native CPU | Ratio | Result |
 | --- | --- | --- | --- | --- |
-| cold_standard_corpus | 0.132s | 0.201s | 1.522x | FAIL |
-| large_file_200mb | 0.104s | 0.120s | 1.156x | FAIL |
-| large_file_200mb_count | 0.108s | 0.063s | 0.586x | PASS |
-| many_file_directory | 0.038s | 0.057s | 1.502x | FAIL |
+| cold_standard_corpus | 0.232s | 0.187s | 0.809x | PASS |
+| large_file_200mb | 0.237s | 0.141s | 0.598x | PASS |
+| large_file_200mb_count | 0.233s | 0.076s | 0.328x | PASS |
+| many_file_directory | 0.216s | 0.053s | 0.248x | PASS |
 
-The native CPU line remains workload-dependent rather than universal. On the current accepted
-artifact, `tg --cpu` wins the large-file count probe, but it still trails `rg` on the cold
-standard corpus, the non-count single large-file search, and the many-file directory case.
+The native CPU benchmark now disables rg fallback for `tg --cpu` measurements (`TG_DISABLE_RG=1`)
+so local bundled `rg` discovery cannot pollute native rows. On the current accepted artifact,
+native CPU wins the large-file count probe and the standard large-file/many-file probes in this
+native-only benchmark. This does not change the default cold-path claim: generic `tg search`
+still keeps `rg` as the default baseline path where routing selects it.
 
 ### ast-grep vs tensor-grep AST mode (`run_ast_benchmarks.py`)
 

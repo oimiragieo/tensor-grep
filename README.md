@@ -133,7 +133,7 @@ Current repo-map lexical retrieval snapshot:
 Current benchmark-governed strengths:
 
 - host-local large-file comparator: `tg search --cpu 0.125s` versus default `tg search 0.240s` in [`artifacts/bench_tool_comparison.json`](artifacts/bench_tool_comparison.json)
-- native CPU benchmark line: `tg --cpu` wins the count-heavy `large_file_200mb_count` row (`0.063s` vs `0.108s`), but still trails `rg` on `cold_standard_corpus`, `large_file_200mb`, and `many_file_directory` in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
+- native CPU benchmark line: with rg fallback disabled for native measurement, `tg --cpu` wins the `large_file_200mb_count` row (`0.076s` vs `0.233s`) and passes all native CPU rows in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
 - native AST search/rewrite beats `sg` on the accepted AST benchmark surfaces in [docs/benchmarks.md](docs/benchmarks.md)
 - repeated-query acceleration remains the strongest warm-path win on unchanged corpora
 

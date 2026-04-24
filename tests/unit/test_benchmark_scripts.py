@@ -690,6 +690,53 @@ def test_run_benchmarks_should_include_large_file_and_many_file_scenarios(tmp_pa
     assert many_scenario["tg_cmd"][-1] == "many_files"
 
 
+def test_run_native_cpu_benchmarks_should_disable_rg_for_tg_cpu_measurements(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_native_cpu_benchmarks_env_script", "benchmarks/run_native_cpu_benchmarks.py"
+    )
+    tg_binary = tmp_path / "tg.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    seen_timing_envs: list[dict[str, str] | None] = []
+    seen_sample_envs: list[dict[str, str] | None] = []
+    seen_count_envs: list[dict[str, str] | None] = []
+
+    def fake_run_cmd_timing(_cmd, capture_stdout=False, *, env_overrides=None):
+        seen_timing_envs.append(env_overrides)
+        return 0.1
+
+    def fake_collect_timing_samples(_cmd, sample_count=1, *, env_overrides=None):
+        seen_sample_envs.append(env_overrides)
+        return 0.1, [0.1] * sample_count
+
+    def fake_run_match_count(_cmd, *, env_overrides=None):
+        seen_count_envs.append(env_overrides)
+        return {"seconds": 0.1, "total_matches": 2}
+
+    monkeypatch.setattr(module, "run_cmd_timing", fake_run_cmd_timing)
+    monkeypatch.setattr(module, "collect_timing_samples", fake_collect_timing_samples)
+    monkeypatch.setattr(module, "run_match_count", fake_run_match_count)
+
+    row = module.run_native_cpu_benchmark_case(
+        name="count",
+        pattern="ERROR",
+        target=tmp_path,
+        rg_binary="rg",
+        tg_binary=tg_binary,
+        sample_count=2,
+        warmup_runs=1,
+        max_ratio_vs_rg=2.0,
+        benchmark_count_mode=True,
+    )
+
+    assert module.NATIVE_TG_ENV == {"TG_DISABLE_RG": "1"}
+    assert seen_timing_envs == [None, module.NATIVE_TG_ENV]
+    assert seen_sample_envs == [None, module.NATIVE_TG_ENV]
+    assert seen_count_envs == [None, module.NATIVE_TG_ENV]
+    assert row["tg_env"] == module.NATIVE_TG_ENV
+
+
 def test_run_benchmarks_should_extract_windows_rg_zip_when_rg_missing(monkeypatch, tmp_path):
     module = _load_script_module("run_benchmarks_script_rg_zip", "benchmarks/run_benchmarks.py")
     bench_dir = tmp_path / "benchmarks"

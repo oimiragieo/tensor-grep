@@ -225,7 +225,6 @@ struct FileSearchResult {
     binary_detected: bool,
     binary_match_detected: bool,
     binary_byte_offset: Option<u64>,
-    used_chunk_parallel: bool,
 }
 
 #[derive(Debug)]
@@ -446,7 +445,6 @@ impl ParallelWalkWorker {
             binary_detected,
             binary_match_detected,
             binary_byte_offset,
-            used_chunk_parallel: false,
         })
     }
 
@@ -490,25 +488,17 @@ impl ParallelWalkWorker {
             binary_detected,
             binary_match_detected,
             binary_byte_offset,
-            used_chunk_parallel: false,
         })
     }
 
     fn search_count(&mut self, path: &Path) -> Result<FileSearchResult> {
-        let mut match_count = 0usize;
-        let mut sink = BinaryAwareSink::new(Lossy(|_, _| {
-            match_count = match_count.saturating_add(1);
-            Ok(true)
-        }));
-
-        self.searcher_with_line_numbers
-            .search_path(&self.matcher, path, &mut sink)
-            .with_context(|| format!("native count output search failed for {}", path.display()))?;
-
-        let binary_detected = sink.saw_binary();
-        let binary_byte_offset = sink.binary_byte_offset();
-        let binary_match_detected =
-            binary_file_matches_pattern(&self.matcher, path, binary_detected)?;
+        let file_result = search_file_count_with_searcher(
+            &self.matcher,
+            path,
+            &mut self.searcher_with_line_numbers,
+        )?;
+        let mut match_count = file_result.match_count;
+        let binary_detected = file_result.binary_detected;
         if !binary_detected {
             append_count_output_bytes(&mut self.output_buffer, &self.config, path, match_count)?;
         } else {
@@ -518,10 +508,9 @@ impl ParallelWalkWorker {
         Ok(FileSearchResult {
             matches: Vec::new(),
             match_count,
-            binary_detected,
-            binary_match_detected,
-            binary_byte_offset,
-            used_chunk_parallel: false,
+            binary_detected: file_result.binary_detected,
+            binary_match_detected: file_result.binary_match_detected,
+            binary_byte_offset: file_result.binary_byte_offset,
         })
     }
 }
@@ -725,7 +714,9 @@ fn run_native_search_files(
             search_file(config, matcher, &file_path)?
         } else if config.ndjson {
             search_file_streaming_ndjson(config, matcher, &file_path)?
-        } else if config.count || config.quiet {
+        } else if config.count {
+            search_file_count(config, matcher, &file_path)?
+        } else if config.quiet {
             search_file(config, matcher, &file_path)?
         } else {
             search_file_streaming_standard(config, matcher, &file_path, !emitted_stream_output)?
@@ -737,7 +728,7 @@ fn run_native_search_files(
             binary_detected,
             binary_match_detected,
             binary_byte_offset,
-            used_chunk_parallel,
+            ..
         } = file_result;
 
         stats.searched_files += 1;
@@ -775,11 +766,7 @@ fn run_native_search_files(
         }
 
         if config.count {
-            if used_chunk_parallel {
-                emit_count_output_from_matches(config, &file_path, match_count)?;
-            } else {
-                emit_count_output(config, matcher, &file_path)?;
-            }
+            emit_count_output_from_matches(config, &file_path, match_count)?;
         }
     }
 
@@ -987,7 +974,6 @@ fn search_file_streaming_standard_sequential(
         binary_detected,
         binary_match_detected,
         binary_byte_offset,
-        used_chunk_parallel: false,
     })
 }
 
@@ -1076,7 +1062,6 @@ fn search_file_streaming_plain_sequential(
         binary_detected,
         binary_match_detected,
         binary_byte_offset,
-        used_chunk_parallel: false,
     })
 }
 
@@ -1107,6 +1092,18 @@ fn search_file(
     }
     let mut searcher = build_searcher(config, true);
     search_file_collect_matches_with_searcher(config, matcher, path, &mut searcher)
+}
+
+fn search_file_count(
+    config: &NativeSearchConfig,
+    matcher: &RegexMatcher,
+    path: &Path,
+) -> Result<FileSearchResult> {
+    if should_use_chunk_parallel_search(config, path)? {
+        return search_file_chunk_parallel(config, matcher, path);
+    }
+    let mut searcher = build_searcher(config, true);
+    search_file_count_with_searcher(matcher, path, &mut searcher)
 }
 
 fn build_matcher(config: &NativeSearchConfig) -> Result<RegexMatcher> {
@@ -1275,6 +1272,10 @@ fn search_file_chunk_parallel(
     let requested_chunk_count = configured_chunk_parallelism_threads(config);
     let chunk_plan = plan_file_chunks(&mmap, requested_chunk_count, config.count);
     if chunk_plan.len() <= 1 {
+        if config.count {
+            let mut searcher = build_searcher(config, true);
+            return search_file_count_with_searcher(matcher, path, &mut searcher);
+        }
         return search_file_json(config, matcher, path);
     }
 
@@ -1306,7 +1307,6 @@ fn search_file_chunk_parallel(
             binary_detected: false,
             binary_match_detected: false,
             binary_byte_offset: None,
-            used_chunk_parallel: true,
         });
     }
 
@@ -1334,7 +1334,6 @@ fn search_file_chunk_parallel(
         binary_detected: false,
         binary_match_detected: false,
         binary_byte_offset: None,
-        used_chunk_parallel: true,
     })
 }
 
@@ -1521,7 +1520,6 @@ fn search_file_collect_matches_with_searcher(
         binary_detected,
         binary_match_detected,
         binary_byte_offset,
-        used_chunk_parallel: false,
     })
 }
 
@@ -1564,7 +1562,6 @@ fn search_file_ndjson_with_searcher(
         binary_detected,
         binary_match_detected,
         binary_byte_offset,
-        used_chunk_parallel: false,
     })
 }
 
@@ -1610,11 +1607,11 @@ fn emit_binary_match_warning(
     }
 }
 
-fn count_matches_with_searcher(
+fn search_file_count_with_searcher(
     matcher: &RegexMatcher,
     path: &Path,
     searcher: &mut Searcher,
-) -> Result<usize> {
+) -> Result<FileSearchResult> {
     let mut match_count = 0usize;
     let mut sink = BinaryAwareSink::new(Lossy(|_, _| {
         match_count = match_count.saturating_add(1);
@@ -1624,11 +1621,20 @@ fn count_matches_with_searcher(
         .search_path(matcher, path, &mut sink)
         .with_context(|| format!("native count output search failed for {}", path.display()))?;
 
-    if sink.saw_binary() {
-        Ok(0)
-    } else {
-        Ok(match_count)
+    let binary_detected = sink.saw_binary();
+    let binary_byte_offset = sink.binary_byte_offset();
+    let binary_match_detected = binary_file_matches_pattern(matcher, path, binary_detected)?;
+    if binary_detected {
+        match_count = 0;
     }
+
+    Ok(FileSearchResult {
+        matches: Vec::new(),
+        match_count,
+        binary_detected,
+        binary_match_detected,
+        binary_byte_offset,
+    })
 }
 
 fn search_file_json(
@@ -1638,18 +1644,6 @@ fn search_file_json(
 ) -> Result<FileSearchResult> {
     let mut searcher = build_searcher(config, true);
     search_file_collect_matches_with_searcher(config, matcher, path, &mut searcher)
-}
-
-fn emit_count_output(
-    config: &NativeSearchConfig,
-    matcher: &RegexMatcher,
-    path: &Path,
-) -> Result<()> {
-    let mut searcher = build_searcher(config, true);
-    let count = count_matches_with_searcher(matcher, path, &mut searcher)?;
-    let mut bytes = Vec::new();
-    append_count_output_bytes(&mut bytes, config, path, count)?;
-    config.output_target.write_all(&bytes)
 }
 
 fn emit_count_output_from_matches(

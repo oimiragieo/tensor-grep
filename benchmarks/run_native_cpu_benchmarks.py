@@ -35,6 +35,7 @@ from run_benchmarks import (  # noqa: E402
 
 DEFAULT_TIMING_SAMPLES = 5
 DEFAULT_WARMUP_RUNS = 1
+NATIVE_TG_ENV = {"TG_DISABLE_RG": "1"}
 
 
 def build_rg_search_command(
@@ -105,8 +106,12 @@ def sum_count_output(text: str) -> int:
     return total
 
 
-def run_match_count(cmd: list[str]) -> dict[str, object]:
-    elapsed_s, stdout = run_cmd_capture(cmd)
+def run_match_count(
+    cmd: list[str],
+    *,
+    env_overrides: dict[str, str] | None = None,
+) -> dict[str, object]:
+    elapsed_s, stdout = run_cmd_capture(cmd, env_overrides=env_overrides)
     return {
         "seconds": round(elapsed_s, 6),
         "total_matches": sum_count_output(stdout),
@@ -138,16 +143,21 @@ def run_native_cpu_benchmark_case(
 
     for _ in range(warmup_runs):
         run_cmd_timing(rg_cmd)
-        run_cmd_timing(tg_cmd)
+        run_cmd_timing(tg_cmd, env_overrides=NATIVE_TG_ENV)
 
     rg_time, rg_samples = collect_timing_samples(rg_cmd, sample_count=sample_count)
-    tg_time, tg_samples = collect_timing_samples(tg_cmd, sample_count=sample_count)
+    tg_time, tg_samples = collect_timing_samples(
+        tg_cmd,
+        sample_count=sample_count,
+        env_overrides=NATIVE_TG_ENV,
+    )
 
     rg_counts = run_match_count(
         build_rg_count_command(rg_binary, pattern, target, fixed_strings=fixed_strings)
     )
     tg_counts = run_match_count(
-        build_tg_cpu_count_command(tg_binary, pattern, target, fixed_strings=fixed_strings)
+        build_tg_cpu_count_command(tg_binary, pattern, target, fixed_strings=fixed_strings),
+        env_overrides=NATIVE_TG_ENV,
     )
     counts_match = rg_counts["total_matches"] == tg_counts["total_matches"]
 
@@ -163,6 +173,7 @@ def run_native_cpu_benchmark_case(
         "target": str(target),
         "rg_cmd": subprocess.list2cmdline(rg_cmd) if os.name == "nt" else " ".join(rg_cmd),
         "tg_cmd": subprocess.list2cmdline(tg_cmd) if os.name == "nt" else " ".join(tg_cmd),
+        "tg_env": NATIVE_TG_ENV,
         "rg_samples_s": rg_samples,
         "rg_time_s": rg_time,
         "tg_samples_s": tg_samples,
