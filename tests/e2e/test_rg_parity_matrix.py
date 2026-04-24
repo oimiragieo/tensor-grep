@@ -74,12 +74,13 @@ def test_rg_contract_row_matches_tg(case, tmp_path: Path) -> None:
 def test_ndjson_case_requires_native_tg_binary_when_not_available(monkeypatch) -> None:
     helpers = _helpers()
     ndjson_case = next(
-        case for case in helpers.build_rg_parity_cases(RG_CONTRACT_ROWS) if case.row["id"] == "ndjson"
+        case
+        for case in helpers.build_rg_parity_cases(RG_CONTRACT_ROWS)
+        if case.row["id"] == "ndjson"
     )
 
     monkeypatch.setattr(helpers, "resolve_native_tg_binary", lambda: None)
 
     assert (
-        helpers.skip_reason_for_case(ndjson_case)
-        == "--ndjson parity requires the native tg binary"
+        helpers.skip_reason_for_case(ndjson_case) == "--ndjson parity requires the native tg binary"
     )
