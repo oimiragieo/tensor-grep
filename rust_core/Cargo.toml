@@ -47,6 +47,7 @@ grep-printer = { version = "0.3.1", features = ["serde"] }
 grep-regex = "0.1.14"
 grep-searcher = "0.1.16"
 cudarc = { version = "0.19.3", optional = true, features = ["cuda-13010"] }
+libc = "0.2.177"
 
 [[bin]]
 name = "tg"

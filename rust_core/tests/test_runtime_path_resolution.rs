@@ -4,6 +4,8 @@ use std::process::{Command, Output};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use tempfile::tempdir;
 
@@ -320,6 +322,43 @@ fn test_tg_defs_help_injects_repo_src_into_pythonpath_for_passthrough() {
         injected_pythonpath.contains(expected_src.to_string_lossy().as_ref()),
         "pythonpath={injected_pythonpath}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_search_help_timeout_fallback_terminates_passthrough_process_tree() {
+    let dir = tempdir().unwrap();
+    let wrapper = write_wrapper_script(
+        dir.path(),
+        "sleeping-help-wrapper.sh",
+        "#!/bin/sh\nsleep 5\n",
+    );
+
+    let mut tg = Command::new(env!("CARGO_BIN_EXE_tg"));
+    tg.current_dir(repo_root())
+        .arg("search")
+        .arg("--help")
+        .env("TG_SIDECAR_PYTHON", &wrapper);
+
+    let started = Instant::now();
+    let output = run_with_timeout(tg, Duration::from_secs(10));
+    let elapsed = started.elapsed();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "public help timeout fallback took too long: {elapsed:?}"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.to_lowercase().contains("usage:"), "stdout={stdout}");
+    assert!(stdout.contains("search"), "stdout={stdout}");
 }
 
 #[test]

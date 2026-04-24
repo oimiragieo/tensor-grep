@@ -6,6 +6,8 @@ use serde_json::Value;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
@@ -111,6 +113,15 @@ pub fn execute_python_passthrough_command_captured(
 
     let mut child = Command::new(&python);
     configure_python_module_path(&mut child);
+    #[cfg(unix)]
+    unsafe {
+        child.pre_exec(|| {
+            if libc::setpgid(0, 0) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
     child
         .arg("-m")
         .arg(DEFAULT_TENSOR_GREP_MODULE)
@@ -431,11 +442,17 @@ fn terminate_passthrough_process(child: &mut Child) -> Result<(), SidecarError> 
 
     #[cfg(not(windows))]
     {
-        if let Err(err) = child.kill() {
-            if err.kind() != io::ErrorKind::InvalidInput {
+        let pid = child.id() as i32;
+        let kill_status = unsafe { libc::killpg(pid, libc::SIGKILL) };
+        if kill_status != 0 {
+            let err = io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ESRCH) && err.kind() != io::ErrorKind::InvalidInput
+            {
                 return Err(SidecarError {
                     exit_code: 1,
-                    message: format!("Failed to terminate timed-out Python passthrough: {err}"),
+                    message: format!(
+                        "Failed to terminate timed-out Python passthrough process group: {err}"
+                    ),
                     stderr: String::new(),
                 });
             }
