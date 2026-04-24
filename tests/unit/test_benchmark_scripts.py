@@ -690,9 +690,7 @@ def test_run_benchmarks_should_include_large_file_and_many_file_scenarios(tmp_pa
     assert many_scenario["tg_cmd"][-1] == "many_files"
 
 
-def test_run_native_cpu_benchmarks_should_disable_rg_for_tg_cpu_measurements(
-    monkeypatch, tmp_path
-):
+def test_run_native_cpu_benchmarks_should_disable_rg_for_tg_cpu_measurements(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_native_cpu_benchmarks_env_script", "benchmarks/run_native_cpu_benchmarks.py"
     )
