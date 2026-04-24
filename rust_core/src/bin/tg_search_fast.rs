@@ -22,15 +22,24 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         fixed_strings: false,
         invert_match: false,
         count: false,
+        count_matches: false,
         line_number: false,
+        column: false,
         only_matching: false,
         context: None,
         before_context: None,
         after_context: None,
         max_count: None,
         word_regexp: false,
+        smart_case: false,
         globs: Vec::new(),
         no_ignore: false,
+        hidden: false,
+        follow: false,
+        text: false,
+        files_with_matches: false,
+        files_without_match: false,
+        file_types: Vec::new(),
         color: None,
         replace: None,
         patterns: Vec::new(),
@@ -51,8 +60,16 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
             "-F" | "--fixed-strings" => args.fixed_strings = true,
             "-v" | "--invert-match" => args.invert_match = true,
             "-c" | "--count" => args.count = true,
+            "--count-matches" => args.count_matches = true,
+            "--column" => args.column = true,
             "-w" | "--word-regexp" => args.word_regexp = true,
+            "-S" | "--smart-case" => args.smart_case = true,
             "--no-ignore" => args.no_ignore = true,
+            "--hidden" | "-." => args.hidden = true,
+            "--follow" | "-L" => args.follow = true,
+            "--text" | "-a" => args.text = true,
+            "--files-with-matches" | "-l" => args.files_with_matches = true,
+            "--files-without-match" => args.files_without_match = true,
             "-C" | "--context" => {
                 index += 1;
                 let value = tokens
@@ -93,6 +110,11 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
                 index += 1;
                 args.globs
                     .push(tokens.get(index).context("missing value for glob")?.clone());
+            }
+            "-t" | "--type" => {
+                index += 1;
+                args.file_types
+                    .push(tokens.get(index).context("missing value for type")?.clone());
             }
             _ if token.starts_with("--glob=") => {
                 let (_, value) = token

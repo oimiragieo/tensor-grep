@@ -5139,6 +5139,10 @@ def main_entry() -> None:
 
     known_commands = _KNOWN_COMMANDS
 
+    if len(sys.argv) == 1:
+        app(args=["--help"])
+        return
+
     if len(sys.argv) > 1:
         first_arg = sys.argv[1]
         if (

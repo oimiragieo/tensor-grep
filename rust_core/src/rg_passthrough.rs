@@ -19,15 +19,24 @@ pub struct RipgrepSearchArgs {
     pub fixed_strings: bool,
     pub invert_match: bool,
     pub count: bool,
+    pub count_matches: bool,
     pub line_number: bool,
+    pub column: bool,
     pub only_matching: bool,
     pub context: Option<usize>,
     pub before_context: Option<usize>,
     pub after_context: Option<usize>,
     pub max_count: Option<usize>,
     pub word_regexp: bool,
+    pub smart_case: bool,
     pub globs: Vec<String>,
     pub no_ignore: bool,
+    pub hidden: bool,
+    pub follow: bool,
+    pub text: bool,
+    pub files_with_matches: bool,
+    pub files_without_match: bool,
+    pub file_types: Vec<String>,
     pub color: Option<String>,
     pub replace: Option<String>,
     pub patterns: Vec<String>,
@@ -56,8 +65,14 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.invert_match {
         command.arg("-v");
     }
+    if args.count_matches {
+        command.arg("--count-matches");
+    }
     if args.only_matching {
         command.arg("-o");
+    }
+    if args.column {
+        command.arg("--column");
     }
     if args.count {
         command.arg("-c");
@@ -80,8 +95,29 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     if args.word_regexp {
         command.arg("-w");
     }
+    if args.smart_case {
+        command.arg("-S");
+    }
     if args.no_ignore {
         command.arg("--no-ignore");
+    }
+    if args.hidden {
+        command.arg("--hidden");
+    }
+    if args.follow {
+        command.arg("--follow");
+    }
+    if args.text {
+        command.arg("--text");
+    }
+    if args.files_with_matches {
+        command.arg("-l");
+    }
+    if args.files_without_match {
+        command.arg("--files-without-match");
+    }
+    for file_type in &args.file_types {
+        command.arg("-t").arg(file_type);
     }
     if let Some(color) = &args.color {
         command.arg("--color").arg(color);

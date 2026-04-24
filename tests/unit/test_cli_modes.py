@@ -4276,7 +4276,7 @@ def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)
@@ -4292,7 +4292,7 @@ def test_main_entry_should_not_rewrite_map_subcommand(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)
@@ -4388,7 +4388,7 @@ def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)

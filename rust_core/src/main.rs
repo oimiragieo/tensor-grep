@@ -77,9 +77,17 @@ pub struct PositionalCli {
     #[arg(short = 'c', long)]
     pub count: bool,
 
+    /// Show only the total number of matches per file
+    #[arg(long = "count-matches")]
+    pub count_matches: bool,
+
     /// Show line numbers
     #[arg(short = 'n', long)]
     pub line_number: bool,
+
+    /// Show column numbers
+    #[arg(long)]
+    pub column: bool,
 
     /// Stop after NUM matching lines per file
     #[arg(short = 'm', long)]
@@ -148,9 +156,17 @@ pub struct SearchArgs {
     #[arg(short = 'c', long)]
     pub count: bool,
 
+    /// Show only the total number of matches per file
+    #[arg(long = "count-matches")]
+    pub count_matches: bool,
+
     /// Show line numbers
     #[arg(short = 'n', long)]
     pub line_number: bool,
+
+    /// Show column numbers
+    #[arg(long)]
+    pub column: bool,
 
     /// Replace matches in emitted output (ripgrep-style)
     #[arg(short = 'r', long)]
@@ -176,6 +192,10 @@ pub struct SearchArgs {
     #[arg(short = 'w', long)]
     pub word_regexp: bool,
 
+    /// Search case insensitively if the pattern is all lowercase
+    #[arg(short = 'S', long = "smart-case")]
+    pub smart_case: bool,
+
     /// Include/exclude files matching glob
     #[arg(short = 'g', long = "glob")]
     pub globs: Vec<String>,
@@ -183,6 +203,30 @@ pub struct SearchArgs {
     /// Ignore .gitignore / ignore files
     #[arg(long = "no-ignore")]
     pub no_ignore: bool,
+
+    /// Search hidden files and directories
+    #[arg(short = '.', long)]
+    pub hidden: bool,
+
+    /// Follow symbolic links
+    #[arg(short = 'L', long)]
+    pub follow: bool,
+
+    /// Search binary files as if they were text
+    #[arg(short = 'a', long)]
+    pub text: bool,
+
+    /// Print only paths with at least one match
+    #[arg(short = 'l', long = "files-with-matches")]
+    pub files_with_matches: bool,
+
+    /// Print only paths containing zero matches
+    #[arg(long = "files-without-match")]
+    pub files_without_match: bool,
+
+    /// Only search files matching TYPE
+    #[arg(short = 't', long = "type")]
+    pub file_type: Vec<String>,
 
     /// Use trigram index for accelerated repeated queries
     #[arg(long)]
@@ -768,15 +812,24 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         fixed_strings: false,
         invert_match: false,
         count: false,
+        count_matches: false,
         line_number: false,
+        column: false,
         only_matching: false,
         context: None,
         after_context: None,
         before_context: None,
         max_count: None,
         word_regexp: false,
+        smart_case: false,
         globs: Vec::new(),
         no_ignore: false,
+        hidden: false,
+        follow: false,
+        text: false,
+        files_with_matches: false,
+        files_without_match: false,
+        file_types: Vec::new(),
         color: None,
         replace: None,
         patterns: Vec::new(),
@@ -1618,15 +1671,24 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         fixed_strings: cli.fixed_strings,
         invert_match: cli.invert_match,
         count: cli.count,
+        count_matches: false,
         line_number: cli.line_number,
+        column: false,
         only_matching: cli.only_matching,
         context: None,
         before_context: None,
         after_context: None,
         max_count: cli.max_count,
         word_regexp: false,
+        smart_case: false,
         globs: Vec::new(),
         no_ignore: true,
+        hidden: false,
+        follow: false,
+        text: false,
+        files_with_matches: false,
+        files_without_match: false,
+        file_types: Vec::new(),
         color: cli.color.clone(),
         replace: cli.replace.clone(),
         patterns: vec![pattern.to_string()],
@@ -1640,20 +1702,43 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         fixed_strings: args.fixed_strings,
         invert_match: args.invert_match,
         count: args.count,
+        count_matches: args.count_matches,
         line_number: args.line_number,
+        column: args.column,
         only_matching: args.only_matching,
         context: args.context,
         before_context: args.before_context,
         after_context: args.after_context,
         max_count: args.max_count,
         word_regexp: args.word_regexp,
+        smart_case: args.smart_case,
         globs: args.globs.clone(),
         no_ignore: args.no_ignore,
+        hidden: args.hidden,
+        follow: args.follow,
+        text: args.text,
+        files_with_matches: args.files_with_matches,
+        files_without_match: args.files_without_match,
+        file_types: args.file_type.clone(),
         color: args.color.clone(),
         replace: args.replace.clone(),
         patterns: request.patterns.clone(),
         path: request.path.clone(),
     }
+}
+
+fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
+    !args.json
+        && !args.ndjson
+        && (args.count_matches
+            || args.column
+            || args.smart_case
+            || args.hidden
+            || args.follow
+            || args.text
+            || args.files_with_matches
+            || args.files_without_match
+            || !args.file_type.is_empty())
 }
 
 fn search_has_context(args: &SearchArgs) -> bool {
@@ -1872,6 +1957,17 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
     let structured_output = args.json || args.ndjson;
     let auto_gpu_ids: [i32; 0] = [];
+
+    if search_requires_ripgrep_passthrough(&args) {
+        if args.verbose {
+            emit_verbose_metadata(RoutingDecision::ripgrep());
+        }
+        let exit_code = execute_ripgrep_search(&command_ripgrep_args(&args, &request))?;
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
 
     #[cfg(feature = "cuda")]
     let corpus_bytes =
@@ -4296,16 +4392,26 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 fixed_strings: params.fixed_strings,
                                 invert_match: params.invert_match,
                                 count: params.count,
+                                count_matches: false,
                                 line_number: params.line_number,
+                                column: false,
                                 only_matching: false,
                                 context: params.context,
                                 before_context: None,
                                 after_context: None,
                                 max_count: params.max_count,
                                 word_regexp: params.word_regexp,
+                                smart_case: false,
                                 globs: params.globs.clone(),
                                 no_ignore: params.no_ignore,
+                                hidden: false,
+                                follow: false,
+                                text: false,
+                                files_with_matches: false,
+                                files_without_match: false,
+                                file_types: Vec::new(),
                                 color: None,
+                                replace: None,
                                 patterns: params.patterns.to_vec(),
                                 path: params.path.to_string(),
                             });

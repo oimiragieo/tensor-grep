@@ -214,6 +214,12 @@ def _extract_visible_help_commands(stdout: str) -> set[str]:
         match = re.match(r"^([a-z][a-z0-9-]*)\s{2,}", cleaned)
         if match:
             commands.add(match.group(1))
+            alias_match = re.search(r"\[aliases?: ([^\]]+)\]", cleaned)
+            if alias_match:
+                for alias in alias_match.group(1).split(","):
+                    normalized = alias.strip()
+                    if re.match(r"^[a-z][a-z0-9-]*$", normalized):
+                        commands.add(normalized)
     return commands
 
 
