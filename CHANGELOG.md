@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.4.9 (2026-04-24)
+
+### Bug Fixes
+
+- Route positional word regexp searches
+  ([`dbc93a3`](https://github.com/oimiragieo/tensor-grep/commit/dbc93a337bac4616f2edcc47103657e745e4591f))
+
+
 ## v1.4.8 (2026-04-24)
 
 ### Bug Fixes
