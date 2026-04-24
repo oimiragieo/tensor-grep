@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.4.6 (2026-04-24)
+
+### Bug Fixes
+
+- Restore help and lock release parity
+  ([`b22705d`](https://github.com/oimiragieo/tensor-grep/commit/b22705d0b9e894227a270cc81245bf05afb4bf82))
+
+
 ## v1.4.5 (2026-04-24)
 
 ### Bug Fixes
