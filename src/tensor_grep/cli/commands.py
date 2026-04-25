@@ -17,6 +17,7 @@ KNOWN_COMMANDS = {
     "run",
     "scan",
     "test",
+    "ast-info",
     "new",
     "worker",
     "defs",

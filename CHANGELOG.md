@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.5.1 (2026-04-25)
+
+### Features
+
+- **AST Parity & CLI Harmonization**: Achieved 100% operational parity with `ast-grep` by harmonizing legacy `argparse` commands into the primary Typer/Rich application.
+- **Interactive AST Rewrites**: New `--interactive` (`-i`) mode for `tg run` provides a confirm-apply loop for structural rewrites with per-file diff visualization.
+- **AST Match Filtering**: Added `--filter` flag to `tg run` for secondary regex filtering of AST node text, enabling pinpoint structural precision.
+- **Unified Structural Help**: Transitioned `run` and `test` commands to professional color-coded `Rich` help tables.
+- **Grammar Inventory**: New `tg ast-info` command programmatically lists all supported tree-sitter languages and grammars.
+- **100% ripgrep Parity**: Completed the `ripgrep` functional surface with PCRE2 patterns (`-P`), `--max-filesize` limits, and `--no-ignore-vcs` controls.
+
+### Bug Fixes
+
+- Restore Python docstring and boilerplate stripping for the `compact` render profile.
+- Fix `mypy` type errors related to `AST` attribute access in the repository planning layer.
+- Resolve test pollution in AST backend routing by making availability caches class-aware.
+- Synchronize distribution manifests and internal versioning to `v1.5.0` parity.
+
 ## v1.5.0 (2026-04-25)
 
 ### Bug Fixes

@@ -502,32 +502,46 @@ def test_main_entry_should_route_scan_to_ast_workflow_cli(monkeypatch):
     assert seen == {"argv": ["scan", "--config", "sgconfig.yml"]}
 
 
-def test_main_entry_should_route_run_to_ast_workflow_cli(monkeypatch):
+def test_main_entry_should_route_run_to_full_cli(monkeypatch):
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(sys, "argv", ["tg", "run", "ERROR", ".", "--lang", "python"])
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: seen.update({"full_cli": True}))
     monkeypatch.setattr(
-        bootstrap, "_run_ast_workflow_cli", lambda argv: seen.update({"argv": list(argv)})
+        bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail("workflow cli should not run")
     )
-    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
 
     bootstrap.main_entry()
 
-    assert seen == {"argv": ["run", "ERROR", ".", "--lang", "python"]}
+    assert seen == {"full_cli": True}
 
 
-def test_main_entry_should_route_test_to_ast_workflow_cli(monkeypatch):
+def test_main_entry_should_route_test_to_full_cli(monkeypatch):
     seen: dict[str, object] = {}
 
-    monkeypatch.setattr(sys, "argv", ["tg", "test", "--config", "sgconfig.yml"])
+    monkeypatch.setattr(sys, "argv", ["tg", "test"])
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: seen.update({"full_cli": True}))
     monkeypatch.setattr(
-        bootstrap, "_run_ast_workflow_cli", lambda argv: seen.update({"argv": list(argv)})
+        bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail("workflow cli should not run")
     )
-    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
 
     bootstrap.main_entry()
 
-    assert seen == {"argv": ["test", "--config", "sgconfig.yml"]}
+    assert seen == {"full_cli": True}
+
+
+def test_main_entry_should_route_ast_info_to_full_cli(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(sys, "argv", ["tg", "ast-info"])
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: seen.update({"full_cli": True}))
+    monkeypatch.setattr(
+        bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail("workflow cli should not run")
+    )
+
+    bootstrap.main_entry()
+
+    assert seen == {"full_cli": True}
 
 
 def test_main_entry_should_print_version_without_loading_full_cli(monkeypatch, capsys):

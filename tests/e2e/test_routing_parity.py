@@ -24,6 +24,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "run",
     "scan",
     "test",
+    "ast-info",
     "new",
     "defs",
     "refs",

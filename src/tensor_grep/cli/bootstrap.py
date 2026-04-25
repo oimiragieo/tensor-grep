@@ -218,8 +218,11 @@ def main_entry() -> None:
         _run_full_cli()
         return
 
-    if argv and argv[0] in {"run", "scan", "test"}:
-        if (argv[0] == "run") or (argv[0] == "scan" and _scan_requires_full_cli(argv[1:])):
+    if argv and argv[0] in {"run", "scan", "test", "ast-info"}:
+        if (
+            (argv[0] in {"run", "test", "ast-info"})
+            or (argv[0] == "scan" and _scan_requires_full_cli(argv[1:]))
+        ):
             _run_full_cli()
             return
         _run_ast_workflow_cli(argv)

@@ -674,22 +674,32 @@ def run_command(
 
 
 def _get_cached_backend(name: str) -> Any:
-    if name not in _CACHED_BACKENDS:
-        if name == "AstBackend":
-            from tensor_grep.backends.ast_backend import AstBackend
+    backend_class: Any
+    if name == "AstBackend":
+        from tensor_grep.backends.ast_backend import AstBackend
 
-            _CACHED_BACKENDS[name] = AstBackend()
-        elif name == "AstGrepWrapperBackend":
-            from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+        backend_class = AstBackend
+    elif name == "AstGrepWrapperBackend":
+        from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
 
-            _CACHED_BACKENDS[name] = AstGrepWrapperBackend()
-    return _CACHED_BACKENDS[name]
+        backend_class = AstGrepWrapperBackend
+    else:
+        raise ValueError(f"Unknown AST backend: {name}")
+
+    cache_key = (name, backend_class)
+    if cache_key not in _CACHED_BACKENDS:
+        _CACHED_BACKENDS[cache_key] = backend_class()
+    return _CACHED_BACKENDS[cache_key]
 
 
 def _check_backend_available(name: str) -> bool:
-    if name not in _BACKEND_AVAILABILITY:
-        _BACKEND_AVAILABILITY[name] = _get_cached_backend(name).is_available()
-    return _BACKEND_AVAILABILITY[name]
+    """Check if a backend is available with class-aware caching to support monkeypatching."""
+    backend = _get_cached_backend(name)
+    backend_class = type(backend)
+    cache_key = (name, backend_class, "availability")
+    if cache_key not in _BACKEND_AVAILABILITY:
+        _BACKEND_AVAILABILITY[cache_key] = backend.is_available()
+    return _BACKEND_AVAILABILITY[cache_key]
 
 
 def _select_ast_backend_for_pattern(
@@ -767,11 +777,9 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
 
     for rule in rules:
         rule_cfg = cfg if rule["language"] == cfg.lang else replace(cfg, lang=rule["language"])
-        backend_name = backend_hints.get(rule["id"])
-        if backend_name and _check_backend_available(backend_name):
-            backend = _get_cached_backend(backend_name)
-        else:
-            backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"])
+        backend = _select_ast_backend_for_pattern(
+            rule_cfg, rule["pattern"], backend_cache=_CACHED_BACKENDS
+        )
 
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_project"):
             wrapper_rules.append(rule)
@@ -874,6 +882,7 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
     backend_names_used: set[str] = set()
     rule_case_groups: dict[tuple[int, str, str], dict[str, Any]] = {}
     backend_hints = hints.get("backend_hints", {})
+    backend_cache: dict[tuple[str | None, str, bool], Any] = {}
 
     total_cases = 0
     failures: list[str] = []
@@ -912,13 +921,9 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
 
                 # Use orchestration hint if available
                 backend_name = backend_hints.get(linked_rule) if linked_rule else None
-                if not backend_name:
-                    backend_name = _select_ast_backend_name_for_pattern(pattern, language)
-
-                if _check_backend_available(backend_name):
-                    backend = _get_cached_backend(backend_name)
-                else:
-                    backend = _select_ast_backend_for_pattern(case_cfg, pattern)
+                backend = _select_ast_backend_for_pattern(
+                    case_cfg, pattern, backend_cache=backend_cache
+                )
 
                 backend_names_used.add(type(backend).__name__)
 
