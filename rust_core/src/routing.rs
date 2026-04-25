@@ -50,6 +50,7 @@ pub struct SearchRoutingConfig {
     pub corpus_bytes: u64,
     pub gpu_auto_supported: bool,
     pub prefer_rg_passthrough: bool,
+    pub pcre2: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,6 +161,10 @@ impl RoutingDecision {
         Self::new(BackendSelection::Ripgrep, "force-cpu", false)
     }
 
+    pub const fn ripgrep_pcre2() -> Self {
+        Self::new(BackendSelection::Ripgrep, "pcre2-required", false)
+    }
+
     pub const fn gpu_sidecar() -> Self {
         Self::new(
             BackendSelection::GpuSidecar,
@@ -176,6 +181,10 @@ pub const fn route_search(
     gpu_available: bool,
 ) -> RoutingDecision {
     let structured_output = config.json || config.ndjson;
+
+    if config.pcre2 && config.rg_available {
+        return RoutingDecision::ripgrep_pcre2();
+    }
 
     if config.explicit_index {
         return RoutingDecision::explicit_index();

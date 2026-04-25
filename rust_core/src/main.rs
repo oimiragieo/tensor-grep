@@ -140,6 +140,18 @@ pub struct PositionalCli {
     /// Emit routing metadata on stderr before executing the search
     #[arg(long)]
     pub verbose: bool,
+
+    /// Use PCRE2 regex engine
+    #[arg(short = 'P', long)]
+    pub pcre2: bool,
+
+    /// Ignore files larger than this size (e.g. 10MB)
+    #[arg(long)]
+    pub max_filesize: Option<String>,
+
+    /// Don't respect source control ignore files
+    #[arg(long)]
+    pub no_ignore_vcs: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -274,6 +286,22 @@ pub struct SearchArgs {
 
     /// Path to search
     pub path: Option<String>,
+
+    /// Use PCRE2 regex engine
+    #[arg(short = 'P', long)]
+    pub pcre2: bool,
+
+    /// Ignore files larger than this size (e.g. 10MB)
+    #[arg(long)]
+    pub max_filesize: Option<String>,
+
+    /// Don't respect source control ignore files
+    #[arg(long)]
+    pub no_ignore_vcs: bool,
+
+    /// Show the version of PCRE2 used
+    #[arg(long)]
+    pub pcre2_version: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -1443,6 +1471,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             corpus_bytes,
             gpu_auto_supported,
             prefer_rg_passthrough: false,
+            pcre2: cli.pcre2,
         },
         calibration.as_ref(),
         IndexRoutingState::default(),
@@ -1731,6 +1760,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         smart_case: false,
         globs: Vec::new(),
         no_ignore: true,
+        no_ignore_vcs: cli.no_ignore_vcs,
         hidden: false,
         follow: false,
         text: false,
@@ -1741,6 +1771,8 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         replace: cli.replace.clone(),
         patterns: vec![pattern.to_string()],
         path: path.to_string(),
+        pcre2: cli.pcre2,
+        max_filesize: cli.max_filesize.clone(),
     }
 }
 
@@ -1762,6 +1794,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         smart_case: args.smart_case,
         globs: args.globs.clone(),
         no_ignore: args.no_ignore,
+        no_ignore_vcs: args.no_ignore_vcs,
         hidden: args.hidden,
         follow: args.follow,
         text: args.text,
@@ -1772,6 +1805,8 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         replace: args.replace.clone(),
         patterns: request.patterns.clone(),
         path: request.path.clone(),
+        pcre2: args.pcre2,
+        max_filesize: args.max_filesize.clone(),
     }
 }
 

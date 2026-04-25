@@ -31,6 +31,7 @@ pub struct RipgrepSearchArgs {
     pub smart_case: bool,
     pub globs: Vec<String>,
     pub no_ignore: bool,
+    pub no_ignore_vcs: bool,
     pub hidden: bool,
     pub follow: bool,
     pub text: bool,
@@ -41,6 +42,8 @@ pub struct RipgrepSearchArgs {
     pub replace: Option<String>,
     pub patterns: Vec<String>,
     pub path: String,
+    pub pcre2: bool,
+    pub max_filesize: Option<String>,
 }
 
 pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
@@ -56,6 +59,15 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
+    if args.pcre2 {
+        command.arg("-P");
+    }
+    if let Some(size) = &args.max_filesize {
+        command.arg("--max-filesize").arg(size);
+    }
+    if args.no_ignore_vcs {
+        command.arg("--no-ignore-vcs");
+    }
     if args.ignore_case {
         command.arg("-i");
     }
@@ -138,6 +150,7 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     let status = command.status().context("failed to execute ripgrep")?;
     Ok(status.code().unwrap_or(1))
 }
+
 
 pub fn ripgrep_is_available() -> bool {
     resolve_ripgrep_binary().is_some()

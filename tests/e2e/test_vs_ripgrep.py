@@ -37,3 +37,37 @@ class TestVsRipgrep:
 
         print(f"ripgrep {len(patterns)} passes: {rg_total:.3f}s")
         print(f"tg single pass: {our_total:.3f}s")
+
+    def test_pcre2_lookahead_support(self, tmp_path):
+        """Verify that PCRE2 lookahead works via the -P flag."""
+        log = tmp_path / "lookahead.txt"
+        log.write_text("apple banana\norange banana\n", encoding="utf-8")
+
+        # Pattern matches 'apple' only if followed by ' banana' (positive lookahead)
+        pattern = r"apple(?= banana)"
+
+        res = subprocess.run(
+            ["uv", "run", "tg", "search", "-P", pattern, str(log)], capture_output=True, text=True
+        )
+        assert res.returncode == 0
+        assert "apple banana" in res.stdout
+        assert "orange banana" not in res.stdout
+
+    def test_max_filesize_respected(self, tmp_path):
+        """Verify that --max-filesize correctly skips large files."""
+        small_file = tmp_path / "small.txt"
+        small_file.write_text("match_me", encoding="utf-8")
+
+        large_file = tmp_path / "large.txt"
+        large_file.write_text("match_me" + ("x" * 1024 * 1024), encoding="utf-8")  # ~1MB
+
+        # Searching with 100KB limit should skip large_file
+        res = subprocess.run(
+            ["uv", "run", "tg", "search", "--max-filesize", "100K", "match_me", str(tmp_path)],
+            capture_output=True,
+            text=True,
+        )
+
+        # Depending on how ripgrep handles stdout, it might return 0 if any matches or 1 if some skipped
+        assert "small.txt" in res.stdout
+        assert "large.txt" not in res.stdout

@@ -141,6 +141,77 @@ impl RustBackend {
                 pyo3::exceptions::PyRuntimeError::new_err(format!("Rust count failed: {}", e))
             })
     }
+
+    /// Passthrough to the system ripgrep binary with full flag support
+    #[allow(clippy::too_many_arguments)]
+    fn execute_ripgrep(
+        &self,
+        patterns: Vec<String>,
+        path: String,
+        ignore_case: bool,
+        fixed_strings: bool,
+        invert_match: bool,
+        count: bool,
+        count_matches: bool,
+        line_number: bool,
+        column: bool,
+        only_matching: bool,
+        context: Option<usize>,
+        before_context: Option<usize>,
+        after_context: Option<usize>,
+        max_count: Option<usize>,
+        word_regexp: bool,
+        smart_case: bool,
+        globs: Vec<String>,
+        no_ignore: bool,
+        no_ignore_vcs: bool,
+        hidden: bool,
+        follow: bool,
+        text: bool,
+        files_with_matches: bool,
+        files_without_match: bool,
+        file_types: Vec<String>,
+        color: Option<String>,
+        replace: Option<String>,
+        pcre2: bool,
+        max_filesize: Option<String>,
+    ) -> PyResult<i32> {
+        use crate::rg_passthrough::{execute_ripgrep_search, RipgrepSearchArgs};
+        let args = RipgrepSearchArgs {
+            ignore_case,
+            fixed_strings,
+            invert_match,
+            count,
+            count_matches,
+            line_number,
+            column,
+            only_matching,
+            context,
+            before_context,
+            after_context,
+            max_count,
+            word_regexp,
+            smart_case,
+            globs,
+            no_ignore,
+            no_ignore_vcs,
+            hidden,
+            follow,
+            text,
+            files_with_matches,
+            files_without_match,
+            file_types,
+            color,
+            replace,
+            patterns,
+            path,
+            pcre2,
+            max_filesize,
+        };
+        execute_ripgrep_search(&args).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Ripgrep passthrough failed: {}", e))
+        })
+    }
 }
 
 /// A Python module implemented in Rust.

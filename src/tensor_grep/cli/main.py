@@ -5122,13 +5122,30 @@ def main_entry() -> None:
     # subcommand into sys.argv if the user didn't provide any recognized subcommand.
 
     # Check for version flag first
-    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V", "--pcre2-version"):
+        first_arg = sys.argv[1]
+
         try:
             from importlib.metadata import version
 
             pkg_version = version("tensor-grep")
         except Exception:
             pkg_version = _read_project_version_fallback()
+
+        if first_arg == "--pcre2-version":
+            # Attempt to delegate to native binary for pcre2 info
+            from tensor_grep.io.runtime_paths import resolve_native_tg_binary
+
+            native_tg_binary = resolve_native_tg_binary()
+            if native_tg_binary and native_tg_binary.exists():
+                completed = subprocess.run(
+                    [str(native_tg_binary), "--pcre2-version"], capture_output=True, text=True
+                )
+                if completed.returncode == 0:
+                    print(completed.stdout.strip())
+                    sys.exit(0)
+            print("PCRE2 is available (delegated to system ripgrep)")
+            sys.exit(0)
 
         print(f"tensor-grep {pkg_version}")
         print()

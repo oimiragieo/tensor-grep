@@ -37,18 +37,76 @@ class RustCoreBackend(ComputeBackend):
             )
 
         ignore_case = False
-        count_only = False
         fixed_strings = False
         invert_match = False
+        count_only = False
+        pcre2 = False
+        max_filesize = None
+        no_ignore_vcs = False
+
         if config:
             if config.ignore_case:
                 ignore_case = True
-            if config.count:
-                count_only = True
             if config.fixed_strings:
                 fixed_strings = True
             if config.invert_match:
                 invert_match = True
+            if config.count:
+                count_only = True
+            if config.pcre2:
+                pcre2 = True
+            if config.max_filesize:
+                max_filesize = config.max_filesize
+            if config.no_ignore_vcs:
+                no_ignore_vcs = True
+
+        # PCRE2 or advanced limits always route to ripgrep passthrough via Rust
+        if pcre2 or max_filesize or no_ignore_vcs:
+            try:
+                exit_code = self.inner.execute_ripgrep(
+                    [pattern],
+                    str(file_path),
+                    ignore_case,
+                    fixed_strings,
+                    invert_match,
+                    count_only,
+                    False,  # count_matches
+                    config.line_number if config else True,
+                    config.column if config else False,
+                    config.only_matching if config else False,
+                    config.context if config else None,
+                    config.before_context if config else None,
+                    config.after_context if config else None,
+                    config.max_count if config else None,
+                    config.word_regexp if config else False,
+                    config.smart_case if config else False,
+                    config.glob if config else [],
+                    config.no_ignore if config else False,
+                    no_ignore_vcs,
+                    config.hidden if config else False,
+                    config.follow if config else False,
+                    config.text if config else False,
+                    False,  # files_with_matches
+                    False,  # files_without_match
+                    config.file_type if config else [],
+                    config.color if config else None,
+                    config.replace_str if config else None,
+                    pcre2,
+                    max_filesize,
+                )
+                # Results are emitted directly to stdout by ripgrep binary
+                return SearchResult(
+                    matches=[],
+                    total_files=1 if exit_code == 0 else 0,
+                    total_matches=0,  # Unknown without parsing
+                    routing_backend="RustCoreBackend",
+                    routing_reason="rust_pcre2_passthrough" if pcre2 else "rust_limit_passthrough",
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                )
+            except (AttributeError, Exception):
+                # Fallback to standard Python-regex path if bridge fails
+                pass
 
         try:
             if count_only and not invert_match:
