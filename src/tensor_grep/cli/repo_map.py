@@ -4671,7 +4671,7 @@ def _is_comment_line(path: Path, line: str) -> bool:
 
 
 def _python_ast_omitted_relative_lines(
-    block: str, profile: str = "compact"
+    block: str, profile: str = "compact", strip_docstrings: bool = True
 ) -> tuple[set[int], set[int]]:
     try:
         tree = ast.parse(block)
@@ -4681,47 +4681,58 @@ def _python_ast_omitted_relative_lines(
     docstring_lines: set[int] = set()
     boilerplate_lines: set[int] = set()
 
-    for node in tree.body:
-        body = getattr(node, "body", None)
-        if not body:
-            continue
+    def _walk_and_strip(nodes: list[ast.stmt], parent: ast.AST | None = None) -> None:
+        if not nodes:
+            return
 
-        if profile == "llm":
-            # For llm profile, keep the first line (signature) and omit the rest of the body
-            # If there's a docstring, we could keep it, but skeletonization typically just needs signature
-            # Let's keep docstring too if present, then omit the rest
-            first = body[0]
-            first_value = getattr(first, "value", None)
-            start_omit = first.lineno
-            if (
-                isinstance(first, ast.Expr)
-                and isinstance(first_value, ast.Constant)
-                and isinstance(first_value.value, str)
-            ):
-                end_lineno = getattr(first, "end_lineno", first.lineno)
-                start_omit = end_lineno + 1
-
-            # Omit everything after the docstring (or signature if no docstring)
-            end_lineno = getattr(node, "end_lineno", node.lineno)
-            if end_lineno >= start_omit:
-                boilerplate_lines.update(range(start_omit, end_lineno + 1))
-            continue
-
-        first = body[0]
+        # Check if the first node in this body is a docstring
+        first = nodes[0]
         first_value = getattr(first, "value", None)
-        if (
-            isinstance(first, ast.Expr)
+        is_docstring = (
+            isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and isinstance(first, ast.Expr)
             and isinstance(first_value, ast.Constant)
             and isinstance(first_value.value, str)
-        ):
+        )
+
+        if profile == "llm":
+            if parent is not None:
+                # Skeletonize: Keep signature, maybe keep docstring, omit rest of body
+                start_omit = first.lineno
+                if is_docstring:
+                    if strip_docstrings:
+                        end_lineno = getattr(first, "end_lineno", first.lineno)
+                        docstring_lines.update(range(first.lineno, end_lineno + 1))
+                        start_omit = end_lineno + 1
+                    else:
+                        end_lineno = getattr(first, "end_lineno", first.lineno)
+                        start_omit = end_lineno + 1
+
+                parent_end_lineno = getattr(parent, "end_lineno", parent.lineno)
+                if parent_end_lineno >= start_omit:
+                    boilerplate_lines.update(range(start_omit, parent_end_lineno + 1))
+                return  # Don't recurse into omitted body
+
+        # Compact profile stripping
+        if is_docstring:
             end_lineno = getattr(first, "end_lineno", first.lineno)
             docstring_lines.update(range(first.lineno, end_lineno + 1))
-        if len(body) == 2 and any(isinstance(child, ast.Pass) for child in body):
-            for child in body:
-                if isinstance(child, ast.Pass):
-                    end_lineno = getattr(child, "end_lineno", child.lineno)
-                    boilerplate_lines.update(range(child.lineno, end_lineno + 1))
 
+        if profile == "compact":
+            # Strip 'pass' if it's the only node or only node after docstring
+            if len(nodes) == 1 or (len(nodes) == 2 and is_docstring):
+                last = nodes[-1]
+                if isinstance(last, ast.Pass):
+                    end_lineno = getattr(last, "end_lineno", last.lineno)
+                    boilerplate_lines.update(range(last.lineno, end_lineno + 1))
+
+        # Recurse into all nodes to find nested functions/classes
+        for node in nodes:
+            node_body = getattr(node, "body", None)
+            if node_body and isinstance(node_body, list):
+                _walk_and_strip(node_body, parent=node)
+
+    _walk_and_strip(tree.body)
     return docstring_lines, boilerplate_lines
 
 
@@ -4840,7 +4851,9 @@ def _render_source_block(
             omitted_rust_attribute_lines: set[int] = set()
             if path.suffix == ".py":
                 omitted_docstring_lines, omitted_boilerplate_lines = (
-                    _python_ast_omitted_relative_lines(block, normalized_profile)
+                    _python_ast_omitted_relative_lines(
+                        block, normalized_profile, strip_docstrings=optimize_context
+                    )
                 )
             elif path.suffix in _TS_SUFFIXES:
                 omitted_jsdoc_lines, omitted_ts_type_import_lines = _ts_ast_omitted_relative_lines(
