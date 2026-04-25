@@ -1,16 +1,29 @@
 # CHANGELOG
 
 
-## v1.4.13 (2026-04-25)
-
-### Features
-
-- Implement high-density `llm` render profile with Python AST skeletonization for maximized token efficiency in AI harnesses.
+## v1.5.0 (2026-04-25)
 
 ### Bug Fixes
 
-- Restore and harden Python docstring and boilerplate stripping for `compact` render profile.
-- Synchronize `rust_core` version parity for `v1.4.12` line.
+- Apply ruff format --preview to match CI requirements
+  ([`f10871c`](https://github.com/oimiragieo/tensor-grep/commit/f10871c84dfd659e1a8bbfc7fe66b144611f6e0d))
+
+- Resolve mypy type errors in python skeletonizer
+  ([`f7d76e1`](https://github.com/oimiragieo/tensor-grep/commit/f7d76e1a3d2fd6ecbe25d77fd806bd7978e8e6c4))
+
+- Restore docstring stripping for compact profile and sync rust_core version
+  ([`7b72f7e`](https://github.com/oimiragieo/tensor-grep/commit/7b72f7e527d6e96188649f3f349e6caa345f9d0d))
+
+### Chores
+
+- Sync local formatting and refactoring from previous session
+  ([`31399f7`](https://github.com/oimiragieo/tensor-grep/commit/31399f702e07c3afd5145af56d66b6b32331479f))
+
+### Features
+
+- Implement high-density llm render profile with python AST skeletonization
+  ([`1703e02`](https://github.com/oimiragieo/tensor-grep/commit/1703e023920e528d3479529a77ffff4522e4e559))
+
 
 ## v1.4.12 (2026-04-25)
 
