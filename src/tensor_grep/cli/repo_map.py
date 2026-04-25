@@ -4696,21 +4696,20 @@ def _python_ast_omitted_relative_lines(
         )
 
         if profile == "llm":
-            if parent is not None:
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 # Skeletonize: Keep signature, maybe keep docstring, omit rest of body
                 start_omit = first.lineno
                 if is_docstring:
                     if strip_docstrings:
-                        end_lineno = getattr(first, "end_lineno", first.lineno)
-                        docstring_lines.update(range(first.lineno, end_lineno + 1))
-                        start_omit = end_lineno + 1
+                        first_end = getattr(first, "end_lineno", first.lineno)
+                        docstring_lines.update(range(first.lineno, first_end + 1))
+                        start_omit = first_end + 1
                     else:
-                        end_lineno = getattr(first, "end_lineno", first.lineno)
-                        start_omit = end_lineno + 1
+                        start_omit = getattr(first, "end_lineno", first.lineno) + 1
 
-                parent_end_lineno = getattr(parent, "end_lineno", parent.lineno)
-                if parent_end_lineno >= start_omit:
-                    boilerplate_lines.update(range(start_omit, parent_end_lineno + 1))
+                parent_end = getattr(parent, "end_lineno", parent.lineno)
+                if parent_end >= start_omit:
+                    boilerplate_lines.update(range(start_omit, parent_end + 1))
                 return  # Don't recurse into omitted body
 
         # Compact profile stripping
