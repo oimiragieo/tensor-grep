@@ -878,6 +878,12 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
                 let value = tokens.get(index)?.parse::<usize>().ok()?;
                 args.max_count = Some(value);
             }
+            _ if token.starts_with("--max-count=") => {
+                let value = token
+                    .split_once('=')
+                    .and_then(|(_, value)| value.parse::<usize>().ok())?;
+                args.max_count = Some(value);
+            }
             "--color" => {
                 index += 1;
                 args.color = Some(tokens.get(index)?.clone());
@@ -1069,6 +1075,21 @@ mod tests {
         assert_eq!(parsed_max_count.max_count, Some(5));
         assert_eq!(parsed_max_count.patterns, vec!["ERROR".to_string()]);
         assert_eq!(parsed_max_count.path, "bench_data".to_string());
+    }
+
+    #[test]
+    fn default_search_frontdoor_accepts_equals_max_count_shape() {
+        let raw_args = ["tg", "search", "--max-count=5", "ERROR", "bench_data"]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        let parsed = parse_default_search_frontdoor_args(&raw_args)
+            .expect("expected default search frontdoor equals max-count args to parse");
+
+        assert_eq!(parsed.max_count, Some(5));
+        assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(parsed.path, "bench_data".to_string());
     }
 
     #[test]

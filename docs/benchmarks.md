@@ -410,6 +410,14 @@ ripgrep args and native routing config instead of dropping it. The accepted read
 this is a positional capability win with a small measured benefit on the experimental lane, not a
 new accepted global cold-path mode.
 
+The accepted `--max-count=N` follow-up is a parser/routing parity fix on the existing default
+`tg search` max-count lane, not a renewed front-door widening experiment. The local
+`artifacts/bench_run_benchmarks.json` gate passed with all parity rows clean and no tensor-grep
+regression detected; the measured `Max Count Limit` row was `rg 0.097s` versus `tg 0.132s`.
+That keeps the product contract honest: `-m N`, `--max-count N`, and `--max-count=N` now reach
+the same max-count passthrough behavior, while the earlier broad count/max-count widening remains
+rejected.
+
 The next positional follow-up was measured and rejected rather than left as a placeholder.
 `artifacts/bench_run_benchmarks_positional_glob_baseline_lane.json` versus
 `artifacts/bench_run_benchmarks_positional_glob_candidate.json` shows that widening the
@@ -550,7 +558,7 @@ This is a more honest benchmark than the older mixed-process snapshot because bo
 
 Operational note: the fixed-string row depends on the benchmark extras (`stringzilla`). The CI `benchmark-regression` job still installs `.[bench,dev]` and runs `run_hot_query_benchmarks.py`, while local one-off runs can now use the smaller `.[bench]` contract directly (`uv pip install -e ".[bench]"` or `uv run --extra bench python benchmarks/run_hot_query_benchmarks.py`). When that dependency is absent, the benchmark records an explicit `SKIP` row with an install hint instead of crashing.
 
-For the cold-path roadmap, the next two targets stay narrow and evidence-first:
+For the cold-path roadmap, the next targets stay narrow and evidence-first:
 
-- first, reduce `--max-count` startup overhead without reopening the broader launcher rewrite
-- second, investigate the remaining `Case-Insensitive`, `Regex`, `File Glob Filtering`, and `Word Boundary` cold-path gaps without retrying the already-rejected broader default-front-door widening
+- keep max-count work limited to parser/routing parity or a cleaner benchmark design, not broad count/max-count front-door widening
+- investigate the remaining `Count Matches`, `Case-Insensitive`, `Regex`, `File Glob Filtering`, and `Word Boundary` cold-path gaps without retrying the already-rejected broader default-front-door widening
