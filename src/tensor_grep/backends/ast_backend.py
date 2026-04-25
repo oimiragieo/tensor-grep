@@ -25,6 +25,27 @@ ParsedSourceCacheEntry = tuple[FileSignature, bytes, list[str], Any, int]
 NodeTypeIndexCacheEntry = tuple[FileSignature, dict[str, list[int]]]
 
 
+def get_supported_languages() -> list[str]:
+    """Return a list of languages with supported tree-sitter grammars."""
+    # This matches the logic in _get_parser
+    return [
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "rust",
+        "go",
+        "java",
+        "c",
+        "cpp",
+        "c_sharp",
+        "ruby",
+        "php",
+        "html",
+        "css",
+    ]
+
+
 class AstBackend(ComputeBackend):
     """
     A Graph Neural Network (GNN) backend that parses source code into an Abstract Syntax Tree (AST)

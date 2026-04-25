@@ -2006,10 +2006,21 @@ def test_only_matching_outputs_token_not_whole_line(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
 
     runner = CliRunner()
-    result = runner.invoke(app, ["search", "ERROR", ".", "--only-matching"])
+    result = runner.invoke(app, ["search", "ERROR", ".", "-o"])
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "ERROR"
+
+
+def test_tg_run_uses_typer_help():
+    from tensor_grep.cli.main import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "Usage: " in result.stdout
+    assert "Options" in result.stdout
+    assert "positional arguments:" not in result.stdout
 
 
 def test_cli_uses_ripgrep_passthrough_fast_path(monkeypatch):
@@ -4902,3 +4913,16 @@ def test_main_entry_should_fallback_to_pyproject_version_when_metadata_missing(m
 
     assert excinfo.value.code == 0
     assert "tensor-grep 0.31.4" in capsys.readouterr().out
+
+
+def test_tg_test_uses_typer_help():
+    from typer.testing import CliRunner
+
+    from tensor_grep.cli.main import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["test", "--help"])
+    assert result.exit_code == 0
+    assert "Usage: " in result.stdout
+    assert "Options" in result.stdout.lower() or "options" in result.stdout.lower()
+    assert "positional arguments:" not in result.stdout

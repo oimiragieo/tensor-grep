@@ -15,8 +15,8 @@ from uuid import uuid4
 
 import typer
 
+from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
-from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 from tensor_grep.cli.runtime_paths import env_flag_enabled, resolve_native_tg_binary
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
@@ -3937,55 +3937,6 @@ def classify(
 
 
 @app.command()
-def run(
-    pattern: str = typer.Argument(..., help="AST pattern to search for"),
-    path: str | None = typer.Argument(None, help="Path to search"),
-    rewrite: str | None = typer.Option(None, "--rewrite", "-r", help="Rewrite matching code"),
-    lang: str | None = typer.Option(None, "--lang", "-l", help="Language to parse"),
-) -> None:
-    """Run one-time AST search or rewrite in command line."""
-    if not path:
-        path = "."
-
-    from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import SearchResult
-    from tensor_grep.io.directory_scanner import DirectoryScanner
-
-    cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=lang, query_pattern=pattern)
-    backend = _select_ast_backend_for_pattern(cfg, pattern)
-    backend_name = type(backend).__name__
-    typer.echo(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
-
-    if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
-        typer.echo(
-            "Warning: AstBackend not available (requires torch_geometric/tree_sitter). Falling back to CPU regex.",
-            err=True,
-        )
-
-    all_results = SearchResult(matches=[], total_files=0, total_matches=0)
-
-    if backend_name == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-        result = backend.search_many([path], pattern, config=cfg)
-        all_results.matches.extend(result.matches)
-        all_results.matched_file_paths.extend(result.matched_file_paths)
-        all_results.total_matches += result.total_matches
-        all_results.total_files = max(all_results.total_files, result.total_files)
-    else:
-        scanner = DirectoryScanner(cfg)
-        candidate_files, _ = _collect_candidate_files(scanner, [path])
-        for current_file in candidate_files:
-            result = backend.search(current_file, pattern, config=cfg)
-            all_results.matches.extend(result.matches)
-            all_results.matched_file_paths.extend(result.matched_file_paths)
-            all_results.total_matches += result.total_matches
-            if result.total_files > 0 or result.total_matches > 0:
-                all_results.total_files += 1
-
-    formatter = RipgrepFormatter()
-    print(formatter.format(all_results))
-
-
-@app.command()
 def rulesets(
     json_output: bool = typer.Option(False, "--json", help="Emit structured ruleset metadata."),
 ) -> None:
@@ -4223,144 +4174,9 @@ def test(
     ),
 ) -> None:
     """Test structural rules by configuration."""
-    from tensor_grep.core.config import SearchConfig
-
-    try:
-        project_cfg = _load_sg_project_config(config)
-    except (FileNotFoundError, ValueError) as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-
-    rules = _load_rule_specs(project_cfg)
-    if not rules:
-        typer.echo("Error: No valid rules found in configured rule directories.", err=True)
-        sys.exit(1)
-    rules_by_id = {rule["id"]: rule for rule in rules}
-
-    root_dir = cast(Path, project_cfg["root_dir"])
-    test_dirs = cast(list[str], project_cfg["test_dirs"])
-    test_files = _iter_yaml_files(root_dir, test_dirs)
-    if not test_files:
-        typer.echo("Error: No test files found in configured test directories.", err=True)
-        sys.exit(1)
-
-    cfg = SearchConfig(
-        ast=True,
-        ast_prefer_native=True,
-        lang=cast(str, project_cfg["language"]),
-    )
-    backend_cache: dict[tuple[str | None, str, bool], ComputeBackend] = {}
-    backend_names_used: set[str] = set()
-    wrapper_case_groups: dict[tuple[int, str, str], dict[str, object]] = {}
-
-    total_cases = 0
-    failures: list[str] = []
-    for test_file in test_files:
-        payload = _load_yaml_dict(test_file)
-        raw_cases = payload.get("tests")
-        if isinstance(raw_cases, list):
-            cases = [case for case in raw_cases if isinstance(case, dict)]
-        else:
-            cases = [payload]
-
-        for case in cases:
-            case_id = str(case.get("id") or test_file.stem)
-            linked_rule = case.get("ruleId")
-            pattern = _extract_rule_pattern(case)
-            language = str(case.get("language") or cfg.lang or "python")
-            if not pattern and isinstance(linked_rule, str) and linked_rule in rules_by_id:
-                pattern = rules_by_id[linked_rule]["pattern"]
-                language = str(case.get("language") or rules_by_id[linked_rule]["language"])
-            if not pattern:
-                failures.append(f"{test_file}:{case_id}: missing pattern or ruleId")
-                continue
-
-            valid_snippets = _normalize_string_list(case.get("valid"), [])
-            invalid_snippets = _normalize_string_list(case.get("invalid"), [])
-            if not valid_snippets and not invalid_snippets:
-                failures.append(f"{test_file}:{case_id}: empty valid/invalid test lists")
-                continue
-
-            total_cases += len(valid_snippets) + len(invalid_snippets)
-            case_cfg = replace(cfg, lang=language)
-            backend = _select_ast_backend_for_pattern(case_cfg, pattern, backend_cache)
-            backend_names_used.add(type(backend).__name__)
-
-            if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
-                backend, "search_many"
-            ):
-                batch_key = (id(backend), pattern, language)
-                batch = wrapper_case_groups.setdefault(
-                    batch_key,
-                    {
-                        "backend": backend,
-                        "root_dir": root_dir,
-                        "case_cfg": case_cfg,
-                        "pattern": pattern,
-                        "language": language,
-                        "items": [],
-                    },
-                )
-                items = cast(list[tuple[str, str, bool]], batch["items"])
-                case_key = f"{test_file}:{case_id}"
-                items.extend((case_key, snippet, False) for snippet in valid_snippets)
-                items.extend((case_key, snippet, True) for snippet in invalid_snippets)
-                continue
-
-            try:
-                evaluated_snippets = []
-                for expected_match, snippets in (
-                    (False, valid_snippets),
-                    (True, invalid_snippets),
-                ):
-                    for snippet in snippets:
-                        temp_name = (
-                            root_dir
-                            / f".tg_rule_test_{uuid4().hex}{_suffix_for_language(language)}"
-                        )
-                        temp_name.write_text(snippet, encoding="utf-8")
-                        try:
-                            result = backend.search(str(temp_name), pattern, config=case_cfg)
-                            evaluated_snippets.append((
-                                f"{test_file}:{case_id}",
-                                snippet,
-                                expected_match,
-                                bool(
-                                    result.total_files > 0
-                                    or result.total_matches > 0
-                                    or result.matched_file_paths
-                                ),
-                            ))
-                        finally:
-                            temp_name.unlink(missing_ok=True)
-            except Exception as exc:
-                failures.append(f"{test_file}:{case_id}: backend error: {exc}")
-                continue
-
-            for case_key, snippet, expected_match, has_match in evaluated_snippets:
-                if has_match != expected_match:
-                    expectation = "match" if expected_match else "no match"
-                    failures.append(
-                        f"{case_key}: expected {expectation}, got "
-                        f"{'match' if has_match else 'no match'} for snippet {snippet!r}"
-                    )
-
-    _evaluate_grouped_ast_test_cases_with_wrapper(
-        failures=failures,
-        grouped_cases=wrapper_case_groups,
-    )
-
-    typer.echo(
-        f"Testing AST rules using {_describe_ast_backend_modes(backend_names_used)} "
-        f"from {project_cfg['config_path']}..."
-    )
-    if failures:
-        for failure in failures:
-            typer.echo(f"[test] FAIL {failure}", err=True)
-        typer.echo(f"Rule tests failed. cases={total_cases} failures={len(failures)}", err=True)
-        sys.exit(1)
-
-    typer.echo(f"All tests passed. cases={total_cases}")
+    exit_code = ast_workflows.test_command(config)
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command()
@@ -5090,6 +4906,54 @@ def review_bundle_verify(
 def update() -> None:
     """Alias for upgrade."""
     upgrade()
+
+
+@app.command(name="ast-info")
+def ast_info() -> None:
+    """List supported AST languages and grammars."""
+    from tensor_grep.backends.ast_backend import get_supported_languages
+
+    typer.echo("Supported AST Languages:")
+    for lang in get_supported_languages():
+        typer.echo(f"- {lang}")
+
+
+@app.command(
+    name="run",
+    help="Run AST structural search and optional rewrites.",
+)
+def run(
+    pattern: str = typer.Argument(..., help="The AST pattern to search for."),
+    path: str | None = typer.Argument(None, help="The path to search in."),
+    rewrite: str | None = typer.Option(None, "--rewrite", "-r", help="Replacement pattern."),
+    lang: str | None = typer.Option(None, "--lang", "-l", help="Language for AST parsing."),
+    apply: bool = typer.Option(False, "--apply", help="Apply the rewrite to files."),
+    verify: bool = typer.Option(False, "--verify", help="Verify the rewrite with tests."),
+    json_output: bool = typer.Option(False, "--json", help="Output results in JSON format."),
+    checkpoint: bool = typer.Option(False, "--checkpoint", help="Enable edit checkpoints."),
+    interactive: bool = typer.Option(
+        False, "--interactive", "-i", help="Start interactive edit session"
+    ),
+    filter_regex: str | None = typer.Option(
+        None, "--filter", help="Filter matched AST nodes by text regex"
+    ),
+) -> None:
+    from tensor_grep.cli.ast_workflows import run_command as execute_run
+
+    exit_code = execute_run(
+        pattern=pattern,
+        path=path,
+        rewrite=rewrite,
+        lang=lang,
+        apply=apply,
+        verify=verify,
+        json_mode=json_output,
+        checkpoint=checkpoint,
+        interactive=interactive,
+        filter_regex=filter_regex,
+    )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command(hidden=True)

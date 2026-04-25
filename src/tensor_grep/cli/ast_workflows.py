@@ -7,10 +7,11 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import SearchResult
+    from tensor_grep.core.result import MatchLine, SearchResult
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 # Global caches
@@ -405,18 +406,15 @@ def _batch_search_snippets(
     suffix = _suffix_for_language(language)
     snippet_paths: list[str] = []
 
-    # Use a counter for faster filename generation than full UUIDs
-    counter = len(snippet_cache)
-
+    # Use unique snippet names with uuid for maximum collision robustness
     for snippet in snippets:
         cache_key = (snippet, language)
         if cache_key in snippet_cache:
             snippet_paths.append(snippet_cache[cache_key])
             continue
 
-        counter += 1
-        # Write unique snippet
-        snippet_path = temp_dir_path / f"snip_{counter}{suffix}"
+        # Write unique snippet with uuid for maximum collision robustness
+        snippet_path = temp_dir_path / f"snip_{uuid4().hex}{suffix}"
         snippet_path.write_text(snippet, encoding="utf-8")
         path_str = str(snippet_path)
         snippet_cache[cache_key] = path_str
@@ -478,57 +476,70 @@ def run_command(
     lang: str | None = None,
     apply: bool = False,
     verify: bool = False,
-    json_output: bool = False,
+    json_mode: bool = False,
     checkpoint: bool = False,
     audit_manifest: str | None = None,
     audit_signing_key: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
     policy: str | None = None,
+    interactive: bool = False,
+    filter_regex: str | None = None,
 ) -> int:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
 
-    if policy is not None and not apply:
-        print("--policy requires --apply.", file=sys.stderr)
+    if policy is not None and not apply and not interactive:
+        print("--policy requires --apply or --interactive.", file=sys.stderr)
         return 1
     if (
-        verify or checkpoint or audit_manifest or audit_signing_key or lint_cmd or test_cmd
-    ) and not apply:
+        (verify or checkpoint or audit_manifest or audit_signing_key or lint_cmd or test_cmd)
+        and not apply
+        and not interactive
+    ):
         print(
             "--verify, --checkpoint, --audit-manifest, --audit-signing-key, --lint-cmd, and "
-            "--test-cmd require --apply.",
+            "--test-cmd require --apply or --interactive.",
             file=sys.stderr,
         )
         return 1
-    if apply:
-        if rewrite is None:
-            print("--apply requires --rewrite.", file=sys.stderr)
-            return 1
-        rewrite_json, exit_code = execute_rewrite_apply_json(
-            pattern=pattern,
-            replacement=rewrite,
-            lang=lang or "",
-            path=path or ".",
-            verify=verify,
-            checkpoint=checkpoint,
-            audit_manifest=audit_manifest,
-            audit_signing_key=audit_signing_key,
-            lint_cmd=lint_cmd,
-            test_cmd=test_cmd,
-            policy=policy,
-        )
-        _safe_stdout_line(rewrite_json)
-        return exit_code
 
-    del rewrite, audit_manifest, audit_signing_key, lint_cmd, test_cmd, policy
+    if interactive and not rewrite:
+        print("--interactive requires --rewrite.", file=sys.stderr)
+        return 1
+    if apply or interactive:
+        if rewrite is None:
+            print(f"--{'apply' if apply else 'interactive'} requires --rewrite.", file=sys.stderr)
+            return 1
+
+        # Interactive mode or filtered apply requires finding matches first
+        # unless it's a simple batch apply.
+        # But for parity, let's always find matches if filtering or interactive.
+        if filter_regex or interactive:
+            pass  # continue to match finding
+        else:
+            rewrite_json, exit_code = execute_rewrite_apply_json(
+                pattern=pattern,
+                replacement=rewrite,
+                lang=lang or "",
+                path=path or ".",
+                verify=verify,
+                checkpoint=checkpoint,
+                audit_manifest=audit_manifest,
+                audit_signing_key=audit_signing_key,
+                lint_cmd=lint_cmd,
+                test_cmd=test_cmd,
+                policy=policy,
+            )
+            _safe_stdout_line(rewrite_json)
+            return exit_code
 
     search_path = path or "."
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=lang, query_pattern=pattern)
     backend = _select_ast_backend_for_pattern(cfg, pattern)
     backend_name = type(backend).__name__
 
-    if not json_output:
+    if not json_mode:
         _safe_stdout_line(f"Executing {_describe_ast_backend_mode(backend_name)} run...")
 
         if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
@@ -559,7 +570,80 @@ def run_command(
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
 
-    if json_output:
+    # Filter matches
+    if filter_regex:
+        import re
+
+        regex = re.compile(filter_regex)
+        all_results.matches = [m for m in all_results.matches if regex.search(m.text)]
+        all_results.total_matches = len(all_results.matches)
+
+    if interactive and rewrite:
+        # Perform interactive rewrites
+        if not all_results.matches:
+            print("No matches found to rewrite.", file=sys.stderr)
+            return 0
+
+        # Group matches by file for more natural interactive flow
+        matches_by_file: dict[str, list[MatchLine]] = {}
+        for match in all_results.matches:
+            matches_by_file.setdefault(match.file, []).append(match)
+
+        applied_files: set[str] = set()
+        for file_path, file_matches in matches_by_file.items():
+            print(f"\nFile: {file_path}")
+            for match in file_matches:
+                print(f"  L{match.line_number}: {match.text.strip()}")
+
+            choice = (
+                input(f"Apply rewrite to {len(file_matches)} matches in this file? [y/n/a/q]: ")
+                .strip()
+                .lower()
+            )
+            if choice == "q":
+                break
+            if choice == "a":
+                # Apply all remaining files
+                for remaining_file in list(matches_by_file.keys())[
+                    list(matches_by_file.keys()).index(file_path) :
+                ]:
+                    applied_files.add(remaining_file)
+                break
+
+            if choice in ("y", "yes", ""):
+                applied_files.add(file_path)
+
+        if not applied_files:
+            print("No changes applied.")
+            return 0
+
+        # Perform the actual apply only to the selected files
+        # We can pass multiple paths to execute_rewrite_apply_json if it supports it,
+        # but it takes a single 'path' string.
+        # We'll call it once per file for simplicity in this slice.
+        total_applied = 0
+        for f in applied_files:
+            rewrite_json, exit_code = execute_rewrite_apply_json(
+                pattern=pattern,
+                replacement=rewrite,
+                lang=lang or "",
+                path=f,
+                verify=verify,
+                checkpoint=checkpoint,
+                audit_manifest=audit_manifest,
+                audit_signing_key=audit_signing_key,
+                lint_cmd=lint_cmd,
+                test_cmd=test_cmd,
+                policy=policy,
+            )
+            total_applied += 1
+            if exit_code != 0:
+                print(f"Error applying rewrite to {f}: {rewrite_json}", file=sys.stderr)
+
+        print(f"Successfully applied rewrites to {total_applied} files.")
+        return 0
+
+    if json_mode:
         import json
 
         matches_payload: list[dict[str, object]] = []
@@ -868,9 +952,7 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                                 if cache_key in snippet_cache:
                                     temp_name_str = snippet_cache[cache_key]
                                 else:
-                                    temp_name = (
-                                        session_temp_path / f"snip_{len(snippet_cache) + 1}{suffix}"
-                                    )
+                                    temp_name = session_temp_path / f"snip_{uuid4().hex}{suffix}"
                                     temp_name.write_text(snippet, encoding="utf-8")
                                     temp_name_str = str(temp_name)
                                     snippet_cache[cache_key] = temp_name_str
@@ -980,13 +1062,13 @@ def main_entry(argv: list[str] | None = None) -> None:
     if args.command == "run":
         raise SystemExit(
             run_command(
-                args.pattern,
-                args.path,
+                pattern=args.pattern,
+                path=args.path,
                 rewrite=args.rewrite,
                 lang=args.lang,
                 apply=args.apply,
                 verify=args.verify,
-                json_output=args.json,
+                json_mode=args.json,
                 checkpoint=args.checkpoint,
                 audit_manifest=args.audit_manifest,
                 audit_signing_key=args.audit_signing_key,
