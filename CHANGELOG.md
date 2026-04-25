@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.4.11 (2026-04-25)
+
+### Bug Fixes
+
+- Audit locked python dependency set
+  ([`870337e`](https://github.com/oimiragieo/tensor-grep/commit/870337e7f031d8aac5ef350e809fa5814330277b))
+
+### Chores
+
+- Sync lockfile for v1.4.10
+  ([`f698813`](https://github.com/oimiragieo/tensor-grep/commit/f698813d7dbfd3ded89bc965a161aff6495590bf))
+
+
 ## v1.4.10 (2026-04-25)
 
 ### Bug Fixes
