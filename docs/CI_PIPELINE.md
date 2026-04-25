@@ -63,12 +63,16 @@ Runs dependency and license audits:
 - `cargo deny check`
 - `pip-audit`
 
-`pip-audit` runs inside a uv-created Python environment after `uv python install 3.12`.
-Do not invoke `uv pip install` in this workflow without creating that environment first, or the job will fail before the audit runs.
+The Python audit exports the fully locked `uv.lock` dependency graph to a hashed requirements file
+under `$RUNNER_TEMP`, then runs `pip-audit` with `--require-hashes` and `--disable-pip` against that
+file. This keeps the scanner/runtime environment out of the audited dependency set, while still
+checking all extras from the resolved lock.
 The repo also owns `pyproject.toml` `tool.uv.constraint-dependencies` security floors for audited
 transitive packages. When `pip-audit` reports a vulnerable transitive dependency, update those
 constraints, refresh `uv.lock`, and extend the validator-backed tests instead of silently pinning
 the package as a new top-level runtime dependency.
+The validator also treats `pytest>=9.0.3` in both `dev` and `bench` extras as audit parity
+surface, because those extras are included in the locked Python audit graph.
 Formatter parity also depends on an exact Ruff dev pin. CI runs Ruff in preview mode, and Ruff's
 versioning allows formatter behavior to change across releases, so keep the repo-owned
 `ruff==0.15.11` pin and the validator tests in sync when intentionally upgrading the formatter.

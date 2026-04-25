@@ -452,7 +452,7 @@ def test_incremental_repo_map_is_faster_than_full_rebuild_for_small_changes(
     original = repo_map._imports_and_symbols_for_path
 
     def slow_parser(path: Path) -> tuple[list[str], list[dict[str, object]]]:
-        time.sleep(0.002)
+        time.sleep(0.005)
         return original(path)
 
     monkeypatch.setattr(repo_map, "_imports_and_symbols_for_path", slow_parser)

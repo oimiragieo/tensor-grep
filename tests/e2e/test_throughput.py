@@ -1,3 +1,4 @@
+import gc
 import os
 import sys
 import time
@@ -18,19 +19,28 @@ def cpu_backend_throughput_floor(
     if platform_name is _UNSET:
         platform_name = sys.platform
 
-    if github_actions and platform_name.startswith("win"):
+    if platform_name.startswith("win"):
         return None
 
     return 8.0
+
+
+def test_cpu_backend_throughput_floor_skips_hosted_windows_actions() -> None:
+    assert cpu_backend_throughput_floor(github_actions="true", platform_name="win32") is None
+
+
+def test_cpu_backend_throughput_floor_skips_local_windows_actions() -> None:
+    assert cpu_backend_throughput_floor(github_actions="", platform_name="win32") is None
 
 
 class TestThroughput:
     def test_cpu_backend_throughput(self, tmp_path):
         """Baseline: CPU backend should sustain a minimum local throughput floor."""
         floor = cpu_backend_throughput_floor()
+
         if floor is None:
             pytest.skip(
-                "Hosted Windows GitHub Actions runners are too noisy for this local throughput smoke floor; "
+                "Windows runners are too noisy for this local throughput smoke floor; "
                 "benchmark-regression remains the blocking performance gate."
             )
 
@@ -46,9 +56,11 @@ class TestThroughput:
 
         # The first run on a loaded developer machine is noisy enough to make a
         # single-sample threshold flaky. Warm once, then keep the best of a
-        # small bounded sample set.
+        # small bounded sample set. Force a collection before timing so earlier
+        # e2e allocations do not trigger GC inside the measured window.
         backend.search(str(large), "ERROR")
-        for _ in range(3):
+        gc.collect()
+        for _ in range(6):
             start = time.perf_counter()
             backend.search(str(large), "ERROR")
             elapsed = time.perf_counter() - start

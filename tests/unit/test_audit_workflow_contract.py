@@ -13,18 +13,28 @@ def test_audit_workflow_requires_repo_owned_cargo_deny_policy() -> None:
     assert (repo_root / "rust_core" / "deny.toml").exists()
 
 
-def test_audit_workflow_creates_uv_environment_before_installing_pip_audit() -> None:
+def test_audit_workflow_audits_exported_locked_requirements_with_isolated_tool() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     workflow = (repo_root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
 
-    create_env = "uv venv --python 3.12"
-    install_audit = "uv pip install pip-audit"
-    run_audit = "uv run pip-audit"
+    setup_python = "uv python install 3.12"
+    export_requirements = (
+        "uv export --format requirements.txt --all-extras --no-emit-project --output-file "
+        '"$RUNNER_TEMP/python-audit-requirements.txt" --locked'
+    )
+    run_audit = (
+        "uv run --no-project --python 3.12 --with pip-audit -- pip-audit --require-hashes "
+        '--disable-pip --progress-spinner off -r "$RUNNER_TEMP/python-audit-requirements.txt"'
+    )
 
-    assert create_env in workflow
-    assert install_audit in workflow
+    assert setup_python in workflow
+    assert export_requirements in workflow
     assert run_audit in workflow
-    assert workflow.index(create_env) < workflow.index(install_audit) < workflow.index(run_audit)
+    assert (
+        workflow.index(setup_python)
+        < workflow.index(export_requirements)
+        < workflow.index(run_audit)
+    )
 
 
 def test_cargo_deny_policy_declares_explicit_license_allowlist() -> None:

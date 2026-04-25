@@ -960,56 +960,88 @@ def validate_audit_workflow_content(*, workflow_content: str) -> list[str]:
                     "Audit workflow `Setup Python` step must invoke `uv python install 3.12`"
                 )
 
-            create_env_step = "Create Python audit environment"
-            create_env_run = audit_runs_by_name.get(create_env_step)
-            if create_env_run is None:
-                errors.append(
-                    "Audit workflow `audit` job must include step `Create Python audit environment`"
-                )
-            elif "uv venv --python 3.12" not in create_env_run:
-                errors.append(
-                    "Audit workflow `Create Python audit environment` step must invoke "
-                    "`uv venv --python 3.12`"
-                )
+            for step_name, step_run in audit_runs_by_name.items():
+                if "uv venv --python" in step_run:
+                    errors.append(
+                        "Audit workflow must not create a project audit environment; "
+                        f"step `{step_name}` must audit exported locked requirements instead"
+                    )
+                if "uv pip install pip-audit" in step_run:
+                    errors.append(
+                        "Audit workflow must not install pip-audit into the project environment; "
+                        f"step `{step_name}` must use isolated `uv run --no-project --with pip-audit`"
+                    )
+                if "uv run pip-audit" in step_run:
+                    errors.append(
+                        "Audit workflow must not run legacy project-environment `uv run pip-audit`; "
+                        f"step `{step_name}` must use exported locked requirements"
+                    )
 
-            install_pip_audit_run = audit_runs_by_name.get("Install pip-audit")
-            if install_pip_audit_run is None:
-                errors.append("Audit workflow `audit` job must include step `Install pip-audit`")
-            elif "uv pip install pip-audit" not in install_pip_audit_run:
+            export_requirements_run = audit_runs_by_name.get("Export Python audit requirements")
+            if export_requirements_run is None:
                 errors.append(
-                    "Audit workflow `Install pip-audit` step must invoke `uv pip install pip-audit`"
+                    "Audit workflow `audit` job must include step "
+                    "`Export Python audit requirements` with `uv export --format requirements.txt`"
                 )
+            else:
+                for expected_export_arg in (
+                    "uv export --format requirements.txt",
+                    "--all-extras",
+                    "--no-emit-project",
+                    '--output-file "$RUNNER_TEMP/python-audit-requirements.txt"',
+                    "--locked",
+                ):
+                    if expected_export_arg not in export_requirements_run:
+                        errors.append(
+                            "Audit workflow `Export Python audit requirements` step must include "
+                            f"`{expected_export_arg}`"
+                        )
 
             run_pip_audit_run = audit_runs_by_name.get("Run pip-audit")
             if run_pip_audit_run is None:
                 errors.append("Audit workflow `audit` job must include step `Run pip-audit`")
-            elif "uv run pip-audit" not in run_pip_audit_run:
-                errors.append("Audit workflow `Run pip-audit` step must invoke `uv run pip-audit`")
+            else:
+                for expected_audit_arg in (
+                    "uv run --no-project",
+                    "--python 3.12",
+                    "--with pip-audit",
+                    "-- pip-audit",
+                    "--require-hashes",
+                    "--disable-pip",
+                    "--progress-spinner off",
+                    '-r "$RUNNER_TEMP/python-audit-requirements.txt"',
+                ):
+                    if expected_audit_arg not in run_pip_audit_run:
+                        errors.append(
+                            "Audit workflow `Run pip-audit` step must include "
+                            f"`{expected_audit_arg}`"
+                        )
 
             required_step_order = [
                 "Install uv",
                 "Setup Python",
-                create_env_step,
-                "Install pip-audit",
+                "Export Python audit requirements",
                 "Run pip-audit",
             ]
             if all(step_name in audit_step_order for step_name in required_step_order):
                 order_positions = {
                     name: audit_step_order.index(name) for name in required_step_order
                 }
-                if order_positions["Setup Python"] > order_positions[create_env_step]:
+                if (
+                    order_positions["Setup Python"]
+                    > order_positions["Export Python audit requirements"]
+                ):
                     errors.append(
-                        "Audit workflow `Create Python audit environment` step must run after "
+                        "Audit workflow `Export Python audit requirements` step must run after "
                         "`Setup Python`"
                     )
-                if order_positions[create_env_step] > order_positions["Install pip-audit"]:
+                if (
+                    order_positions["Export Python audit requirements"]
+                    > order_positions["Run pip-audit"]
+                ):
                     errors.append(
-                        "Audit workflow `Create Python audit environment` step must run before "
-                        "`Install pip-audit`"
-                    )
-                if order_positions["Install pip-audit"] > order_positions["Run pip-audit"]:
-                    errors.append(
-                        "Audit workflow `Install pip-audit` step must run before `Run pip-audit`"
+                        "Audit workflow `Export Python audit requirements` step must run before "
+                        "`Run pip-audit`"
                     )
 
     report_job = jobs.get("report-audit-status")
@@ -2328,6 +2360,7 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
         return ["pyproject.toml [tool.uv].constraint-dependencies must be a list"]
 
     expected_constraints = {
+        "aiohttp>=3.13.4",
         "cryptography>=46.0.7",
         "pygments>=2.20.0",
         "python-multipart>=0.0.26",
@@ -2358,6 +2391,9 @@ def validate_dev_tooling_constraints(*, pyproject_content: str) -> list[str]:
     dev_dependencies = optional_dependencies.get("dev", [])
     if not isinstance(dev_dependencies, list):
         return ["pyproject.toml [project.optional-dependencies].dev must be a list"]
+    bench_dependencies = optional_dependencies.get("bench", [])
+    if not isinstance(bench_dependencies, list):
+        return ["pyproject.toml [project.optional-dependencies].bench must be a list"]
 
     expected_ruff_pin = "ruff==0.15.11"
     if expected_ruff_pin not in {str(entry) for entry in dev_dependencies}:
@@ -2365,6 +2401,13 @@ def validate_dev_tooling_constraints(*, pyproject_content: str) -> list[str]:
             "pyproject.toml [project.optional-dependencies].dev must pin "
             f"`{expected_ruff_pin}` for CI/local formatter parity"
         )
+    expected_pytest_floor = "pytest>=9.0.3"
+    for group_name, dependencies in (("dev", dev_dependencies), ("bench", bench_dependencies)):
+        if expected_pytest_floor not in {str(entry) for entry in dependencies}:
+            errors.append(
+                "pyproject.toml [project.optional-dependencies]."
+                f"{group_name} must include `{expected_pytest_floor}` for audit parity"
+            )
     return errors
 
 

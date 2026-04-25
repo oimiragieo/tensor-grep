@@ -434,7 +434,7 @@ def test_should_require_audit_workflow_managed_issue_title_contract():
     assert "[Security Audit] Scheduled dependency audit failure" in joined_errors
 
 
-def test_should_require_audit_workflow_uv_environment_before_pip_audit_install():
+def test_should_require_audit_workflow_isolated_pip_audit_tool_run():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -454,8 +454,94 @@ def test_should_require_audit_workflow_uv_environment_before_pip_audit_install()
             uses: astral-sh/setup-uv@v8.0.0
           - name: Setup Python
             run: uv python install 3.12
-          - name: Install pip-audit
-            run: uv pip install pip-audit
+          - name: Export Python audit requirements
+            run: uv export --format requirements.txt --all-extras --no-emit-project --output-file "$RUNNER_TEMP/python-audit-requirements.txt" --locked
+          - name: Run pip-audit
+            run: uv run pip-audit -r "$RUNNER_TEMP/python-audit-requirements.txt"
+      report-audit-status:
+        if: always() && github.event_name == 'schedule'
+        needs: audit
+        runs-on: ubuntu-latest
+        permissions:
+          contents: read
+          issues: write
+        steps:
+          - name: Create or update scheduled audit issue on failure
+            uses: actions/github-script@v8
+            with:
+              script: |
+                const title = "[Security Audit] Scheduled dependency audit failure";
+                github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title,
+                });
+                github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                });
+                github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                  body: title,
+                });
+          - name: Close scheduled audit issue on success
+            uses: actions/github-script@v8
+            with:
+              script: |
+                const title = "[Security Audit] Scheduled dependency audit failure";
+                github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                  body: title,
+                });
+                github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: 1,
+                  state: "closed",
+                });
+    """
+    errors = module.validate_audit_workflow_content(workflow_content=textwrap.dedent(workflow))
+    joined_errors = "\n".join(errors)
+    assert "uv run --no-project" in joined_errors
+    assert "--with pip-audit" in joined_errors
+    assert "--progress-spinner off" in joined_errors
+
+
+def test_should_require_audit_workflow_locked_requirements_export_before_pip_audit():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = """
+    name: Security Audit
+    on:
+      schedule:
+        - cron: '0 0 * * *'
+      pull_request:
+        branches: [main]
+      workflow_dispatch:
+    jobs:
+      audit:
+        name: Dependency & License Audit
+        runs-on: ubuntu-latest
+        steps:
+          - name: Run cargo audit
+            run: cargo audit
+          - name: Run cargo deny
+            run: cargo deny check
+          - name: Install uv
+            uses: astral-sh/setup-uv@v8.0.0
+          - name: Setup Python
+            run: uv python install 3.12
           - name: Run pip-audit
             run: uv run pip-audit
       report-audit-status:
@@ -507,7 +593,39 @@ def test_should_require_audit_workflow_uv_environment_before_pip_audit_install()
     """
     errors = module.validate_audit_workflow_content(workflow_content=textwrap.dedent(workflow))
     joined_errors = "\n".join(errors)
-    assert "Create Python audit environment" in joined_errors
+    assert "Export Python audit requirements" in joined_errors
+    assert "uv export --format requirements.txt" in joined_errors
+    assert "$RUNNER_TEMP/python-audit-requirements.txt" in joined_errors
+    assert "--disable-pip" in joined_errors
+
+
+def test_should_reject_audit_workflow_legacy_scanner_environment_steps():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    workflow = (root / ".github" / "workflows" / "audit.yml").read_text(encoding="utf-8")
+    workflow = workflow.replace(
+        "      - name: Export Python audit requirements\n",
+        "      - name: Create Python audit environment\n"
+        "        run: uv venv --python 3.12\n\n"
+        "      - name: Install pip-audit\n"
+        "        run: uv pip install pip-audit\n\n"
+        "      - name: Legacy Run pip-audit\n"
+        "        run: uv run pip-audit\n\n"
+        "      - name: Export Python audit requirements\n",
+        1,
+    )
+
+    errors = module.validate_audit_workflow_content(workflow_content=workflow)
+    joined_errors = "\n".join(errors)
+    assert "must not create a project audit environment" in joined_errors
+    assert "must not install pip-audit into the project environment" in joined_errors
+    assert "must not run legacy project-environment `uv run pip-audit`" in joined_errors
 
 
 def test_should_require_uv_security_floor_constraints_for_audited_transitive_dependencies():
@@ -533,6 +651,7 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     assert "pygments>=2.20.0" in joined_errors
     assert "python-multipart>=0.0.26" in joined_errors
     assert "python-dotenv>=1.2.2" in joined_errors
+    assert "aiohttp>=3.13.4" in joined_errors
 
 
 def test_should_accept_uv_security_floor_constraints_when_all_required_entries_present():
@@ -556,13 +675,14 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
       "python-multipart>=0.0.26",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
+      "aiohttp>=3.13.4",
     ]
     """
     errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
     assert errors == []
 
 
-def test_should_require_exact_ruff_dev_pin_for_ci_format_parity():
+def test_should_require_dev_tooling_security_floors_for_ci_format_parity():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -578,13 +698,15 @@ def test_should_require_exact_ruff_dev_pin_for_ci_format_parity():
 
     [project.optional-dependencies]
     dev = ["ruff>=0.6"]
+    bench = ["pytest>=8.0"]
     """
     errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
     joined_errors = "\n".join(errors)
     assert "ruff==0.15.11" in joined_errors
+    assert "pytest>=9.0.3" in joined_errors
 
 
-def test_should_accept_exact_ruff_dev_pin_for_ci_format_parity():
+def test_should_accept_dev_tooling_security_floors_for_ci_format_parity():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"
     spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
@@ -599,7 +721,8 @@ def test_should_accept_exact_ruff_dev_pin_for_ci_format_parity():
     version = "1.3.2"
 
     [project.optional-dependencies]
-    dev = ["ruff==0.15.11"]
+    dev = ["ruff==0.15.11", "pytest>=9.0.3"]
+    bench = ["pytest>=9.0.3"]
     """
     errors = module.validate_dev_tooling_constraints(pyproject_content=textwrap.dedent(pyproject))
     assert errors == []
