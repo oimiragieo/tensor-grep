@@ -75,64 +75,76 @@ def load_patch_scenarios(path: str | Path) -> list[Scenario]:
     payload = json.loads(scenarios_path.read_text(encoding="utf-8"))
     scenarios = payload.get("scenarios")
     if not isinstance(scenarios, list):
-        raise ScenarioValidationError([
-            {"field": "scenarios", "code": "invalid_type", "expected": "list"}
-        ])
+        raise ScenarioValidationError(
+            [{"field": "scenarios", "code": "invalid_type", "expected": "list"}]
+        )
     errors: list[dict[str, Any]] = []
     validated: list[Scenario] = []
     for index, scenario in enumerate(scenarios):
         if not isinstance(scenario, dict):
-            errors.append({
-                "scenario_index": index,
-                "field": "scenario",
-                "code": "invalid_type",
-                "expected": "object",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "scenario",
+                    "code": "invalid_type",
+                    "expected": "object",
+                }
+            )
             continue
         current = dict(scenario)
         missing = [field for field in _REQUIRED_SCENARIO_FIELDS if field not in current]
         for field in missing:
-            errors.append({
-                "scenario_index": index,
-                "field": field,
-                "code": "missing_required_field",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": field,
+                    "code": "missing_required_field",
+                }
+            )
         if missing:
             continue
         if not isinstance(current["instance_id"], str):
-            errors.append({
-                "scenario_index": index,
-                "field": "instance_id",
-                "code": "invalid_type",
-                "expected": "str",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "instance_id",
+                    "code": "invalid_type",
+                    "expected": "str",
+                }
+            )
         repo_fixture = current["repo_fixture"]
         if not isinstance(repo_fixture, str):
-            errors.append({
-                "scenario_index": index,
-                "field": "repo_fixture",
-                "code": "invalid_type",
-                "expected": "str",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "repo_fixture",
+                    "code": "invalid_type",
+                    "expected": "str",
+                }
+            )
         elif not Path(repo_fixture).is_absolute():
             current["repo_fixture"] = str((scenarios_path.parent / repo_fixture).resolve())
         if current["expected_primary_file"] is not None and not isinstance(
             current["expected_primary_file"], str
         ):
-            errors.append({
-                "scenario_index": index,
-                "field": "expected_primary_file",
-                "code": "invalid_type",
-                "expected": "str | null",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "expected_primary_file",
+                    "code": "invalid_type",
+                    "expected": "str | null",
+                }
+            )
         if current["expected_primary_span"] is not None and not _valid_span(
             current["expected_primary_span"]
         ):
-            errors.append({
-                "scenario_index": index,
-                "field": "expected_primary_span",
-                "code": "invalid_shape",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "expected_primary_span",
+                    "code": "invalid_shape",
+                }
+            )
         for field in (
             "expected_changed_files",
             "expected_test_files",
@@ -141,12 +153,14 @@ def load_patch_scenarios(path: str | Path) -> list[Scenario]:
         ):
             value = current[field]
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-                errors.append({
-                    "scenario_index": index,
-                    "field": field,
-                    "code": "invalid_type",
-                    "expected": "list[str]",
-                })
+                errors.append(
+                    {
+                        "scenario_index": index,
+                        "field": field,
+                        "code": "invalid_type",
+                        "expected": "list[str]",
+                    }
+                )
         validated.append(current)
     if errors:
         raise ScenarioValidationError(errors)
@@ -167,46 +181,54 @@ def load_patch_predictions(path: str | Path) -> list[Prediction]:
         else:
             records = payload
     if not isinstance(records, list):
-        raise PredictionValidationError([
-            {"field": "records", "code": "invalid_type", "expected": "list"}
-        ])
+        raise PredictionValidationError(
+            [{"field": "records", "code": "invalid_type", "expected": "list"}]
+        )
     validated: list[Prediction] = []
     for index, record in enumerate(records):
         if not isinstance(record, dict):
-            errors.append({
-                "prediction_index": index,
-                "field": "record",
-                "code": "invalid_type",
-                "expected": "object",
-            })
+            errors.append(
+                {
+                    "prediction_index": index,
+                    "field": "record",
+                    "code": "invalid_type",
+                    "expected": "object",
+                }
+            )
             continue
         current = dict(record)
         for field in ("instance_id", "system"):
             if not isinstance(current.get(field), str):
-                errors.append({
-                    "prediction_index": index,
-                    "field": field,
-                    "code": "invalid_type",
-                    "expected": "str",
-                })
+                errors.append(
+                    {
+                        "prediction_index": index,
+                        "field": field,
+                        "code": "invalid_type",
+                        "expected": "str",
+                    }
+                )
         if current.get("model_patch") is not None and not isinstance(
             current.get("model_patch"), str
         ):
-            errors.append({
-                "prediction_index": index,
-                "field": "model_patch",
-                "code": "invalid_type",
-                "expected": "str | null",
-            })
+            errors.append(
+                {
+                    "prediction_index": index,
+                    "field": "model_patch",
+                    "code": "invalid_type",
+                    "expected": "str | null",
+                }
+            )
         if not isinstance(current.get("actual_validation_commands", []), list) or not all(
             isinstance(item, str) for item in current.get("actual_validation_commands", [])
         ):
-            errors.append({
-                "prediction_index": index,
-                "field": "actual_validation_commands",
-                "code": "invalid_type",
-                "expected": "list[str]",
-            })
+            errors.append(
+                {
+                    "prediction_index": index,
+                    "field": "actual_validation_commands",
+                    "code": "invalid_type",
+                    "expected": "list[str]",
+                }
+            )
         validated.append(current)
     if errors:
         raise PredictionValidationError(errors)
@@ -272,11 +294,13 @@ def evaluate_prediction(scenario: Scenario, prediction: Prediction) -> ResultRow
                     )
                     passed = completed.returncode == 0
                     validation_passed = validation_passed and passed
-                    validation_results.append({
-                        "command": command,
-                        "passed": passed,
-                        "returncode": completed.returncode,
-                    })
+                    validation_results.append(
+                        {
+                            "command": command,
+                            "passed": passed,
+                            "returncode": completed.returncode,
+                        }
+                    )
                 if not validation_passed:
                     reason = "validation failed"
     else:

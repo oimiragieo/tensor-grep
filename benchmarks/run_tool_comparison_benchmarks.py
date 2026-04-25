@@ -78,52 +78,62 @@ def build_tool_commands(
 
     git_binary = resolve_optional_tool("git")
     if git_binary:
-        commands.append({
-            "tool": "git grep --no-index",
-            "command": [git_binary, "grep", "--no-index", "-n", pattern, str(target)],
-        })
+        commands.append(
+            {
+                "tool": "git grep --no-index",
+                "command": [git_binary, "grep", "--no-index", "-n", pattern, str(target)],
+            }
+        )
 
     ag_binary = resolve_optional_tool("ag")
     if ag_binary:
-        commands.append({
-            "tool": "ag",
-            "command": [ag_binary, "--nocolor", "--noheading", "-n", pattern, str(target)],
-        })
+        commands.append(
+            {
+                "tool": "ag",
+                "command": [ag_binary, "--nocolor", "--noheading", "-n", pattern, str(target)],
+            }
+        )
 
     ack_binary = resolve_optional_tool("ack")
     if ack_binary:
-        commands.append({
-            "tool": "ack",
-            "command": [
-                ack_binary,
-                "--nocolor",
-                "--nogroup",
-                "--noenv",
-                "-n",
-                pattern,
-                str(target),
-            ],
-        })
+        commands.append(
+            {
+                "tool": "ack",
+                "command": [
+                    ack_binary,
+                    "--nocolor",
+                    "--nogroup",
+                    "--noenv",
+                    "-n",
+                    pattern,
+                    str(target),
+                ],
+            }
+        )
 
     ugrep_binary = resolve_optional_tool("ugrep")
     if ugrep_binary:
         ugrep_cmd = [ugrep_binary, "-n", "-I", pattern, str(target)]
         if target.is_dir():
             ugrep_cmd.insert(1, "-r")
-        commands.append({
-            "tool": "ugrep",
-            "command": ugrep_cmd,
-        })
+        commands.append(
+            {
+                "tool": "ugrep",
+                "command": ugrep_cmd,
+            }
+        )
 
     grep_binary = resolve_optional_tool("grep")
     if grep_binary:
         grep_cmd = [grep_binary, "-n", "-E", pattern, str(target)]
         if target.is_dir():
             grep_cmd.insert(1, "-R")
-        commands.append({
-            "tool": "grep",
-            "command": grep_cmd,
-        })
+        commands.append(
+            {
+                "tool": "grep",
+                "command": grep_cmd,
+            }
+        )
 
     return commands
 

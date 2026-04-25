@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.4.13 (2026-04-25)
+
+### Features
+
+- Implement high-density `llm` render profile with Python AST skeletonization for maximized token efficiency in AI harnesses.
+
+### Bug Fixes
+
+- Restore and harden Python docstring and boilerplate stripping for `compact` render profile.
+- Synchronize `rust_core` version parity for `v1.4.12` line.
+
 ## v1.4.12 (2026-04-25)
 
 ### Bug Fixes
