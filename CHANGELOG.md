@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.4.12 (2026-04-25)
+
+### Bug Fixes
+
+- Bound context render full seed traversal
+  ([`b3ac75d`](https://github.com/oimiragieo/tensor-grep/commit/b3ac75d09ff899bf59d51fbf152224316cf12450))
+
+### Chores
+
+- Sync lockfile for v1.4.11
+  ([`906d4ba`](https://github.com/oimiragieo/tensor-grep/commit/906d4ba239bcc32339458b01ce3fd37d3b6f6ac9))
+
+
 ## v1.4.11 (2026-04-25)
 
 ### Bug Fixes
