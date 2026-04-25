@@ -10,7 +10,7 @@ manifest-path = "rust_core/Cargo.toml"
 
 [project]
 name = "tensor-grep"
-version = "1.4.9"
+version = "1.4.10"
 description = "High-performance grep-compatible CLI with Rust, GPU, and AST/NLP routing"
 readme = { file = "rust_core/README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"

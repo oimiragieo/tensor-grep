@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.4.10 (2026-04-25)
+
+### Bug Fixes
+
+- Route equals max-count through search frontdoor
+  ([`432c206`](https://github.com/oimiragieo/tensor-grep/commit/432c206a67364c5e5ddd370f444e107081c30adc))
+
+### Chores
+
+- Sync lockfile for v1.4.9
+  ([`22dac81`](https://github.com/oimiragieo/tensor-grep/commit/22dac81e3839e272079dd12f3a1f9fc3668d6126))
+
+
 ## v1.4.9 (2026-04-24)
 
 ### Bug Fixes
