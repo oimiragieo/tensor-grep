@@ -64,13 +64,11 @@ def main():
             if code == 0:
                 times.append(t)
 
-        results.append(
-            {
-                "name": f"editor_{name}_cold",
-                "tg_time_s": avg(times),
-                "backend": "native",
-            }
-        )
+        results.append({
+            "name": f"editor_{name}_cold",
+            "tg_time_s": avg(times),
+            "backend": "native",
+        })
 
     # 2. Resident path
     subprocess.Popen([str(BIN_PATH), "worker", "--port", "12352"], cwd=str(bench_dir))
@@ -90,13 +88,11 @@ def main():
             if code == 0:
                 times.append(t)
 
-        results.append(
-            {
-                "name": f"editor_{name}_resident",
-                "tg_time_s": avg(times),
-                "backend": "native_resident",
-            }
-        )
+        results.append({
+            "name": f"editor_{name}_resident",
+            "tg_time_s": avg(times),
+            "backend": "native_resident",
+        })
 
     # Stop worker
     subprocess.run([str(BIN_PATH), "worker", "--stop"], capture_output=True, cwd=str(bench_dir))

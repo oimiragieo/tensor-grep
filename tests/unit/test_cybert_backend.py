@@ -212,12 +212,10 @@ class TestCybertBackend:
 
         mock_result = MagicMock()
 
-        mock_result.as_numpy.return_value = np.array(
-            [
-                [0.1, 0.9, 0.0],  # High confidence
-                [0.4, 0.4, 0.2],  # Low confidence
-            ]
-        )
+        mock_result.as_numpy.return_value = np.array([
+            [0.1, 0.9, 0.0],  # High confidence
+            [0.4, 0.4, 0.2],  # Low confidence
+        ])
         mock_client.infer.return_value = mock_result
 
         from tensor_grep.backends.cybert_backend import CybertBackend

@@ -291,15 +291,13 @@ def test_load_apply_policy_resolves_relative_baseline_against_policy_file(tmp_pa
 
     baseline_path = tmp_path / "baseline.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "kind": "ruleset-scan-baseline",
-                "ruleset": "auth-safe",
-                "language": "python",
-                "fingerprints": [],
-            }
-        ),
+        json.dumps({
+            "version": 1,
+            "kind": "ruleset-scan-baseline",
+            "ruleset": "auth-safe",
+            "language": "python",
+            "fingerprints": [],
+        }),
         encoding="utf-8",
     )
     policy_path = _write_policy(
@@ -733,21 +731,19 @@ def test_ast_workflow_main_entry_emits_json_for_policy_apply(
     )
 
     with pytest.raises(SystemExit) as excinfo:
-        ast_workflows.main_entry(
-            [
-                "run",
-                "--lang",
-                "python",
-                "--rewrite",
-                "lambda $$$ARGS: $EXPR",
-                "--apply",
-                "--policy",
-                str(policy_path),
-                "--json",
-                "def $F($$$ARGS): return $EXPR",
-                str(tmp_path),
-            ]
-        )
+        ast_workflows.main_entry([
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--policy",
+            str(policy_path),
+            "--json",
+            "def $F($$$ARGS): return $EXPR",
+            str(tmp_path),
+        ])
 
     assert excinfo.value.code == 0
     assert '{"policy_result":{"all_passed":true}}' in capsys.readouterr().out
@@ -776,21 +772,19 @@ def test_ast_workflow_main_entry_preserves_nonzero_exit_for_policy_failures(
     )
 
     with pytest.raises(SystemExit) as excinfo:
-        ast_workflows.main_entry(
-            [
-                "run",
-                "--lang",
-                "python",
-                "--rewrite",
-                "lambda $$$ARGS: $EXPR",
-                "--apply",
-                "--policy",
-                str(policy_path),
-                "--json",
-                "def $F($$$ARGS): return $EXPR",
-                str(tmp_path),
-            ]
-        )
+        ast_workflows.main_entry([
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--policy",
+            str(policy_path),
+            "--json",
+            "def $F($$$ARGS): return $EXPR",
+            str(tmp_path),
+        ])
 
     assert excinfo.value.code == 1
     assert '{"policy_result":{"all_passed":false}}' in capsys.readouterr().out

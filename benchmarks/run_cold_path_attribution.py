@@ -82,19 +82,17 @@ def _scenario_commands(
             )
             phase_trace = _parse_phase_trace(phase_trace_stdout, trace_path)
 
-            rows.append(
-                {
-                    "name": f"{scenario['name']} [{launcher_mode}]",
-                    "scenario": scenario["name"],
-                    "launcher_mode": launcher_mode,
-                    "resolved_launcher_mode": resolved_mode,
-                    "rg_time_s": rg_time_s,
-                    "rg_samples_s": rg_samples_s,
-                    "tg_time_s": tg_time_s,
-                    "tg_samples_s": tg_samples_s,
-                    "phase_trace": phase_trace,
-                }
-            )
+            rows.append({
+                "name": f"{scenario['name']} [{launcher_mode}]",
+                "scenario": scenario["name"],
+                "launcher_mode": launcher_mode,
+                "resolved_launcher_mode": resolved_mode,
+                "rg_time_s": rg_time_s,
+                "rg_samples_s": rg_samples_s,
+                "tg_time_s": tg_time_s,
+                "tg_samples_s": tg_samples_s,
+                "phase_trace": phase_trace,
+            })
 
     return rows
 
@@ -164,13 +162,11 @@ def main(argv: list[str] | None = None) -> int:
         "artifact": "bench_cold_path_attribution",
         "suite": "cold_path_attribution",
         "generated_at_epoch_s": time.time(),
-        "benchmark_host_key": benchmark_host_key(
-            {
-                "platform": platform.system().lower(),
-                "machine": platform.machine().lower(),
-                "python_version": platform.python_version(),
-            }
-        ),
+        "benchmark_host_key": benchmark_host_key({
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
+        }),
         "environment": {
             "platform": platform.system().lower(),
             "machine": platform.machine().lower(),
@@ -178,13 +174,11 @@ def main(argv: list[str] | None = None) -> int:
             "tg_binary_source": tg_binary_source,
         },
         "host_provenance": {
-            "benchmark_host_key": benchmark_host_key(
-                {
-                    "platform": platform.system().lower(),
-                    "machine": platform.machine().lower(),
-                    "python_version": platform.python_version(),
-                }
-            ),
+            "benchmark_host_key": benchmark_host_key({
+                "platform": platform.system().lower(),
+                "machine": platform.machine().lower(),
+                "python_version": platform.python_version(),
+            }),
             "platform": platform.system().lower(),
             "machine": platform.machine().lower(),
             "python_version": platform.python_version(),

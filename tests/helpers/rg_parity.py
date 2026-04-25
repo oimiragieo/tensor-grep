@@ -485,36 +485,30 @@ def _normalize_machine_output(
     if tool == "tg":
         if len(rows) == 1 and isinstance(rows[0], dict) and "matches" in rows[0]:
             for match in rows[0]["matches"]:
-                matches.append(
-                    (
-                        _normalize_path(str(match["file"]), corpus=corpus),
-                        int(match.get("line", match.get("line_number"))),
-                        str(match["text"]).rstrip("\r\n"),
-                    )
-                )
+                matches.append((
+                    _normalize_path(str(match["file"]), corpus=corpus),
+                    int(match.get("line", match.get("line_number"))),
+                    str(match["text"]).rstrip("\r\n"),
+                ))
             return {"matches": sorted(matches)}
 
         for row in rows:
-            matches.append(
-                (
-                    _normalize_path(str(row["file"]), corpus=corpus),
-                    int(row.get("line", row.get("line_number"))),
-                    str(row["text"]).rstrip("\r\n"),
-                )
-            )
+            matches.append((
+                _normalize_path(str(row["file"]), corpus=corpus),
+                int(row.get("line", row.get("line_number"))),
+                str(row["text"]).rstrip("\r\n"),
+            ))
         return {"matches": sorted(matches)}
 
     for row in rows:
         if row.get("type") != "match":
             continue
         data = row["data"]
-        matches.append(
-            (
-                _normalize_path(str(data["path"]["text"]), corpus=corpus),
-                int(data["line_number"]),
-                str(data["lines"]["text"]).rstrip("\r\n"),
-            )
-        )
+        matches.append((
+            _normalize_path(str(data["path"]["text"]), corpus=corpus),
+            int(data["line_number"]),
+            str(data["lines"]["text"]).rstrip("\r\n"),
+        ))
     return {"matches": sorted(matches)}
 
 
