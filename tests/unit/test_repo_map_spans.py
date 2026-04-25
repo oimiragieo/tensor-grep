@@ -456,5 +456,26 @@ def test_malformed_rust_file_does_not_crash_repo_map(tmp_path: Path) -> None:
     )
 
     payload = repo_map.build_symbol_source("issue_invoice", project)
+    assert payload is not None
+
+
+def test_context_render_llm_profile_skeletonizes_python_functions(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text(
+        'def create_invoice(total, tax):\n    """Creates an invoice."""\n    subtotal = total + tax\n    return subtotal\n',
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_context_render("create_invoice", project, render_profile="llm")
+
+    # In llm profile, the source should be skeletonized
+    text = payload["rendered_context"]
+    assert "def create_invoice(total, tax):" in text
+    assert '"""Creates an invoice."""' in text
+    assert "subtotal = total + tax" not in text
+    assert "return subtotal" not in text
 
     assert isinstance(payload["sources"], list)
