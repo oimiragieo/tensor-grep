@@ -805,3 +805,108 @@ def test_rollback_risk_decreases_with_test_coverage(tmp_path: Path) -> None:
     )
 
     assert tested_seed["rollback_risk"] < untested_seed["rollback_risk"]
+
+
+def test_context_render_full_seed_respects_capped_repo_map_file_universe(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    _write(src_dir / "payments.py", "def create_invoice(total):\n    return total + 1\n")
+    _write(
+        src_dir / "service.py",
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def build_receipt(total):\n"
+        "    return create_invoice(total)\n",
+    )
+    outside_cap = src_dir / "z_outside_cap.py"
+    _write(
+        outside_cap,
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def outside_receipt(total):\n"
+        "    return create_invoice(total)\n",
+    )
+    capped_map = repo_map.build_repo_map(project, max_repo_files=2)
+
+    payload = repo_map.build_context_render_from_map(
+        capped_map,
+        "create invoice",
+        max_files=2,
+        include_edit_plan_seed=True,
+    )
+    seed = _edit_plan_seed(payload)
+
+    assert str(outside_cap.resolve()) not in capped_map["files"]
+    assert str(outside_cap.resolve()) not in seed["dependent_files"]
+    assert str(outside_cap.resolve()) not in {
+        str(current["file"]) for current in seed["related_spans"]
+    }
+    assert str(outside_cap.resolve()) not in payload["candidate_edit_targets"]["files"]
+    assert str(outside_cap.resolve()) not in {
+        str(current["file"]) for current in payload["candidate_edit_targets"]["spans"]
+    }
+    assert str(outside_cap.resolve()) not in {
+        str(current["file"]) for current in payload["navigation_pack"]["follow_up_reads"]
+    }
+
+
+def test_symbol_callers_provider_results_respect_capped_repo_map_file_universe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    _write(src_dir / "payments.py", "def create_invoice(total):\n    return total + 1\n")
+    service_path = src_dir / "service.py"
+    _write(
+        service_path,
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def build_receipt(total):\n"
+        "    return create_invoice(total)\n",
+    )
+    outside_cap = src_dir / "z_outside_cap.py"
+    _write(
+        outside_cap,
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def outside_receipt(total):\n"
+        "    return create_invoice(total)\n",
+    )
+    capped_map = repo_map.build_repo_map(project, max_repo_files=2)
+
+    def _external_refs(repo_root: Path, symbol: str, definitions: list[dict[str, Any]]):
+        return [
+            {
+                "name": symbol,
+                "kind": "reference",
+                "file": str(outside_cap.resolve()),
+                "line": 4,
+                "text": "    return create_invoice(total)",
+                "provenance": "lsp-python",
+            }
+        ]
+
+    monkeypatch.setattr(repo_map, "_external_references", _external_refs)
+
+    payload = repo_map.build_symbol_callers_from_map(
+        capped_map,
+        "create_invoice",
+        semantic_provider="hybrid",
+    )
+    refs_payload = repo_map.build_symbol_refs_from_map(
+        capped_map,
+        "create_invoice",
+        semantic_provider="hybrid",
+    )
+
+    assert str(service_path.resolve()) in payload["files"]
+    assert str(outside_cap.resolve()) not in payload["files"]
+    assert str(outside_cap.resolve()) not in {
+        str(current["file"]) for current in payload["callers"]
+    }
+    assert str(service_path.resolve()) in refs_payload["files"]
+    assert str(outside_cap.resolve()) not in refs_payload["files"]
+    assert str(outside_cap.resolve()) not in {
+        str(current["file"]) for current in refs_payload["references"]
+    }

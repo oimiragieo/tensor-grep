@@ -1161,6 +1161,52 @@ def test_build_context_render_can_skip_edit_plan_seed_for_bounded_roots(monkeypa
     assert seen["called"] is False
 
 
+def test_build_context_render_full_seed_reuses_bounded_repo_map(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice(total):\n    return total + 1\n", encoding="utf-8")
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def build_receipt(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    (src_dir / "z_outside_cap.py").write_text(
+        "from src.payments import create_invoice\n"
+        "\n"
+        "def outside_receipt(total):\n"
+        "    return create_invoice(total)\n",
+        encoding="utf-8",
+    )
+    original_iter_repo_files = repo_map._iter_repo_files
+    unbounded_walks = 0
+
+    def _bounded_iter_guard(root, **kwargs):
+        nonlocal unbounded_walks
+        if kwargs.get("max_files") is None:
+            unbounded_walks += 1
+            raise AssertionError("bounded context-render must not recrawl the physical repo")
+        return original_iter_repo_files(root, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_iter_repo_files", _bounded_iter_guard)
+
+    payload = repo_map.build_context_render(
+        "create invoice",
+        project,
+        max_repo_files=2,
+        include_edit_plan_seed=True,
+        max_files=2,
+    )
+
+    assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
+    assert payload["edit_plan_seed"]["dependent_files"] == [str(service_path.resolve())]
+    assert unbounded_walks == 0
+
+
 def test_iter_repo_files_does_not_resolve_every_child_file(monkeypatch, tmp_path):
     project = tmp_path / "project"
     project.mkdir()
@@ -1177,6 +1223,30 @@ def test_iter_repo_files_does_not_resolve_every_child_file(monkeypatch, tmp_path
     files = repo_map._iter_repo_files(project)
 
     assert files == [project.resolve() / "a.py"]
+
+
+def test_repo_map_file_universe_does_not_resolve_child_files(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    project_root = project.resolve()
+    child_file = project_root / "a.py"
+    child_file.write_text("print('ok')\n", encoding="utf-8")
+    original_resolve = repo_map.Path.resolve
+
+    def _guarded_resolve(self, *args, **kwargs):
+        if self.name == "a.py":
+            raise AssertionError("repo-map child paths should preserve map identity")
+        return original_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(repo_map.Path, "resolve", _guarded_resolve)
+
+    files = repo_map._repo_map_file_universe({
+        "path": str(project_root),
+        "files": [str(child_file)],
+        "tests": [],
+    })
+
+    assert files == [child_file]
 
 
 def test_detect_validation_runners_caps_repo_scan(monkeypatch, tmp_path):

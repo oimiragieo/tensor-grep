@@ -58,7 +58,7 @@ Current accepted full-suite artifact:
 
 ## Bounded Heavy-Root AI Handoff
 
-For large internal-library roots where full edit-plan assembly is too expensive, `tensor-grep` now supports a bounded context-render path that keeps the AI handoff compact and actionable.
+For large internal-library roots, `tensor-grep` supports a bounded context-render path that keeps the AI handoff compact and actionable without letting symbol navigation escape the capped repo-map universe.
 
 Current accepted production proof:
 
@@ -71,9 +71,10 @@ What the bounded path preserves:
 - phased read groups
 - repo-level validation command
 
-What it intentionally skips:
+What is now contract-tested:
 
-- the expensive full `edit_plan_seed` on that fast path
+- `include_edit_plan_seed=False` keeps the fast lightweight path
+- `include_edit_plan_seed=True` returns full `edit_plan_seed`, `candidate_edit_targets`, and `navigation_pack` while honoring `max_repo_files`
 
 Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
 

@@ -35,4 +35,5 @@
 - `rg` remains the cold generic text-search baseline.
 - `tg --cpu` can beat `rg` on selected count-heavy workloads and materially narrow the large-file gap, but comparison claims stay workload-specific.
 - `tensor-grep` is strongest on native AST workflows, repeated-query acceleration, machine-readable harness flows, and managed enterprise rollout.
+- Bounded heavy-root context renders can now include full edit-plan seed metadata without escaping the capped repo-map file universe.
 - GPU acceleration is benchmark-governed and hardware-specific, not a universal default.

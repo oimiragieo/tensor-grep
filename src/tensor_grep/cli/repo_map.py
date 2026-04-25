@@ -232,6 +232,24 @@ def _iter_repo_files(
         return files
 
 
+def _repo_map_file_universe(repo_map: dict[str, Any]) -> list[Path]:
+    root = Path(str(repo_map["path"])).expanduser().resolve()
+    base = root if root.is_dir() else root.parent
+    files: list[Path] = []
+    seen: set[str] = set()
+    for key in ("files", "tests"):
+        for raw_path in repo_map.get(key, []) or []:
+            current = Path(str(raw_path)).expanduser()
+            if not current.is_absolute():
+                current = base / current
+            normalized = os.path.abspath(str(current))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            files.append(Path(normalized))
+    return files
+
+
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     if path.suffix != ".py":
         return [], []
@@ -1852,7 +1870,7 @@ def _preferred_definition_files(repo_map: dict[str, Any], symbol: str) -> list[s
         return definition_files
 
     scores = dict.fromkeys(definition_files, 0)
-    for current in _iter_repo_files(Path(repo_map["path"])):
+    for current in _repo_map_file_universe(repo_map):
         current_path = str(current)
         if current_path in scores:
             continue
@@ -7666,8 +7684,10 @@ def build_symbol_refs_from_map(
     payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     context_payload = build_context_pack_from_map(repo_map, symbol)
     repo_root = Path(str(repo_map["path"])).resolve()
+    bounded_files = _repo_map_file_universe(repo_map)
+    bounded_file_set = {str(current) for current in bounded_files}
     references: list[dict[str, Any]] = []
-    for current in _iter_repo_files(Path(payload["path"])):
+    for current in bounded_files:
         current_provenance = _symbol_navigation_provenance_for_path(str(current))
         if current.suffix == ".py":
             current_refs, _ = _python_references_and_calls(current, symbol)
@@ -7737,9 +7757,13 @@ def build_symbol_refs_from_map(
     external_refs: list[dict[str, Any]] = []
     fallback_used = False
     if normalized_provider != "native":
-        external_refs = _external_references(
-            repo_root, symbol, [dict(current) for current in payload["definitions"]]
-        )
+        external_refs = [
+            dict(current)
+            for current in _external_references(
+                repo_root, symbol, [dict(current) for current in payload["definitions"]]
+            )
+            if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
+        ]
         if normalized_provider == "lsp":
             fallback_used = not bool(external_refs)
             references = external_refs or references
@@ -7830,6 +7854,8 @@ def build_symbol_callers_from_map(
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
     repo_root = Path(str(repo_map["path"])).resolve()
+    bounded_files = _repo_map_file_universe(repo_map)
+    bounded_file_set = {str(current) for current in bounded_files}
     preferred_definition_files = _preferred_definition_files(repo_map, symbol)
     preferred_definition_file_set = set(preferred_definition_files)
     definitions = [
@@ -7841,10 +7867,7 @@ def build_symbol_callers_from_map(
     calls: list[dict[str, Any]] = []
     python_files: set[str] = set()
     with _profiling_phase(_profiling_collector, "caller_scan"):
-        for current in _iter_repo_files(
-            Path(defs_payload["path"]),
-            _profiling_collector=_profiling_collector,
-        ):
+        for current in bounded_files:
             if current.suffix == ".py":
                 python_files.add(str(current))
                 _, current_calls = _python_references_and_calls(current, symbol)
@@ -7873,9 +7896,13 @@ def build_symbol_callers_from_map(
     external_calls: list[dict[str, Any]] = []
     fallback_used = False
     if normalized_provider != "native":
-        external_refs = _external_references(
-            repo_root, symbol, [dict(current) for current in defs_payload["definitions"]]
-        )
+        external_refs = [
+            dict(current)
+            for current in _external_references(
+                repo_root, symbol, [dict(current) for current in defs_payload["definitions"]]
+            )
+            if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
+        ]
         python_external_provenance = {
             str(current["file"]): str(
                 current.get("provenance", f"lsp-{_language_for_path(Path(str(current['file'])))}")
@@ -7970,10 +7997,7 @@ def build_symbol_callers_from_map(
                     })
             js_ts_files = sorted(
                 str(current)
-                for current in _iter_repo_files(
-                    Path(defs_payload["path"]),
-                    _profiling_collector=_profiling_collector,
-                )
+                for current in bounded_files
                 if Path(str(current)).suffix in _JS_TS_SUFFIXES
             )
             for js_ts_file in js_ts_files:
@@ -7990,10 +8014,7 @@ def build_symbol_callers_from_map(
                     })
             rust_files = sorted(
                 str(current)
-                for current in _iter_repo_files(
-                    Path(defs_payload["path"]),
-                    _profiling_collector=_profiling_collector,
-                )
+                for current in bounded_files
                 if Path(str(current)).suffix in _RUST_SUFFIXES
             )
             for rust_file in rust_files:

@@ -80,6 +80,15 @@ Editor-plane guardrails were rerun on the same host before accepting the line:
 
 The accepted product read is therefore narrow and explicit: lexical-first repo-map retrieval now fixes the curated planning misses without reopening the earlier cold-path or provider-default decisions.
 
+## Bounded Full Edit-Plan Seed Snapshot (2026-04-25)
+
+The current bounded context-render contract is a correctness and feasibility line, not a speedup claim.
+
+- `build_context_render(..., max_repo_files=N, include_edit_plan_seed=True)` keeps `edit_plan_seed`, `candidate_edit_targets`, and `navigation_pack` inside the capped repo-map file universe.
+- Provider-backed references/callers are filtered through the same cap before they can affect the rendered edit plan.
+- Latest local artifacts: `artifacts/bench_editor_profiling.json` and `artifacts/bench_context_render.json`.
+- Latest `bench_context_render` medians: `small cold=1.1083s / warm=1.3381s`, `medium cold=1.6946s / warm=2.3128s`, `large cold=5.5744s / warm=5.1427s`.
+
 Current Roadmap 1 launcher-mode read on this host:
 
 - `python_module_launcher`: mean `tg_time_s = 0.252554`, median `tg_time_s = 0.230292`
