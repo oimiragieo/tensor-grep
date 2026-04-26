@@ -284,27 +284,33 @@ def _load_rule_specs_and_meta(
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append({
-                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
-                    "language": str(
-                        item.get("language") or payload.get("language") or default_language
-                    ),
-                    "severity": str(item.get("severity") or payload.get("severity") or "warning"),
-                    "message": str(item.get("message") or payload.get("message") or ""),
-                })
+                specs.append(
+                    {
+                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                        "pattern": pattern,
+                        "language": str(
+                            item.get("language") or payload.get("language") or default_language
+                        ),
+                        "severity": str(
+                            item.get("severity") or payload.get("severity") or "warning"
+                        ),
+                        "message": str(item.get("message") or payload.get("message") or ""),
+                    }
+                )
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append({
-            "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
-            "language": str(payload.get("language") or default_language),
-            "severity": str(payload.get("severity") or "warning"),
-            "message": str(payload.get("message") or ""),
-        })
+        specs.append(
+            {
+                "id": str(payload.get("id") or rule_file.stem),
+                "pattern": pattern,
+                "language": str(payload.get("language") or default_language),
+                "severity": str(payload.get("severity") or "warning"),
+                "message": str(payload.get("message") or ""),
+            }
+        )
 
     return specs, meta
 
@@ -515,7 +521,7 @@ def run_command(
         if rewrite is None:
             print(f"--{'apply' if apply else 'interactive'} requires --rewrite.", file=sys.stderr)
             return 1
-        
+
         rewrite_json, exit_code = execute_rewrite_apply_json(
             pattern=pattern,
             replacement=rewrite,
@@ -571,6 +577,7 @@ def run_command(
     # Filter matches
     if filter_regex:
         import re
+
         regex = re.compile(filter_regex)
         all_results.matches = [m for m in all_results.matches if regex.search(m.text)]
         all_results.total_matches = len(all_results.matches)
@@ -580,8 +587,6 @@ def run_command(
         if not all_results.matches:
             print("No matches found to rewrite.", file=sys.stderr)
             return 0
-
-        from tensor_grep.core.result import MatchLine
 
         # Group matches by file for more natural interactive flow
         matches_by_file: dict[str, list[MatchLine]] = {}
@@ -741,6 +746,7 @@ def _select_ast_backend_for_pattern(
         backend_cache[cache_key] = backend
     return backend
 
+
 def scan_command(
     config: str | None = "sgconfig.yml",
     ruleset: str | None = None,
@@ -772,12 +778,20 @@ def scan_command(
             rules = yaml_mod.load(inline_rules, Loader=loader)
             if not isinstance(rules, list):
                 rules = [rules]
-            project_cfg = {"language": rules[0].get("language", "python"), "root_dir": Path(path or ".").resolve()}
+            project_cfg = {
+                "language": rules[0].get("language", "python"),
+                "root_dir": Path(path or ".").resolve(),
+            }
             hints: dict[str, Any] = {}
             from tensor_grep.io.directory_scanner import DirectoryScanner
-            cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
+
+            cfg = SearchConfig(
+                ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"])
+            )
             scanner = DirectoryScanner(cfg)
-            candidate_files, _, _ = _collect_candidate_files(scanner, [str(project_cfg["root_dir"])])
+            candidate_files, _, _ = _collect_candidate_files(
+                scanner, [str(project_cfg["root_dir"])]
+            )
             if not json_mode:
                 print("Scanning project using inline rules...")
         except Exception as exc:
@@ -785,6 +799,7 @@ def scan_command(
             return 1
     elif ruleset:
         from tensor_grep.cli.rule_packs import resolve_rule_pack
+
         try:
             ruleset_meta, rules = resolve_rule_pack(ruleset, None)
             project_cfg = {
@@ -796,11 +811,18 @@ def scan_command(
             }
             hints = {}
             from tensor_grep.io.directory_scanner import DirectoryScanner
-            cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
+
+            cfg = SearchConfig(
+                ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"])
+            )
             scanner = DirectoryScanner(cfg)
-            candidate_files, _, _ = _collect_candidate_files(scanner, [str(project_cfg["root_dir"])])
+            candidate_files, _, _ = _collect_candidate_files(
+                scanner, [str(project_cfg["root_dir"])]
+            )
             if not json_mode:
-                print(f"Scanning project using built-in ruleset {ruleset_meta['name']} ({ruleset_meta['language']})...")
+                print(
+                    f"Scanning project using built-in ruleset {ruleset_meta['name']} ({ruleset_meta['language']})..."
+                )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
@@ -812,7 +834,9 @@ def scan_command(
             return 1
 
         if not json_mode:
-            print(f"Scanning project using adaptive AST routing based on {project_cfg.get('config_path', config or 'sgconfig.yml')}...")
+            print(
+                f"Scanning project using adaptive AST routing based on {project_cfg.get('config_path', config or 'sgconfig.yml')}..."
+            )
 
     if not rules:
         print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
@@ -886,20 +910,22 @@ def scan_command(
                 files_list = list({match.file for match in result.matches if match.file})
 
             fingerprint = hashlib.sha256(
-                json.dumps({
-                    "rule_id": rule["id"],
-                    "language": rule["language"],
-                    "files": sorted(files_list),
-                }, sort_keys=True).encode("utf-8")
+                json.dumps(
+                    {
+                        "rule_id": rule["id"],
+                        "language": rule["language"],
+                        "files": sorted(files_list),
+                    },
+                    sort_keys=True,
+                ).encode("utf-8")
             ).hexdigest()
 
             ev_data: dict[str, list[dict[str, Any]]] = {}
             for m in result.matches:
                 if m.file:
-                    ev_data.setdefault(m.file, []).append({
-                        "line_number": m.line_number,
-                        "text": m.text[:max_evidence_snippet_chars]
-                    })
+                    ev_data.setdefault(m.file, []).append(
+                        {"line_number": m.line_number, "text": m.text[:max_evidence_snippet_chars]}
+                    )
 
             evidence = []
             if ev_data:
@@ -912,7 +938,7 @@ def scan_command(
                 if len(files_list) == 1:
                     item = {"file": files_list[0], "match_count": result.total_matches}
                     if include_evidence:
-                        item["snippets"] = [] # best effort
+                        item["snippets"] = []  # best effort
                     evidence.append(item)
                 else:
                     for f in files_list:
@@ -921,16 +947,18 @@ def scan_command(
                             item["snippets"] = []
                         evidence.append(item)
 
-            findings.append({
-                "rule_id": rule["id"],
-                "language": rule["language"],
-                "severity": rule.get("severity", "warning"),
-                "message": rule.get("message", ""),
-                "matches": rule_matches,
-                "files": files_list,
-                "fingerprint": fingerprint,
-                "evidence": evidence,
-            })
+            findings.append(
+                {
+                    "rule_id": rule["id"],
+                    "language": rule["language"],
+                    "severity": rule.get("severity", "warning"),
+                    "message": rule.get("message", ""),
+                    "matches": rule_matches,
+                    "files": files_list,
+                    "fingerprint": fingerprint,
+                    "evidence": evidence,
+                }
+            )
 
     # Process other results (native or individual wrapper)
     for rule, rule_cfg, backend in other_resolved:
@@ -964,20 +992,22 @@ def scan_command(
 
         files_list = list(matched_files)
         fingerprint = hashlib.sha256(
-            json.dumps({
-                "rule_id": rule["id"],
-                "language": rule["language"],
-                "files": sorted(files_list),
-            }, sort_keys=True).encode("utf-8")
+            json.dumps(
+                {
+                    "rule_id": rule["id"],
+                    "language": rule["language"],
+                    "files": sorted(files_list),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
         ).hexdigest()
 
         ev_data = {}
         for m in result.matches:
             if m.file:
-                ev_data.setdefault(m.file, []).append({
-                    "line_number": m.line_number,
-                    "text": m.text[:max_evidence_snippet_chars]
-                })
+                ev_data.setdefault(m.file, []).append(
+                    {"line_number": m.line_number, "text": m.text[:max_evidence_snippet_chars]}
+                )
 
         evidence = []
         if ev_data:
@@ -999,27 +1029,35 @@ def scan_command(
                         item["snippets"] = []
                     evidence.append(item)
 
-        findings.append({
-            "rule_id": rule["id"],
-            "language": rule["language"],
-            "severity": rule.get("severity", "warning"),
-            "message": rule.get("message", ""),
-            "matches": rule_matches,
-            "files": files_list,
-            "fingerprint": fingerprint,
-            "evidence": evidence,
-        })
+        findings.append(
+            {
+                "rule_id": rule["id"],
+                "language": rule["language"],
+                "severity": rule.get("severity", "warning"),
+                "message": rule.get("message", ""),
+                "matches": rule_matches,
+                "files": files_list,
+                "fingerprint": fingerprint,
+                "evidence": evidence,
+            }
+        )
 
     if json_mode:
         payload: dict[str, Any] = {
             "version": 1,
-            "routing_backend": next(iter(backend_names_used)) if backend_names_used else "AstGrepWrapperBackend",
-            "routing_reason": "builtin-ruleset-scan" if ruleset else "inline-rules-scan" if inline_rules else "project-scan",
+            "routing_backend": next(iter(backend_names_used))
+            if backend_names_used
+            else "AstGrepWrapperBackend",
+            "routing_reason": "builtin-ruleset-scan"
+            if ruleset
+            else "inline-rules-scan"
+            if inline_rules
+            else "project-scan",
             "sidecar_used": False,
             "total_matches": total_matches,
             "matched_rules": matched_rules,
             "rule_count": len(rules),
-            "backends": list(sorted(backend_names_used)),
+            "backends": sorted(backend_names_used),
             "findings": findings,
         }
         if ruleset:
@@ -1094,7 +1132,6 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
                 case_cfg = cfg if language == cfg.lang else replace(cfg, lang=language)
 
                 # Use orchestration hint if available
-                backend_name = backend_hints.get(linked_rule) if linked_rule else None
                 backend = _select_ast_backend_for_pattern(
                     case_cfg, pattern, backend_cache=backend_cache
                 )
@@ -1197,12 +1234,16 @@ def main_entry(argv: list[str] | None = None) -> None:
         if "--help" in argv or "-h" in argv:
             # Fall through to argparse for help display
             pass
-        elif argv[0] == "scan" and (len(argv) == 1 or (len(argv) == 3 and argv[1] in ("--config", "-c"))):
+        elif argv[0] == "scan" and (
+            len(argv) == 1 or (len(argv) == 3 and argv[1] in ("--config", "-c"))
+        ):
             config = "sgconfig.yml"
             if len(argv) >= 3:
                 config = argv[2]
             raise SystemExit(scan_command(config=config))
-        elif argv[0] == "test" and (len(argv) == 1 or (len(argv) == 3 and argv[1] in ("--config", "-c"))):
+        elif argv[0] == "test" and (
+            len(argv) == 1 or (len(argv) == 3 and argv[1] in ("--config", "-c"))
+        ):
             config = "sgconfig.yml"
             if len(argv) >= 3:
                 config = argv[2]
@@ -1284,4 +1325,3 @@ def main_entry(argv: list[str] | None = None) -> None:
 
         full_main_entry()
     raise SystemExit(2)
-
