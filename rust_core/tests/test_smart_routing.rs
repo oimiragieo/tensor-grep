@@ -15,6 +15,7 @@ fn base_config() -> SearchRoutingConfig {
         corpus_bytes: 0,
         gpu_auto_supported: true,
         prefer_rg_passthrough: false,
+        pcre2: false,
     }
 }
 
