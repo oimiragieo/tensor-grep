@@ -1080,7 +1080,7 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
     from tensor_grep.core.config import SearchConfig
 
     try:
-        project_cfg, rules, _, test_data, hints = _load_ast_project_data(config)
+        project_cfg, rules, _, test_data, _hints = _load_ast_project_data(config)
     except (FileNotFoundError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
