@@ -866,6 +866,9 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         replace: None,
         patterns: Vec::new(),
         path: String::new(),
+        no_ignore_vcs: false,
+        pcre2: false,
+        max_filesize: None,
     };
 
     let mut positionals: Vec<String> = Vec::new();
@@ -1773,6 +1776,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         path: path.to_string(),
         pcre2: cli.pcre2,
         max_filesize: cli.max_filesize.clone(),
+        no_ignore_vcs: cli.no_ignore_vcs,
     }
 }
 
@@ -1807,6 +1811,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         path: request.path.clone(),
         pcre2: args.pcre2,
         max_filesize: args.max_filesize.clone(),
+        no_ignore_vcs: args.no_ignore_vcs,
     }
 }
 
@@ -4498,6 +4503,9 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 replace: None,
                                 patterns: params.patterns.to_vec(),
                                 path: params.path.to_string(),
+                                no_ignore_vcs: false,
+                                pcre2: false,
+                                max_filesize: None,
                             });
                     if cpu_config.verbose {
                         emit_verbose_metadata(fallback_decision);
