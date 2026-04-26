@@ -44,6 +44,9 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         replace: None,
         patterns: Vec::new(),
         path: String::new(),
+        no_ignore_vcs: false,
+        pcre2: false,
+        max_filesize: None,
     };
 
     let mut positionals: Vec<String> = Vec::new();
