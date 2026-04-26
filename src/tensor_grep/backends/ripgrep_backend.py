@@ -234,6 +234,10 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--trace")
             if config.stats:
                 cmd.append("--stats")
+            if config.pcre2:
+                cmd.append("-P")
+            if config.max_filesize:
+                cmd.extend(["--max-filesize", config.max_filesize])
             if config.threads > 0:
                 cmd.extend(["-j", str(config.threads)])
 

@@ -1,3 +1,4 @@
+import sys
 import subprocess
 import time
 
@@ -30,7 +31,7 @@ class TestVsRipgrep:
         # Our tool: classify does all at once (when GPU available)
         start = time.perf_counter()
         subprocess.run(
-            ["tg", "search", "--cpu", "ERROR|WARN|INFO", str(log)],
+            [sys.executable, "-m", "tensor_grep.cli.main", "search", "--cpu", "ERROR|WARN|INFO", str(log)],
             capture_output=True,
         )
         our_total = time.perf_counter() - start
@@ -47,7 +48,9 @@ class TestVsRipgrep:
         pattern = r"apple(?= banana)"
 
         res = subprocess.run(
-            ["uv", "run", "tg", "search", "-P", pattern, str(log)], capture_output=True, text=True
+            [sys.executable, "-m", "tensor_grep.cli.main", "search", "-P", pattern, str(log)],
+            capture_output=True,
+            text=True,
         )
         assert res.returncode == 0
         assert "apple banana" in res.stdout
@@ -63,7 +66,7 @@ class TestVsRipgrep:
 
         # Searching with 100KB limit should skip large_file
         res = subprocess.run(
-            ["uv", "run", "tg", "search", "--max-filesize", "100K", "match_me", str(tmp_path)],
+            [sys.executable, "-m", "tensor_grep.cli.main", "search", "--max-filesize", "100K", "match_me", str(tmp_path)],
             capture_output=True,
             text=True,
         )
