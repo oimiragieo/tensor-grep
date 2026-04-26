@@ -151,7 +151,6 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     Ok(status.code().unwrap_or(1))
 }
 
-
 pub fn ripgrep_is_available() -> bool {
     resolve_ripgrep_binary().is_some()
 }
