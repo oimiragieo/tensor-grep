@@ -1776,7 +1776,6 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         path: path.to_string(),
         pcre2: cli.pcre2,
         max_filesize: cli.max_filesize.clone(),
-        no_ignore_vcs: cli.no_ignore_vcs,
     }
 }
 
@@ -1811,7 +1810,6 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         path: request.path.clone(),
         pcre2: args.pcre2,
         max_filesize: args.max_filesize.clone(),
-        no_ignore_vcs: args.no_ignore_vcs,
     }
 }
 
@@ -2114,6 +2112,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             corpus_bytes,
             gpu_auto_supported,
             prefer_rg_passthrough: search_has_context(&args) && !args.json && !args.ndjson,
+            pcre2: args.pcre2,
         },
         calibration.as_ref(),
         index_state,
