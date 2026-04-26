@@ -22,6 +22,17 @@ class RipgrepBackend(ComputeBackend):
         path = resolve_ripgrep_binary()
         return str(path) if path else None
 
+    def supports_pcre2(self) -> bool:
+        """Check if the ripgrep binary was compiled with PCRE2 support."""
+        binary = self._get_binary_name()
+        if not binary:
+            return False
+        try:
+            result = subprocess.run([binary, "--pcre2-version"], capture_output=True, text=True)
+            return result.returncode == 0
+        except Exception:
+            return False
+
     def search(
         self, file_path: str | list[str], pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:

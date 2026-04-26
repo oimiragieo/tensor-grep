@@ -180,13 +180,15 @@ class Pipeline:
                 fallback_backend = rust_backend
 
             if config and config.pcre2:
-                if rg_available:
+                if rg_available and rg_backend.supports_pcre2():
                     self.backend = rg_backend
                     selected_backend_reason = "pcre2_explicit_ripgrep"
+                elif rust_available:
+                    self.backend = rust_backend
+                    selected_backend_reason = "pcre2_fallback_rust"
                 else:
                     raise ConfigurationError(
-                        "PCRE2 requested but 'rg' binary is not available. "
-                        "Please install ripgrep with PCRE2 support."
+                        "PCRE2 requested but neither 'rg' (with PCRE2) nor 'tensor-grep-rust' are available."
                     )
             elif force_cpu:
                 if rust_available and not needs_python_cpu:
