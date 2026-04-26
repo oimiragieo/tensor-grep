@@ -243,20 +243,22 @@ def main() -> int:
     ratio = tg_median / sg_median if sg_median else float("inf")
     passed = ratio <= args.max_ratio
 
-    payload.update({
-        "tg_binary": str(tg_binary),
-        "sg_binary": str(sg_binary),
-        "hyperfine_binary": str(hyperfine_binary),
-        "runs": args.runs,
-        "warmup": args.warmup,
-        "tg_command": command_strings[0],
-        "sg_command": command_strings[1],
-        "tg_median_s": round(tg_median, 6),
-        "sg_median_s": round(sg_median, 6),
-        "ratio": round(ratio, 6),
-        "passed": passed,
-        "hyperfine": hyperfine_data,
-    })
+    payload.update(
+        {
+            "tg_binary": str(tg_binary),
+            "sg_binary": str(sg_binary),
+            "hyperfine_binary": str(hyperfine_binary),
+            "runs": args.runs,
+            "warmup": args.warmup,
+            "tg_command": command_strings[0],
+            "sg_command": command_strings[1],
+            "tg_median_s": round(tg_median, 6),
+            "sg_median_s": round(sg_median, 6),
+            "ratio": round(ratio, 6),
+            "passed": passed,
+            "hyperfine": hyperfine_data,
+        }
+    )
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     print(

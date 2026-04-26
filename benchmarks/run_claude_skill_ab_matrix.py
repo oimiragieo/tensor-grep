@@ -82,12 +82,14 @@ def build_experiment_configs(
         for task_contract in task_contracts:
             for enhanced_effort in enhanced_efforts:
                 effort_name = enhanced_effort or "default"
-                configs.append({
-                    "name": f"output-{output_contract}__task-{task_contract}__effort-{effort_name}",
-                    "enhanced_output_contract": output_contract,
-                    "enhanced_task_contract": task_contract,
-                    "enhanced_effort": enhanced_effort,
-                })
+                configs.append(
+                    {
+                        "name": f"output-{output_contract}__task-{task_contract}__effort-{effort_name}",
+                        "enhanced_output_contract": output_contract,
+                        "enhanced_task_contract": task_contract,
+                        "enhanced_effort": enhanced_effort,
+                    }
+                )
     return configs
 
 
@@ -112,35 +114,43 @@ def summarize_trace_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
                 / float(len(system_rows)),
                 6,
             ),
-            "mean_first_tg_seconds": _mean_numeric([
-                float(value)
-                for row in system_rows
-                if (value := row.get("first_tg_seconds")) is not None
-            ]),
-            "mean_first_patch_seconds": _mean_numeric([
-                float(value)
-                for row in system_rows
-                if (value := row.get("first_patch_seconds")) is not None
-            ]),
-            "mean_first_file_change_seconds": _mean_numeric([
-                float(value)
-                for row in system_rows
-                if (value := row.get("first_file_change_seconds")) is not None
-            ]),
-            "mean_post_edit_deliberation_seconds": _mean_numeric([
-                float(value)
-                for row in system_rows
-                if (value := row.get("post_edit_deliberation_seconds")) is not None
-            ]),
-            "mean_tg_invocation_count": _mean_numeric([
-                float(row.get("tg_invocation_count", 0.0)) for row in system_rows
-            ]),
-            "mean_tg_seconds_total": _mean_numeric([
-                float(row.get("tg_seconds_total", 0.0)) for row in system_rows
-            ]),
-            "mean_changed_file_count": _mean_numeric([
-                float(row.get("changed_file_count", 0.0)) for row in system_rows
-            ]),
+            "mean_first_tg_seconds": _mean_numeric(
+                [
+                    float(value)
+                    for row in system_rows
+                    if (value := row.get("first_tg_seconds")) is not None
+                ]
+            ),
+            "mean_first_patch_seconds": _mean_numeric(
+                [
+                    float(value)
+                    for row in system_rows
+                    if (value := row.get("first_patch_seconds")) is not None
+                ]
+            ),
+            "mean_first_file_change_seconds": _mean_numeric(
+                [
+                    float(value)
+                    for row in system_rows
+                    if (value := row.get("first_file_change_seconds")) is not None
+                ]
+            ),
+            "mean_post_edit_deliberation_seconds": _mean_numeric(
+                [
+                    float(value)
+                    for row in system_rows
+                    if (value := row.get("post_edit_deliberation_seconds")) is not None
+                ]
+            ),
+            "mean_tg_invocation_count": _mean_numeric(
+                [float(row.get("tg_invocation_count", 0.0)) for row in system_rows]
+            ),
+            "mean_tg_seconds_total": _mean_numeric(
+                [float(row.get("tg_seconds_total", 0.0)) for row in system_rows]
+            ),
+            "mean_changed_file_count": _mean_numeric(
+                [float(row.get("changed_file_count", 0.0)) for row in system_rows]
+            ),
         }
     return summary
 
@@ -153,18 +163,18 @@ def summarize_score_rows(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]
     for system, system_rows in sorted(by_system.items()):
         summary[system] = {
             "record_count": len(system_rows),
-            "mean_patch_applied_rate": _mean_numeric([
-                float(row.get("patch_applied", 0.0)) for row in system_rows
-            ]),
-            "mean_validation_pass_rate": _mean_numeric([
-                float(row.get("validation_passed", 0.0)) for row in system_rows
-            ]),
-            "mean_primary_file_hit_rate": _mean_numeric([
-                float(row.get("primary_file_hit", 0.0)) for row in system_rows
-            ]),
-            "mean_primary_span_hit_rate": _mean_numeric([
-                float(row.get("primary_span_hit", 0.0)) for row in system_rows
-            ]),
+            "mean_patch_applied_rate": _mean_numeric(
+                [float(row.get("patch_applied", 0.0)) for row in system_rows]
+            ),
+            "mean_validation_pass_rate": _mean_numeric(
+                [float(row.get("validation_passed", 0.0)) for row in system_rows]
+            ),
+            "mean_primary_file_hit_rate": _mean_numeric(
+                [float(row.get("primary_file_hit", 0.0)) for row in system_rows]
+            ),
+            "mean_primary_span_hit_rate": _mean_numeric(
+                [float(row.get("primary_span_hit", 0.0)) for row in system_rows]
+            ),
         }
     return summary
 
@@ -182,21 +192,21 @@ def summarize_bakeoff_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "scenario_count": len(rows),
         "missing_predictions": [],
-        "mean_patch_applied_rate": _mean_numeric([
-            float(row.get("patch_applied", 0.0)) for row in rows
-        ])
+        "mean_patch_applied_rate": _mean_numeric(
+            [float(row.get("patch_applied", 0.0)) for row in rows]
+        )
         or 0.0,
-        "mean_validation_pass_rate": _mean_numeric([
-            float(row.get("validation_passed", 0.0)) for row in rows
-        ])
+        "mean_validation_pass_rate": _mean_numeric(
+            [float(row.get("validation_passed", 0.0)) for row in rows]
+        )
         or 0.0,
-        "mean_primary_file_hit_rate": _mean_numeric([
-            float(row.get("primary_file_hit", 0.0)) for row in rows
-        ])
+        "mean_primary_file_hit_rate": _mean_numeric(
+            [float(row.get("primary_file_hit", 0.0)) for row in rows]
+        )
         or 0.0,
-        "mean_primary_span_hit_rate": _mean_numeric([
-            float(row.get("primary_span_hit", 0.0)) for row in rows
-        ])
+        "mean_primary_span_hit_rate": _mean_numeric(
+            [float(row.get("primary_span_hit", 0.0)) for row in rows]
+        )
         or 0.0,
     }
 

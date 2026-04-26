@@ -57,17 +57,19 @@ def analyze_bakeoff_misses(payload: dict[str, Any]) -> dict[str, Any]:
         false_positive_files = [str(path) for path in row.get("false_positive_files", [])]
         bucket_counter = Counter(_bucket_false_positive_path(path) for path in false_positive_files)
         bucket_counts.update(bucket_counter)
-        scenario_summaries.append({
-            "name": str(row.get("name", "")),
-            "query_or_symbol": str(row.get("query_or_symbol", "")),
-            "expected_primary_file": row.get("expected_primary_file"),
-            "actual_primary_file": row.get("actual_primary_file"),
-            "file_hit_rate": float(row.get("file_hit_rate", 0.0)),
-            "file_precision": float(row.get("file_precision", 0.0)),
-            "false_positive_count": len(false_positive_files),
-            "false_positive_buckets": dict(sorted(bucket_counter.items())),
-            "false_positive_files": false_positive_files,
-        })
+        scenario_summaries.append(
+            {
+                "name": str(row.get("name", "")),
+                "query_or_symbol": str(row.get("query_or_symbol", "")),
+                "expected_primary_file": row.get("expected_primary_file"),
+                "actual_primary_file": row.get("actual_primary_file"),
+                "file_hit_rate": float(row.get("file_hit_rate", 0.0)),
+                "file_precision": float(row.get("file_precision", 0.0)),
+                "false_positive_count": len(false_positive_files),
+                "false_positive_buckets": dict(sorted(bucket_counter.items())),
+                "false_positive_files": false_positive_files,
+            }
+        )
 
     worst_scenarios = sorted(
         scenario_summaries,

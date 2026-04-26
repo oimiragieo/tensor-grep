@@ -59,45 +59,53 @@ def load_driver_scenarios(path: str | Path) -> list[Scenario]:
     payload = json.loads(scenarios_path.read_text(encoding="utf-8-sig"))
     scenarios = payload.get("scenarios")
     if not isinstance(scenarios, list):
-        raise ScenarioValidationError([
-            {"field": "scenarios", "code": "invalid_type", "expected": "list"}
-        ])
+        raise ScenarioValidationError(
+            [{"field": "scenarios", "code": "invalid_type", "expected": "list"}]
+        )
     errors: list[dict[str, Any]] = []
     validated: list[Scenario] = []
     for index, scenario in enumerate(scenarios):
         if not isinstance(scenario, dict):
-            errors.append({
-                "scenario_index": index,
-                "field": "scenario",
-                "code": "invalid_type",
-                "expected": "object",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "scenario",
+                    "code": "invalid_type",
+                    "expected": "object",
+                }
+            )
             continue
         current = dict(scenario)
         missing = [field for field in _REQUIRED_FIELDS if field not in current]
         for field in missing:
-            errors.append({
-                "scenario_index": index,
-                "field": field,
-                "code": "missing_required_field",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": field,
+                    "code": "missing_required_field",
+                }
+            )
         if missing:
             continue
         if current["mode"] not in _ALLOWED_MODES:
-            errors.append({
-                "scenario_index": index,
-                "field": "mode",
-                "code": "invalid_choice",
-                "expected": list(_ALLOWED_MODES),
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "mode",
+                    "code": "invalid_choice",
+                    "expected": list(_ALLOWED_MODES),
+                }
+            )
         repo_fixture = current["repo_fixture"]
         if not isinstance(repo_fixture, str):
-            errors.append({
-                "scenario_index": index,
-                "field": "repo_fixture",
-                "code": "invalid_type",
-                "expected": "str",
-            })
+            errors.append(
+                {
+                    "scenario_index": index,
+                    "field": "repo_fixture",
+                    "code": "invalid_type",
+                    "expected": "str",
+                }
+            )
         elif not Path(repo_fixture).is_absolute():
             current["repo_fixture"] = str((scenarios_path.parent / repo_fixture).resolve())
         validated.append(current)
@@ -202,17 +210,19 @@ def run_tensor_grep_scenario(
 def build_patch_prompt(scenario: Scenario, payload: dict[str, Any]) -> str:
     rendered_context = str(payload.get("rendered_context", "")).strip()
     problem_statement = str(scenario["problem_statement"]).strip()
-    return "\n\n".join([
-        "You are preparing a repository patch.",
-        "Apply the smallest correct repository change for the problem statement.",
-        "Prefer editing the repository files directly. If you do that, do not create unrelated files.",
-        "If you choose not to edit files directly, return a git-style unified diff patch only. Do not include prose.",
-        "Make the patch safe for git apply: include diff --git headers and enough unchanged context lines around every edit.",
-        "Do not emit fragile one-line hunks. Include the full surrounding block when needed so the patch applies cleanly.",
-        "Do not run the test suite or create caches like .pytest_cache.",
-        f"Problem statement:\n{problem_statement}",
-        f"Context:\n{rendered_context}",
-    ]).strip()
+    return "\n\n".join(
+        [
+            "You are preparing a repository patch.",
+            "Apply the smallest correct repository change for the problem statement.",
+            "Prefer editing the repository files directly. If you do that, do not create unrelated files.",
+            "If you choose not to edit files directly, return a git-style unified diff patch only. Do not include prose.",
+            "Make the patch safe for git apply: include diff --git headers and enough unchanged context lines around every edit.",
+            "Do not emit fragile one-line hunks. Include the full surrounding block when needed so the patch applies cleanly.",
+            "Do not run the test suite or create caches like .pytest_cache.",
+            f"Problem statement:\n{problem_statement}",
+            f"Context:\n{rendered_context}",
+        ]
+    ).strip()
 
 
 def build_payload(
@@ -261,27 +271,31 @@ def build_attempt_ledger_for_payload(payload: dict[str, Any]) -> dict[str, Any]:
     for record in records:
         instance_id = str(record.get("instance_id") or "")
         attempt_id = f"{instance_id}:tensor-grep"
-        attempts.append({
-            "attempt_id": attempt_id,
-            "parent_attempt_id": None,
-            "kind": "tensor_grep_patch_driver",
-            "status": "accepted",
-            "retryable": False,
-            "retry_stage": "none",
-            "retry_reason": "accepted",
-            "checkpoint_id": None,
-            "audit_manifest_path": None,
-            "validation_success": True,
-            "score_artifact": None,
-            "session_id": None,
-            "inputs": [str(record.get("repo_fixture") or "")],
-            "outputs": [str(record.get("prompt") or "")],
-        })
-        tasks.append({
-            "task_id": instance_id,
-            "status": "accepted",
-            "accepted_attempt_id": attempt_id,
-        })
+        attempts.append(
+            {
+                "attempt_id": attempt_id,
+                "parent_attempt_id": None,
+                "kind": "tensor_grep_patch_driver",
+                "status": "accepted",
+                "retryable": False,
+                "retry_stage": "none",
+                "retry_reason": "accepted",
+                "checkpoint_id": None,
+                "audit_manifest_path": None,
+                "validation_success": True,
+                "score_artifact": None,
+                "session_id": None,
+                "inputs": [str(record.get("repo_fixture") or "")],
+                "outputs": [str(record.get("prompt") or "")],
+            }
+        )
+        tasks.append(
+            {
+                "task_id": instance_id,
+                "status": "accepted",
+                "accepted_attempt_id": attempt_id,
+            }
+        )
     ledger_input = {
         "task_id": task_id,
         "root": root,

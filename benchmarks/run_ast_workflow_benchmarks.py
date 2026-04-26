@@ -73,14 +73,16 @@ def _write_tests(tests_dir: Path, rule_count: int) -> None:
 def _write_source_files(root: Path, file_count: int) -> None:
     for idx in range(file_count):
         (root / f"module_{idx:03d}.py").write_text(
-            "\n".join([
-                "class SampleClass:",
-                "    def __init__(self):",
-                "        pass",
-                "",
-                "def sample_function():",
-                "    return 1",
-            ])
+            "\n".join(
+                [
+                    "class SampleClass:",
+                    "    def __init__(self):",
+                    "        pass",
+                    "",
+                    "def sample_function():",
+                    "    return 1",
+                ]
+            )
             + "\n",
             encoding="utf-8",
         )
