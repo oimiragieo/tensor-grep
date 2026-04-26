@@ -51,12 +51,14 @@ class TestVsRipgrep:
         """Verify that PCRE2 lookahead works via the -P flag."""
         # Check for PCRE2 support first
         from tensor_grep.core.config import SearchConfig
-        from tensor_grep.core.pipeline import Pipeline
+        from tensor_grep.core.pipeline import ConfigurationError, Pipeline
 
         try:
             p = Pipeline(config=SearchConfig(pcre2=True))
             if p.selected_backend_name == "CPUBackend":
                 pytest.skip("No PCRE2-capable backend available (need rg-pcre2 or rust-core)")
+        except (ConfigurationError, RuntimeError):
+            pytest.skip("No PCRE2-capable backend available (explicit error)")
         except Exception:
             pytest.skip("Pipeline configuration failed for PCRE2")
 
