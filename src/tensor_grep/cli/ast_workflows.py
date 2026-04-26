@@ -1093,7 +1093,6 @@ def test_command(config: str | None = "sgconfig.yml") -> int:
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
     backend_names_used: set[str] = set()
     rule_case_groups: dict[tuple[int, str, str], dict[str, Any]] = {}
-    backend_hints = hints.get("backend_hints", {})
     backend_cache: dict[tuple[str | None, str, bool], Any] = {}
 
     total_cases = 0
