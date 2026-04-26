@@ -290,6 +290,8 @@ def _load_rule_specs_and_meta(
                     "language": str(
                         item.get("language") or payload.get("language") or default_language
                     ),
+                    "severity": str(item.get("severity") or payload.get("severity") or "warning"),
+                    "message": str(item.get("message") or payload.get("message") or ""),
                 })
             continue
 
@@ -300,6 +302,8 @@ def _load_rule_specs_and_meta(
             "id": str(payload.get("id") or rule_file.stem),
             "pattern": pattern,
             "language": str(payload.get("language") or default_language),
+            "severity": str(payload.get("severity") or "warning"),
+            "message": str(payload.get("message") or ""),
         })
 
     return specs, meta
@@ -503,36 +507,30 @@ def run_command(
             file=sys.stderr,
         )
         return 1
-
     if interactive and not rewrite:
         print("--interactive requires --rewrite.", file=sys.stderr)
         return 1
-    if apply or interactive:
+
+    if (apply or interactive) and not filter_regex and not interactive:
         if rewrite is None:
             print(f"--{'apply' if apply else 'interactive'} requires --rewrite.", file=sys.stderr)
             return 1
-
-        # Interactive mode or filtered apply requires finding matches first
-        # unless it's a simple batch apply.
-        # But for parity, let's always find matches if filtering or interactive.
-        if filter_regex or interactive:
-            pass  # continue to match finding
-        else:
-            rewrite_json, exit_code = execute_rewrite_apply_json(
-                pattern=pattern,
-                replacement=rewrite,
-                lang=lang or "",
-                path=path or ".",
-                verify=verify,
-                checkpoint=checkpoint,
-                audit_manifest=audit_manifest,
-                audit_signing_key=audit_signing_key,
-                lint_cmd=lint_cmd,
-                test_cmd=test_cmd,
-                policy=policy,
-            )
-            _safe_stdout_line(rewrite_json)
-            return exit_code
+        
+        rewrite_json, exit_code = execute_rewrite_apply_json(
+            pattern=pattern,
+            replacement=rewrite,
+            lang=lang or "",
+            path=path or ".",
+            verify=verify,
+            checkpoint=checkpoint,
+            audit_manifest=audit_manifest,
+            audit_signing_key=audit_signing_key,
+            lint_cmd=lint_cmd,
+            test_cmd=test_cmd,
+            policy=policy,
+        )
+        _safe_stdout_line(rewrite_json)
+        return exit_code
 
     search_path = path or "."
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=lang, query_pattern=pattern)
@@ -573,7 +571,6 @@ def run_command(
     # Filter matches
     if filter_regex:
         import re
-
         regex = re.compile(filter_regex)
         all_results.matches = [m for m in all_results.matches if regex.search(m.text)]
         all_results.total_matches = len(all_results.matches)
@@ -584,6 +581,8 @@ def run_command(
             print("No matches found to rewrite.", file=sys.stderr)
             return 0
 
+        from tensor_grep.core.result import MatchLine
+
         # Group matches by file for more natural interactive flow
         matches_by_file: dict[str, list[MatchLine]] = {}
         for match in all_results.matches:
@@ -591,9 +590,10 @@ def run_command(
 
         applied_files: set[str] = set()
         for file_path, file_matches in matches_by_file.items():
-            print(f"\nFile: {file_path}")
-            for match in file_matches:
-                print(f"  L{match.line_number}: {match.text.strip()}")
+            print(f"{chr(10)}File: {file_path}")
+
+            for m in file_matches:
+                print(f"  L{m.line_number}: {m.text.strip()}")
 
             choice = (
                 input(f"Apply rewrite to {len(file_matches)} matches in this file? [y/n/a/q]: ")
@@ -604,9 +604,8 @@ def run_command(
                 break
             if choice == "a":
                 # Apply all remaining files
-                for remaining_file in list(matches_by_file.keys())[
-                    list(matches_by_file.keys()).index(file_path) :
-                ]:
+                keys = list(matches_by_file.keys())
+                for remaining_file in keys[keys.index(file_path) :]:
                     applied_files.add(remaining_file)
                 break
 
@@ -617,10 +616,6 @@ def run_command(
             print("No changes applied.")
             return 0
 
-        # Perform the actual apply only to the selected files
-        # We can pass multiple paths to execute_rewrite_apply_json if it supports it,
-        # but it takes a single 'path' string.
-        # We'll call it once per file for simplicity in this slice.
         total_applied = 0
         for f in applied_files:
             rewrite_json, exit_code = execute_rewrite_apply_json(
@@ -646,7 +641,6 @@ def run_command(
     if json_mode:
         import json
 
-        matches_payload: list[dict[str, object]] = []
         payload = {
             "version": 1,
             "routing_backend": backend_name,
@@ -655,15 +649,15 @@ def run_command(
             "query": pattern,
             "path": search_path,
             "total_matches": all_results.total_matches,
-            "matches": matches_payload,
+            "matches": [
+                {
+                    "file": m.file,
+                    "line": m.line_number,
+                    "text": m.text,
+                }
+                for m in all_results.matches
+            ],
         }
-        for match in all_results.matches:
-            match_payload = {"file": match.file, "line": match.line_number, "text": match.text}
-            if match.range is not None:
-                match_payload["range"] = match.range
-            if match.meta_variables is not None:
-                match_payload["metaVariables"] = match.meta_variables
-            matches_payload.append(match_payload)
         _safe_stdout_line(json.dumps(payload))
         return 0
 
@@ -747,39 +741,98 @@ def _select_ast_backend_for_pattern(
         backend_cache[cache_key] = backend
     return backend
 
-
-def scan_command(config: str | None = "sgconfig.yml") -> int:
+def scan_command(
+    config: str | None = "sgconfig.yml",
+    ruleset: str | None = None,
+    inline_rules: str | None = None,
+    path: str | None = None,
+    apply: bool = False,
+    json_mode: bool = False,
+    checkpoint: bool = False,
+    audit_manifest: str | None = None,
+    audit_signing_key: str | None = None,
+    lint_cmd: str | None = None,
+    test_cmd: str | None = None,
+    policy: str | None = None,
+    optimize_context: bool = False,
+    render_profile: str = "compact",
+    max_tokens: int | None = None,
+    include_evidence: bool = False,
+    max_evidence_snippets_per_file: int = 1,
+    max_evidence_snippet_chars: int = 120,
+) -> int:
     from dataclasses import replace
 
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
 
-    try:
-        project_cfg, rules, candidate_files, _, hints = _load_ast_project_data(config)
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        return 1
+    if inline_rules:
+        yaml_mod, loader = _get_yaml()
+        try:
+            rules = yaml_mod.load(inline_rules, Loader=loader)
+            if not isinstance(rules, list):
+                rules = [rules]
+            project_cfg = {"language": rules[0].get("language", "python"), "root_dir": Path(path or ".").resolve()}
+            hints: dict[str, Any] = {}
+            from tensor_grep.io.directory_scanner import DirectoryScanner
+            cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
+            scanner = DirectoryScanner(cfg)
+            candidate_files, _, _ = _collect_candidate_files(scanner, [str(project_cfg["root_dir"])])
+            if not json_mode:
+                print("Scanning project using inline rules...")
+        except Exception as exc:
+            print(f"Error parsing inline rules: {exc}", file=sys.stderr)
+            return 1
+    elif ruleset:
+        from tensor_grep.cli.rule_packs import resolve_rule_pack
+        try:
+            ruleset_meta, rules = resolve_rule_pack(ruleset, None)
+            project_cfg = {
+                "config_path": f"builtin:{ruleset_meta['name']}",
+                "root_dir": Path(path or ".").resolve(),
+                "rule_dirs": [],
+                "test_dirs": [],
+                "language": ruleset_meta["language"],
+            }
+            hints = {}
+            from tensor_grep.io.directory_scanner import DirectoryScanner
+            cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
+            scanner = DirectoryScanner(cfg)
+            candidate_files, _, _ = _collect_candidate_files(scanner, [str(project_cfg["root_dir"])])
+            if not json_mode:
+                print(f"Scanning project using built-in ruleset {ruleset_meta['name']} ({ruleset_meta['language']})...")
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    else:
+        try:
+            project_cfg, rules, candidate_files, _, hints = _load_ast_project_data(config)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
+        if not json_mode:
+            print(f"Scanning project using adaptive AST routing based on {project_cfg.get('config_path', config or 'sgconfig.yml')}...")
 
     if not rules:
         print("Error: No valid rules found in configured rule directories.", file=sys.stderr)
         return 1
 
     cfg = SearchConfig(ast=True, ast_prefer_native=True, lang=cast(str, project_cfg["language"]))
-    root_dir = cast("Path", project_cfg["root_dir"])
+    root_dir = project_cfg["root_dir"]
     backend_names_used: set[str] = set()
     backend_hints = hints.get("backend_hints", {})
 
-    print(f"Scanning project using adaptive AST routing based on {project_cfg['config_path']}...")
-
-    # Group rules by backend to maximize search_project usage
-    wrapper_rules: list[dict[str, str]] = []
-    other_resolved: list[tuple[dict[str, str], SearchConfig, Any]] = []
+    wrapper_rules: list[dict[str, Any]] = []
+    other_resolved: list[tuple[dict[str, Any], SearchConfig, Any]] = []
 
     for rule in rules:
         rule_cfg = cfg if rule["language"] == cfg.lang else replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(
-            rule_cfg, rule["pattern"], backend_cache=_CACHED_BACKENDS
-        )
+        backend_name = backend_hints.get(rule["id"])
+        if backend_name and _check_backend_available(backend_name):
+            backend = _get_cached_backend(backend_name)
+        else:
+            backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"])
 
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_project"):
             wrapper_rules.append(rule)
@@ -792,7 +845,7 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
         backend_names_used.add("AstGrepWrapperBackend")
         try:
             wrapper_project_results = wrapper_backend.search_project(
-                str(root_dir), str(project_cfg["config_path"])
+                str(root_dir), str(project_cfg.get("config_path", config or ""))
             )
         except Exception:
             # Fallback to individual search_many if search_project fails
@@ -804,6 +857,8 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
 
     total_matches = 0
     matched_rules = 0
+    findings = []
+    import hashlib
 
     # Process wrapper results
     for rule in wrapper_rules:
@@ -820,10 +875,62 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
             if matched_count == 0 and result.total_files > 0:
                 matched_count = len({match.file for match in result.matches if match.file})
 
-            print(
-                f"[scan] rule={rule['id']} lang={rule['language']} "
-                f"matches={rule_matches} files={matched_count}"
-            )
+            if not json_mode:
+                print(
+                    f"[scan] rule={rule['id']} lang={rule['language']} "
+                    f"matches={rule_matches} files={matched_count}"
+                )
+
+            files_list = list(result.matched_file_paths)
+            if not files_list and result.total_files > 0:
+                files_list = list({match.file for match in result.matches if match.file})
+
+            fingerprint = hashlib.sha256(
+                json.dumps({
+                    "rule_id": rule["id"],
+                    "language": rule["language"],
+                    "files": sorted(files_list),
+                }, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+
+            ev_data: dict[str, list[dict[str, Any]]] = {}
+            for m in result.matches:
+                if m.file:
+                    ev_data.setdefault(m.file, []).append({
+                        "line_number": m.line_number,
+                        "text": m.text[:max_evidence_snippet_chars]
+                    })
+
+            evidence = []
+            if ev_data:
+                for f, snips in ev_data.items():
+                    item: dict[str, Any] = {"file": f, "match_count": len(snips)}
+                    if include_evidence:
+                        item["snippets"] = snips[:max_evidence_snippets_per_file]
+                    evidence.append(item)
+            elif files_list and result.total_matches > 0:
+                if len(files_list) == 1:
+                    item = {"file": files_list[0], "match_count": result.total_matches}
+                    if include_evidence:
+                        item["snippets"] = [] # best effort
+                    evidence.append(item)
+                else:
+                    for f in files_list:
+                        item = {"file": f, "match_count": 1}
+                        if include_evidence:
+                            item["snippets"] = []
+                        evidence.append(item)
+
+            findings.append({
+                "rule_id": rule["id"],
+                "language": rule["language"],
+                "severity": rule.get("severity", "warning"),
+                "message": rule.get("message", ""),
+                "matches": rule_matches,
+                "files": files_list,
+                "fingerprint": fingerprint,
+                "evidence": evidence,
+            })
 
     # Process other results (native or individual wrapper)
     for rule, rule_cfg, backend in other_resolved:
@@ -849,10 +956,77 @@ def scan_command(config: str | None = "sgconfig.yml") -> int:
         total_matches += rule_matches
         if rule_matches > 0:
             matched_rules += 1
-        print(
-            f"[scan] rule={rule['id']} lang={rule['language']} "
-            f"matches={rule_matches} files={len(matched_files)}"
-        )
+        if not json_mode:
+            print(
+                f"[scan] rule={rule['id']} lang={rule['language']} "
+                f"matches={rule_matches} files={len(matched_files)}"
+            )
+
+        files_list = list(matched_files)
+        fingerprint = hashlib.sha256(
+            json.dumps({
+                "rule_id": rule["id"],
+                "language": rule["language"],
+                "files": sorted(files_list),
+            }, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
+        ev_data = {}
+        for m in result.matches:
+            if m.file:
+                ev_data.setdefault(m.file, []).append({
+                    "line_number": m.line_number,
+                    "text": m.text[:max_evidence_snippet_chars]
+                })
+
+        evidence = []
+        if ev_data:
+            for f, snips in ev_data.items():
+                item = {"file": f, "match_count": len(snips)}
+                if include_evidence:
+                    item["snippets"] = snips[:max_evidence_snippets_per_file]
+                evidence.append(item)
+        elif files_list and rule_matches > 0:
+            if len(files_list) == 1:
+                item = {"file": files_list[0], "match_count": rule_matches}
+                if include_evidence:
+                    item["snippets"] = []
+                evidence.append(item)
+            else:
+                for f in files_list:
+                    item = {"file": f, "match_count": 1}
+                    if include_evidence:
+                        item["snippets"] = []
+                    evidence.append(item)
+
+        findings.append({
+            "rule_id": rule["id"],
+            "language": rule["language"],
+            "severity": rule.get("severity", "warning"),
+            "message": rule.get("message", ""),
+            "matches": rule_matches,
+            "files": files_list,
+            "fingerprint": fingerprint,
+            "evidence": evidence,
+        })
+
+    if json_mode:
+        payload: dict[str, Any] = {
+            "version": 1,
+            "routing_backend": next(iter(backend_names_used)) if backend_names_used else "AstGrepWrapperBackend",
+            "routing_reason": "builtin-ruleset-scan" if ruleset else "inline-rules-scan" if inline_rules else "project-scan",
+            "sidecar_used": False,
+            "total_matches": total_matches,
+            "matched_rules": matched_rules,
+            "rule_count": len(rules),
+            "backends": list(sorted(backend_names_used)),
+            "findings": findings,
+        }
+        if ruleset:
+            payload["ruleset"] = ruleset
+
+        _safe_stdout_line(json.dumps(payload))
+        return 0
 
     print(
         "Scan completed. "
@@ -1023,16 +1197,16 @@ def main_entry(argv: list[str] | None = None) -> None:
         if "--help" in argv or "-h" in argv:
             # Fall through to argparse for help display
             pass
-        elif argv[0] == "scan":
+        elif argv[0] == "scan" and (len(argv) == 1 or (len(argv) == 3 and argv[1] in ("--config", "-c"))):
             config = "sgconfig.yml"
-            if len(argv) >= 3 and argv[1] in ("--config", "-c"):
+            if len(argv) >= 3:
                 config = argv[2]
-            raise SystemExit(scan_command(config))
-        elif argv[0] == "test":
+            raise SystemExit(scan_command(config=config))
+        elif argv[0] == "test" and (len(argv) == 1 or (len(argv) == 3 and argv[1] in ("--config", "-c"))):
             config = "sgconfig.yml"
-            if len(argv) >= 3 and argv[1] in ("--config", "-c"):
+            if len(argv) >= 3:
                 config = argv[2]
-            raise SystemExit(test_command(config))
+            raise SystemExit(test_command(config=config))
 
     import argparse
 
@@ -1055,7 +1229,14 @@ def main_entry(argv: list[str] | None = None) -> None:
     run_parser.add_argument("--policy", default=None)
 
     scan_parser = subparsers.add_parser("scan")
+    scan_parser.add_argument("path", nargs="?", default=".")
     scan_parser.add_argument("--config", "-c", default="sgconfig.yml")
+    scan_parser.add_argument("--ruleset", default=None)
+    scan_parser.add_argument("--inline-rules", default=None)
+    scan_parser.add_argument("--json", action="store_true")
+    scan_parser.add_argument("--include-evidence-snippets", action="store_true")
+    scan_parser.add_argument("--max-evidence-snippets-per-file", type=int, default=1)
+    scan_parser.add_argument("--max-evidence-snippet-chars", type=int, default=120)
 
     test_parser = subparsers.add_parser("test")
     test_parser.add_argument("--config", "-c", default="sgconfig.yml")
@@ -1067,8 +1248,8 @@ def main_entry(argv: list[str] | None = None) -> None:
     if args.command == "run":
         raise SystemExit(
             run_command(
-                pattern=args.pattern,
-                path=args.path,
+                args.pattern,
+                args.path,
                 rewrite=args.rewrite,
                 lang=args.lang,
                 apply=args.apply,
@@ -1083,12 +1264,24 @@ def main_entry(argv: list[str] | None = None) -> None:
             )
         )
     if args.command == "scan":
-        raise SystemExit(scan_command(args.config))
+        raise SystemExit(
+            scan_command(
+                config=args.config,
+                ruleset=getattr(args, "ruleset", None),
+                inline_rules=getattr(args, "inline_rules", None),
+                path=getattr(args, "path", None),
+                json_mode=getattr(args, "json", False),
+                include_evidence=getattr(args, "include_evidence_snippets", False),
+                max_evidence_snippets_per_file=getattr(args, "max_evidence_snippets_per_file", 1),
+                max_evidence_snippet_chars=getattr(args, "max_evidence_snippet_chars", 120),
+            )
+        )
     if args.command == "test":
-        raise SystemExit(test_command(args.config))
+        raise SystemExit(test_command(config=args.config))
     if args.command == "new":
         # 'new' is handled by the full Typer CLI for now as it's not perf-critical
         from tensor_grep.cli.main import main_entry as full_main_entry
 
         full_main_entry()
     raise SystemExit(2)
+
