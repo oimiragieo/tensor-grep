@@ -1,5 +1,5 @@
-import sys
 import subprocess
+import sys
 import time
 
 import pytest
@@ -31,7 +31,15 @@ class TestVsRipgrep:
         # Our tool: classify does all at once (when GPU available)
         start = time.perf_counter()
         subprocess.run(
-            [sys.executable, "-m", "tensor_grep.cli.main", "search", "--cpu", "ERROR|WARN|INFO", str(log)],
+            [
+                sys.executable,
+                "-m",
+                "tensor_grep.cli.main",
+                "search",
+                "--cpu",
+                "ERROR|WARN|INFO",
+                str(log),
+            ],
             capture_output=True,
         )
         our_total = time.perf_counter() - start
@@ -41,6 +49,17 @@ class TestVsRipgrep:
 
     def test_pcre2_lookahead_support(self, tmp_path):
         """Verify that PCRE2 lookahead works via the -P flag."""
+        # Check for PCRE2 support first
+        from tensor_grep.core.config import SearchConfig
+        from tensor_grep.core.pipeline import Pipeline
+
+        try:
+            p = Pipeline(config=SearchConfig(pcre2=True))
+            if p.selected_backend_name == "CPUBackend":
+                pytest.skip("No PCRE2-capable backend available (need rg-pcre2 or rust-core)")
+        except Exception:
+            pytest.skip("Pipeline configuration failed for PCRE2")
+
         log = tmp_path / "lookahead.txt"
         log.write_text("apple banana\norange banana\n", encoding="utf-8")
 
@@ -66,7 +85,16 @@ class TestVsRipgrep:
 
         # Searching with 100KB limit should skip large_file
         res = subprocess.run(
-            [sys.executable, "-m", "tensor_grep.cli.main", "search", "--max-filesize", "100K", "match_me", str(tmp_path)],
+            [
+                sys.executable,
+                "-m",
+                "tensor_grep.cli.main",
+                "search",
+                "--max-filesize",
+                "100K",
+                "match_me",
+                str(tmp_path),
+            ],
             capture_output=True,
             text=True,
         )
