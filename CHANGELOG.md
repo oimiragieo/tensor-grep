@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.6.2 (2026-04-27)
+
+### Bug Fixes
+
+- Harden top-level pcre2 version probe
+  ([`384f377`](https://github.com/oimiragieo/tensor-grep/commit/384f377d186e5e8299cf56862b904c72d52eb240))
+
+
 ## v1.6.1 (2026-04-27)
 
 ### Bug Fixes
