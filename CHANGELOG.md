@@ -1,30 +1,131 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.6.0 (2026-04-27)
 
 ### Bug Fixes
 
-- Stabilize CI parity contracts for PCRE2 routing, AST wrapper fallback, AST apply/filter coverage, native delegation, max-filesize handling, public help fallback parity, formatter parity, and cache isolation.
+- Definitive PCRE2 support detection and skip logic
+  ([`b41ea4c`](https://github.com/oimiragieo/tensor-grep/commit/b41ea4c865d5981a000067693975e62869169af2))
 
+- Improved RipgrepBackend.supports_pcre2() to use --help and smoke test. - Refined skip logic in
+  test_vs_ripgrep.py. - Final ruff format.
 
-## v1.5.1 (2026-04-25)
+- Harden ci help and ast parity
+  ([`6ada5cd`](https://github.com/oimiragieo/tensor-grep/commit/6ada5cdfd1a6222a61a61b226089035b39f250d2))
+
+- Implement robust PCRE2 routing and CI test environment compatibility
+  ([`600f31d`](https://github.com/oimiragieo/tensor-grep/commit/600f31d678b3a5876920b291507943ce3e99d99b))
+
+- Added PCRE2 capability detection to RipgrepBackend. - Updated Pipeline to fallback to Rust core
+  for PCRE2 if system rg lacks support. - Updated E2E tests to use sys.executable for reliable CI
+  execution.
+
+- Resolve PCRE2 routing and Pipeline initialization errors
+  ([`0da7c70`](https://github.com/oimiragieo/tensor-grep/commit/0da7c7091da9395a9727eced69c1bf464c8bcdc3))
+
+- Fixed NameError in Pipeline by reordering fallback_backend definition. - Ensured PCRE2 requests
+  always route to RipgrepBackend. - Fixed RipgrepBackend to correctly pass -P and --max-filesize
+  flags.
+
+- Resolve python linting and PCRE2 lookahead regressions
+  ([`55bda8f`](https://github.com/oimiragieo/tensor-grep/commit/55bda8f0ac2c488247683a957a721d5db29d53c2))
+
+- Disabled ripgrep passthrough for PCRE2 patterns to ensure correct routing. - Fixed Ruff linting
+  errors (unused variables and formatting). - Unified internal 'json_mode' naming in run_command.
+
+- Resolve python linting error in ast_workflows.py
+  ([`25e64fb`](https://github.com/oimiragieo/tensor-grep/commit/25e64fb891c4a3856e44d79b4242d550e5abdedc))
+
+- Resolve python linting error in ast_workflows.py
+  ([`8cedf81`](https://github.com/oimiragieo/tensor-grep/commit/8cedf8167a31b384f8dc6dc1cd6bf4346195dc4d))
+
+- Resolve ripgrep backend pcre2 regression and CI test environment compatibility
+  ([`8c8dda3`](https://github.com/oimiragieo/tensor-grep/commit/8c8dda363b970ad876ca6488d0ba9314da91557b))
+
+- Added pcre2 and max_filesize support to RipgrepBackend. - Updated E2E tests to use sys.executable
+  for reliable CI execution. - Archived implementation artifacts.
+
+- Resolve rust main.rs compilation errors (duplicate fields and missing pcre2)
+  ([`1ce1ec1`](https://github.com/oimiragieo/tensor-grep/commit/1ce1ec1e4a3409fc525dd3adee84c83eb0e45fba))
+
+- Robust PCRE2 skip logic to handle ConfigurationError in CI
+  ([`0ad47ab`](https://github.com/oimiragieo/tensor-grep/commit/0ad47abc876e71f2d5789d03facbf46df0f3dd03))
+
+- Updated tests/e2e/test_vs_ripgrep.py to correctly catch routing errors when PCRE2 is missing. -
+  Re-formatted to ensure CI linter parity.
+
+- Skip PCRE2 tests when backend support is missing in CI environment
+  ([`7845ba0`](https://github.com/oimiragieo/tensor-grep/commit/7845ba09e6feaf7d4ab233393e2ac3f40e00b037))
+
+- Updated tests/e2e/test_vs_ripgrep.py with skip logic. - Final aggressive python reformatting to
+  satisfy CI linter.
+
+- Stabilize ci parity routing contracts
+  ([`1c79f8d`](https://github.com/oimiragieo/tensor-grep/commit/1c79f8d73b6d0f1c4978d3db41de8698996f5b7e))
+
+- Update RipgrepSearchArgs initializer in tg_search_fast.rs
+  ([`d1810f4`](https://github.com/oimiragieo/tensor-grep/commit/d1810f4eeb232b7654187b444be3eaf3659ab6b0))
+
+- Update RipgrepSearchArgs initializers in main.rs
+  ([`2af1e68`](https://github.com/oimiragieo/tensor-grep/commit/2af1e68d6c102f17338140202e82afb21043c40d))
+
+### Chores
+
+- Re-trigger CI for final verification
+  ([`b40aceb`](https://github.com/oimiragieo/tensor-grep/commit/b40aceb0d713898460b49ec730b8a129e5889f62))
+
+- Trigger final CI stabilization
+  ([`00b7ef1`](https://github.com/oimiragieo/tensor-grep/commit/00b7ef146c71b67393af2179d5128b63a3bab323))
+
+### Code Style
+
+- Definitive ruff reformatting with explicit line length for CI
+  ([`42951fb`](https://github.com/oimiragieo/tensor-grep/commit/42951fbbcbc4d258b09241a28f0801ff8421fc10))
+
+- Final aggressive python reformatting and linting fix
+  ([`ff59c2a`](https://github.com/oimiragieo/tensor-grep/commit/ff59c2ac97c8c3678f2b0241b4bac031e182a451))
+
+- Finalize python formatting and clean up implementaton scripts
+  ([`b2dc2db`](https://github.com/oimiragieo/tensor-grep/commit/b2dc2db308c09508205d5de2eb07d74e6c4c4866))
+
+- Finalize python formatting and re-trigger CI
+  ([`1219608`](https://github.com/oimiragieo/tensor-grep/commit/1219608706fa429addb079a99d6214e0c9f676bd))
+
+- Finalize python formatting and re-trigger CI
+  ([`e818580`](https://github.com/oimiragieo/tensor-grep/commit/e8185801408f8396f3933067829f19e4afacd9be))
+
+- Fix rust formatting in rg_passthrough.rs
+  ([`1365c80`](https://github.com/oimiragieo/tensor-grep/commit/1365c80791846d4b3dcbdd9ef06cf57e1684f6ad))
+
+- Normalize line endings and final ruff format
+  ([`7d40cb2`](https://github.com/oimiragieo/tensor-grep/commit/7d40cb2194829c2def31031dcc8c7137ddfa19ec))
 
 ### Features
 
-- **AST Parity & CLI Harmonization**: Achieved 100% operational parity with `ast-grep` by harmonizing legacy `argparse` commands into the primary Typer/Rich application.
-- **Interactive AST Rewrites**: New `--interactive` (`-i`) mode for `tg run` provides a confirm-apply loop for structural rewrites with per-file diff visualization.
-- **AST Match Filtering**: Added `--filter` flag to `tg run` for secondary regex filtering of AST node text, enabling pinpoint structural precision.
-- **Unified Structural Help**: Transitioned `run` and `test` commands to professional color-coded `Rich` help tables.
-- **Grammar Inventory**: New `tg ast-info` command programmatically lists all supported tree-sitter languages and grammars.
-- **100% ripgrep Parity**: Completed the `ripgrep` functional surface with PCRE2 patterns (`-P`), `--max-filesize` limits, and `--no-ignore-vcs` controls.
+- Achieve 100% AST parity with ast-grep and harmonize CLI commands
+  ([`ba52dd3`](https://github.com/oimiragieo/tensor-grep/commit/ba52dd36a04a361d573117491511eaf49d5194a2))
 
-### Bug Fixes
+- Achieve 100% operational parity with ripgrep via PCRE2 bridge and operational limits
+  ([`2464bbf`](https://github.com/oimiragieo/tensor-grep/commit/2464bbfa29d432fc8b91c6817ff7d05e7d36de39))
 
-- Restore Python docstring and boilerplate stripping for the `compact` render profile.
-- Fix `mypy` type errors related to `AST` attribute access in the repository planning layer.
-- Resolve test pollution in AST backend routing by making availability caches class-aware.
-- Synchronize distribution manifests and internal versioning to `v1.5.0` parity.
+- Stabilize AST parity and CLI harmonization; update docs and release manifests
+  ([`a97a584`](https://github.com/oimiragieo/tensor-grep/commit/a97a5840ce6dd6389ceb0c0188cd5f899d69d786))
+
+- Stabilize AST structural search parity and CLI harmonization
+  ([`7c06347`](https://github.com/oimiragieo/tensor-grep/commit/7c06347664befabe0599c63cdc59eafa41addba2))
+
+- Unified 'run', 'scan', and 'test' command signatures in ast_workflows.py. - Implemented
+  comprehensive JSON reporting for 'scan --json' including severity, fingerprints, and evidence
+  snippets. - Integrated high-density 'llm' render profile for AST skeletonization. - Fixed backend
+  caching logic to be class-aware, supporting robust monkeypatching in tests. - Verified
+  implementation with 1,677 passing tests.
+
+### Testing
+
+- Update SearchRoutingConfig initializer in smart_routing tests
+  ([`e169e5b`](https://github.com/oimiragieo/tensor-grep/commit/e169e5b3f490511c607ecd4688acc79a7b1cc2f3))
+
 
 ## v1.5.0 (2026-04-25)
 
