@@ -1814,8 +1814,8 @@ The stable text-search contract is the validated rg-compatible surface documente
 - `tg devices`: Print routable GPU device IDs and VRAM inventory
 - `tg mcp`: Start the AI-assistant Model Context Protocol (MCP) server
 - `tg classify`: Run semantic NLP threat classification on logs via cyBERT
-- `tg run`: Run GPU-accelerated AST structural queries (ast-grep parity)
-- `tg scan` / `tg test` / `tg lsp`: Auxiliary AST-GNN workflows
+- `tg run`: Run AST structural search and optional rewrites (ast-grep parity)
+- `tg scan` / `tg test` / `tg lsp`: Auxiliary AST workflows
 - `tg upgrade` / `tg update`: Upgrade tensor-grep in place
 """,
 )
@@ -2106,7 +2106,12 @@ def search_command(
         False, "--type-list", help="Show all supported file types and exit."
     ),
     # TENSOR-GREP SPECIFIC
-    cpu: bool = typer.Option(False, "--cpu", help="Force CPU fallback (tensor-grep specific)."),
+    cpu: bool = typer.Option(
+        False,
+        "--cpu",
+        "--force-cpu",
+        help="Force CPU fallback (tensor-grep specific).",
+    ),
     format_type: str = typer.Option(
         "rg", "--format", help="Internal formatter: json, table, csv, rg"
     ),

@@ -20,6 +20,7 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--files",
     "--files-with-matches",
     "--files-without-match",
+    "--force-cpu",
     "--format",
     "--generate",
     "--glob",
@@ -148,7 +149,7 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
         return False
 
     supported_trigger = any(
-        arg in {"--cpu", "--json", "--ndjson", "--gpu-device-ids"}
+        arg in {"--cpu", "--force-cpu", "--json", "--ndjson", "--gpu-device-ids"}
         or arg.startswith("--gpu-device-ids=")
         for arg in search_args
     )
@@ -175,7 +176,11 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
 
 
 def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
-    if not env_flag_enabled("TG_FORCE_CPU") or "--cpu" in search_args:
+    if (
+        not env_flag_enabled("TG_FORCE_CPU")
+        or "--cpu" in search_args
+        or "--force-cpu" in search_args
+    ):
         return list(search_args)
     return [*search_args, "--cpu"]
 

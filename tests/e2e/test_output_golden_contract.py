@@ -185,7 +185,7 @@ def run_tg(launcher, args, cwd):
 @pytest.mark.parametrize("name, args, target", GOLDEN_CASES, ids=[c[0] for c in GOLDEN_CASES])
 def test_output_golden_contract(golden_fixture_dir, snapshot, launcher, name, args, target):
     _skip_if_native_binary_missing(launcher)
-    if launcher == "native" and ("--count-matches" in args or "-a" in args):
+    if launcher == "native" and "-a" in args:
         pytest.skip("Native tg.exe does not support this flag currently")
     if launcher == "python-m" and "--ndjson" in args:
         pytest.skip("python -m tensor_grep requires native tg support for --ndjson")

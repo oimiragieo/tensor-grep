@@ -5,6 +5,8 @@
 
 ### Bug Fixes
 
+- Align rg, AST, and GPU front-door contracts for CI parity.
+
 - Definitive PCRE2 support detection and skip logic
   ([`b41ea4c`](https://github.com/oimiragieo/tensor-grep/commit/b41ea4c865d5981a000067693975e62869169af2))
 

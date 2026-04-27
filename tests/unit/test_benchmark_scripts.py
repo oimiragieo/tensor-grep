@@ -2554,6 +2554,67 @@ def test_run_gpu_benchmarks_should_parse_corpus_sizes_with_units():
     assert sizes == (1024 * 1024, 10 * 1024 * 1024, 100 * 1024 * 1024, 1024 * 1024 * 1024)
 
 
+def test_run_gpu_benchmarks_should_skip_before_corpus_generation_without_operational_gpu(
+    monkeypatch, tmp_path
+):
+    module = _load_script_module(
+        "run_gpu_benchmarks_script_no_operational_gpu", "benchmarks/run_gpu_benchmarks.py"
+    )
+    output_path = tmp_path / "bench_gpu_scale.json"
+    tg_binary = tmp_path / "tg.exe"
+    sidecar_python = tmp_path / "python.exe"
+    tg_binary.write_text("binary", encoding="utf-8")
+    sidecar_python.write_text("python", encoding="utf-8")
+
+    def _fail_generate_gpu_scale_corpus(*_args, **_kwargs):
+        raise AssertionError("corpus generation should be skipped without operational GPUs")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "run_gpu_benchmarks.py",
+            "--output",
+            str(output_path),
+            "--corpus-sizes",
+            "1MB",
+        ],
+    )
+    monkeypatch.setattr(module, "resolve_tg_binary", lambda binary=None: tg_binary)
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(module, "resolve_gpu_sidecar_python", lambda raw=None: sidecar_python)
+    monkeypatch.setattr(module, "resolve_gpu_bench_data_dir", lambda: tmp_path / "gpu_bench_data")
+    monkeypatch.setattr(
+        module,
+        "probe_gpu_devices",
+        lambda _sidecar_python: {
+            "available": False,
+            "torch_version": "2.6.0",
+            "devices": [
+                {
+                    "device_id": 0,
+                    "name": "NVIDIA GeForce RTX 5070",
+                    "operational": False,
+                    "error": "no kernel image is available for execution on the device",
+                }
+            ],
+            "warnings": [],
+        },
+    )
+    monkeypatch.setattr(module, "generate_gpu_scale_corpus", _fail_generate_gpu_scale_corpus)
+
+    exit_code = module.main()
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "SKIP"
+    assert payload["skipped"] is True
+    assert payload["rows"] == []
+    assert payload["correctness_checks"] == []
+    recommendation = payload["gpu_auto_recommendation"]
+    assert recommendation["should_add_flag"] is False
+    assert "no operational GPU" in recommendation["reason"]
+
+
 def test_run_gpu_benchmarks_should_emit_scale_rows_and_correctness(monkeypatch, tmp_path):
     module = _load_script_module(
         "run_gpu_benchmarks_script_rows", "benchmarks/run_gpu_benchmarks.py"

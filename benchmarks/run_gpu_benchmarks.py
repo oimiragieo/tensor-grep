@@ -521,6 +521,31 @@ def run_gpu_scale_benchmarks(
     errors: list[str] = []
     if probe.get("error"):
         warnings.append(str(probe["error"]))
+    if not any(device.get("operational", False) for device in devices):
+        return {
+            "bench_dir": str(bench_dir),
+            "corpus_sizes": [
+                {"label": _format_size_label(size_bytes), "bytes": size_bytes}
+                for size_bytes in corpus_sizes
+            ],
+            "devices": devices,
+            "rows": [],
+            "correctness_checks": [],
+            "gpu_auto_recommendation": {
+                "should_add_flag": False,
+                "reason": "Skipped because no operational GPU devices were detected.",
+                "winning_rows": [],
+            },
+            "warnings": warnings,
+            "errors": errors,
+            "benchmark_pattern": benchmark_pattern,
+            "correctness_patterns": list(correctness_patterns),
+            "timing_backend": "perf_counter",
+            "sidecar_python": str(sidecar_python) if sidecar_python is not None else None,
+            "torch_version": probe.get("torch_version"),
+            "status": "SKIP",
+            "skipped": True,
+        }
 
     command_env = _build_command_env(sidecar_python)
     rows: list[dict[str, object]] = []

@@ -37,14 +37,14 @@ use tensor_grep_rs::python_sidecar::{
     execute_sidecar_command, SidecarError,
 };
 use tensor_grep_rs::rg_passthrough::{
-    execute_ripgrep_search, ripgrep_is_available, RipgrepSearchArgs,
+    execute_ripgrep_pcre2_version, execute_ripgrep_search, ripgrep_is_available, RipgrepSearchArgs,
 };
 use tensor_grep_rs::routing::{
     route_search, BackendSelection, IndexRoutingState, RoutingDecision, SearchRoutingCalibration,
     SearchRoutingConfig,
 };
 
-const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON  Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH         Path to the ripgrep executable used for text-search passthrough.";
+const ENVIRONMENT_OVERRIDES_HELP: &str = "Environment overrides:\n  TG_SIDECAR_PYTHON                 Path to the Python executable used for sidecar-backed commands.\n  TG_RG_PATH                        Path to the ripgrep executable used for text-search passthrough.\n  TG_FORCE_CPU                      Force CPU routing for search commands.\n  TG_SIDECAR_TIMEOUT_MS             Timeout for sidecar-backed commands.\n  TENSOR_GREP_DEVICE_IDS            Comma-separated GPU IDs available to tensor-grep.\n  TENSOR_GREP_TRITON_TIMEOUT_SECONDS Timeout for Triton-backed NLP probes.";
 const JSON_OUTPUT_VERSION: u32 = 1;
 const TG_RUST_EARLY_RG_ENV: &str = "TG_RUST_EARLY_RG";
 const TG_RUST_EARLY_POSITIONAL_RG_ENV: &str = "TG_RUST_EARLY_POSITIONAL_RG";
@@ -418,7 +418,7 @@ pub enum Commands {
     Mcp,
     /// Run semantic NLP threat classification on logs via cyBERT
     Classify { file_path: String },
-    /// Run GPU-accelerated AST structural queries (ast-grep parity)
+    /// Run AST structural search and optional rewrites (ast-grep parity)
     Run(RunArgs),
     /// Scan code by configuration
     Scan {
@@ -681,6 +681,14 @@ fn main() -> anyhow::Result<()> {
         return print_native_top_level_help();
     }
 
+    if is_top_level_pcre2_version_invocation(&raw_args) {
+        let exit_code = execute_ripgrep_pcre2_version()?;
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
     if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -737,6 +745,10 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn is_top_level_pcre2_version_invocation(raw_args: &[OsString]) -> bool {
+    raw_args.len() == 2 && raw_args.get(1).and_then(|arg| arg.to_str()) == Some("--pcre2-version")
+}
+
 fn parse_public_help_passthrough(raw_args: &[OsString]) -> Option<(&str, Vec<String>)> {
     if raw_args.len() == 1 {
         return Some(("--help", Vec::new()));
@@ -751,6 +763,9 @@ fn parse_public_help_passthrough(raw_args: &[OsString]) -> Option<(&str, Vec<Str
         ("--help" | "-h", None, 2) => Some((first, Vec::new())),
         ("search", Some("--help" | "-h"), 3) => {
             Some(("search", vec![raw_args[2].to_string_lossy().into_owned()]))
+        }
+        ("scan" | "test", Some("--help" | "-h"), 3) => {
+            Some((first, vec![raw_args[2].to_string_lossy().into_owned()]))
         }
         _ => None,
     }
@@ -1211,6 +1226,10 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Classify { file_path } => handle_sidecar_command("classify", vec![file_path]),
         Commands::Run(args) => handle_ast_run(args),
         Commands::Scan { args } => {
+            if ast_scan_requires_python_passthrough(&args) {
+                return handle_python_passthrough("scan", args);
+            }
+
             use tensor_grep_rs::backend_ast_workflow::{handle_ast_scan, SessionRequest};
             let config_path =
                 if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1
@@ -1228,6 +1247,10 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
             handle_ast_scan(config_path.as_deref())
         }
         Commands::Test { args } => {
+            if ast_test_requires_python_passthrough(&args) {
+                return handle_python_passthrough("test", args);
+            }
+
             use tensor_grep_rs::backend_ast_workflow::{handle_ast_test, SessionRequest};
             let config_path =
                 if !args.is_empty() && (args[0] == "--config" || args[0] == "-c") && args.len() > 1
@@ -1372,6 +1395,57 @@ fn try_resident_execution(
     } else {
         Ok(Some(0))
     }
+}
+
+fn ast_scan_requires_python_passthrough(args: &[String]) -> bool {
+    const FULL_CLI_FLAGS: &[&str] = &[
+        "--help",
+        "-h",
+        "--baseline",
+        "--include-evidence-snippets",
+        "--inline-rules",
+        "--json",
+        "--justification",
+        "--language",
+        "--max-evidence-snippet-chars",
+        "--max-evidence-snippets-per-file",
+        "--path",
+        "--ruleset",
+        "--suppressions",
+        "--write-baseline",
+        "--write-suppressions",
+    ];
+    const FULL_CLI_PREFIXES: &[&str] = &[
+        "--baseline=",
+        "--justification=",
+        "--language=",
+        "--max-evidence-snippet-chars=",
+        "--max-evidence-snippets-per-file=",
+        "--path=",
+        "--ruleset=",
+        "--suppressions=",
+        "--write-baseline=",
+        "--write-suppressions=",
+    ];
+
+    args.iter().any(|arg| {
+        FULL_CLI_FLAGS.contains(&arg.as_str())
+            || FULL_CLI_PREFIXES
+                .iter()
+                .any(|prefix| arg.starts_with(prefix))
+    })
+}
+
+fn ast_test_requires_python_passthrough(args: &[String]) -> bool {
+    let mut index = 0usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--config" | "-c" => index += 2,
+            arg if arg.starts_with("--config=") => index += 1,
+            _ => return true,
+        }
+    }
+    false
 }
 
 fn handle_calibrate_command(_args: CalibrateArgs) -> anyhow::Result<()> {

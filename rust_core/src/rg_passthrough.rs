@@ -151,6 +151,23 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     Ok(status.code().unwrap_or(1))
 }
 
+pub fn execute_ripgrep_pcre2_version() -> anyhow::Result<i32> {
+    let rg_binary = resolve_ripgrep_binary().ok_or_else(|| {
+        anyhow!(
+            "ripgrep binary not found. Install `rg`, set {TG_RG_PATH_ENV}, or place a bundled ripgrep binary next to `tg`."
+        )
+    })?;
+
+    let status = Command::new(rg_binary)
+        .arg("--pcre2-version")
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .context("failed to execute ripgrep")?;
+    Ok(status.code().unwrap_or(1))
+}
+
 pub fn ripgrep_is_available() -> bool {
     resolve_ripgrep_binary().is_some()
 }

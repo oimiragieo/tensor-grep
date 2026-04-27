@@ -820,6 +820,10 @@ While structurally correct and benchmark-clean on the direct native surface, the
 
 A final narrow default routing promotion was landed for strictly plain search shapes (no context, globs, or complex regex flags) in count and many-file scenarios. This ensures that the most optimized native paths are leveraged where they provide the greatest benefit, while maintaining the proven performance of ripgrep for more complex search shapes. Verified against the baseline, this represents the final stabilization of the cold-path native text search surface.
 
+The 2026-04-27 parity and GPU audit closed several front-door contract gaps without changing the benchmark story. `tg search --force-cpu` now behaves as the documented alias for `--cpu` instead of leaking to ripgrep as an unsupported flag, native `tg.exe --pcre2-version` now delegates to the bundled/system ripgrep PCRE2 probe, and native `tg.exe scan --ruleset ... --json --path ...` delegates to the Python full CLI rather than silently falling through to `sgconfig.yml`. The accepted test surface covers the documented alias, native PCRE2 probe, and native ruleset JSON contract. This is a correctness and harness-compatibility fix, not a speedup claim.
+
+The same audit keeps the current GPU conclusion conservative. On the local Windows host, GPU tooling can enumerate hardware and run explicit checks, but GPU auto-routing remains benchmark-governed and should not be promoted when the measured artifact reports no winning rows. The benchmark script now records a top-level `SKIP` before corpus generation when no operational GPU is available, preventing no-GPU CI or unsupported-device hosts from producing misleading CPU-only "GPU" artifacts. New research signals point to bit-parallel and Glushkov-NFA GPU regex engines (HybridSA, BitGen, and recent RAPIDS cuDF work) as the most plausible future direction for real GPU regex wins, but they are not drop-in replacements for the current sidecar path and require new end-to-end benchmark proof before any product claim changes.
+
 ## References
 1. Zhong, J., Chen, S., & Yu, C. (2024). *XAV: A High-Performance Regular Expression Matching Engine for Packet Processing*. arXiv:2403.16533.
 2. Ye, Y., Pang, P., Zhang, T., & Huang, H. (2025). *GNN-Coder: Boosting Semantic Code Retrieval with Combined GNNs and Transformer*. arXiv:2502.15202.
@@ -838,3 +842,6 @@ A final narrow default routing promotion was landed for strictly plain search sh
 13. sorendunn. (2025). *Agentless-Lite*. GitHub repository. https://github.com/sorendunn/Agentless-Lite
 14. Anthropic. (2026). *Claude Code Overview*. https://code.claude.com/docs/en/overview
 15. Anthropic. (2026). *The Complete Guide to Building Skills for Claude*. https://resources.anthropic.com/hubfs/The-Complete-Guide-to-Building-Skill-for-Claude.pdf
+16. Sultana, N., et al. (2024). *HybridSA: GPU Acceleration of Multi-pattern Regex Matching using Bit Parallelism*. https://par.nsf.gov/biblio/10618058
+17. Tian, G., et al. (2025). *BitGen: Interleaved Bitstream Execution for Multi-Pattern Regex Matching on GPUs*. https://github.com/getianao/BitGen
+18. RAPIDS cuDF. (2026). *Glushkov NFA Regex Engine for string matching*. https://github.com/rapidsai/cudf/pull/21936

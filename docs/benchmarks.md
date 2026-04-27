@@ -184,6 +184,7 @@ uv run python benchmarks/run_gpu_benchmarks.py
 
 Notes:
 - `cyBERT` benchmarking also requires a reachable Triton inference endpoint; when Triton is unavailable, the script now records `cybert_backend` as `SKIP` instead of failing the whole benchmark run.
+- When no operational GPU device is detected, `run_gpu_benchmarks.py` now records a top-level `status: "SKIP"` before generating synthetic corpora. This prevents no-GPU CI or unsupported-device hosts from creating misleading CPU-only GPU artifacts.
 - On this host, the current Windows local CLI run at `artifacts/benchmark_results.json` passed `benchmarks/check_regression.py --baseline auto` against `benchmarks/baselines/run_benchmarks.windows.json`.
 - The current host-local CLI comparison artifact is `artifacts/bench_tool_comparison.json`. It is informational, not a release-gated regression suite.
 - The current accepted provider hardcase artifact is `artifacts/bench_provider_navigation_click_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_click_hardcases.md`.
@@ -531,6 +532,8 @@ The current native GPU benchmark reports `gpu_auto_recommendation.should_add_fla
 | AST backend | 0.114s | 4 matches |
 | cyBERT backend | 0.182s | 2 classes |
 | Torch backend | 0.333s | 2,000 matches |
+
+If the host has no operational CUDA device, this artifact should contain `status: "SKIP"`, `skipped: true`, empty timing rows, and `gpu_auto_recommendation.should_add_flag = false`.
 
 ### Repeated Fixed-String Microbenchmark
 

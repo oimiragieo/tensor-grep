@@ -239,6 +239,48 @@ def test_extract_visible_help_commands_handles_unicode_box_help() -> None:
     assert _extract_visible_help_commands(stdout) == {"search", "doctor", "upgrade"}
 
 
+def test_search_force_cpu_alias_matches_cpu_flag(parity_env) -> None:
+    force_result = run_command(
+        "python-m", ["search", "--force-cpu", "apple", "target.txt"], cwd=parity_env
+    )
+    cpu_result = run_command("python-m", ["search", "--cpu", "apple", "target.txt"], cwd=parity_env)
+
+    assert force_result.returncode == cpu_result.returncode == 0, (
+        f"--force-cpu stdout: {force_result.stdout}\nstderr: {force_result.stderr}\n"
+        f"--cpu stdout: {cpu_result.stdout}\nstderr: {cpu_result.stderr}"
+    )
+    assert force_result.stdout == cpu_result.stdout
+    assert force_result.stderr == cpu_result.stderr
+
+
+def test_native_top_level_pcre2_version_matches_public_contract(parity_env) -> None:
+    _skip_if_native_binary_missing("native")
+
+    result = _run_native_front_door(["--pcre2-version"], cwd=parity_env)
+
+    assert result.returncode == 0, result.stderr
+    assert "PCRE2" in result.stdout
+    assert result.stderr.strip() == ""
+
+
+def test_native_scan_ruleset_json_uses_python_full_contract_without_sgconfig(
+    parity_env,
+) -> None:
+    _skip_if_native_binary_missing("native")
+    (parity_env / "safe.py").write_text("def f():\n    return 'ok'\n", encoding="utf-8")
+
+    result = _run_native_front_door(
+        ["scan", "--ruleset", "secrets-basic", "--json", "--path", "."],
+        cwd=parity_env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["ruleset"] == "secrets-basic"
+    assert payload["routing_reason"] == "builtin-ruleset-scan"
+    assert payload["path"] == str(parity_env.resolve())
+
+
 # We check which layer handled it.
 # For native rust, search is usually native unless it falls back to python.
 # `run` etc. usually fall back to python.
