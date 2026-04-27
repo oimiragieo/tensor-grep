@@ -1,6 +1,9 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def _load_script_module(name: str, rel_path: str):
@@ -12,6 +15,41 @@ def _load_script_module(name: str, rel_path: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize(
+    ("module_name", "rel_path"),
+    [
+        ("run_ast_benchmarks_resolver", "benchmarks/run_ast_benchmarks.py"),
+        ("run_ast_parity_resolver", "benchmarks/run_ast_parity_check.py"),
+    ],
+)
+def test_ast_grep_resolver_should_ignore_linux_group_sg(
+    monkeypatch, tmp_path, module_name, rel_path
+):
+    module = _load_script_module(module_name, rel_path)
+    system_sg = tmp_path / "usr" / "bin" / "sg"
+    real_ast_grep = tmp_path / "cargo" / "bin" / "ast-grep"
+    system_sg.parent.mkdir(parents=True)
+    real_ast_grep.parent.mkdir(parents=True)
+    system_sg.write_text("system sg", encoding="utf-8")
+    real_ast_grep.write_text("ast-grep", encoding="utf-8")
+
+    def fake_which(name: str) -> str | None:
+        return {
+            "sg": str(system_sg),
+            "ast-grep": str(real_ast_grep),
+        }.get(name)
+
+    def fake_run(cmd, **_kwargs):
+        binary = Path(cmd[0])
+        stdout = "ast-grep 0.42.1\n" if binary == real_ast_grep else "sg from util-linux 2.39\n"
+        return subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(module.shutil, "which", fake_which)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    assert module.resolve_ast_grep_binary() == real_ast_grep
 
 
 def test_run_ast_benchmarks_should_emit_m3_gate_artifact(monkeypatch, tmp_path):

@@ -25,6 +25,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ripgrep hyperfine
+      - name: Install ast-grep comparator
+        run: cargo install ast-grep --version 0.41.1 --locked
       - name: Install benchmark dependencies
         run: |
           uv venv --python 3.12

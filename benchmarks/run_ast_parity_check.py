@@ -45,21 +45,38 @@ def resolve_tg_binary(binary: str | None = None) -> Path:
     return Path(binary).expanduser().resolve() if binary else default_binary_path()
 
 
+def is_ast_grep_binary(candidate: Path) -> bool:
+    try:
+        completed = subprocess.run(
+            [str(candidate), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    version_output = f"{completed.stdout}\n{completed.stderr}".lower()
+    return completed.returncode == 0 and "ast-grep" in version_output
+
+
 def resolve_ast_grep_binary() -> Path | None:
     env_override = os.environ.get("AST_GREP_BINARY")
     if env_override:
         candidate = Path(env_override).expanduser().resolve()
-        if candidate.exists():
+        if candidate.exists() and is_ast_grep_binary(candidate):
             return candidate
         return None
 
     for candidate in ("sg", "sg.exe", "ast-grep", "ast-grep.exe"):
         if found := shutil.which(candidate):
-            return Path(found)
+            resolved = Path(found)
+            if is_ast_grep_binary(resolved):
+                return resolved
 
     for local_name in ("sg.exe", "sg.cmd", "ast-grep.exe", "ast-grep.cmd"):
         local = BENCHMARKS_DIR / local_name
-        if local.exists():
+        if local.exists() and is_ast_grep_binary(local):
             return local
 
     return None

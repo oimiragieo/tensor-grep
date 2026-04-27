@@ -87,14 +87,17 @@ def test_benchmark_workflow_should_prepare_ast_benchmark_tools_before_running() 
     workflow = Path(".github/workflows/benchmark.yml").read_text(encoding="utf-8")
     setup_rust = workflow.index("Setup Rust stable")
     install_tools = workflow.index("Install ripgrep and hyperfine")
+    install_ast_grep = workflow.index("Install ast-grep comparator")
     build_binary = workflow.index("Build native release binary")
     run_benchmarks = workflow.index("Run benchmark suites")
 
     assert install_tools < run_benchmarks
+    assert install_ast_grep < run_benchmarks
     assert setup_rust < build_binary
     assert build_binary < run_benchmarks
     assert "dtolnay/rust-toolchain@stable" in workflow
     assert "sudo apt-get install -y ripgrep hyperfine" in workflow
+    assert "cargo install ast-grep --version 0.41.1 --locked" in workflow
     assert "cargo build --release --no-default-features" in workflow
 
 
