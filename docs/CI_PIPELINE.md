@@ -49,6 +49,7 @@ Runs the standalone benchmark workflow on a schedule and via manual dispatch.
 Primary responsibilities:
 
 - run `benchmarks/run_benchmarks.py` and `benchmarks/run_ast_benchmarks.py`
+- provision AST benchmark prerequisites before the suite: `ripgrep`, `hyperfine`, and a freshly built native release `tg` binary
 - optionally run `benchmarks/run_gpu_benchmarks.py` on manual dispatch
 - perform the OS-baseline regression check when a stored baseline exists
 - publish the benchmark markdown summary and artifacts

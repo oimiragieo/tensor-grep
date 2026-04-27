@@ -83,6 +83,21 @@ def test_ci_workflow_should_include_native_build_smoke_matrix() -> None:
     assert "target/release/tg" in workflow or "target\\release\\tg.exe" in workflow
 
 
+def test_benchmark_workflow_should_prepare_ast_benchmark_tools_before_running() -> None:
+    workflow = Path(".github/workflows/benchmark.yml").read_text(encoding="utf-8")
+    setup_rust = workflow.index("Setup Rust stable")
+    install_tools = workflow.index("Install ripgrep and hyperfine")
+    build_binary = workflow.index("Build native release binary")
+    run_benchmarks = workflow.index("Run benchmark suites")
+
+    assert install_tools < run_benchmarks
+    assert setup_rust < build_binary
+    assert build_binary < run_benchmarks
+    assert "dtolnay/rust-toolchain@stable" in workflow
+    assert "sudo apt-get install -y ripgrep hyperfine" in workflow
+    assert "cargo build --release --no-default-features" in workflow
+
+
 def test_release_workflow_should_smoke_test_package_manager_bundle_before_publish() -> None:
     workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
     assert "Smoke-test package-manager bundle contracts" in workflow
