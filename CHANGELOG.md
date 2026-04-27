@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.6.3 (2026-04-27)
+
+### Bug Fixes
+
+- Disable rich help for redirected windows output
+  ([`bfd2cc6`](https://github.com/oimiragieo/tensor-grep/commit/bfd2cc698993835a1e4f17d061c7912e77aea005))
+
+### Chores
+
+- Sync uv lock to v1.6.2
+  ([`b85ea17`](https://github.com/oimiragieo/tensor-grep/commit/b85ea177df925a103f4e8d589896e8b968442fa2))
+
+
 ## v1.6.2 (2026-04-27)
 
 ### Bug Fixes
