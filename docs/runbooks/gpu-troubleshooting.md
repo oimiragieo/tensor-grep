@@ -19,7 +19,18 @@ This guide helps administrators diagnose and resolve GPU-related issues in tenso
   - Update NVIDIA drivers on the host.
   - Alternatively, use the CPU-only binary.
 
-### 3. Forcing CPU Fallback
+### 3. RTX 50-series / `sm_120` reports `no kernel image`
+- **Symptom:** `tg devices` detects an RTX 50-series GPU, but an explicit GPU search fails during compute with `CUDA error: no kernel image is available for execution on the device`.
+- **Diagnosis:** Check the sidecar Python environment:
+  ```powershell
+  python -c "import torch; print(torch.__version__); print(torch.cuda.get_device_capability(0))"
+  ```
+- **Resolution:**
+  - Use a PyTorch build compiled for CUDA 12.8+ (`cu128` or newer) for RTX 50-series / Blackwell `sm_120` compatibility.
+  - Keep routing pinned to a working GPU such as RTX 4070 / `sm_89` until the `sm_120` environment is upgraded and benchmarked.
+  - Do not promote RTX 50-series device discovery into a performance claim without a passing `benchmarks/run_gpu_benchmarks.py` artifact.
+
+### 4. Forcing CPU Fallback
 To bypass GPU acceleration entirely for a session or globally:
 ```bash
 export TG_FORCE_CPU=1
@@ -34,7 +45,7 @@ tg search "pattern" ./logs
 tg search --force-cpu "pattern" ./logs
 ```
 
-### 4. Device Pinning and Inventory
+### 5. Device Pinning and Inventory
 Use `tg devices --json` to inspect routable device IDs before pinning a workload:
 
 ```bash

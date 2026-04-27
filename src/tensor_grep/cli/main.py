@@ -13,6 +13,11 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
+# Rich's legacy Windows renderer can raise EINVAL when long help is piped through
+# PowerShell. Disable Typer/Rich help before Typer imports when stdout is not a TTY.
+if sys.platform.startswith("win") and not sys.stdout.isatty():
+    os.environ.setdefault("TYPER_USE_RICH", "0")
+
 import typer
 
 from tensor_grep.cli import ast_workflows

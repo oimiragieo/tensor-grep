@@ -470,7 +470,7 @@ $ cargo build --release --features cuda
 $ cargo test --features cuda
 ```
 
-The `cuda` feature links against `cudarc` (Rust-native CUDA bindings) and compiles GPU kernels via NVRTC JIT at runtime. Supported architectures include sm_89 (RTX 4070) and sm_120 (RTX 5070).
+The `cuda` feature links against `cudarc` (Rust-native CUDA bindings) and compiles GPU kernels via NVRTC JIT at runtime. The current accepted benchmark line covers sm_89 (RTX 4070). RTX 50-series / sm_120 hosts need a CUDA 12.8+ compatible stack for PyTorch-backed sidecar flows and are not benchmark-promoted by device discovery alone.
 
 ## Hardware & Software Requirements
 
@@ -483,12 +483,12 @@ The native CPU engine requires only a Rust toolchain. No GPU, CUDA, or Python ru
 To unlock GPU acceleration, your system must meet these requirements. End-to-end GPU routing is still benchmark-governed and host-specific; see [docs/gpu_crossover.md](docs/gpu_crossover.md) for the current measured line.
 
 * **Hardware:**
-  * NVIDIA GPU (RTX 30/40/50 series recommended; tested on RTX 4070 sm_89 and RTX 5070 sm_120)
+  * NVIDIA GPU (RTX 30/40 series recommended; RTX 50-series / sm_120 support depends on the CUDA/PyTorch stack described in [docs/runbooks/gpu-troubleshooting.md](docs/runbooks/gpu-troubleshooting.md))
   * Minimum 4GB VRAM (8GB+ recommended for massive corpora)
   * Multi-GPU supported; current gains are workload-dependent and documented in [docs/gpu_crossover.md](docs/gpu_crossover.md)
 * **Software / Drivers:**
   * **NVIDIA Display Drivers:** v535.xx or newer
-  * **CUDA Toolkit:** 12.0 or newer (CUDA 12.4+ recommended; `nvcc` must be on PATH for JIT compilation)
+  * **CUDA Toolkit:** 12.0 or newer (CUDA 12.4+ recommended for current accepted paths; CUDA 12.8+ is required for PyTorch-backed RTX 50-series / sm_120 compatibility)
 * **Build:** `cargo build --release --features cuda` in the `rust_core` directory
 
 ### Python backends (optional)

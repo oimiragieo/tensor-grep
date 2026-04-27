@@ -16,7 +16,7 @@ Environment:
 - Query: fixed-string `gpu benchmark sentinel`
 - Timing: median of 3 end-to-end CLI runs per command
 
-The artifact also detected device `1` (`NVIDIA GeForce RTX 5070`), but the benchmark path on this host still records a missing kernel image for that card. Do not treat device discovery as proof of end-to-end 5070 benchmark coverage here.
+The artifact also detected device `1` (`NVIDIA GeForce RTX 5070`), but the benchmark path on this host still records a missing kernel image for that card. Do not treat device discovery as proof of end-to-end 5070 benchmark coverage here. Current PyTorch upstream guidance for RTX 50-series / Blackwell `sm_120` is to use CUDA 12.8+ wheels/builds; `torch==2.6.0+cu124` remains insufficient for those sidecar-backed flows.
 
 ## Result
 

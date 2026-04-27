@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import os
 import re
 import subprocess
 import sys
@@ -4462,6 +4463,30 @@ def test_main_entry_should_not_rewrite_top_level_help(monkeypatch):
     cli_main.main_entry()
 
     assert seen["argv"] == ["tg", "--help"]
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("win"),
+    reason="Rich legacy Windows pipe workaround is Windows-specific.",
+)
+def test_main_module_should_disable_rich_when_windows_stdout_is_redirected():
+    env = dict(os.environ)
+    env.pop("TYPER_USE_RICH", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            ("import os; import tensor_grep.cli.main; print(os.environ.get('TYPER_USE_RICH'))"),
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "0"
 
 
 def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
