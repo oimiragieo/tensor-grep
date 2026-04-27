@@ -28,8 +28,15 @@ class RipgrepBackend(ComputeBackend):
         if not binary:
             return False
         try:
-            result = subprocess.run([binary, "--pcre2-version"], capture_output=True, text=True)
-            return result.returncode == 0
+            # Check help output or version info for PCRE2 support
+            result = subprocess.run([binary, "--help"], capture_output=True, text=True)
+            if "--pcre2" in result.stdout or "PCRE2" in result.stdout:
+                # Also do a quick smoke test to be sure
+                test_proc = subprocess.run(
+                    [binary, "-P", "a(?=b)", "-V"], capture_output=True, text=True
+                )
+                return test_proc.returncode == 0
+            return False
         except Exception:
             return False
 
