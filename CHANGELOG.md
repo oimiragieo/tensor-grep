@@ -1,11 +1,28 @@
 # CHANGELOG
 
 
-## v1.6.0 (2026-04-27)
+## v1.6.1 (2026-04-27)
 
 ### Bug Fixes
 
-- Align rg, AST, and GPU front-door contracts for CI parity.
+- Align rg ast gpu front-door contracts
+  ([`69a3178`](https://github.com/oimiragieo/tensor-grep/commit/69a3178f51967a0a4d9cd6930a7c0f1c2fcc4e9b))
+
+- Format gpu benchmark skip test
+  ([`bba3727`](https://github.com/oimiragieo/tensor-grep/commit/bba372769a858097aaf6ccdea565a4f2cb96fe51))
+
+### Continuous Integration
+
+- Install ast-grep benchmark comparator
+  ([`c404296`](https://github.com/oimiragieo/tensor-grep/commit/c4042962b6de6c41df00b51afbfbe503ced28e26))
+
+- Provision standalone ast benchmark prerequisites
+  ([`b270674`](https://github.com/oimiragieo/tensor-grep/commit/b270674d3c29657d185eacc95fa40552804579db))
+
+
+## v1.6.0 (2026-04-27)
+
+### Bug Fixes
 
 - Definitive PCRE2 support detection and skip logic
   ([`b41ea4c`](https://github.com/oimiragieo/tensor-grep/commit/b41ea4c865d5981a000067693975e62869169af2))
