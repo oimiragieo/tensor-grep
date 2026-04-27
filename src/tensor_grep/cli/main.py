@@ -17,7 +17,11 @@ import typer
 
 from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
-from tensor_grep.cli.runtime_paths import env_flag_enabled, resolve_native_tg_binary
+from tensor_grep.cli.runtime_paths import (
+    env_flag_enabled,
+    resolve_native_tg_binary,
+    resolve_ripgrep_binary,
+)
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.result import MatchLine
 
@@ -5015,19 +5019,28 @@ def main_entry() -> None:
             pkg_version = _read_project_version_fallback()
 
         if first_arg == "--pcre2-version":
-            # Attempt to delegate to native binary for pcre2 info
-            from tensor_grep.io.runtime_paths import resolve_native_tg_binary
-
-            native_tg_binary = resolve_native_tg_binary()
-            if native_tg_binary and native_tg_binary.exists():
+            candidates = [resolve_native_tg_binary(), resolve_ripgrep_binary()]
+            last_completed: subprocess.CompletedProcess[str] | None = None
+            for candidate in candidates:
+                if not candidate or not candidate.exists():
+                    continue
                 completed = subprocess.run(
-                    [str(native_tg_binary), "--pcre2-version"], capture_output=True, text=True
+                    [str(candidate), "--pcre2-version"], capture_output=True, text=True
                 )
+                last_completed = completed
                 if completed.returncode == 0:
                     print(completed.stdout.strip())
                     sys.exit(0)
-            print("PCRE2 is available (delegated to system ripgrep)")
-            sys.exit(0)
+            if last_completed is not None:
+                output = last_completed.stderr.strip() or last_completed.stdout.strip()
+                if output:
+                    print(output, file=sys.stderr)
+                sys.exit(last_completed.returncode or 1)
+            print(
+                "PCRE2 version unavailable: no native tg or ripgrep binary found.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
         print(f"tensor-grep {pkg_version}")
         print()

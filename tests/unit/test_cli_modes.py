@@ -4915,6 +4915,57 @@ def test_main_entry_should_fallback_to_pyproject_version_when_metadata_missing(m
     assert "tensor-grep 0.31.4" in capsys.readouterr().out
 
 
+def test_main_entry_should_delegate_top_level_pcre2_version_to_native_binary(
+    monkeypatch, tmp_path: Path, capsys
+):
+    from tensor_grep.cli import main as cli_main
+
+    native_binary = tmp_path / ("tg.exe" if sys.platform.startswith("win") else "tg")
+    native_binary.write_text("binary", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def _fake_run(cmd, capture_output, text):
+        seen["cmd"] = list(cmd)
+        seen["capture_output"] = capture_output
+        seen["text"] = text
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout="PCRE2 10.42 is available (JIT is available)\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(sys, "argv", ["tg", "--pcre2-version"])
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: native_binary)
+    monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {
+        "cmd": [str(native_binary), "--pcre2-version"],
+        "capture_output": True,
+        "text": True,
+    }
+    assert "PCRE2 10.42" in capsys.readouterr().out
+
+
+def test_main_entry_should_fail_pcre2_version_when_no_backend_is_available(monkeypatch, capsys):
+    from tensor_grep.cli import main as cli_main
+
+    monkeypatch.setattr(sys, "argv", ["tg", "--pcre2-version"])
+    monkeypatch.setattr(cli_main, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.main_entry()
+
+    captured = capsys.readouterr()
+    assert excinfo.value.code == 1
+    assert "PCRE2 version unavailable" in captured.err
+
+
 def test_tg_test_uses_typer_help():
     from typer.testing import CliRunner
 
