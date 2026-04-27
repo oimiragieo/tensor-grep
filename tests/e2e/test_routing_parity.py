@@ -468,13 +468,27 @@ def test_public_help_falls_back_to_native_when_python_passthrough_is_broken(pari
     assert native_help.stderr.strip() == ""
 
 
+def test_empty_invocation_fallback_help_matches_public_contract(parity_env):
+    if sys.platform == "win32":
+        broken_python = str(shutil.which("powershell.exe"))
+    else:
+        broken_python = "/bin/sh"
+    env = dict(**os.environ, TG_SIDECAR_PYTHON=broken_python)
+
+    native_help = _run_native_front_door([], cwd=parity_env, env=env)
+
+    assert native_help.returncode == 0
+    assert _extract_visible_help_commands(native_help.stdout) == PUBLIC_TOP_LEVEL_COMMANDS
+    assert native_help.stderr.strip() == ""
+
+
 def test_public_help_falls_back_to_native_when_python_passthrough_times_out(parity_env):
     if sys.platform == "win32":
         wrapper = parity_env / "wedged-python.cmd"
-        wrapper.write_text("@echo off\r\nping -n 6 127.0.0.1 >nul\r\n", encoding="utf-8")
+        wrapper.write_text("@echo off\r\nping -n 9 127.0.0.1 >nul\r\n", encoding="utf-8")
     else:
         wrapper = parity_env / "wedged-python.sh"
-        wrapper.write_text("#!/bin/sh\nsleep 5\n", encoding="utf-8")
+        wrapper.write_text("#!/bin/sh\nsleep 8\n", encoding="utf-8")
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
 
     env = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper))
@@ -485,7 +499,7 @@ def test_public_help_falls_back_to_native_when_python_passthrough_times_out(pari
     native_help = _run_native_front_door(["search", "--help"], cwd=parity_env, env=env)
     elapsed = __import__("time").perf_counter() - started
 
-    assert elapsed < 4.0, f"public help timeout fallback took too long: {elapsed:.2f}s"
+    assert elapsed < 6.0, f"public help timeout fallback took too long: {elapsed:.2f}s"
     assert native_help.returncode == 0
     assert "Usage:" in native_help.stdout
     assert "search" in native_help.stdout

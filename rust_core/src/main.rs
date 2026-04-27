@@ -522,6 +522,11 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    #[command(name = "ast-info", disable_help_flag = true)]
+    AstInfo {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     #[command(name = "rulesets", disable_help_flag = true)]
     Rulesets {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -1280,6 +1285,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::BlastRadiusPlan { args } => handle_python_passthrough("blast-radius-plan", args),
         Commands::EditPlan { args } => handle_python_passthrough("edit-plan", args),
         Commands::ContextRender { args } => handle_python_passthrough("context-render", args),
+        Commands::AstInfo { args } => handle_python_passthrough("ast-info", args),
         Commands::Rulesets { args } => handle_python_passthrough("rulesets", args),
         Commands::AuditHistory { args } => handle_python_passthrough("audit-history", args),
         Commands::AuditDiff { args } => handle_python_passthrough("audit-diff", args),

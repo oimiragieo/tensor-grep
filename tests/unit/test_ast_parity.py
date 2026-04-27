@@ -63,12 +63,33 @@ def test_ast_interactive_apply(tmp_path, monkeypatch):
     assert "return 2" in test_file.read_text(encoding="utf-8")
 
 
-def test_ast_match_filtering(tmp_path):
+def test_ast_match_filtering(tmp_path, monkeypatch):
     """Verify that --filter narrows AST matches by node text regex."""
     from tensor_grep.cli.ast_workflows import run_command
+    from tensor_grep.core.result import MatchLine, SearchResult
 
     test_file = tmp_path / "test.py"
     test_file.write_text("foo(1)\nbar(2)\n", encoding="utf-8")
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            return SearchResult(
+                matches=[
+                    MatchLine(line_number=1, text="foo(1)", file=str(test_file)),
+                    MatchLine(line_number=2, text="bar(2)", file=str(test_file)),
+                ],
+                matched_file_paths=[str(test_file)],
+                total_files=1,
+                total_matches=2,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
 
     # Search for all calls, but filter for 'foo'
     # We use json_mode to check internal matches
