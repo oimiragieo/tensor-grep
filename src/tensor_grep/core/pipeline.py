@@ -183,12 +183,9 @@ class Pipeline:
                 if rg_available and rg_backend.supports_pcre2():
                     self.backend = rg_backend
                     selected_backend_reason = "pcre2_explicit_ripgrep"
-                elif rust_available:
-                    self.backend = rust_backend
-                    selected_backend_reason = "pcre2_fallback_rust"
                 else:
                     raise ConfigurationError(
-                        "PCRE2 requested but neither 'rg' (with PCRE2) nor 'tensor-grep-rust' are available."
+                        "PCRE2 requested but no PCRE2-capable 'rg' backend is available."
                     )
             elif force_cpu:
                 if rust_available and not needs_python_cpu:
@@ -204,9 +201,10 @@ class Pipeline:
 
                     ast_backend = AstBackend()
                     ast_wrapper = AstGrepWrapperBackend()
+                    supports_native_ast_pattern = self._supports_native_ast_pattern(config)
                     if (
                         config.ast_prefer_native
-                        and self._supports_native_ast_pattern(config)
+                        and supports_native_ast_pattern
                         and ast_backend.is_available()
                     ):
                         self.backend = ast_backend
@@ -214,9 +212,13 @@ class Pipeline:
                     elif ast_wrapper.is_available():
                         self.backend = ast_wrapper
                         selected_backend_reason = "ast_wrapper_available"
-                    elif ast_backend.is_available():
+                    elif supports_native_ast_pattern and ast_backend.is_available():
                         self.backend = ast_backend
                         selected_backend_reason = "ast_backend_available_fallback"
+                    elif not supports_native_ast_pattern:
+                        self._raise_explicit_ast_configuration_error(
+                            "ast-grep wrapper backend is required for this pattern but is not available"
+                        )
                     else:
                         self._raise_explicit_ast_configuration_error("no AST backend is available")
                 except ImportError as exc:

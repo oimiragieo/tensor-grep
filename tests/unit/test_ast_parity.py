@@ -18,12 +18,40 @@ def test_ast_interactive_apply(tmp_path, monkeypatch):
     import io
 
     from tensor_grep.cli.ast_workflows import run_command
+    from tensor_grep.core.result import MatchLine, SearchResult
 
     test_file = tmp_path / "test.py"
     test_file.write_text("def foo():\n    return 1\n", encoding="utf-8")
 
     # Mock input to answer 'y'
     monkeypatch.setattr("sys.stdin", io.StringIO("y\n"))
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            return SearchResult(
+                matches=[MatchLine(line_number=2, text="    return 1", file=str(test_file))],
+                matched_file_paths=[str(test_file)],
+                total_files=1,
+                total_matches=1,
+            )
+
+    def apply_rewrite(**kwargs):
+        path = kwargs["path"]
+        text = test_file.read_text(encoding="utf-8")
+        test_file.write_text(text.replace("return 1", kwargs["replacement"]), encoding="utf-8")
+        return f'{{"path": "{path}", "applied": true}}', 0
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows.execute_rewrite_apply_json",
+        apply_rewrite,
+    )
 
     # Run interactive command
     # We call the core command directly to avoid subprocess complexity for mocking stdin

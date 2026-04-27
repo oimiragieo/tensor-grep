@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 # Global caches
 _YAML_MODULE: Any = None
 _YAML_LOADER: Any = None
-_BACKEND_AVAILABILITY: dict[str, bool] = {}
+_BACKEND_AVAILABILITY: dict[tuple[str, type[Any], str], bool] = {}
 _SUPPORTED_NATIVE_PATTERN_RE = None
-_CACHED_BACKENDS: dict[str, Any] = {}
+_CACHED_BACKENDS: dict[tuple[str, type[Any]], Any] = {}
 _NORM_CACHE: dict[str, str] = {}
 
 _SUFFIX_CACHE = {
@@ -54,7 +54,7 @@ def execute_rewrite_apply_json(*args: Any, **kwargs: Any) -> tuple[str, int]:
 
 def _get_yaml() -> tuple[Any, Any]:
     global _YAML_MODULE, _YAML_LOADER
-    if _YAML_MODULE is None:
+    if _YAML_MODULE is None or _YAML_LOADER is None:
         import yaml
 
         _YAML_MODULE = yaml
@@ -62,10 +62,22 @@ def _get_yaml() -> tuple[Any, Any]:
     return _YAML_MODULE, _YAML_LOADER
 
 
+def _reset_yaml_cache() -> None:
+    global _YAML_MODULE, _YAML_LOADER
+    _YAML_MODULE = None
+    _YAML_LOADER = None
+
+
 def _load_yaml_dict(path: Path) -> dict[str, object]:
     yaml_mod, loader = _get_yaml()
     with path.open(encoding="utf-8") as handle:
-        loaded = yaml_mod.load(handle, Loader=loader) or {}
+        try:
+            loaded = yaml_mod.load(handle, Loader=loader) or {}
+        except yaml_mod.YAMLError:
+            _reset_yaml_cache()
+            yaml_mod, loader = _get_yaml()
+            handle.seek(0)
+            loaded = yaml_mod.load(handle, Loader=loader) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"YAML in {path} must be a mapping.")
     return loaded
@@ -284,33 +296,27 @@ def _load_rule_specs_and_meta(
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                        "severity": str(
-                            item.get("severity") or payload.get("severity") or "warning"
-                        ),
-                        "message": str(item.get("message") or payload.get("message") or ""),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                    "severity": str(item.get("severity") or payload.get("severity") or "warning"),
+                    "message": str(item.get("message") or payload.get("message") or ""),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-                "severity": str(payload.get("severity") or "warning"),
-                "message": str(payload.get("message") or ""),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+            "severity": str(payload.get("severity") or "warning"),
+            "message": str(payload.get("message") or ""),
+        })
 
     return specs, meta
 
@@ -622,6 +628,7 @@ def run_command(
             return 0
 
         total_applied = 0
+        apply_failed = False
         for f in applied_files:
             rewrite_json, exit_code = execute_rewrite_apply_json(
                 pattern=pattern,
@@ -636,10 +643,15 @@ def run_command(
                 test_cmd=test_cmd,
                 policy=policy,
             )
-            total_applied += 1
             if exit_code != 0:
+                apply_failed = True
                 print(f"Error applying rewrite to {f}: {rewrite_json}", file=sys.stderr)
+                continue
+            total_applied += 1
 
+        if apply_failed:
+            print(f"Successfully applied rewrites to {total_applied} files.")
+            return 1
         print(f"Successfully applied rewrites to {total_applied} files.")
         return 0
 
@@ -673,7 +685,7 @@ def run_command(
 
 
 def _get_cached_backend(name: str) -> Any:
-    backend_class: Any
+    backend_class: type[Any]
     if name == "AstBackend":
         from tensor_grep.backends.ast_backend import AstBackend
 
@@ -737,6 +749,13 @@ def _select_ast_backend_for_pattern(
             backend = _get_cached_backend("AstBackend")
         elif _check_backend_available("AstGrepWrapperBackend"):
             backend = _get_cached_backend("AstGrepWrapperBackend")
+        elif pattern_kind == "wrapper":
+            from tensor_grep.core.pipeline import ConfigurationError
+
+            raise ConfigurationError(
+                "Explicit AST search requires AST dependencies: ast-grep wrapper backend "
+                "is required for this pattern but is not available"
+            )
         else:
             backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
     else:
@@ -923,9 +942,10 @@ def scan_command(
             ev_data: dict[str, list[dict[str, Any]]] = {}
             for m in result.matches:
                 if m.file:
-                    ev_data.setdefault(m.file, []).append(
-                        {"line_number": m.line_number, "text": m.text[:max_evidence_snippet_chars]}
-                    )
+                    ev_data.setdefault(m.file, []).append({
+                        "line_number": m.line_number,
+                        "text": m.text[:max_evidence_snippet_chars],
+                    })
 
             evidence = []
             if ev_data:
@@ -947,18 +967,16 @@ def scan_command(
                             item["snippets"] = []
                         evidence.append(item)
 
-            findings.append(
-                {
-                    "rule_id": rule["id"],
-                    "language": rule["language"],
-                    "severity": rule.get("severity", "warning"),
-                    "message": rule.get("message", ""),
-                    "matches": rule_matches,
-                    "files": files_list,
-                    "fingerprint": fingerprint,
-                    "evidence": evidence,
-                }
-            )
+            findings.append({
+                "rule_id": rule["id"],
+                "language": rule["language"],
+                "severity": rule.get("severity", "warning"),
+                "message": rule.get("message", ""),
+                "matches": rule_matches,
+                "files": files_list,
+                "fingerprint": fingerprint,
+                "evidence": evidence,
+            })
 
     # Process other results (native or individual wrapper)
     for rule, rule_cfg, backend in other_resolved:
@@ -1005,9 +1023,10 @@ def scan_command(
         ev_data = {}
         for m in result.matches:
             if m.file:
-                ev_data.setdefault(m.file, []).append(
-                    {"line_number": m.line_number, "text": m.text[:max_evidence_snippet_chars]}
-                )
+                ev_data.setdefault(m.file, []).append({
+                    "line_number": m.line_number,
+                    "text": m.text[:max_evidence_snippet_chars],
+                })
 
         evidence = []
         if ev_data:
@@ -1029,18 +1048,16 @@ def scan_command(
                         item["snippets"] = []
                     evidence.append(item)
 
-        findings.append(
-            {
-                "rule_id": rule["id"],
-                "language": rule["language"],
-                "severity": rule.get("severity", "warning"),
-                "message": rule.get("message", ""),
-                "matches": rule_matches,
-                "files": files_list,
-                "fingerprint": fingerprint,
-                "evidence": evidence,
-            }
-        )
+        findings.append({
+            "rule_id": rule["id"],
+            "language": rule["language"],
+            "severity": rule.get("severity", "warning"),
+            "message": rule.get("message", ""),
+            "matches": rule_matches,
+            "files": files_list,
+            "fingerprint": fingerprint,
+            "evidence": evidence,
+        })
 
     if json_mode:
         payload: dict[str, Any] = {

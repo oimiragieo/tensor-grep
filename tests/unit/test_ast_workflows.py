@@ -1,9 +1,12 @@
+import io
 import json
 from pathlib import Path
 
 import pytest
 
-from tensor_grep.core.result import SearchResult
+from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.pipeline import ConfigurationError
+from tensor_grep.core.result import MatchLine, SearchResult
 
 
 class AstBackend:
@@ -57,6 +60,16 @@ class AstGrepWrapperBackend:
                 routing_reason="ast_grep_project_scan_json",
             )
         }
+
+
+class _AvailableAstBackend:
+    def is_available(self):
+        return True
+
+
+class _UnavailableAstGrepWrapperBackend:
+    def is_available(self):
+        return False
 
 
 class _CountingWrapperBackend(AstGrepWrapperBackend):
@@ -334,6 +347,39 @@ def test_ast_project_data_cache_should_invalidate_when_traversed_tree_dir_change
     assert str(added_file) in refreshed_candidate_files
 
 
+def test_load_yaml_dict_recovers_from_partial_yaml_cache(tmp_path, monkeypatch):
+    import yaml
+
+    from tensor_grep.cli import ast_workflows
+
+    config_path = tmp_path / "sgconfig.yml"
+    config_path.write_text("ruleDirs: [rules]\nlanguage: python\n", encoding="utf-8")
+    monkeypatch.setattr(ast_workflows, "_YAML_MODULE", yaml)
+    monkeypatch.setattr(ast_workflows, "_YAML_LOADER", None)
+
+    payload = ast_workflows._load_yaml_dict(config_path)
+
+    assert payload["ruleDirs"] == ["rules"]
+
+
+def test_load_yaml_dict_recovers_from_stale_invalid_yaml_loader(tmp_path, monkeypatch):
+    import yaml
+
+    from tensor_grep.cli import ast_workflows
+
+    class BrokenLoader(yaml.SafeLoader):
+        DEFAULT_SCALAR_TAG = None
+
+    config_path = tmp_path / "sgconfig.yml"
+    config_path.write_text("ruleDirs: [rules]\nlanguage: python\n", encoding="utf-8")
+    monkeypatch.setattr(ast_workflows, "_YAML_MODULE", yaml)
+    monkeypatch.setattr(ast_workflows, "_YAML_LOADER", BrokenLoader)
+
+    payload = ast_workflows._load_yaml_dict(config_path)
+
+    assert payload["ruleDirs"] == ["rules"]
+
+
 def test_select_ast_backend_name_for_pattern_should_prefer_native_for_native_shapes():
     from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
 
@@ -347,10 +393,80 @@ def test_select_ast_backend_name_for_pattern_should_use_wrapper_for_ast_grep_pat
     assert _select_ast_backend_name_for_pattern("def $FUNC():", "python") == "AstGrepWrapperBackend"
 
 
+def test_select_ast_backend_should_reject_wrapper_pattern_when_wrapper_is_unavailable(
+    monkeypatch,
+):
+    from tensor_grep.cli.ast_workflows import _select_ast_backend_for_pattern
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_backend.AstBackend",
+        _AvailableAstBackend,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend",
+        _UnavailableAstGrepWrapperBackend,
+    )
+
+    with pytest.raises(ConfigurationError, match="ast-grep"):
+        _select_ast_backend_for_pattern(
+            SearchConfig(
+                ast=True,
+                ast_prefer_native=True,
+                lang="python",
+                query_pattern="return 1",
+            ),
+            "return 1",
+            {},
+        )
+
+
+def test_run_command_interactive_apply_should_return_error_when_apply_fails(
+    monkeypatch, tmp_path, capsys
+):
+    from tensor_grep.cli.ast_workflows import run_command
+
+    test_file = tmp_path / "test.py"
+    test_file.write_text("def foo():\n    return 1\n", encoding="utf-8")
+
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths, pattern, config=None) -> SearchResult:
+            _ = file_paths
+            _ = pattern
+            _ = config
+            return SearchResult(
+                matches=[MatchLine(line_number=2, text="    return 1", file=str(test_file))],
+                matched_file_paths=[str(test_file)],
+                total_files=1,
+                total_matches=1,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda config, pattern: AstGrepWrapperBackend(),
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO("y\n"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.ast_workflows.execute_rewrite_apply_json",
+        lambda **kwargs: ('{"error": {"message": "apply failed"}}', 1),
+    )
+
+    exit_code = run_command(
+        pattern="return 1",
+        path=str(tmp_path),
+        rewrite="return 2",
+        lang="python",
+        interactive=True,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Error applying rewrite" in captured.err
+    assert "return 1" in test_file.read_text(encoding="utf-8")
+
+
 def test_run_command_should_fall_back_for_unencodable_ast_output(monkeypatch):
     import tensor_grep.cli.ast_workflows as ast_workflows
     from tensor_grep.cli.ast_workflows import run_command
-    from tensor_grep.core.result import MatchLine
 
     class AstGrepWrapperBackend:
         def search_many(self, file_paths, pattern, config=None) -> SearchResult:

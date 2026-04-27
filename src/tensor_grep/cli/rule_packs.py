@@ -940,17 +940,15 @@ def list_rule_packs() -> list[dict[str, Any]]:
     for name, spec in sorted(_RULE_PACKS.items()):
         languages = sorted(spec["languages"].keys())
         rules = sum(len(entries) for entries in spec["languages"].values())
-        packs.append(
-            {
-                "name": name,
-                "description": spec["description"],
-                "category": spec["category"],
-                "status": spec["status"],
-                "default_language": spec["default_language"],
-                "languages": languages,
-                "rule_count": rules,
-            }
-        )
+        packs.append({
+            "name": name,
+            "description": spec["description"],
+            "category": spec["category"],
+            "status": spec["status"],
+            "default_language": spec["default_language"],
+            "languages": languages,
+            "rule_count": rules,
+        })
     return packs
 
 

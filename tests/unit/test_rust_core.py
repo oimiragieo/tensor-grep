@@ -82,6 +82,31 @@ def test_rust_backend_honors_max_count(monkeypatch, tmp_path: Path):
     assert result.routing_reason == "rust_regex"
 
 
+def test_rust_backend_skips_file_over_max_filesize(monkeypatch, tmp_path: Path):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    class FakeNativeRustBackend:
+        def execute_ripgrep(self, *args, **kwargs):
+            raise RuntimeError("rg unavailable")
+
+        def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
+            raise AssertionError("oversized file should be skipped before Rust search")
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    log_file = tmp_path / "large.log"
+    log_file.write_text("match_me" + ("x" * 1024), encoding="utf-8")
+    result = backend.search(str(log_file), "match_me", config=SearchConfig(max_filesize="100B"))
+
+    assert result.total_matches == 0
+    assert result.total_files == 0
+    assert result.routing_backend == "RustCoreBackend"
+    assert result.routing_reason == "rust_max_filesize_skipped"
+
+
 def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_path: Path):
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.core.config import SearchConfig

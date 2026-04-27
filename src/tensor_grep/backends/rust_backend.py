@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 from tensor_grep.backends.base import ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -21,6 +24,42 @@ class RustCoreBackend(ComputeBackend):
 
     def is_available(self) -> bool:
         return HAVE_RUST
+
+    @staticmethod
+    def _parse_max_filesize_bytes(value: str) -> int | None:
+        match = re.fullmatch(r"\s*(\d+)\s*([kmgt]?b?)?\s*", value, flags=re.IGNORECASE)
+        if not match:
+            return None
+        amount = int(match.group(1))
+        suffix = (match.group(2) or "").lower()
+        multiplier_by_suffix = {
+            "": 1,
+            "b": 1,
+            "k": 1024,
+            "kb": 1024,
+            "m": 1024**2,
+            "mb": 1024**2,
+            "g": 1024**3,
+            "gb": 1024**3,
+            "t": 1024**4,
+            "tb": 1024**4,
+        }
+        multiplier = multiplier_by_suffix.get(suffix)
+        if multiplier is None:
+            return None
+        return amount * multiplier
+
+    def _file_exceeds_max_filesize(self, file_path: str, max_filesize: str) -> bool:
+        limit_bytes = self._parse_max_filesize_bytes(max_filesize)
+        if limit_bytes is None:
+            return False
+        path = Path(file_path)
+        if not path.is_file():
+            return False
+        try:
+            return path.stat().st_size > limit_bytes
+        except OSError:
+            return False
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
@@ -59,6 +98,17 @@ class RustCoreBackend(ComputeBackend):
                 max_filesize = config.max_filesize
             if config.no_ignore_vcs:
                 no_ignore_vcs = True
+
+        if max_filesize and self._file_exceeds_max_filesize(str(file_path), max_filesize):
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="RustCoreBackend",
+                routing_reason="rust_max_filesize_skipped",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
 
         # PCRE2 or advanced limits always route to ripgrep passthrough via Rust
         if pcre2 or max_filesize or no_ignore_vcs:

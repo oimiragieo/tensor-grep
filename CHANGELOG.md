@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Stabilize CI parity contracts for PCRE2 routing, AST wrapper fallback, interactive apply coverage, native delegation, max-filesize handling, and cache isolation.
+
+
 ## v1.5.1 (2026-04-25)
 
 ### Features

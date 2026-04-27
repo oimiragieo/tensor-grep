@@ -49,7 +49,7 @@ def test_should_skip_package_manager_checks_when_requested():
     assert all("winget" not in err for err in errors)
 
 
-def test_should_retry_pypi_check_until_expected_version_becomes_visible():
+def test_should_retry_pypi_check_until_expected_version_becomes_visible(monkeypatch):
     module = _load_module()
     expected_version = module._version_from_pyproject()
     observed = ["0.0.1", "0.0.2", expected_version]
@@ -57,9 +57,9 @@ def test_should_retry_pypi_check_until_expected_version_becomes_visible():
     def fake_fetch(*, package_name="tensor-grep"):
         return observed.pop(0)
 
-    module._fetch_pypi_latest = fake_fetch
-    module.time.sleep = lambda _seconds: None
-    module.time.monotonic = lambda: 0.0
+    monkeypatch.setattr(module, "_fetch_pypi_latest", fake_fetch)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 0.0)
 
     errors = module.validate_release_version_parity(
         expected_version=expected_version,
@@ -71,15 +71,15 @@ def test_should_retry_pypi_check_until_expected_version_becomes_visible():
     assert errors == []
 
 
-def test_should_fail_when_pypi_never_reaches_expected_version_within_wait_window():
+def test_should_fail_when_pypi_never_reaches_expected_version_within_wait_window(monkeypatch):
     module = _load_module()
     expected_version = module._version_from_pyproject()
 
-    module._fetch_pypi_latest = lambda *, package_name="tensor-grep": "0.0.1"
-    module.time.sleep = lambda _seconds: None
+    monkeypatch.setattr(module, "_fetch_pypi_latest", lambda *, package_name="tensor-grep": "0.0.1")
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
     ticks = iter([0.0, 0.0, 0.5, 1.1])
-    module.time.monotonic = lambda: next(ticks)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(ticks))
 
     errors = module.validate_release_version_parity(
         expected_version=expected_version,
@@ -91,7 +91,7 @@ def test_should_fail_when_pypi_never_reaches_expected_version_within_wait_window
     assert f"pypi latest 0.0.1 != expected {expected_version}" in errors
 
 
-def test_should_retry_npm_check_until_expected_version_becomes_visible():
+def test_should_retry_npm_check_until_expected_version_becomes_visible(monkeypatch):
     module = _load_module()
     expected_version = module._version_from_pyproject()
     observed = ["0.0.1", "0.0.2", expected_version]
@@ -99,9 +99,9 @@ def test_should_retry_npm_check_until_expected_version_becomes_visible():
     def fake_fetch(*, package_name="tensor-grep"):
         return observed.pop(0)
 
-    module._fetch_npm_latest = fake_fetch
-    module.time.sleep = lambda _seconds: None
-    module.time.monotonic = lambda: 0.0
+    monkeypatch.setattr(module, "_fetch_npm_latest", fake_fetch)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 0.0)
 
     errors = module.validate_release_version_parity(
         expected_version=expected_version,
@@ -113,15 +113,15 @@ def test_should_retry_npm_check_until_expected_version_becomes_visible():
     assert errors == []
 
 
-def test_should_fail_when_npm_never_reaches_expected_version_within_wait_window():
+def test_should_fail_when_npm_never_reaches_expected_version_within_wait_window(monkeypatch):
     module = _load_module()
     expected_version = module._version_from_pyproject()
 
-    module._fetch_npm_latest = lambda *, package_name="tensor-grep": "0.0.1"
-    module.time.sleep = lambda _seconds: None
+    monkeypatch.setattr(module, "_fetch_npm_latest", lambda *, package_name="tensor-grep": "0.0.1")
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
     ticks = iter([0.0, 0.0, 0.5, 1.1])
-    module.time.monotonic = lambda: next(ticks)
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(ticks))
 
     errors = module.validate_release_version_parity(
         expected_version=expected_version,

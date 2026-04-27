@@ -75,6 +75,29 @@ class TestPipeline:
         assert pipeline.backend == mock_ast_wrapper.return_value
         assert pipeline.selected_backend_reason == "ast_wrapper_available"
 
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    @patch("tensor_grep.backends.ast_wrapper_backend.AstGrepWrapperBackend")
+    @patch("tensor_grep.backends.ast_backend.AstBackend")
+    def test_should_reject_ast_grep_style_pattern_when_wrapper_is_unavailable(
+        self, mock_ast_backend, mock_ast_wrapper, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rust.return_value.is_available.return_value = True
+        mock_ast_backend.return_value.is_available.return_value = True
+        mock_ast_wrapper.return_value.is_available.return_value = False
+
+        with pytest.raises(ConfigurationError, match="ast-grep"):
+            Pipeline(
+                force_cpu=False,
+                config=SearchConfig(
+                    ast=True,
+                    ast_prefer_native=True,
+                    lang="python",
+                    query_pattern="return 1",
+                ),
+            )
+
     @patch("tensor_grep.backends.cybert_backend.CybertBackend")
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
@@ -120,6 +143,30 @@ class TestPipeline:
         assert pipeline.selected_backend_reason == "rust_secondary_fast_path"
         assert pipeline.selected_gpu_device_ids == []
         assert pipeline.selected_gpu_chunk_plan_mb == []
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_should_raise_configuration_error_for_pcre2_when_rg_lacks_pcre2(
+        self, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = True
+        mock_rg.return_value.supports_pcre2.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+
+        with pytest.raises(ConfigurationError, match="PCRE2 requested"):
+            Pipeline(force_cpu=False, config=SearchConfig(pcre2=True, query_pattern="a(?=b)"))
+
+    @patch("tensor_grep.core.pipeline.RipgrepBackend")
+    @patch("tensor_grep.core.pipeline.RustCoreBackend")
+    def test_should_raise_configuration_error_for_pcre2_when_rg_is_missing(
+        self, mock_rust, mock_rg
+    ):
+        mock_rg.return_value.is_available.return_value = False
+        mock_rg.return_value.supports_pcre2.return_value = False
+        mock_rust.return_value.is_available.return_value = True
+
+        with pytest.raises(ConfigurationError, match="PCRE2 requested"):
+            Pipeline(force_cpu=False, config=SearchConfig(pcre2=True, query_pattern="a(?=b)"))
 
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")

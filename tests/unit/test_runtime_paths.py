@@ -13,6 +13,9 @@ from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripg
 def clear_caches():
     resolve_native_tg_binary.cache_clear()
     resolve_ripgrep_binary.cache_clear()
+    yield
+    resolve_native_tg_binary.cache_clear()
+    resolve_ripgrep_binary.cache_clear()
 
 
 def test_resolve_native_tg_binary_env_override(tmp_path):

@@ -28,15 +28,13 @@ def test_validate_release_assets_payload_should_pass_for_complete_asset_matrix()
             {"name": "CHECKSUMS.txt"},
         ]
     }
-    checksums_content = "\n".join(
-        [
-            f"{'a' * 64}  tg-linux-amd64-cpu",
-            f"{'b' * 64}  tg-linux-amd64-nvidia",
-            f"{'c' * 64}  tg-macos-amd64-cpu",
-            f"{'d' * 64}  tg-windows-amd64-cpu.exe",
-            f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
-        ]
-    )
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'b' * 64}  tg-linux-amd64-nvidia",
+        f"{'c' * 64}  tg-macos-amd64-cpu",
+        f"{'d' * 64}  tg-windows-amd64-cpu.exe",
+        f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
+    ])
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -91,16 +89,14 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_managed_asset
             {"name": "CHECKSUMS.txt"},
         ]
     }
-    checksums_content = "\n".join(
-        [
-            f"{'a' * 64}  tg-linux-amd64-cpu",
-            f"{'b' * 64}  tg-linux-amd64-nvidia",
-            f"{'c' * 64}  tg-macos-amd64-cpu",
-            f"{'d' * 64}  tg-windows-amd64-cpu.exe",
-            f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
-            f"{'f' * 64}  tg-linux-arm64-cpu",
-        ]
-    )
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'b' * 64}  tg-linux-amd64-nvidia",
+        f"{'c' * 64}  tg-macos-amd64-cpu",
+        f"{'d' * 64}  tg-windows-amd64-cpu.exe",
+        f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
+        f"{'f' * 64}  tg-linux-arm64-cpu",
+    ])
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -133,15 +129,13 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_non_managed_a
             {"name": "CHECKSUMS.txt"},
         ]
     }
-    checksums_content = "\n".join(
-        [
-            f"{'a' * 64}  tg-linux-amd64-cpu",
-            f"{'b' * 64}  tg-linux-amd64-nvidia",
-            f"{'c' * 64}  tg-macos-amd64-cpu",
-            f"{'d' * 64}  tg-windows-amd64-cpu.exe",
-            f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
-        ]
-    )
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'b' * 64}  tg-linux-amd64-nvidia",
+        f"{'c' * 64}  tg-macos-amd64-cpu",
+        f"{'d' * 64}  tg-windows-amd64-cpu.exe",
+        f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
+    ])
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -173,16 +167,14 @@ def test_validate_release_assets_payload_should_fail_on_unexpected_checksum_entr
             {"name": "CHECKSUMS.txt"},
         ]
     }
-    checksums_content = "\n".join(
-        [
-            f"{'a' * 64}  tg-linux-amd64-cpu",
-            f"{'b' * 64}  tg-linux-amd64-nvidia",
-            f"{'c' * 64}  tg-macos-amd64-cpu",
-            f"{'d' * 64}  tg-windows-amd64-cpu.exe",
-            f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
-            f"{'f' * 64}  tg-extra-experimental",
-        ]
-    )
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'b' * 64}  tg-linux-amd64-nvidia",
+        f"{'c' * 64}  tg-macos-amd64-cpu",
+        f"{'d' * 64}  tg-windows-amd64-cpu.exe",
+        f"{'e' * 64}  tg-windows-amd64-nvidia.exe",
+        f"{'f' * 64}  tg-extra-experimental",
+    ])
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -228,12 +220,10 @@ def test_validate_release_assets_payload_should_fail_on_duplicate_checksum_manif
             {"name": "CHECKSUMS.txt"},
         ]
     }
-    checksums_content = "\n".join(
-        [
-            f"{'a' * 64}  tg-linux-amd64-cpu",
-            f"{'a' * 64}  tg-linux-amd64-cpu",
-        ]
-    )
+    checksums_content = "\n".join([
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+        f"{'a' * 64}  tg-linux-amd64-cpu",
+    ])
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content=checksums_content,
@@ -326,13 +316,11 @@ def test_validate_release_assets_payload_should_validate_bundle_checksums_agains
             {"name": "BUNDLE_CHECKSUMS.txt"},
         ]
     }
-    bundle_checksums_content = "\n".join(
-        [
-            f"{'a' * 64}  tensor-grep.rb",
-            f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
-            f"{'0' * 64}  PUBLISH_INSTRUCTIONS.md",
-        ]
-    )
+    bundle_checksums_content = "\n".join([
+        f"{'a' * 64}  tensor-grep.rb",
+        f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
+        f"{'0' * 64}  PUBLISH_INSTRUCTIONS.md",
+    ])
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content="",
@@ -366,14 +354,12 @@ def test_validate_release_assets_payload_should_fail_on_unmanaged_bundle_checksu
             {"name": "BUNDLE_CHECKSUMS.txt"},
         ]
     }
-    bundle_checksums_content = "\n".join(
-        [
-            f"{'a' * 64}  tensor-grep.rb",
-            f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
-            f"{'c' * 64}  PUBLISH_INSTRUCTIONS.md",
-            f"{'d' * 64}  unexpected-extra.txt",
-        ]
-    )
+    bundle_checksums_content = "\n".join([
+        f"{'a' * 64}  tensor-grep.rb",
+        f"{'b' * 64}  oimiragieo.tensor-grep.yaml",
+        f"{'c' * 64}  PUBLISH_INSTRUCTIONS.md",
+        f"{'d' * 64}  unexpected-extra.txt",
+    ])
     errors = module.validate_release_assets_payload(
         release_data=release_data,
         checksums_content="",

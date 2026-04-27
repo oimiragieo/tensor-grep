@@ -478,6 +478,8 @@ def test_public_help_falls_back_to_native_when_python_passthrough_times_out(pari
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR)
 
     env = dict(**os.environ, TG_SIDECAR_PYTHON=str(wrapper))
+    if _get_native_binary() is None:
+        _run_native_front_door(["--version"], cwd=parity_env)
 
     started = __import__("time").perf_counter()
     native_help = _run_native_front_door(["search", "--help"], cwd=parity_env, env=env)
