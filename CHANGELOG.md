@@ -1,13 +1,12 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.6.5 (2026-04-28)
 
 ### Bug Fixes
 
-- Restore PyPI wheel AST rewrite plan/apply behavior when no standalone native `tg` binary is present.
-- Strengthen PyPI artifact smoke coverage so future releases exercise `tg run --rewrite` plan and apply paths before publish.
-- Normalize Windows console-script variadic metavars that arrive as `$$ARGS` back to native AST `$$$ARGS` form.
+- Restore pypi ast rewrite path
+  ([`bee9db3`](https://github.com/oimiragieo/tensor-grep/commit/bee9db321d90fa9ada26cfeea7bfea6d71aca4e8))
 
 
 ## v1.6.4 (2026-04-28)
