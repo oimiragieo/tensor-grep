@@ -338,17 +338,20 @@ def test_native_rewrite_v2_roadmap_should_record_default_frontdoor_probe() -> No
     doc = WORLD_CLASS_PLAN_PATH.read_text(encoding="utf-8")
 
     assert "explicit_binary default front door" in doc
-    assert "0.261513" in doc
-    assert "0.247376" in doc
-    assert "5 of 10 scenarios" in doc
+    assert "0.266167" in doc
+    assert "0.260132" in doc
+    assert "passes parity on all 10 rows" in doc
+    assert "passes `benchmarks/check_regression.py --baseline auto`" in doc
 
 
 def test_benchmark_docs_should_record_default_frontdoor_probe() -> None:
     doc = BENCHMARKS_DOC_PATH.read_text(encoding="utf-8")
 
     assert "explicit_binary default front door" in doc
-    assert "0.261513" in doc
-    assert "0.247376" in doc
+    assert "0.266167" in doc
+    assert "0.260132" in doc
+    assert "bench_run_benchmarks_v165_control_plane_current.json" in doc
+    assert "passed with no benchmark regressions" in doc
 
 
 def test_native_rewrite_v2_roadmap_should_record_closed_statuses() -> None:
@@ -356,11 +359,11 @@ def test_native_rewrite_v2_roadmap_should_record_closed_statuses() -> None:
 
     assert "### Roadmap 1: Native Control-Plane Rewrite v2" in doc
     assert (
-        "Closed on 2026-03-31 as an explicit rejected architecture result for the current line"
+        "Closed on 2026-04-28 as a gate-clean but still workload-specific architecture result"
         in doc
     )
     assert "default front door" in doc
-    assert "5 of 10 scenarios" in doc
+    assert "raw `rg` still wins several individual cold rows" in doc
     assert "### Roadmap 2: Agent Product Surface v5" in doc
     assert "Closed on 2026-03-31." in doc
     assert "multi-task and multi-session replay chains" in doc

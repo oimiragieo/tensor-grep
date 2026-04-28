@@ -264,13 +264,15 @@ Top-level claims should stay aligned with those workload classes instead of coll
 
 ### Native control-plane rewrite v2 (`run_benchmarks.py`)
 
-Measured on the `explicit_binary default front door` path after promoting the fastest supported `tg search` subset into the real default front door:
+Measured on the `explicit_binary default front door` path after promoting the fastest supported `tg search` subset into the real default front door, then refreshed after `v1.6.5`:
 
-- artifact: `artifacts/bench_run_benchmarks_explicit_binary_default_frontdoor_uv.json`
-- mean `tg_time_s`: `0.261513`
-- median `tg_time_s`: `0.247376`
+- artifact: `artifacts/bench_run_benchmarks_v165_control_plane_current.json`
+- mean `tg_time_s`: `0.266167`
+- median `tg_time_s`: `0.260132`
+- parity: PASS on all 10 rows
+- regression gate: `benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks_v165_control_plane_current.json` passed with no benchmark regressions
 
-This improves the older `explicit_binary` line (`0.282347` / `0.271463`), which means the default front door change was real, not benchmark noise. It is still not an accepted cold-path win: `check_regression.py --baseline auto` still reports regressions on 5 of 10 scenarios against the accepted Windows baseline.
+This supersedes the older rejected read for the current host artifact. The accepted status is now narrower and cleaner: the explicit native-binary front door is regression-gate clean on this Windows host, but raw `rg` remains the baseline for generic cold text search because it still wins several individual rows.
 
 The next widening probe is explicitly rejected and preserved as history rather than code. `artifacts/bench_run_benchmarks_explicit_binary_default_frontdoor_v2_uv.json` broadened the default front door to accept the already-supported `--glob`, `-w`, and `-F` subset. That preserved parity, but it made the default `explicit_binary` line slower than the prior default-front-door artifact and still failed the frozen Windows baseline on 5 scenarios (`Case-Insensitive`, `Regex`, `File Glob Filtering`, `Word Boundary`, and `Fixed Strings`). The accepted read is narrower than “more native is always better”: widening the default front door to more ripgrep-equivalent flags was not the next win for this line.
 
@@ -357,23 +359,24 @@ The current broader Gemini A/B artifact is `artifacts/patch_eval_demo/gemini_ski
 
 | Scenario | ripgrep | tensor-grep | Result |
 | --- | --- | --- | --- |
-| Simple String Match | 0.288s | 0.314s | Parity PASS / regression gate FAIL |
-| Case-Insensitive Match | 0.298s | 0.315s | Parity PASS / regression gate FAIL |
-| Regex Match | 0.316s | 0.347s | Parity PASS / regression gate PASS |
-| Invert Match | 0.492s | 0.526s | Parity PASS / regression gate FAIL |
-| Count Matches | 0.270s | 0.309s | Parity PASS / regression gate FAIL |
-| Context Lines (`-C2`) | 0.635s | 0.690s | Parity PASS / regression gate FAIL |
-| Max Count (`-m 5`) | 0.225s | 0.237s | Parity PASS / regression gate FAIL |
-| File Glob Filtering | 0.333s | 0.337s | Parity PASS / regression gate FAIL |
-| Word Boundary | 0.351s | 0.367s | Parity PASS / regression gate PASS |
-| Fixed Strings (`-F`) | 0.350s | 0.313s | Parity PASS / regression gate FAIL |
+| Simple String Match | 0.199s | 0.258s | Parity PASS / regression gate PASS |
+| Case-Insensitive Match | 0.256s | 0.274s | Parity PASS / regression gate PASS |
+| Regex Match | 0.280s | 0.262s | Parity PASS / regression gate PASS |
+| Invert Match | 0.348s | 0.379s | Parity PASS / regression gate PASS |
+| Count Matches | 0.164s | 0.186s | Parity PASS / regression gate PASS |
+| Context Lines (`-C2`) | 0.449s | 0.412s | Parity PASS / regression gate PASS |
+| Max Count (`-m 5`) | 0.123s | 0.135s | Parity PASS / regression gate PASS |
+| File Glob Filtering | 0.192s | 0.226s | Parity PASS / regression gate PASS |
+| Word Boundary | 0.240s | 0.279s | Parity PASS / regression gate PASS |
+| Fixed Strings (`-F`) | 0.207s | 0.250s | Parity PASS / regression gate PASS |
 
 The current accepted cold-path read is narrower than "tensor-grep beats ripgrep." `rg` remains the
-baseline for generic cold text search on the current release line, and the default `tg search`
-path still fails the frozen Windows regression gate in the current local artifact
-`artifacts/bench_run_benchmarks_rerun.json`. The accepted read is therefore architectural, not
-promotional: cold generic text search is not the main reason to adopt `tg`, and this rerun should
-not be promoted as a speed win.
+baseline for generic cold text search on the current release line. The default explicit native
+`tg search` path now passes the frozen Windows regression gate in
+`artifacts/bench_run_benchmarks_v165_control_plane_current.json`, but this is still an
+architectural/governance result rather than a broad marketing claim: several cold rows remain
+slower than raw `rg`, while native CPU, AST, rewrite, repeated-query, and harness workflows are the
+stronger differentiated surfaces.
 
 ### Host-local CLI tool comparison (`run_tool_comparison_benchmarks.py`)
 
@@ -593,4 +596,5 @@ Operational note: the fixed-string row depends on the benchmark extras (`stringz
 For the cold-path roadmap, the next targets stay narrow and evidence-first:
 
 - keep max-count work limited to parser/routing parity or a cleaner benchmark design, not broad count/max-count front-door widening
-- investigate the remaining `Count Matches`, `Case-Insensitive`, `Regex`, `File Glob Filtering`, and `Word Boundary` cold-path gaps without retrying the already-rejected broader default-front-door widening
+- investigate the remaining raw-`rg` deltas per row without retrying the already-rejected broader default-front-door widening
+- prioritize attribution before implementation: separate native-binary launcher cost, `rg` subprocess cost, and any row-specific parser/routing overhead before changing the front door again

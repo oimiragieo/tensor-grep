@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Documentation
+
+- Refresh the v1.6.5 native cold-path benchmark read after the explicit native-binary run passed the frozen Windows regression gate.
+
+
 ## v1.6.5 (2026-04-28)
 
 ### Bug Fixes

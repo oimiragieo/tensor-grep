@@ -1246,16 +1246,16 @@ Goal:
 Beat the accepted Windows cold-path baseline with a real native front door instead of more benchmark-only shortcuts.
 
 Status:
-Closed on 2026-03-31 as an explicit rejected architecture result for the current line. The accepted evidence now includes the older rewrite-backed probe set plus the `explicit_binary default front door` result. That front-door promotion materially improved the old `explicit_binary` line (`0.282347` / `0.271463`) to `0.261513` / `0.247376`, but it still regresses against the accepted Windows baseline on 5 of 10 scenarios. The correct read for this line is now explicit: the default front door helped, but a larger native rewrite is still required.
+Closed on 2026-04-28 as a gate-clean but still workload-specific architecture result for the current line. The accepted evidence now includes the older rewrite-backed probe set plus the refreshed `explicit_binary default front door` result after `v1.6.5`. That front-door line now records mean `0.266167` and median `0.260132`, passes parity on all 10 benchmark rows, and passes the frozen Windows regression gate. The correct read for this line is now explicit: the default front door is release-safe on this host, but raw `rg` still wins several individual cold rows, so future work should use attribution rather than another broad front-door widening.
 
 Current accepted progress:
 
-- `explicit_binary default front door`, artifact `artifacts/bench_run_benchmarks_explicit_binary_default_frontdoor_uv.json`
-  - mean `0.261513`
-  - median `0.247376`
-  - improves the older `explicit_binary` line (`0.282347` / `0.271463`)
-  - still regresses against the accepted Windows baseline on 5 of 10 scenarios
-  - accepted read: promoting the fastest supported `tg search` subset into the real default front door is a meaningful improvement, but it is still not the full cold-path win needed to close Roadmap 1 v2
+- `explicit_binary default front door`, artifact `artifacts/bench_run_benchmarks_v165_control_plane_current.json`
+  - mean `0.266167`
+  - median `0.260132`
+  - passes parity on all 10 rows
+  - passes `benchmarks/check_regression.py --baseline auto`
+  - accepted read: promoting the fastest supported `tg search` subset into the real default front door is release-safe on this host, but it is still not a universal "tg beats rg" claim
 - rejected follow-up widening attempt, artifact `artifacts/bench_run_benchmarks_explicit_binary_default_frontdoor_v2_uv.json`
   - broadened the default front door to accept the already-supported `--glob`, `-w`, and `-F` search subset
   - preserved parity, but regressed the default `explicit_binary` line relative to the prior front-door artifact
