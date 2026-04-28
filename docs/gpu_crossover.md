@@ -1,4 +1,4 @@
-# Native GPU crossover benchmark (2026-03-17)
+# Native GPU crossover benchmark (2026-04-27)
 
 Command used:
 
@@ -9,7 +9,7 @@ python benchmarks/run_gpu_native_benchmarks.py --output artifacts/bench_run_gpu_
 Environment:
 
 - Host: Windows 10 (`amd64`)
-- `tg` binary: `rust_core/target/release/tg.exe` built with `--features cuda`
+- `tg` binary: `rust_core/target/release/tg.exe` (`tg 1.6.3`)
 - GPU under test: device `0` (`NVIDIA GeForce RTX 4070`, `sm_89`)
 - Corpus sizes: `10MB`, `100MB`, `500MB`, `1GB`
 - Corpus layout: 8 synthetic log shards per size
@@ -22,47 +22,47 @@ The artifact also detected device `1` (`NVIDIA GeForce RTX 5070`), but the bench
 
 No crossover was found.
 
-`tg search --gpu-device-ids 0` stayed slower than both `rg` and `tg search --cpu` at every measured size, so GPU auto-routing still should **not** be enabled from size alone.
+`tg search --gpu-device-ids 0` stayed slower than both `rg` and `tg search --cpu` where it completed, then timed out on larger corpora. GPU auto-routing still should **not** be enabled from size alone.
 
 ## Per-size benchmark data
 
-| Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU/rg ratio |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 10MB | 0.125s | 0.317s | 0.869s | 6.9329x |
-| 100MB | 0.120s | 0.300s | 1.004s | 8.3682x |
-| 500MB | 0.202s | 0.364s | 1.384s | 6.8427x |
-| 1GB | 0.202s | 0.455s | 2.045s | 10.1223x |
+| Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU/rg ratio | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 10MB | 0.173s | 0.168s | 0.550s | 3.1766x | no crossover |
+| 100MB | 0.161s | 0.187s | 1.227s | 7.6324x | no crossover |
+| 500MB | 0.163s | 0.171s | timeout | n/a | FAIL |
+| 1GB | 0.224s | 0.244s | timeout | n/a | FAIL |
 
 Exact throughput and correctness metadata are recorded in `artifacts/bench_run_gpu_native_benchmarks.json`.
 
 ## Correctness parity
 
-GPU and CPU match counts were identical at all four corpus sizes:
+GPU and CPU match counts were identical only on the sizes that completed:
 
 | Corpus size | CPU matches | GPU matches | Status |
 | --- | ---: | ---: | --- |
 | 10MB | 2 | 2 | PASS |
 | 100MB | 14 | 14 | PASS |
-| 500MB | 70 | 70 | PASS |
-| 1GB | 143 | 143 | PASS |
+| 500MB | n/a | n/a | FAIL - sidecar timeout |
+| 1GB | n/a | n/a | FAIL - sidecar timeout |
 
 ## Error-handling validation
 
 | Check | Result |
 | --- | --- |
-| Invalid device ID `99` | PASS — exits `2` and lists available CUDA devices |
-| CUDA unavailable | PASS — reported explicitly in artifact/test coverage |
-| Timeout simulation | PASS — exits `2` with a timeout error |
+| Invalid device ID `99` | FAIL in current artifact expectation check |
+| CUDA unavailable / NVRTC failure | FAIL in current artifact expectation check |
+| Timeout simulation | FAIL in current artifact expectation check |
 | Malformed / binary / empty files | PASS — GPU path returns valid JSON and handles the mixed fixture without crashing |
 
 Some fault cases are simulation-backed through `TG_TEST_CUDA_BEHAVIOR`.
 
 ## Gap analysis
 
-The best measured GPU/rg ratio was at `10MB`, where GPU was still **6.9329x slower** than `rg`.
-The gap remained negative at every measured size and reached **10.1223x slower** than `rg` at `1GB`.
+The best measured GPU/rg ratio was at `10MB`, where GPU was still **3.1766x slower** than `rg`.
+The gap remained negative where the command completed, and larger corpora timed out before they could establish correctness or throughput.
 
-The current native GPU path is correctness-valid, but it is not yet performance-competitive for this literal-search workload on Windows.
+The current native GPU path is explicit and benchmarkable, but this artifact is not correctness-valid across all measured sizes and is not performance-competitive for this literal-search workload on Windows.
 
 ## Optimizations needed before GPU crossover is plausible
 

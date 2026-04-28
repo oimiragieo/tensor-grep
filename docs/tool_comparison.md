@@ -19,10 +19,10 @@ The current public comparison story is anchored to rerunnable artifacts, not one
 | Workload | Comparator | Current read | Source |
 | --- | --- | --- | --- |
 | Cold generic text search | `ripgrep` | `rg` remains the baseline on the current release line. `tg search` keeps CLI contract parity, but the current cold-path rerun does not beat `rg` on this Windows host. | `artifacts/bench_run_benchmarks.json`, [benchmarks.md](benchmarks.md) |
-| Host-local CLI comparison | `ripgrep`, `git grep --no-index` | On the current host, `rg` wins both published rows. `tg search --cpu` is still the stronger `tg` text path and beats `git grep --no-index` on both published rows. Default `tg search` beats `git grep --no-index` on the standard corpus row but trails it on the 200MB large-file row. | `artifacts/bench_tool_comparison.json` |
-| Native CPU text search | `ripgrep` | The current `tg --cpu` rerun wins `large_file_200mb_count`, but it trails `rg` on `cold_standard_corpus`, `large_file_200mb`, and `many_file_directory`. | `artifacts/bench_run_native_cpu_benchmarks.json`, [benchmarks.md](benchmarks.md) |
-| AST search and rewrite | `ast-grep` | `tg` is ahead on the accepted AST search and rewrite benchmark surfaces (`0.177s` vs `0.209s`, `0.846x`). | [benchmarks.md](benchmarks.md) |
-| Repeated query on unchanged corpora | cold grep-style tools | `tg` wins after warm index reuse. This is a different workload class from one-shot cold scans. | `artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json` |
+| Host-local CLI comparison | `ripgrep`, `git grep --no-index` | On the current host, `rg` wins the standard-corpus row, while `git grep --no-index` narrowly wins the 200MB large-file row. `tg` stays close on the 200MB row but is not the leader. | `artifacts/bench_tool_comparison.json` |
+| Native CPU text search | `ripgrep` | With rg fallback disabled for native measurement, the current `tg --cpu` rerun wins all four native CPU rows, including count-heavy and many-file probes. | `artifacts/bench_run_native_cpu_benchmarks.json`, [benchmarks.md](benchmarks.md) |
+| AST search and rewrite | `ast-grep` | `tg` is ahead on AST search (`0.135s` vs `0.180s`, `0.754x`), but the latest AST rewrite apply gate failed (`1.429s` vs `0.819s`, `1.745x`). | [benchmarks.md](benchmarks.md) |
+| Repeated query on unchanged corpora | cold grep-style tools | `tg` wins after warm index reuse. This is a different workload class from one-shot cold scans. | `artifacts/bench_hot_query_benchmarks.json` |
 | Policy and security scanning | `Semgrep` | `Semgrep` remains the stronger ecosystem baseline today. | [benchmarks.md](benchmarks.md) |
 | Indexed search at repository scale | `Zoekt` | `Zoekt` remains the search-at-scale baseline. `tg` currently publishes local repeated-query wins rather than an accepted direct Zoekt bakeoff. | [benchmarks.md](benchmarks.md) |
 
@@ -48,18 +48,18 @@ They are medians over three timed samples after one warmup run on this Windows h
 
 | Scenario | Tool | Command | Line count | Median | vs `rg` |
 | --- | --- | --- | --- | --- | --- |
-| standard corpus | `rg` | `rg --no-ignore ERROR artifacts/bench_data` | `800001` | `0.166s` | `1.00x` |
-| standard corpus | `tg search` | `tg search --no-ignore ERROR artifacts/bench_data` | `800001` | `0.240s` | `1.44x` |
-| standard corpus | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/bench_data` | `800001` | `0.212s` | `1.28x` |
-| standard corpus | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/bench_data` | `800001` | `0.293s` | `1.77x` |
-| 200MB large file | `rg` | `rg --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.108s` | `1.00x` |
-| 200MB large file | `tg search` | `tg search --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.240s` | `2.23x` |
-| 200MB large file | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.125s` | `1.16x` |
-| 200MB large file | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.214s` | `1.99x` |
+| standard corpus | `rg` | `rg --no-ignore ERROR artifacts/bench_data` | `800001` | `0.217s` | `1.00x` |
+| standard corpus | `tg search` | `tg search --no-ignore ERROR artifacts/bench_data` | `800001` | `0.269s` | `1.24x` |
+| standard corpus | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/bench_data` | `800001` | `0.243s` | `1.12x` |
+| standard corpus | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/bench_data` | `800001` | `0.292s` | `1.35x` |
+| 200MB large file | `rg` | `rg --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.210s` | `1.00x` |
+| 200MB large file | `tg search` | `tg search --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.218s` | `1.04x` |
+| 200MB large file | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.219s` | `1.04x` |
+| 200MB large file | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.204s` | `0.98x` |
 
 ## Where `tensor-grep` Is Stronger
 
-- Native AST search, rewrite planning, diff, apply, and verify
+- Native AST search and functional AST rewrite workflows; latest apply-vs-`sg` speed gate needs follow-up
 - Warm repeated-query search on unchanged corpora
 - Machine-readable CLI, NDJSON, session, and MCP surfaces for agent workflows
 - Output-side replacement for text search plus real AST-backed rewrite application

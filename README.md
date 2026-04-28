@@ -6,7 +6,7 @@
 
 Native search and rewrite tool for large text corpora and codebases. `tensor-grep` combines a Rust-native CPU text engine, Rust-native AST search/rewrite, indexed repeated-query acceleration, and a benchmark-governed native GPU path for large workloads.
 
-`tensor-grep` has first class support on Windows, macOS and Linux. The native CPU engine embeds ripgrep's grep crates directly (no subprocess overhead) with chunk parallelism for large files. The native GPU engine uses Rust-native CUDA via `cudarc` with NVRTC JIT compilation, CUDA streams, pinned memory, and CUDA graphs. Smart routing automatically selects the fastest backend based on measured crossover data.
+`tensor-grep` has first class support on Windows, macOS and Linux. The native CPU engine embeds ripgrep's grep crates directly (no subprocess overhead) with chunk parallelism for large files. The native GPU engine uses Rust-native CUDA via `cudarc` with NVRTC JIT compilation, CUDA streams, pinned memory, and CUDA graphs. GPU routing stays opt-in unless local calibration proves a real end-to-end crossover.
 
 Harness consumers should use the documented public contracts in [docs/harness_api.md](docs/harness_api.md) and the workflow guide in [docs/harness_cookbook.md](docs/harness_cookbook.md).
 
@@ -97,21 +97,21 @@ Current quick tool comparison:
 
 | Scenario | ripgrep | `tg search` | `tg search --cpu` | `git grep --no-index` |
 | --- | --- | --- | --- | --- |
-| standard corpus | `0.166s` | `0.240s` | `0.212s` | `0.293s` |
-| 200MB large file | `0.108s` | `0.240s` | `0.125s` | `0.214s` |
+| standard corpus | `0.217s` | `0.269s` | `0.243s` | `0.292s` |
+| 200MB large file | `0.210s` | `0.218s` | `0.219s` | `0.204s` |
 
 Current read:
 
 - `rg` remains the cold generic text-search baseline
-- `tg search --cpu` is materially faster than default `tg search` on both comparator rows, but `rg` still leads both published rows on this host
+- `tg search` is near `rg` on the 200MB row, but `git grep --no-index` won that specific host-local row in the latest run
 - host-local peer rows currently include `rg` and `git grep --no-index`; `ag`, `ack`, `ugrep`, and `grep` are omitted on this host because they are not installed
-- native AST search/rewrite, repeated-query acceleration, and GPU are separate benchmark surfaces and should not be conflated with cold plain-text search
+- native AST search, AST rewrite, repeated-query acceleration, and GPU are separate benchmark surfaces and should not be conflated with cold plain-text search
 
 Current repeated-query snapshot:
 
-- artifact: [`artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json`](artifacts/bench_hot_query_benchmarks_post_bench_extra_refresh.json)
-- repeated fixed string: `0.6271s -> 0.2164s`
-- repeated regex prefilter: `0.8776s -> 0.2263s`
+- artifact: [`artifacts/bench_hot_query_benchmarks.json`](artifacts/bench_hot_query_benchmarks.json)
+- repeated fixed string: `0.6535s -> 0.1784s`
+- repeated regex prefilter: `0.6425s -> 0.2147s`
 - both rows now include fresh-process overhead
 - local benchmark note: run `uv run --extra bench python benchmarks/run_hot_query_benchmarks.py` for the fully provisioned path; without the benchmark extras, the fixed-string row records `SKIP` with an install hint instead of crashing
 
@@ -133,9 +133,9 @@ Current repo-map lexical retrieval snapshot:
 
 Current benchmark-governed strengths:
 
-- host-local large-file comparator: `tg search --cpu 0.125s` versus default `tg search 0.240s` in [`artifacts/bench_tool_comparison.json`](artifacts/bench_tool_comparison.json)
-- native CPU benchmark line: with rg fallback disabled for native measurement, `tg --cpu` wins the `large_file_200mb_count` row (`0.076s` vs `0.233s`) and passes all native CPU rows in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
-- native AST search/rewrite beats `sg` on the accepted AST benchmark surfaces in [docs/benchmarks.md](docs/benchmarks.md)
+- native CPU benchmark line: with rg fallback disabled for native measurement, `tg --cpu` wins all four current native CPU rows, including `large_file_200mb_count` (`0.050s` vs `0.199s`) and `many_file_directory` (`0.048s` vs `0.204s`) in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
+- native AST search beats `sg` on the current AST search surfaces in [docs/benchmarks.md](docs/benchmarks.md)
+- AST rewrite remains functional, but the latest `v1.6.3` rewrite apply benchmark failed the `sg` ratio gate and is now a performance follow-up instead of a promoted speed claim
 - repeated-query acceleration remains the strongest warm-path win on unchanged corpora
 
 Current CLI correctness line:
@@ -179,7 +179,7 @@ Important constraint:
 - **Unified Harness API (NEW).** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
 - **NDJSON Streaming Output (NEW).** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
 - **Batch AST Rewrite (NEW).** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.
-- **Fast one-shot rewrite apply (NEW).** The one-shot CLI fast path `tg run --rewrite ... --apply` uses fused single-read direct writes to stay competitive with `sg`. The explicit planned-edit apply path still uses the safer atomic temp-file rename contract.
+- **One-shot rewrite apply (NEW).** The one-shot CLI fast path `tg run --rewrite ... --apply` uses fused single-read direct writes. The explicit planned-edit apply path still uses the safer atomic temp-file rename contract. Current speed claims must follow the latest AST rewrite benchmark gate in [docs/benchmarks.md](docs/benchmarks.md).
 - **Stale-File Detection (NEW).** Before applying rewrite edits, the engine verifies that each file's mtime hasn't changed since planning. Stale files are rejected with a clear error rather than silently applying outdated edits.
 - **Encoding Safety (NEW).** Rewrites preserve UTF-8 BOM and CRLF line endings in non-edited ranges. Binary files are automatically skipped. Large files (>100 MB) are skipped with a warning. Non-ASCII content (CJK, emoji, combining characters) is handled without corruption.
 - **Index Compression (NEW).** The trigram index binary format now uses varint encoding for posting lists, achieving ~73.5% size reduction compared to the legacy format. The compressed format is the default and maintains full backward compatibility.
@@ -341,7 +341,7 @@ Calibrate CPU vs GPU crossover thresholds for your hardware:
 $ tg calibrate
 ```
 
-This measures search performance at various corpus sizes and writes a `.tg_crossover` config file. After calibration, `tg` automatically routes to GPU when the corpus is large enough for GPU to be faster, and stays on CPU otherwise.
+This measures search performance at various corpus sizes and writes a `.tg_crossover` config file. Only rely on automatic GPU routing when that local artifact shows a real end-to-end crossover; the current Windows benchmark keeps GPU search manual-only.
 
 Inspect routable multi-GPU inventory and VRAM sizing:
 
@@ -515,7 +515,7 @@ The `v1.x` line is feature-complete for the current native search, AST, and edit
 
 ### Routing first, forcing later
 
-- use `tg calibrate` before relying on auto GPU routing
+- use `tg calibrate` before considering auto GPU routing, and keep GPU manual-only unless the artifact shows a real crossover
 - use `--gpu-device-ids` only when you have a workload that actually benefits
 - use `--index` for warm repeated-query workflows
 - use `--ndjson` for large result streams
