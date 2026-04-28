@@ -1,6 +1,6 @@
 [package]
 name = "tensor_grep_rs"
-version = "1.6.3"
+version = "1.6.4"
 edition = "2021"
 description = "Rust core engine for tensor-grep"
 license = "MIT"

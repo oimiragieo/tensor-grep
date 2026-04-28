@@ -1,15 +1,20 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.6.4 (2026-04-28)
+
+### Documentation
+
+- Add ast rewrite apply recovery plan
+  ([`7a6521d`](https://github.com/oimiragieo/tensor-grep/commit/7a6521da89204964048325d7121972a89fe57e09))
+
+- Refresh v1.6.3 benchmark snapshot
+  ([`cabf21f`](https://github.com/oimiragieo/tensor-grep/commit/cabf21f2703b143814e564cfefb5e3dfdb44dfa2))
 
 ### Performance Improvements
 
-- Recover the safe one-shot AST rewrite apply fast path for `tg run --rewrite ... --apply`, bringing `artifacts/bench_ast_rewrite.json` back under the `sg` apply ratio gate (`0.831x`).
-
-### Tests
-
-- Add Rust coverage for rewrite apply fast-path eligibility and no-match apply behavior.
+- Recover ast rewrite apply fast path
+  ([`5020602`](https://github.com/oimiragieo/tensor-grep/commit/5020602a051fdef60ce96ad1439d79b6853c9854))
 
 
 ## v1.6.3 (2026-04-27)
