@@ -417,6 +417,8 @@ def can_use_positional_launcher(tg_args: list[str]) -> bool:
         "--invert-match",
         "-c",
         "--count",
+        "-w",
+        "--word-regexp",
         "--cpu",
         "--json",
         "--ndjson",

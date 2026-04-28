@@ -6,6 +6,11 @@
 ### Documentation
 
 - Refresh the v1.6.5 native cold-path benchmark read after the explicit native-binary run passed the frozen Windows regression gate.
+- Add cold-path attribution notes for explicit native-binary, discovered CLI, Python module, and positional word-boundary benchmark lanes.
+
+### Tests
+
+- Cover `-w/--word-regexp` in the positional early-rg benchmark launcher helper so the experimental lane is measured instead of silently falling back to `tg search`.
 
 
 ## v1.6.5 (2026-04-28)

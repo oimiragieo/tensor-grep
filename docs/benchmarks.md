@@ -276,6 +276,27 @@ This supersedes the older rejected read for the current host artifact. The accep
 
 The next widening probe is explicitly rejected and preserved as history rather than code. `artifacts/bench_run_benchmarks_explicit_binary_default_frontdoor_v2_uv.json` broadened the default front door to accept the already-supported `--glob`, `-w`, and `-F` subset. That preserved parity, but it made the default `explicit_binary` line slower than the prior default-front-door artifact and still failed the frozen Windows baseline on 5 scenarios (`Case-Insensitive`, `Regex`, `File Glob Filtering`, `Word Boundary`, and `Fixed Strings`). The accepted read is narrower than “more native is always better”: widening the default front door to more ripgrep-equivalent flags was not the next win for this line.
 
+The 2026-04-28 cold-path attribution refresh keeps that boundary intact. Current research on fast
+CLI design points toward reducing eager command construction and dependency/process overhead, but
+the repo evidence still says to avoid broad default-front-door widening. The measured attribution
+artifact `artifacts/bench_cold_path_attribution_v166_word_boundary.json` separates explicit native
+binary, discovered CLI, and Python module launcher shapes:
+
+- `explicit_binary`: mean `0.270281s`, median `0.234517s`
+- `discovered_cli_binary`: mean `0.415460s`, median `0.387956s`
+- `python_module_launcher`: mean `0.377861s`, median `0.349126s`
+
+The operational read is simple: benchmark claims should keep using the explicit repo native binary.
+On this host, the shell-discovered `tg` command resolved to an older user install, so it is useful
+as an environment-drift warning rather than a release-quality comparator.
+
+The narrow follow-up accepted in this slice is only benchmark-helper coverage for the existing
+positional word-boundary path. `artifacts/bench_run_benchmarks_word_boundary_positional_candidate.json`
+uses `explicit_binary_positional_early_rg` for `-w/--word-regexp`, passes parity on all 10 rows, and
+passes `benchmarks/check_regression.py --baseline auto`. Its aggregate is mean `0.259608s`, median
+`0.243768s`; the word-boundary row measured `rg 0.241s` versus `tg 0.256s`. This is useful
+attribution and a safe experimental-lane fix, not a default launcher promotion.
+
 ### Provider-mode hardcase navigation (`run_provider_navigation_bakeoff.py`)
 
 Measured on the accepted Click-style Python alias-wrapper hardcase pack:
@@ -596,5 +617,6 @@ Operational note: the fixed-string row depends on the benchmark extras (`stringz
 For the cold-path roadmap, the next targets stay narrow and evidence-first:
 
 - keep max-count work limited to parser/routing parity or a cleaner benchmark design, not broad count/max-count front-door widening
+- keep word-boundary work limited to the positional early-rg attribution lane unless a future artifact proves a default-path win
 - investigate the remaining raw-`rg` deltas per row without retrying the already-rejected broader default-front-door widening
 - prioritize attribution before implementation: separate native-binary launcher cost, `rg` subprocess cost, and any row-specific parser/routing overhead before changing the front door again

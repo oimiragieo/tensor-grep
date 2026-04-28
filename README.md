@@ -104,6 +104,7 @@ Current read:
 
 - `rg` remains the cold generic text-search baseline
 - fresh `v1.6.5` cold-path evidence now passes the frozen Windows regression gate (`artifacts/bench_run_benchmarks_v165_control_plane_current.json`, parity PASS on all 10 rows, median `tg_time_s = 0.260132s`)
+- cold-path attribution now confirms benchmark claims should use the explicit repo native binary; shell-discovered `tg` can be stale and is treated as environment-drift evidence
 - `tg search` is near `rg` on the 200MB row, but `git grep --no-index` won that specific host-local row in the latest run
 - host-local peer rows currently include `rg` and `git grep --no-index`; `ag`, `ack`, `ugrep`, and `grep` are omitted on this host because they are not installed
 - native AST search, AST rewrite, repeated-query acceleration, and GPU are separate benchmark surfaces and should not be conflated with cold plain-text search
