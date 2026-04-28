@@ -1254,6 +1254,8 @@ These examples reuse the existing public contracts above; they are not separate 
 
 The MCP server exposes stable tool contracts layered on top of the native CLI outputs.
 
+PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_apply(...)` through the packaged PyO3 Rust extension even when a standalone native `tg` binary is unavailable. Rewrite diff, checkpoint, audit, validation, verify, and other native-only rewrite options still require a standalone native `tg` binary via `TG_NATIVE_TG_BINARY` or an in-tree/release build.
+
 Current tool set:
 
 - `tg_rulesets()`

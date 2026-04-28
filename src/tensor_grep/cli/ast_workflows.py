@@ -52,6 +52,16 @@ def execute_rewrite_apply_json(*args: Any, **kwargs: Any) -> tuple[str, int]:
     return real_func(*args, **kwargs)
 
 
+def execute_rewrite_plan_json(*args: Any, **kwargs: Any) -> tuple[str, int]:
+    """
+    Lazy wrapper for execute_rewrite_plan_json to allow monkeypatching in tests
+    without paying the import cost at module load time.
+    """
+    from tensor_grep.cli.mcp_server import execute_rewrite_plan_json as real_func
+
+    return real_func(*args, **kwargs)
+
+
 def _get_yaml() -> tuple[Any, Any]:
     global _YAML_MODULE, _YAML_LOADER
     if _YAML_MODULE is None or _YAML_LOADER is None:
@@ -522,6 +532,16 @@ def run_command(
     if interactive and not rewrite:
         print("--interactive requires --rewrite.", file=sys.stderr)
         return 1
+
+    if rewrite is not None and not apply and not interactive:
+        rewrite_json, exit_code = execute_rewrite_plan_json(
+            pattern=pattern,
+            replacement=rewrite,
+            lang=lang or "",
+            path=path or ".",
+        )
+        _safe_stdout_line(rewrite_json)
+        return exit_code
 
     if (apply or interactive) and not filter_regex and not interactive:
         if rewrite is None:

@@ -4,6 +4,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -24,6 +25,12 @@ def _venv_tg(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "tg"
 
 
+def _project_dependencies() -> list[str]:
+    pyproject_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    metadata = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    return list(metadata["project"].get("dependencies", []))
+
+
 def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
     resolved_dist = dist_dir.resolve()
     venv_dir = work_dir / ".pypi-smoke-venv"
@@ -33,14 +40,28 @@ def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
 
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
     python_exe = _venv_python(venv_dir)
+    dependencies = _project_dependencies()
+    if dependencies:
+        subprocess.run(
+            [
+                str(python_exe),
+                "-m",
+                "pip",
+                "install",
+                *dependencies,
+            ],
+            check=True,
+        )
     subprocess.run(
         [
             str(python_exe),
             "-m",
             "pip",
             "install",
+            "--no-index",
             "--find-links",
             str(resolved_dist),
+            "--no-deps",
             f"tensor-grep=={version}",
         ],
         check=True,
@@ -61,6 +82,48 @@ def run_smoke_test(*, dist_dir: Path, version: str, work_dir: Path) -> None:
         [
             str(_venv_tg(venv_dir)),
             "--version",
+        ],
+        check=True,
+    )
+    rewrite_smoke_dir = work_dir / "rewrite-smoke"
+    rewrite_smoke_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            str(python_exe),
+            "-c",
+            (
+                "import subprocess, sys; "
+                "from pathlib import Path; "
+                "source = Path(sys.argv[2]); "
+                "source.write_text('def add(x, y): return x + y\\n', encoding='utf-8'); "
+                "result = subprocess.run([sys.argv[1], 'run', '--lang', 'python', "
+                "'--rewrite', 'lambda $$$ARGS: $EXPR', "
+                "'def $F($$$ARGS): return $EXPR', str(source)], "
+                "capture_output=True, text=True, check=True); "
+                "assert 'lambda x, y: x + y' in result.stdout"
+            ),
+            str(_venv_tg(venv_dir)),
+            str(rewrite_smoke_dir / "plan.py"),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            str(python_exe),
+            "-c",
+            (
+                "import subprocess, sys; "
+                "from pathlib import Path; "
+                "source = Path(sys.argv[2]); "
+                "source.write_text('def add(x, y): return x + y\\n', encoding='utf-8'); "
+                "subprocess.run([sys.argv[1], 'run', '--lang', 'python', "
+                "'--rewrite', 'lambda $$$ARGS: $EXPR', '--apply', "
+                "'def $F($$$ARGS): return $EXPR', str(source)], "
+                "capture_output=True, text=True, check=True); "
+                "assert source.read_text(encoding='utf-8') == 'lambda x, y: x + y\\n'"
+            ),
+            str(_venv_tg(venv_dir)),
+            str(rewrite_smoke_dir / "apply.py"),
         ],
         check=True,
     )

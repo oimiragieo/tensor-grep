@@ -163,7 +163,7 @@ Important constraint:
 ## Why should I use `tensor-grep`?
 
 - **Native CPU engine with measured workload-class wins.** The Rust text engine embeds ripgrep's grep crates directly, avoids subprocess overhead in the native path, and adds chunk parallelism for large files. See [docs/tool_comparison.md](docs/tool_comparison.md) and [docs/benchmarks.md](docs/benchmarks.md) for the current measured line.
-- **Native AST search and rewrite.** `tg run` stays fully native for structural search, rewrite planning, diff, apply, and verify.
+- **Native AST search and rewrite.** `tg run` stays fully native for structural search, rewrite planning, diff, apply, and verify. PyPI wheels also expose Rust rewrite plan/apply through the PyO3 extension so simple CLI and MCP rewrite plan/apply paths work even when a standalone native `tg` binary is not installed.
 - **Repeated-query acceleration.** The trigram index gives warm-query wins on unchanged corpora without changing the public search contract.
 - **Harness-first machine interfaces.** JSON, NDJSON, diff, batch rewrite, and MCP are documented and regression-tested. Start with [docs/harness_api.md](docs/harness_api.md) and [docs/harness_cookbook.md](docs/harness_cookbook.md).
 - **Lexical-first repo-map retrieval for AI planning.** Exact symbol queries stay anchored to definition files, camelCase queries bridge to snake_case symbols, and source-term fallback only engages when parser/path signals are weak.

@@ -27,6 +27,7 @@
 2. One-shot apply routing.
 3. Safety contract preservation.
 4. Benchmark recovery and documentation.
+5. PyPI/MCP rewrite plan/apply release smoke recovery.
 
 ## TDD Plan
 
@@ -364,6 +365,34 @@ uv run pytest tests/unit/test_benchmark_docs.py tests/unit/test_benchmark_govern
 ```
 
 Status: public docs updated from the accepted artifact; docs governance validation passed (`27 passed`).
+
+## Task 7: Restore PyPI/MCP Rewrite Plan/Apply Smoke Coverage
+
+**Files:**
+
+- `rust_core/src/lib.rs`
+- `src/tensor_grep/cli/ast_workflows.py`
+- `src/tensor_grep/cli/mcp_server.py`
+- `scripts/smoke_test_pypi_artifacts.py`
+- `tests/unit/test_cli_modes.py`
+- `tests/unit/test_mcp_server.py`
+- `tests/unit/test_smoke_test_pypi_artifacts.py`
+- `README.md`
+- `docs/PAPER.md`
+- `docs/installation.md`
+- `CHANGELOG.md`
+
+**Purpose:** Post-release smoke testing showed the PyPI wheel path could report native Rust features but fail `tg run --rewrite` plan/apply when no standalone native `tg` binary was installed.
+
+TDD status:
+
+- [x] Added a failing CLI test proving `tg run --rewrite` without `--apply` emits a rewrite plan instead of falling into AST search.
+- [x] Added a failing MCP/PyPI-path test proving rewrite apply works through embedded Rust when `resolve_native_tg_binary()` is unavailable.
+- [x] Added a failing Windows console compatibility test for `$$ARGS` variadic metavars.
+- [x] Strengthened the PyPI artifact smoke unit test so release validation checks rewrite plan and apply.
+- [x] Exposed Rust AST rewrite plan/apply via the PyO3 extension.
+- [x] Routed Python CLI and MCP plan/apply through embedded Rust when no standalone native binary exists.
+- [x] Documented the PyPI/MCP boundary and release-smoke fix.
 
 ## CI Checks To Run Before Push
 

@@ -31,17 +31,29 @@ def test_should_run_smoke_install_from_local_dist(tmp_path: Path, monkeypatch):
         work_dir=tmp_path / "work",
     )
 
-    assert len(calls) == 4
+    assert len(calls) == 7
+    expected_python = module._venv_python(tmp_path / "work" / ".pypi-smoke-venv")
     assert calls[0][:3] == [module.sys.executable, "-m", "venv"]
-    assert calls[1][2:6] == [
+    assert calls[1][:4] == [str(expected_python), "-m", "pip", "install"]
+    assert any(dep.startswith("typer") for dep in calls[1])
+    assert calls[2][:8] == [
+        str(expected_python),
+        "-m",
         "pip",
         "install",
+        "--no-index",
         "--find-links",
         str(tmp_path.resolve()),
+        "--no-deps",
     ]
-    assert calls[1][-1] == "tensor-grep==0.11.1"
-    assert calls[2][1] == "-c"
-    assert calls[3][-1] == "--version"
+    assert calls[2][-1] == "tensor-grep==0.11.1"
+    assert calls[3][1] == "-c"
+    assert calls[4][-1] == "--version"
+    assert calls[5][1] == "-c"
+    assert calls[6][1] == "-c"
+    assert "'run'" in calls[5][2]
+    assert "'run'" in calls[6][2]
+    assert "'--apply'" in calls[6][2]
 
 
 def test_should_resolve_linux_tg_shim_path(tmp_path: Path, monkeypatch):

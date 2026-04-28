@@ -3883,6 +3883,57 @@ def test_run_should_report_native_ast_backend_mode_without_gnns(monkeypatch):
     assert "GPU-Accelerated GNNs" not in result.output
 
 
+def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
+    from tensor_grep.cli import ast_workflows
+
+    seen: dict[str, str] = {}
+
+    def _fake_execute_rewrite_plan_json(
+        *,
+        pattern: str,
+        replacement: str,
+        lang: str,
+        path: str,
+    ) -> tuple[str, int]:
+        seen.update({
+            "pattern": pattern,
+            "replacement": replacement,
+            "lang": lang,
+            "path": path,
+        })
+        return '{"total_edits": 1, "edits": []}', 0
+
+    monkeypatch.setattr(ast_workflows, "execute_rewrite_plan_json", _fake_execute_rewrite_plan_json)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text("def add(x, y): return x + y\n", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--lang",
+                "python",
+                "--rewrite",
+                "lambda $$$ARGS: $EXPR",
+                "def $F($$$ARGS): return $EXPR",
+                "a.py",
+            ],
+        )
+
+    assert result.exit_code == 0
+    assert '"total_edits": 1' in result.output
+    assert "Executing " not in result.output
+    assert seen == {
+        "pattern": "def $F($$$ARGS): return $EXPR",
+        "replacement": "lambda $$$ARGS: $EXPR",
+        "lang": "python",
+        "path": "a.py",
+    }
+
+
 def test_ast_rust_language_support_matrix(monkeypatch):
     from tensor_grep.cli.ast_workflows import _select_ast_backend_name_for_pattern
 

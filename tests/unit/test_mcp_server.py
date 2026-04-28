@@ -889,6 +889,53 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
     ]
 
 
+def test_execute_rewrite_apply_json_should_use_embedded_rust_when_native_binary_missing(
+    monkeypatch, tmp_path: Path
+):
+    from tensor_grep.cli import mcp_server
+
+    source = tmp_path / "sample.py"
+    source.write_text("def add(x, y): return x + y\n", encoding="utf-8")
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+
+    payload_json, exit_code = mcp_server.execute_rewrite_apply_json(
+        pattern="def $F($$$ARGS): return $EXPR",
+        replacement="lambda $$$ARGS: $EXPR",
+        lang="python",
+        path=str(source),
+    )
+
+    payload = json.loads(payload_json)
+    assert exit_code == 0
+    assert payload["plan"]["total_edits"] == 1
+    assert payload["plan"]["edits"][0]["replacement_text"] == "lambda x, y: x + y"
+    assert source.read_text(encoding="utf-8") == "lambda x, y: x + y\n"
+
+
+def test_execute_rewrite_plan_json_should_restore_windows_variadic_metavar_escaping(
+    monkeypatch, tmp_path: Path
+):
+    from tensor_grep.cli import mcp_server
+
+    source = tmp_path / "sample.py"
+    source.write_text("def add(x, y): return x + y\n", encoding="utf-8")
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+
+    payload_json, exit_code = mcp_server.execute_rewrite_plan_json(
+        pattern="def $F($$ARGS): return $EXPR",
+        replacement="lambda $$ARGS: $EXPR",
+        lang="python",
+        path=str(source),
+    )
+
+    payload = json.loads(payload_json)
+    assert exit_code == 0
+    assert payload["total_edits"] == 1
+    assert payload["edits"][0]["replacement_text"] == "lambda x, y: x + y"
+
+
 def test_tg_rewrite_apply_supports_optional_verify_flag():
     from tensor_grep.cli import mcp_server
 

@@ -36,6 +36,7 @@ _REWRITE_ROUTING_BACKEND = "AstBackend"
 _REWRITE_ROUTING_REASON = "ast-native"
 _INDEX_ROUTING_BACKEND = "TrigramIndex"
 _INDEX_ROUTING_REASON = "index-accelerated"
+_WINDOWS_VARIADIC_METAVAR_RE = re.compile(r"(?<!\$)\$\$([A-Z][A-Z0-9_]*)")
 
 
 def _repo_root() -> Path:
@@ -260,6 +261,10 @@ def _validate_index_search_inputs(pattern: str, path: str) -> str | None:
     return None
 
 
+def _restore_variadic_metavar_escaping(value: str) -> str:
+    return _WINDOWS_VARIADIC_METAVAR_RE.sub(r"$$$\1", value)
+
+
 def _build_rewrite_command(
     *,
     pattern: str,
@@ -369,6 +374,81 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
     return _normalize_rewrite_json_payload(payload)
 
 
+def _execute_embedded_rewrite_json(
+    *,
+    pattern: str,
+    replacement: str,
+    lang: str,
+    path: str,
+    mode: str,
+) -> str:
+    try:
+        from tensor_grep.rust_core import ast_rewrite_apply_json, ast_rewrite_plan_json
+    except Exception as exc:
+        return _rewrite_error(
+            f"Embedded native rewrite support unavailable: {exc}", code="unavailable"
+        )
+
+    try:
+        if mode == "plan":
+            stdout = ast_rewrite_plan_json(pattern, replacement, lang, path)
+        elif mode == "apply":
+            stdout = ast_rewrite_apply_json(pattern, replacement, lang, path)
+        else:
+            return _rewrite_error(
+                f"Embedded native rewrite mode is unsupported: {mode}",
+                code="unavailable",
+            )
+    except Exception as exc:
+        return _rewrite_error(str(exc), code="invalid_input")
+
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError:
+        return _rewrite_error(
+            "Embedded rewrite command produced invalid JSON output.",
+            code="invalid_output",
+        )
+
+    _record_generated_audit_manifest(payload)
+    return _normalize_rewrite_json_payload(payload)
+
+
+def execute_rewrite_plan_json(
+    *,
+    pattern: str,
+    replacement: str,
+    lang: str,
+    path: str = ".",
+) -> tuple[str, int]:
+    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    if validation_error:
+        return _rewrite_error(validation_error, code="invalid_input"), 1
+    pattern = _restore_variadic_metavar_escaping(pattern)
+    replacement = _restore_variadic_metavar_escaping(replacement)
+
+    if resolve_native_tg_binary() is None:
+        rewrite_json = _execute_embedded_rewrite_json(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+            mode="plan",
+        )
+    else:
+        command = _build_rewrite_command(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+            mode="plan",
+        )
+        rewrite_json = _execute_rewrite_json_command(command)
+
+    rewrite_payload = json.loads(rewrite_json)
+    return rewrite_json, 1 if rewrite_payload.get("error") else 0
+
+
 def execute_rewrite_apply_json(
     *,
     pattern: str,
@@ -392,6 +472,8 @@ def execute_rewrite_apply_json(
     validation_error = _validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input"), 1
+    pattern = _restore_variadic_metavar_escaping(pattern)
+    replacement = _restore_variadic_metavar_escaping(replacement)
 
     loaded_policy = None
     if policy is not None:
@@ -424,20 +506,38 @@ def execute_rewrite_apply_json(
                 1,
             )
 
-    command = _build_rewrite_command(
-        pattern=pattern,
-        replacement=replacement,
-        lang=lang,
-        path=path,
-        mode="apply",
-        verify=verify,
-        checkpoint=checkpoint,
-        audit_manifest=audit_manifest,
-        audit_signing_key=audit_signing_key,
-        lint_cmd=None if loaded_policy is not None else lint_cmd,
-        test_cmd=None if loaded_policy is not None else test_cmd,
-    )
-    rewrite_json = _execute_rewrite_json_command(command)
+    if resolve_native_tg_binary() is None:
+        if verify or checkpoint or audit_manifest or audit_signing_key or lint_cmd or test_cmd:
+            return (
+                _rewrite_error(
+                    "Standalone native tg binary is required for verify, checkpoint, "
+                    "audit, lint, or test rewrite apply options.",
+                    code="unavailable",
+                ),
+                1,
+            )
+        rewrite_json = _execute_embedded_rewrite_json(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+            mode="apply",
+        )
+    else:
+        command = _build_rewrite_command(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+            mode="apply",
+            verify=verify,
+            checkpoint=checkpoint,
+            audit_manifest=audit_manifest,
+            audit_signing_key=audit_signing_key,
+            lint_cmd=None if loaded_policy is not None else lint_cmd,
+            test_cmd=None if loaded_policy is not None else test_cmd,
+        )
+        rewrite_json = _execute_rewrite_json_command(command)
     rewrite_payload = json.loads(rewrite_json)
     if rewrite_payload.get("error"):
         return rewrite_json, 1

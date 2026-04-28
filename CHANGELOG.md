@@ -1,6 +1,15 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Restore PyPI wheel AST rewrite plan/apply behavior when no standalone native `tg` binary is present.
+- Strengthen PyPI artifact smoke coverage so future releases exercise `tg run --rewrite` plan and apply paths before publish.
+- Normalize Windows console-script variadic metavars that arrive as `$$ARGS` back to native AST `$$$ARGS` form.
+
+
 ## v1.6.4 (2026-04-28)
 
 ### Documentation

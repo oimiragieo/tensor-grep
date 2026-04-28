@@ -17,6 +17,7 @@ pub mod rg_passthrough;
 pub mod routing;
 pub mod runtime_paths;
 
+use crate::backend_ast::AstBackend;
 use crate::backend_cpu::CpuBackend;
 use arrow_array::Array;
 use arrow_array::StringArray;
@@ -92,6 +93,51 @@ fn read_mmap_to_arrow_chunked(
     }
 
     Ok(py_chunks)
+}
+
+fn rewrite_error(err: impl std::fmt::Display) -> PyErr {
+    pyo3::exceptions::PyRuntimeError::new_err(format!("AST rewrite failed: {err}"))
+}
+
+/// Return native AST rewrite plan JSON through the PyO3 wheel extension.
+#[pyfunction]
+fn ast_rewrite_plan_json(
+    pattern: &str,
+    replacement: &str,
+    lang: &str,
+    path: &str,
+) -> PyResult<String> {
+    let backend = AstBackend::new();
+    let plan = backend
+        .plan_rewrites(pattern, replacement, lang, path)
+        .map_err(rewrite_error)?;
+    serde_json::to_string_pretty(&plan).map_err(rewrite_error)
+}
+
+/// Apply native AST rewrites through the PyO3 wheel extension.
+#[pyfunction]
+fn ast_rewrite_apply_json(
+    pattern: &str,
+    replacement: &str,
+    lang: &str,
+    path: &str,
+) -> PyResult<String> {
+    let backend = AstBackend::new();
+    let plan = backend
+        .plan_and_apply(pattern, replacement, lang, path)
+        .map_err(rewrite_error)?;
+    let payload = serde_json::json!({
+        "version": plan.version,
+        "routing_backend": plan.routing_backend,
+        "routing_reason": plan.routing_reason,
+        "sidecar_used": plan.sidecar_used,
+        "checkpoint": null,
+        "audit_manifest": null,
+        "plan": &plan,
+        "verification": null,
+        "validation": null,
+    });
+    serde_json::to_string_pretty(&payload).map_err(rewrite_error)
 }
 
 /// Python bindings for the Rust CPU backend
@@ -220,5 +266,7 @@ fn rust_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RustBackend>()?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow, m)?)?;
     m.add_function(wrap_pyfunction!(read_mmap_to_arrow_chunked, m)?)?;
+    m.add_function(wrap_pyfunction!(ast_rewrite_plan_json, m)?)?;
+    m.add_function(wrap_pyfunction!(ast_rewrite_apply_json, m)?)?;
     Ok(())
 }
