@@ -16,6 +16,8 @@ Recommended next work: recover the native AST rewrite apply benchmark gate.
 
 This matters because AST rewrite is a core AI-harness editing surface. Correctness exists, but performance credibility is currently weaker than the public product story should allow.
 
+Implementation update (2026-04-28): the safe one-shot apply fast path recovered the standard local gate. `artifacts/bench_ast_rewrite.json` measured `tg 0.534s` vs `sg 0.643s` (`0.831x`, passed) across 50,000 rewrites and 1,000 files.
+
 ## Business Objective
 
 Restore a benchmark-governed AST rewrite apply claim so `tensor-grep` can credibly position itself as an agent-friendly search and edit substrate, not just a structural search tool.
@@ -60,10 +62,9 @@ FR4. Prefer a safe fast path only for simple one-shot apply shapes where contrac
 - `--diff` is not set.
 - no checkpoint or audit manifest is requested.
 - no edit-id filtering is requested.
-- no interactive flow is requested.
 - no JSON output is requested.
 - no validation, verification, lint command, or test command is requested.
-- no rewrite filter is requested.
+- no future rewrite filter or interactive flow is requested if those flags are introduced later.
 
 FR5. Keep stale-file, overlap rejection, BOM/CRLF, binary-file skip, UTF-8 boundary, and large-file protections intact.
 
@@ -91,7 +92,7 @@ NFR5. The implementation must be small enough to review and revert.
 | AC2 | Eligible fast-path output is equivalent to the current plan-first path for the simple apply surface. | New parity test comparing byte-for-byte file edits, exit codes, stdout/stderr summaries, no-match behavior, and overlap reporting between plan-first and fast-path modes. |
 | AC3 | Dry-run plan output is unchanged. | Existing `rust_core/tests/test_ast_rewrite.rs`; add fixture if fast-path extraction changes plan code. |
 | AC4 | `--diff` output is unchanged. | Existing rewrite diff tests plus focused `tg run --rewrite ... --diff` CLI test. |
-| AC5 | Checkpoint, audit, JSON, filter, interactive, lint/test, verify, and validation paths do not use unsafe fast path. | New Rust or e2e tests for fast-path ineligibility when those flags are present. |
+| AC5 | Checkpoint, audit, JSON, selector, lint/test, verify, validation, batch rewrite, and any future filter/interactive paths do not use unsafe fast path. | New Rust or e2e tests for fast-path ineligibility when those flags are present. |
 | AC6 | Rewrite safety contracts remain intact. | Existing BOM/CRLF/binary/stale/overlap tests in Rust AST rewrite coverage plus a write-failure test that proves no silent partial success. |
 | AC7 | Benchmark gate passes or records a measured rejection against a same-machine baseline. | Run `python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite_baseline.json` before implementation and `python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite.json` after implementation; target `ratio_tg_vs_sg <= 1.1` and no plan/diff median regression greater than 10% without documented reason. |
 | AC8 | No repo-wide regression. | `uv run ruff check .`, `uv run mypy src/tensor_grep`, `uv run pytest -q`, Rust `cargo fmt --check`, Rust clippy/tests, and relevant benchmark reruns. |
@@ -117,9 +118,9 @@ NFR5. The implementation must be small enough to review and revert.
 | Risk | Mitigation |
 | --- | --- |
 | Fast path bypasses safety behavior. | Gate it with an explicit eligibility predicate and tests for every excluded flag. |
-| Benchmark win only appears locally. | Run same benchmark, same artifact, and CI benchmark-regression before publishing claims. |
+| Benchmark win only appears locally. | Run same benchmark and same artifact before publishing claims. Current CI does not enforce `run_ast_rewrite_benchmarks.py`, so local artifact review is mandatory unless CI is intentionally extended later. |
 | JSON/audit/checkpoint contracts drift. | Keep those paths on existing plan-first implementation until separately designed. |
-| Destructive writes fail halfway through a run. | Require non-zero exit, no false success summary, clear failure reporting, and no weaker per-file atomicity than the current plan-first apply path. |
+| Destructive writes fail halfway through a run. | Require non-zero exit, no false success summary, and clear failure reporting. The fast path explicitly accepts existing direct-write per-file semantics; the atomic temp-file rename contract remains on the plan-first path. |
 | `sg` comparator changes or PATH resolves wrong binary. | Use resolver checks already in benchmark scripts and record `sg_binary` in artifact. |
 | Large docs/paper claims go stale again. | Update public docs only after accepted artifacts, and preserve rejected attempts in `docs/PAPER.md`. |
 
@@ -127,7 +128,7 @@ NFR5. The implementation must be small enough to review and revert.
 
 Repository evidence:
 
-- `README.md` and `docs/tool_comparison.md` now mark AST rewrite apply as a performance follow-up.
+- `README.md` and `docs/tool_comparison.md` now carry the recovered AST rewrite apply benchmark line.
 - `docs/benchmarks.md` records the failed `v1.6.3` rewrite gate.
 - `docs/PAPER.md` preserves the failed benchmark line and demotes prior rewrite-speed claims to historical context.
 - `benchmarks/run_ast_rewrite_benchmarks.py` provides the governing artifact and threshold.
@@ -139,5 +140,6 @@ Current research:
 - ast-grep official docs position `run`, `scan`, `test`, and `--update-all` as the relevant structural rewrite comparator: https://ast-grep.github.io/reference/cli.html
 - ast-grep performance guidance emphasizes profiling, reducing duplicate tree traversal, and using selective matching: https://ast-grep.github.io/blog/optimize-ast-grep.html
 - Current public codemod benchmarks show ast-grep remains a strong rewrite baseline, so beating or matching it is commercially meaningful: https://github.com/codemod/benchmark
+- A current developer-community signal reinforces AST tooling value for AI agents, but also shows agent workflows need explicit, reliable structural tooling rather than vague "use ast-grep" prompts: https://www.reddit.com/r/ClaudeAI/comments/1lefmff/caludecode_can_use_astgrep_to_improve_search/
 - Tree-sitter Rust docs support parser/tree reuse and incremental parsing as relevant future design options, but this slice should first remove avoidable one-shot apply overhead: https://github.com/tree-sitter/tree-sitter/blob/master/lib/binding_rust/README.md
-- GPU regex research remains relevant but deferred: BitGen, RAPIDS cuDF Glushkov NFA work, and arXiv regex testing all point to future GPU work, not this immediate fix.
+- GPU regex research remains relevant but deferred: BitGen, RAPIDS cuDF Glushkov NFA work, and arXiv regex testing all point to future GPU work, not this immediate fix: https://github.com/getianao/BitGen, https://github.com/rapidsai/cudf/pull/21936, https://arxiv.org/abs/2305.18575

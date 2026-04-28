@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Performance Improvements
+
+- Recover the safe one-shot AST rewrite apply fast path for `tg run --rewrite ... --apply`, bringing `artifacts/bench_ast_rewrite.json` back under the `sg` apply ratio gate (`0.831x`).
+
+### Tests
+
+- Add Rust coverage for rewrite apply fast-path eligibility and no-match apply behavior.
+
+
 ## v1.6.3 (2026-04-27)
 
 ### Bug Fixes

@@ -135,7 +135,7 @@ Current benchmark-governed strengths:
 
 - native CPU benchmark line: with rg fallback disabled for native measurement, `tg --cpu` wins all four current native CPU rows, including `large_file_200mb_count` (`0.050s` vs `0.199s`) and `many_file_directory` (`0.048s` vs `0.204s`) in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
 - native AST search beats `sg` on the current AST search surfaces in [docs/benchmarks.md](docs/benchmarks.md)
-- AST rewrite remains functional, but the latest `v1.6.3` rewrite apply benchmark failed the `sg` ratio gate and is now a performance follow-up instead of a promoted speed claim
+- AST rewrite remains functional and the one-shot apply path is back under the `sg` ratio gate on the current local benchmark (`0.831x` in `artifacts/bench_ast_rewrite.json`)
 - repeated-query acceleration remains the strongest warm-path win on unchanged corpora
 
 Current CLI correctness line:
@@ -179,7 +179,7 @@ Important constraint:
 - **Unified Harness API (NEW).** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
 - **NDJSON Streaming Output (NEW).** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
 - **Batch AST Rewrite (NEW).** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.
-- **One-shot rewrite apply (NEW).** The one-shot CLI fast path `tg run --rewrite ... --apply` uses fused single-read direct writes. The explicit planned-edit apply path still uses the safer atomic temp-file rename contract. Current speed claims must follow the latest AST rewrite benchmark gate in [docs/benchmarks.md](docs/benchmarks.md).
+- **One-shot rewrite apply (NEW).** The one-shot CLI fast path `tg run --rewrite ... --apply` uses fused single-read direct writes for safe simple apply shapes. The explicit planned-edit apply path still uses the safer atomic temp-file rename contract, and contract-heavy paths such as JSON, diff, checkpoint, audit, validation, verify, selector, and batch rewrite stay on the plan-first path. Current speed claims follow the AST rewrite benchmark gate in [docs/benchmarks.md](docs/benchmarks.md).
 - **Stale-File Detection (NEW).** Before applying rewrite edits, the engine verifies that each file's mtime hasn't changed since planning. Stale files are rejected with a clear error rather than silently applying outdated edits.
 - **Encoding Safety (NEW).** Rewrites preserve UTF-8 BOM and CRLF line endings in non-edited ranges. Binary files are automatically skipped. Large files (>100 MB) are skipped with a warning. Non-ASCII content (CJK, emoji, combining characters) is handled without corruption.
 - **Index Compression (NEW).** The trigram index binary format now uses varint encoding for posting lists, achieving ~73.5% size reduction compared to the legacy format. The compressed format is the default and maintains full backward compatibility.

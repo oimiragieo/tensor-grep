@@ -256,7 +256,7 @@ These are the external baselines for the current line. They are workload-class a
 The accepted product read for the current line is workload-specific:
 
 - `tensor-grep` is not yet better than `ripgrep` on raw cold plain-text search
-- native Rust AST search is ahead of `ast-grep`; rewrite remains the right comparison surface, but the latest apply-speed gate failed and should not be promoted as a win
+- native Rust AST search is ahead of `ast-grep`; the one-shot rewrite apply path is also back under the `sg` ratio gate on the latest same-repo control artifact
 - `Semgrep` remains the stronger policy/security ecosystem benchmark
 - `Zoekt` remains the indexed repeated-query/search-at-scale benchmark
 
@@ -488,14 +488,14 @@ still keeps `rg` as the default baseline path where routing selects it.
 
 | Scenario | tensor-grep | Result |
 | --- | --- | --- |
-| plan median | 0.441s | PASS |
-| diff median | 0.492s | PASS |
-| apply median | 1.429s | Gate FAIL |
-| `sg` apply median | 0.819s | comparison |
+| plan median | 0.435s | PASS |
+| diff median | 0.479s | PASS |
+| apply median | 0.534s | Gate PASS |
+| `sg` apply median | 0.643s | comparison |
 | total rewrites | 50,000 | completed |
-| `tg/sg` apply ratio | 1.745x | slower than `sg` |
+| `tg/sg` apply ratio | 0.831x | faster than `sg` |
 
-The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails when `tg` is more than 10% slower than `sg` on the apply phase. The current `v1.6.3` rerun is therefore a real performance follow-up, not a promoted rewrite speed claim.
+The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails when `tg` is more than 10% slower than `sg` on the apply phase. The current accepted local artifact is `artifacts/bench_ast_rewrite.json`; it passes the apply gate with `ratio_tg_vs_sg = 0.831`. The broader contract remains narrow: JSON, diff, checkpoint, audit, validation, verify, selector, and batch rewrite stay on the plan-first path.
 
 ### Editor-plane context render (`run_context_render_benchmarks.py`)
 

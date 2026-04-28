@@ -216,32 +216,6 @@ fn resolve_ripgrep_binary_uncached() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn resolve_ripgrep_binary_uses_cached_value_after_first_lookup() {
-        let cache = OnceLock::new();
-        let calls = AtomicUsize::new(0);
-        let expected = PathBuf::from("rg-a.exe");
-
-        let first = resolve_ripgrep_binary_with_cache(&cache, || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Some(expected.clone())
-        });
-        let second = resolve_ripgrep_binary_with_cache(&cache, || {
-            calls.fetch_add(1, Ordering::SeqCst);
-            Some(PathBuf::from("rg-b.exe"))
-        });
-
-        assert_eq!(first, Some(expected.clone()));
-        assert_eq!(second, Some(expected));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-}
-
 fn env_flag_enabled(name: &str) -> bool {
     env::var(name)
         .map(|value| {
@@ -271,4 +245,30 @@ fn rg_path_candidates() -> Vec<PathBuf> {
     }
 
     candidates
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn resolve_ripgrep_binary_uses_cached_value_after_first_lookup() {
+        let cache = OnceLock::new();
+        let calls = AtomicUsize::new(0);
+        let expected = PathBuf::from("rg-a.exe");
+
+        let first = resolve_ripgrep_binary_with_cache(&cache, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Some(expected.clone())
+        });
+        let second = resolve_ripgrep_binary_with_cache(&cache, || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Some(PathBuf::from("rg-b.exe"))
+        });
+
+        assert_eq!(first, Some(expected.clone()));
+        assert_eq!(second, Some(expected));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 }

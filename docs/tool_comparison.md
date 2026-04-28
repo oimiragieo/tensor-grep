@@ -21,7 +21,7 @@ The current public comparison story is anchored to rerunnable artifacts, not one
 | Cold generic text search | `ripgrep` | `rg` remains the baseline on the current release line. `tg search` keeps CLI contract parity, but the current cold-path rerun does not beat `rg` on this Windows host. | `artifacts/bench_run_benchmarks.json`, [benchmarks.md](benchmarks.md) |
 | Host-local CLI comparison | `ripgrep`, `git grep --no-index` | On the current host, `rg` wins the standard-corpus row, while `git grep --no-index` narrowly wins the 200MB large-file row. `tg` stays close on the 200MB row but is not the leader. | `artifacts/bench_tool_comparison.json` |
 | Native CPU text search | `ripgrep` | With rg fallback disabled for native measurement, the current `tg --cpu` rerun wins all four native CPU rows, including count-heavy and many-file probes. | `artifacts/bench_run_native_cpu_benchmarks.json`, [benchmarks.md](benchmarks.md) |
-| AST search and rewrite | `ast-grep` | `tg` is ahead on AST search (`0.135s` vs `0.180s`, `0.754x`), but the latest AST rewrite apply gate failed (`1.429s` vs `0.819s`, `1.745x`). | [benchmarks.md](benchmarks.md) |
+| AST search and rewrite | `ast-grep` | `tg` is ahead on AST search (`0.135s` vs `0.180s`, `0.754x`) and the recovered one-shot rewrite apply path is back under the `sg` gate (`0.534s` vs `0.643s`, `0.831x`). | [benchmarks.md](benchmarks.md) |
 | Repeated query on unchanged corpora | cold grep-style tools | `tg` wins after warm index reuse. This is a different workload class from one-shot cold scans. | `artifacts/bench_hot_query_benchmarks.json` |
 | Policy and security scanning | `Semgrep` | `Semgrep` remains the stronger ecosystem baseline today. | [benchmarks.md](benchmarks.md) |
 | Indexed search at repository scale | `Zoekt` | `Zoekt` remains the search-at-scale baseline. `tg` currently publishes local repeated-query wins rather than an accepted direct Zoekt bakeoff. | [benchmarks.md](benchmarks.md) |
@@ -59,7 +59,7 @@ They are medians over three timed samples after one warmup run on this Windows h
 
 ## Where `tensor-grep` Is Stronger
 
-- Native AST search and functional AST rewrite workflows; latest apply-vs-`sg` speed gate needs follow-up
+- Native AST search and benchmark-recovered one-shot AST rewrite apply workflows
 - Warm repeated-query search on unchanged corpora
 - Machine-readable CLI, NDJSON, session, and MCP surfaces for agent workflows
 - Output-side replacement for text search plus real AST-backed rewrite application

@@ -988,12 +988,201 @@ fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepS
 mod tests {
     use super::*;
 
+    fn parse_run_args(tokens: &[&str]) -> RunArgs {
+        use clap::Parser;
+        let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
+        let cli = CommandCli::try_parse_from(&raw_args).expect("expected CLI args to parse");
+        match cli.command {
+            Commands::Run(args) => args,
+            _ => panic!("expected run command"),
+        }
+    }
+
     fn parse_args(tokens: &[&str]) -> RipgrepSearchArgs {
-        let raw_args = tokens
-            .iter()
-            .map(|token| OsString::from(token))
-            .collect::<Vec<_>>();
+        let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
         parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
+    }
+
+    #[test]
+    fn one_shot_apply_fast_path_is_only_enabled_for_safe_simple_apply() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(can_use_one_shot_apply_fast_path(&args));
+
+        let diff = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--diff",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&diff));
+
+        let json = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--json",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&json));
+
+        let verify = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--verify",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&verify));
+
+        let checkpoint = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--checkpoint",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&checkpoint));
+
+        let audit = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--audit-manifest",
+            "audit.json",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&audit));
+
+        let selector = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--apply-edit-ids",
+            "e0000:fixture.py:0:1",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&selector));
+
+        let reject_selector = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--reject-edit-ids",
+            "e0000:fixture.py:0:1",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&reject_selector));
+
+        let validation = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--lint-cmd",
+            "echo lint",
+            "--test-cmd",
+            "echo test",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&validation));
+
+        let batch = parse_run_args(&[
+            "tg",
+            "run",
+            "--batch-rewrite",
+            "batch-rewrite.json",
+            "--apply",
+            "fixture.py",
+        ]);
+        assert!(!can_use_one_shot_apply_fast_path(&batch));
+    }
+
+    #[test]
+    fn simple_apply_selects_one_shot_apply_fast_path() {
+        let args = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+
+        assert_eq!(
+            select_rewrite_apply_mode(&args),
+            RewriteApplyMode::OneShotFastPath
+        );
+
+        let json = parse_run_args(&[
+            "tg",
+            "run",
+            "--lang",
+            "python",
+            "--rewrite",
+            "lambda $$$ARGS: $EXPR",
+            "--apply",
+            "--json",
+            "def $F($$$ARGS): return $EXPR",
+            "fixture.py",
+        ]);
+
+        assert_eq!(
+            select_rewrite_apply_mode(&json),
+            RewriteApplyMode::PlanThenApply
+        );
     }
 
     #[test]
@@ -2879,6 +3068,36 @@ fn validate_run_args(args: &RunArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RewriteApplyMode {
+    PlanThenApply,
+    OneShotFastPath,
+}
+
+fn can_use_one_shot_apply_fast_path(args: &RunArgs) -> bool {
+    args.rewrite.is_some()
+        && args.batch_rewrite.is_none()
+        && args.apply
+        && !args.diff
+        && !args.json
+        && !args.verify
+        && args.lint_cmd.is_none()
+        && args.test_cmd.is_none()
+        && !args.checkpoint
+        && args.audit_manifest.is_none()
+        && args.audit_signing_key.is_none()
+        && args.apply_edit_ids.is_empty()
+        && args.reject_edit_ids.is_empty()
+}
+
+fn select_rewrite_apply_mode(args: &RunArgs) -> RewriteApplyMode {
+    if can_use_one_shot_apply_fast_path(args) {
+        RewriteApplyMode::OneShotFastPath
+    } else {
+        RewriteApplyMode::PlanThenApply
+    }
+}
+
 fn checkpoint_timestamp_string() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3825,8 +4044,16 @@ fn handle_ast_rewrite_apply(
     }
 
     let pattern = run_pattern(args)?;
-    let plan = backend.plan_rewrites(pattern, replacement, &args.lang, path)?;
-    let plan = filter_rewrite_plan(&plan, args)?;
+    let apply_mode = select_rewrite_apply_mode(args);
+    let plan = match apply_mode {
+        RewriteApplyMode::OneShotFastPath => {
+            backend.plan_and_apply(pattern, replacement, &args.lang, path)?
+        }
+        RewriteApplyMode::PlanThenApply => {
+            let plan = backend.plan_rewrites(pattern, replacement, &args.lang, path)?;
+            filter_rewrite_plan(&plan, args)?
+        }
+    };
 
     if plan.edits.is_empty() && plan.rejected_overlaps.is_empty() {
         eprintln!("[rewrite] no matches found, nothing to rewrite");
@@ -3850,7 +4077,9 @@ fn handle_ast_rewrite_apply(
         None
     };
 
-    AstBackend::apply_rewrites(&plan)?;
+    if apply_mode == RewriteApplyMode::PlanThenApply {
+        AstBackend::apply_rewrites(&plan)?;
+    }
 
     if !plan.rejected_overlaps.is_empty() {
         eprintln!(

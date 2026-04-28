@@ -1612,7 +1612,7 @@ fn test_routing_native_editor_plane_commands() {
     let dir = tempdir().unwrap();
     let python_wrapper = write_python_wrapper(dir.path());
 
-    for command in vec!["defs", "refs", "context"] {
+    for command in ["defs", "refs", "context"] {
         let output = tg()
             .current_dir(repo_root())
             .arg(command)
@@ -1639,7 +1639,7 @@ fn test_routing_native_editor_plane_commands() {
 
 #[test]
 fn test_routing_ast_workflow_commands_are_native() {
-    for command in vec!["scan", "test", "new"] {
+    for command in ["scan", "test", "new"] {
         let output = tg().arg(command).arg("--help").output().unwrap();
 
         let stdout = String::from_utf8_lossy(&output.stdout);

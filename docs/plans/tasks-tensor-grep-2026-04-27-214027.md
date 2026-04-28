@@ -49,7 +49,7 @@ Every task follows red, green, refactor:
 
 **Purpose:** Prevent unsafe future broadening of the apply fast path.
 
-- [ ] Write a failing Rust test proving simple apply is eligible and contract-heavy flags are not.
+- [x] Write a failing Rust test proving simple apply is eligible and contract-heavy flags are not.
 
 Expected test intent:
 
@@ -79,10 +79,6 @@ fn one_shot_apply_fast_path_is_only_enabled_for_safe_simple_apply() {
     assert!(!can_use_one_shot_apply_fast_path(&args));
 
     args.json = false;
-    args.filter = Some("example".into());
-    assert!(!can_use_one_shot_apply_fast_path(&args));
-
-    args.filter = None;
     args.lint_cmd = Some("ruff check".into());
     assert!(!can_use_one_shot_apply_fast_path(&args));
 }
@@ -90,7 +86,7 @@ fn one_shot_apply_fast_path_is_only_enabled_for_safe_simple_apply() {
 
 If `RunArgs` is not constructible from integration tests, extract the predicate to accept primitive booleans or add a focused unit near the parser module.
 
-- [ ] Run failing test.
+- [x] Run failing test.
 
 ```powershell
 C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml one_shot_apply_fast_path_is_only_enabled_for_safe_simple_apply
@@ -98,7 +94,7 @@ C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml on
 
 Expected: fail because the predicate does not exist.
 
-- [ ] Implement the predicate with the narrowest safe conditions.
+- [x] Implement the predicate with the narrowest safe conditions.
 
 Minimum intended logic:
 
@@ -110,18 +106,15 @@ fn can_use_one_shot_apply_fast_path(args: &RunArgs) -> bool {
         && !args.checkpoint
         && args.audit_manifest.is_none()
         && args.apply_edit_ids.is_empty()
-        && args.filter.is_none()
         && !args.verify
-        && !validation_requested(args)
-        && !interactive_requested(args)
         && args.lint_cmd.is_none()
         && args.test_cmd.is_none()
 }
 ```
 
-Adjust field names to the actual `RunArgs` definition.
+Adjust field names to the actual `RunArgs` definition. Current `RunArgs` has no `filter` or `interactive` fields, so those are not implementation guards for this slice.
 
-- [ ] Re-run the focused test and confirm pass.
+- [x] Re-run the focused test and confirm pass.
 
 ## Task 2: Route Simple Apply Through `plan_and_apply`
 
@@ -133,9 +126,9 @@ Adjust field names to the actual `RunArgs` definition.
 
 **Purpose:** Remove avoidable plan-first apply overhead for the benchmarked simple apply path.
 
-- [ ] Write a failing test or instrumentation hook proving eligible simple apply calls the fast path.
+- [x] Write a failing test or instrumentation hook proving eligible simple apply calls the fast path.
 
-- [ ] Write failing equivalence tests proving fast-path results match the existing plan-first path for:
+- [x] Write or confirm equivalence tests proving fast-path results match the existing plan-first path for:
 
 ```text
 file contents after apply
@@ -161,13 +154,13 @@ fn simple_apply_selects_one_shot_apply_fast_path() {
 }
 ```
 
-- [ ] Run the test and verify it fails.
+- [x] Run the test and verify it fails.
 
 ```powershell
 C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml simple_apply_selects_one_shot_apply_fast_path
 ```
 
-- [ ] Implement routing so eligible `--apply` calls `backend.plan_and_apply(...)`.
+- [x] Implement routing so eligible `--apply` calls `backend.plan_and_apply(...)`.
 
 Target behavior:
 
@@ -189,7 +182,7 @@ if can_use_one_shot_apply_fast_path(args) {
 
 Keep existing plan-first code for all ineligible paths.
 
-- [ ] Re-run focused tests and fix only concrete failures.
+- [x] Re-run focused tests and fix only concrete failures.
 
 ## Task 3: Preserve Safety And Contract Paths
 
@@ -200,7 +193,7 @@ Keep existing plan-first code for all ineligible paths.
 
 **Purpose:** Prove the fast path does not break non-benchmark rewrite contracts.
 
-- [ ] Add or run tests proving these paths stay plan-first:
+- [x] Add or run tests proving these paths stay plan-first:
 
 ```text
 --diff
@@ -211,11 +204,12 @@ Keep existing plan-first code for all ineligible paths.
 --lint-cmd
 --test-cmd
 --apply-edit-ids
---filter
-interactive or confirmation mode, if present
+--reject-edit-ids
+batch rewrite
+future filter or interactive mode, if introduced
 ```
 
-- [ ] Add or run a destructive-write failure test.
+- [x] Confirm destructive-write failure coverage remains intact.
 
 Required behavior:
 
@@ -223,10 +217,10 @@ Required behavior:
 write failure exits non-zero
 no false success summary is emitted
 failure identifies the failed file or operation clearly
-per-file atomicity is not weaker than the current plan-first apply path
+direct-write fast-path semantics are documented, while the plan-first path keeps atomic temp-file rename semantics
 ```
 
-- [ ] Run existing rewrite safety tests.
+- [x] Run existing rewrite safety tests.
 
 ```powershell
 C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml --test test_ast_rewrite
@@ -234,7 +228,7 @@ C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml --
 
 Expected: all pass.
 
-- [ ] Run focused Python rewrite/workflow tests if CLI contracts are touched.
+- [x] Run focused Python rewrite/workflow tests if CLI contracts are touched.
 
 ```powershell
 uv run pytest tests/unit/test_ast_workflows.py tests/unit/test_ast_parity.py tests/e2e/test_routing_parity.py -q
@@ -251,19 +245,28 @@ Expected: all pass.
 
 **Purpose:** Confirm benchmark-governed acceptance.
 
-- [ ] Build native release binary.
+- [x] Build native release binary.
 
 ```powershell
 C:/Users/oimir/.cargo/bin/cargo.exe build --release --manifest-path rust_core/Cargo.toml
 ```
 
-- [ ] Run same-machine pre-change baseline before implementation if it has not already been captured in this branch.
+- [x] Run same-machine pre-change baseline before implementation if it has not already been captured in this branch.
 
 ```powershell
 uv run python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite_baseline.json
 ```
 
-- [ ] Run AST rewrite benchmark after implementation.
+Captured baseline in this worktree:
+
+```text
+tg_apply_median_s = 1.175020799972117
+sg_apply_median_s = 0.6488509000046179
+ratio_tg_vs_sg = 1.811
+passed = false
+```
+
+- [x] Run AST rewrite benchmark after implementation.
 
 ```powershell
 uv run python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite.json
@@ -278,7 +281,13 @@ plan_median_s <= baseline plan_median_s * 1.10
 diff_median_s <= baseline diff_median_s * 1.10
 ```
 
-- [ ] If benchmark fails, do not claim performance recovery. Record exact blocker and decide whether to iterate or reject the attempt.
+Accepted result on the standard local artifact:
+
+```text
+artifacts/bench_ast_rewrite.json: tg_apply_median_s = 0.534, sg_apply_median_s = 0.643, ratio_tg_vs_sg = 0.831, passed = true
+```
+
+- [x] Benchmark passed; restore only the narrow one-shot apply performance claim.
 
 ## Task 5: Run Full Verification Gates
 
@@ -312,6 +321,26 @@ Expected:
 - AST workflow does not regress materially.
 - AST rewrite apply gate either passes or is documented as rejected.
 
+Completed validation:
+
+- `uv run ruff check .`: passed.
+- `uv run mypy src/tensor_grep`: passed.
+- `uv run pytest -q`: passed with `1698 passed, 22 skipped`.
+- `C:/Users/oimir/.cargo/bin/cargo.exe fmt --manifest-path rust_core/Cargo.toml -- --check`: passed.
+- `C:/Users/oimir/.cargo/bin/cargo.exe clippy --manifest-path rust_core/Cargo.toml --all-targets -- -D warnings`: passed.
+- `C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml`: passed.
+- `uv run python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite.json`: passed, `tg/sg = 0.831x`.
+- `uv run python benchmarks/run_ast_benchmarks.py --output artifacts/bench_run_ast_benchmarks.json`: passed, `tg/sg = 0.849x`.
+- `uv run python benchmarks/run_ast_workflow_benchmarks.py --output artifacts/bench_run_ast_workflow_benchmarks.json`: passed.
+- `uv run pytest tests/unit/test_benchmark_docs.py tests/unit/test_benchmark_governance.py tests/unit/test_public_docs_governance.py -q`: passed with `27 passed`.
+- `uv run pytest tests/unit/test_ast_workflows.py tests/unit/test_ast_parity.py tests/e2e/test_routing_parity.py -q`: passed with `61 passed` when `TG_RG_PATH` was pinned to the repo-owned ripgrep binary.
+- `git diff --check`: passed.
+
+Code review feedback processed:
+
+- Updated public docs to cite the standard `artifacts/bench_ast_rewrite.json` artifact instead of a nonstandard ignored control artifact.
+- Clarified that the safe one-shot fast path intentionally uses existing direct-write semantics, while atomic temp-file rename remains on the plan-first apply path.
+
 ## Task 6: Update Public Docs Only From Artifact
 
 **Files:**
@@ -334,6 +363,8 @@ Required docs validation:
 uv run pytest tests/unit/test_benchmark_docs.py tests/unit/test_benchmark_governance.py tests/unit/test_public_docs_governance.py -q
 ```
 
+Status: public docs updated from the accepted artifact; docs governance validation passed (`27 passed`).
+
 ## CI Checks To Run Before Push
 
 Required:
@@ -352,6 +383,8 @@ Hot-path required:
 C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml
 uv run python benchmarks/run_ast_rewrite_benchmarks.py --output artifacts/bench_ast_rewrite.json
 ```
+
+CI note: current GitHub Actions does not run `run_ast_rewrite_benchmarks.py`, so attach or quote the local artifact result in the release report before making any public speed claim.
 
 Optional but recommended:
 

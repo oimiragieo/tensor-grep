@@ -18,6 +18,10 @@ The latest artifact shows `tg` applying 50,000 rewrites across 1,000 files but l
 - `ratio = 1.745x`
 - threshold: `<= 1.1`
 
+Implementation result (2026-04-28): the safe one-shot apply fast path recovered the standard local artifact line:
+
+- `artifacts/bench_ast_rewrite.json`: `tg apply median = 0.534s`, `sg apply median = 0.643s`, `ratio = 0.831x`, passed
+
 Relevant code surfaces:
 
 - `rust_core/src/main.rs`: CLI routing for `run --rewrite --apply`.
@@ -41,8 +45,7 @@ The core idea:
    - checkpoint
    - audit manifest
    - apply-edit-id filtering
-   - rewrite filtering
-   - interactive or confirmation flows
+   - future rewrite filtering or interactive confirmation flows, if introduced later
    - lint/test commands
    - validation or verification if tests show pre-apply plan state is required
 4. Benchmark before and after on the same machine. Keep the change only if the end-to-end apply gate improves without contract regressions.
@@ -63,16 +66,13 @@ fn can_use_one_shot_apply_fast_path(args: &RunArgs) -> bool {
         && !args.checkpoint
         && args.audit_manifest.is_none()
         && args.apply_edit_ids.is_empty()
-        && args.filter.is_none()
         && !args.verify
-        && !validation_requested(args)
-        && !interactive_requested(args)
         && args.lint_cmd.is_none()
         && args.test_cmd.is_none()
 }
 ```
 
-The exact field names must be verified against `RunArgs` before implementation. The test should lock the predicate against accidental broadening.
+The exact field names must be verified against `RunArgs` before implementation. Current repository evidence shows no `filter` or `interactive` fields in `RunArgs`; add those predicate guards only if such flags are introduced later. The test should lock the predicate against accidental broadening.
 
 ### AST Backend
 
@@ -150,15 +150,17 @@ Performance:
 
 - Primary metric: `ratio_tg_vs_sg <= 1.1` for `benchmarks/run_ast_rewrite_benchmarks.py`.
 - Baseline requirement: run the benchmark once before implementation on the same machine and save it as `artifacts/bench_ast_rewrite_baseline.json`.
+- Captured baseline for this branch: `tg_apply_median_s = 1.175020799972117`, `sg_apply_median_s = 0.6488509000046179`, `ratio_tg_vs_sg = 1.811`, `passed = false`.
 - Secondary metrics: plan and diff medians must not regress by more than 10% versus the same-machine baseline unless the regression is documented and explicitly accepted.
+- CI note: current GitHub Actions does not run `benchmarks/run_ast_rewrite_benchmarks.py`, so the release decision must explicitly review the local artifact.
 
 Reliability:
 
 - Keep deterministic edit ordering for plan/diff outputs.
 - Keep direct-write behavior scoped to one-shot apply only.
 - Preserve atomic-write path for explicit plan-then-apply APIs.
-- Do not accept a fast path that reports success after a partial write failure.
-- Do not weaken per-file atomicity relative to the current plan-first apply path. If `plan_and_apply` cannot match current failure semantics, either harden it first or reject the fast-path attempt.
+- Do not accept a fast path that reports success after a write failure.
+- The safe one-shot fast path intentionally keeps the existing direct-write semantics used by `plan_and_apply` for throughput. The atomic temp-file rename contract remains on the explicit plan-first apply path; fast-path failures must still exit non-zero and identify the failed operation clearly.
 
 ## Alternatives Considered
 
@@ -183,7 +185,7 @@ Pros:
 
 Cons:
 
-- High risk to checkpoint, audit, filtering, verification, and JSON contracts.
+- High risk to checkpoint, audit, selector, validation, verification, and JSON contracts.
 
 Decision: reject for this slice.
 
@@ -207,7 +209,8 @@ Decision: do AST rewrite first.
 - ast-grep optimization guidance highlights avoiding duplicate traversal and using selective rule structures, which maps to this repo's suspected duplicate plan/apply work: https://ast-grep.github.io/blog/optimize-ast-grep.html
 - Public codemod benchmarking continues to show ast-grep as a top structural rewrite baseline, so recovering the `sg` gate has market value: https://github.com/codemod/benchmark
 - Tree-sitter incremental parsing APIs are relevant for future repeated edit sessions, but not required for this first one-shot apply recovery: https://github.com/tree-sitter/tree-sitter/blob/master/lib/binding_rust/README.md
-- GPU regex research and RAPIDS Glushkov NFA work are promising but not applicable to this immediate rewrite apply bottleneck.
+- Reddit/community discussion around agents and ast-grep reinforces the product value of reliable structural search/edit tooling, but the plan still relies on repo tests and benchmarks rather than anecdote: https://www.reddit.com/r/ClaudeAI/comments/1lefmff/caludecode_can_use_astgrep_to_improve_search/
+- GPU regex research, BitGen, and RAPIDS Glushkov NFA work are promising but not applicable to this immediate rewrite apply bottleneck: https://arxiv.org/abs/2305.18575, https://github.com/getianao/BitGen, https://github.com/rapidsai/cudf/pull/21936
 
 ## Open Questions
 

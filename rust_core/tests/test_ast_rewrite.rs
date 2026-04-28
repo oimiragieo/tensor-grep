@@ -372,6 +372,32 @@ fn test_tg_run_rewrite_no_matches_reports_nothing() {
 }
 
 #[test]
+fn test_tg_run_rewrite_apply_no_matches_reports_nothing() {
+    let (_dir, file_path) = write_source_file("py", "x = 1\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("run")
+        .arg("--lang")
+        .arg("python")
+        .arg("--rewrite")
+        .arg("lambda $$$ARGS: $EXPR")
+        .arg("--apply")
+        .arg("def $F($$$ARGS): return $EXPR")
+        .arg(&file_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read_to_string(&file_path).unwrap(), "x = 1\n");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no matches"), "stderr={stderr}");
+}
+
+#[test]
 fn test_rewrite_plan_json_contract_fields() {
     let source = "def add(x, y): return x + y\ndef mul(a, b): return a * b\n";
     let (_dir, file_path) = write_source_file("py", source);
