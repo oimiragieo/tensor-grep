@@ -7,6 +7,9 @@
 
 - Refresh the v1.6.5 native cold-path benchmark read after the explicit native-binary run passed the frozen Windows regression gate.
 - Add cold-path attribution notes for explicit native-binary, discovered CLI, Python module, and positional word-boundary benchmark lanes.
+- Refresh the 2026-04-29 benchmark documentation across README, benchmark docs, tool comparison, GPU crossover, and paper notes.
+- Record the latest cold-path rerun as parity evidence, not a new speed baseline, because the regression gate failed on comparator drift and one `tg` row.
+- Update GPU crossover documentation to keep GPU auto-routing manual-only after the latest native GPU artifact still found no literal-search crossover.
 
 ### Tests
 

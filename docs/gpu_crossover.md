@@ -1,22 +1,22 @@
-# Native GPU crossover benchmark (2026-04-27)
+# Native GPU crossover benchmark (2026-04-29)
 
 Command used:
 
 ```powershell
-python benchmarks/run_gpu_native_benchmarks.py --output artifacts/bench_run_gpu_native_benchmarks.json
+uv run python benchmarks/run_gpu_native_benchmarks.py --output artifacts/bench_run_gpu_native_benchmarks.json
 ```
 
 Environment:
 
 - Host: Windows 10 (`amd64`)
-- `tg` binary: `rust_core/target/release/tg.exe` (`tg 1.6.3`)
+- `tg` binary: `rust_core/target/release/tg.exe` (`tg 1.6.5`)
 - GPU under test: device `0` (`NVIDIA GeForce RTX 4070`, `sm_89`)
 - Corpus sizes: `10MB`, `100MB`, `500MB`, `1GB`
 - Corpus layout: 8 synthetic log shards per size
 - Query: fixed-string `gpu benchmark sentinel`
 - Timing: median of 3 end-to-end CLI runs per command
 
-The artifact also detected device `1` (`NVIDIA GeForce RTX 5070`), but the benchmark path on this host still records a missing kernel image for that card. Do not treat device discovery as proof of end-to-end 5070 benchmark coverage here. Current PyTorch upstream guidance for RTX 50-series / Blackwell `sm_120` is to use CUDA 12.8+ wheels/builds; `torch==2.6.0+cu124` remains insufficient for those sidecar-backed flows.
+The artifact also detected device `1` (`NVIDIA GeForce RTX 5070`), but the benchmark path on this host still records a missing kernel image for that card. Do not treat device discovery as proof of end-to-end 5070 benchmark coverage here. Current PyTorch upstream guidance for RTX 50-series / Blackwell `sm_120` is to use CUDA 12.8 or CUDA 13.0 builds; `torch==2.6.0+cu124` remains insufficient for those sidecar-backed flows.
 
 ## Result
 
@@ -28,10 +28,10 @@ No crossover was found.
 
 | Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU/rg ratio | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 10MB | 0.173s | 0.168s | 0.550s | 3.1766x | no crossover |
-| 100MB | 0.161s | 0.187s | 1.227s | 7.6324x | no crossover |
-| 500MB | 0.163s | 0.171s | timeout | n/a | FAIL |
-| 1GB | 0.224s | 0.244s | timeout | n/a | FAIL |
+| 10MB | 0.129s | 0.133s | 0.436s | 3.3879x | no crossover |
+| 100MB | 0.126s | 0.136s | 1.143s | 9.0860x | no crossover |
+| 500MB | 0.143s | 0.164s | timeout | n/a | FAIL |
+| 1GB | 0.197s | 0.185s | timeout | n/a | FAIL |
 
 Exact throughput and correctness metadata are recorded in `artifacts/bench_run_gpu_native_benchmarks.json`.
 
@@ -59,7 +59,7 @@ Some fault cases are simulation-backed through `TG_TEST_CUDA_BEHAVIOR`.
 
 ## Gap analysis
 
-The best measured GPU/rg ratio was at `10MB`, where GPU was still **3.1766x slower** than `rg`.
+The best measured GPU/rg ratio was at `10MB`, where GPU was still **3.3879x slower** than `rg`.
 The gap remained negative where the command completed, and larger corpora timed out before they could establish correctness or throughput.
 
 The current native GPU path is explicit and benchmarkable, but this artifact is not correctness-valid across all measured sizes and is not performance-competitive for this literal-search workload on Windows.

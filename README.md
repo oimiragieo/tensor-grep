@@ -97,23 +97,23 @@ Current quick tool comparison:
 
 | Scenario | ripgrep | `tg search` | `tg search --cpu` | `git grep --no-index` |
 | --- | --- | --- | --- | --- |
-| standard corpus | `0.217s` | `0.269s` | `0.243s` | `0.292s` |
-| 200MB large file | `0.210s` | `0.218s` | `0.219s` | `0.204s` |
+| standard corpus | `0.227s` | `0.288s` | `0.288s` | `0.278s` |
+| 200MB large file | `0.221s` | `0.220s` | `0.220s` | `0.232s` |
 
 Current read:
 
 - `rg` remains the cold generic text-search baseline
-- fresh `v1.6.5` cold-path evidence now passes the frozen Windows regression gate (`artifacts/bench_run_benchmarks_v165_control_plane_current.json`, parity PASS on all 10 rows, median `tg_time_s = 0.260132s`)
+- the 2026-04-29 `v1.6.5` cold-path rerun preserved parity on all 10 rows, but `benchmarks/check_regression.py --baseline auto` failed because the `rg` comparator drifted and the case-insensitive `tg` row was 8.93% slower than the frozen Windows baseline
 - cold-path attribution now confirms benchmark claims should use the explicit repo native binary; shell-discovered `tg` can be stale and is treated as environment-drift evidence
-- `tg search` is near `rg` on the 200MB row, but `git grep --no-index` won that specific host-local row in the latest run
+- `tg search` is effectively tied with `rg` on the 200MB row in the latest host-local comparison, while `rg` still wins the standard-corpus row
 - host-local peer rows currently include `rg` and `git grep --no-index`; `ag`, `ack`, `ugrep`, and `grep` are omitted on this host because they are not installed
 - native AST search, AST rewrite, repeated-query acceleration, and GPU are separate benchmark surfaces and should not be conflated with cold plain-text search
 
 Current repeated-query snapshot:
 
 - artifact: [`artifacts/bench_hot_query_benchmarks.json`](artifacts/bench_hot_query_benchmarks.json)
-- repeated fixed string: `0.6535s -> 0.1784s`
-- repeated regex prefilter: `0.6425s -> 0.2147s`
+- repeated fixed string: `0.5671s -> 0.1470s`
+- repeated regex prefilter: `0.5476s -> 0.1662s`
 - both rows now include fresh-process overhead
 - local benchmark note: run `uv run --extra bench python benchmarks/run_hot_query_benchmarks.py` for the fully provisioned path; without the benchmark extras, the fixed-string row records `SKIP` with an install hint instead of crashing
 
@@ -135,9 +135,9 @@ Current repo-map lexical retrieval snapshot:
 
 Current benchmark-governed strengths:
 
-- native CPU benchmark line: with rg fallback disabled for native measurement, `tg --cpu` wins all four current native CPU rows, including `large_file_200mb_count` (`0.050s` vs `0.199s`) and `many_file_directory` (`0.048s` vs `0.204s`) in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
+- native CPU benchmark line: with rg fallback disabled for native measurement, `tg --cpu` wins all four current native CPU rows, including `large_file_200mb_count` (`0.072s` vs `0.417s`) and `many_file_directory` (`0.159s` vs `0.236s`) in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
 - native AST search beats `sg` on the current AST search surfaces in [docs/benchmarks.md](docs/benchmarks.md)
-- AST rewrite remains functional and the one-shot apply path is back under the `sg` ratio gate on the current local benchmark (`0.831x` in `artifacts/bench_ast_rewrite.json`)
+- AST rewrite remains functional and the one-shot apply path is under the `sg` ratio gate on the current local benchmark (`0.885x` in `artifacts/bench_ast_rewrite.json`)
 - repeated-query acceleration remains the strongest warm-path win on unchanged corpora
 
 Current CLI correctness line:

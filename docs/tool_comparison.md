@@ -19,9 +19,9 @@ The current public comparison story is anchored to rerunnable artifacts, not one
 | Workload | Comparator | Current read | Source |
 | --- | --- | --- | --- |
 | Cold generic text search | `ripgrep` | `rg` remains the baseline on the current release line. `tg search` keeps CLI contract parity, but the current cold-path rerun does not beat `rg` on this Windows host. | `artifacts/bench_run_benchmarks.json`, [benchmarks.md](benchmarks.md) |
-| Host-local CLI comparison | `ripgrep`, `git grep --no-index` | On the current host, `rg` wins the standard-corpus row, while `git grep --no-index` narrowly wins the 200MB large-file row. `tg` stays close on the 200MB row but is not the leader. | `artifacts/bench_tool_comparison.json` |
+| Host-local CLI comparison | `ripgrep`, `git grep --no-index` | On the current host, `rg` wins the standard-corpus row, while `tg search` is effectively tied with `rg` on the 200MB large-file row. | `artifacts/bench_tool_comparison.json` |
 | Native CPU text search | `ripgrep` | With rg fallback disabled for native measurement, the current `tg --cpu` rerun wins all four native CPU rows, including count-heavy and many-file probes. | `artifacts/bench_run_native_cpu_benchmarks.json`, [benchmarks.md](benchmarks.md) |
-| AST search and rewrite | `ast-grep` | `tg` is ahead on AST search (`0.135s` vs `0.180s`, `0.754x`) and the recovered one-shot rewrite apply path is back under the `sg` gate (`0.534s` vs `0.643s`, `0.831x`). | [benchmarks.md](benchmarks.md) |
+| AST search and rewrite | `ast-grep` | `tg` is ahead on AST search (`0.116s` vs `0.151s`, `0.770x`) and the one-shot rewrite apply path remains under the `sg` gate (`0.636s` vs `0.719s`, `0.885x`). | [benchmarks.md](benchmarks.md) |
 | Repeated query on unchanged corpora | cold grep-style tools | `tg` wins after warm index reuse. This is a different workload class from one-shot cold scans. | `artifacts/bench_hot_query_benchmarks.json` |
 | Policy and security scanning | `Semgrep` | `Semgrep` remains the stronger ecosystem baseline today. | [benchmarks.md](benchmarks.md) |
 | Indexed search at repository scale | `Zoekt` | `Zoekt` remains the search-at-scale baseline. `tg` currently publishes local repeated-query wins rather than an accepted direct Zoekt bakeoff. | [benchmarks.md](benchmarks.md) |
@@ -48,14 +48,14 @@ They are medians over three timed samples after one warmup run on this Windows h
 
 | Scenario | Tool | Command | Line count | Median | vs `rg` |
 | --- | --- | --- | --- | --- | --- |
-| standard corpus | `rg` | `rg --no-ignore ERROR artifacts/bench_data` | `800001` | `0.217s` | `1.00x` |
-| standard corpus | `tg search` | `tg search --no-ignore ERROR artifacts/bench_data` | `800001` | `0.269s` | `1.24x` |
-| standard corpus | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/bench_data` | `800001` | `0.243s` | `1.12x` |
-| standard corpus | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/bench_data` | `800001` | `0.292s` | `1.35x` |
-| 200MB large file | `rg` | `rg --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.210s` | `1.00x` |
-| 200MB large file | `tg search` | `tg search --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.218s` | `1.04x` |
-| 200MB large file | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.219s` | `1.04x` |
-| 200MB large file | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.204s` | `0.98x` |
+| standard corpus | `rg` | `rg --no-ignore ERROR artifacts/bench_data` | `800001` | `0.227s` | `1.00x` |
+| standard corpus | `tg search` | `tg search --no-ignore ERROR artifacts/bench_data` | `800001` | `0.288s` | `1.27x` |
+| standard corpus | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/bench_data` | `800001` | `0.288s` | `1.27x` |
+| standard corpus | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/bench_data` | `800001` | `0.278s` | `1.22x` |
+| 200MB large file | `rg` | `rg --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.221s` | `1.00x` |
+| 200MB large file | `tg search` | `tg search --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.220s` | `1.00x` |
+| 200MB large file | `tg search --cpu` | `tg search --cpu --no-ignore ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.220s` | `1.00x` |
+| 200MB large file | `git grep --no-index` | `git grep --no-index -n ERROR artifacts/native_cpu_bench_data/large_file_200mb.log` | `4271` | `0.232s` | `1.05x` |
 
 ## Where `tensor-grep` Is Stronger
 
@@ -72,7 +72,7 @@ They are medians over three timed samples after one warmup run on this Windows h
 - `Semgrep` still has the stronger policy and security scanning ecosystem
 - `Zoekt` is still the external baseline for indexed search at repository scale
 - Minimal standalone footprint still favors pure single-purpose tools such as `rg`
-- Default cold text search on the current Windows host still favors `rg`, and `git grep --no-index` still beats default `tg search` on the published large-file row
+- Default cold text search on the current Windows host still favors `rg`; the latest large-file row is effectively tied between `rg` and default `tg search`, not a general cold-search win.
 
 ## Comparator Policy
 
