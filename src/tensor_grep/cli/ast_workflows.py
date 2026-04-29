@@ -85,9 +85,9 @@ def _load_yaml_dict(path: Path) -> dict[str, object]:
             loaded = yaml_mod.load(handle, Loader=loader) or {}
         except yaml_mod.YAMLError:
             _reset_yaml_cache()
-            yaml_mod, loader = _get_yaml()
+            yaml_mod, _loader = _get_yaml()
             handle.seek(0)
-            loaded = yaml_mod.load(handle, Loader=loader) or {}
+            loaded = yaml_mod.safe_load(handle) or {}
     if not isinstance(loaded, dict):
         raise ValueError(f"YAML in {path} must be a mapping.")
     return loaded

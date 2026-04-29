@@ -37,6 +37,97 @@ _REWRITE_ROUTING_REASON = "ast-native"
 _INDEX_ROUTING_BACKEND = "TrigramIndex"
 _INDEX_ROUTING_REASON = "index-accelerated"
 _WINDOWS_VARIADIC_METAVAR_RE = re.compile(r"(?<!\$)\$\$([A-Z][A-Z0-9_]*)")
+_NATIVE_TG_REMEDIATION = (
+    "Install a standalone native tg binary, put it on PATH, or set TG_NATIVE_TG_BINARY."
+)
+
+_PYTHON_LOCAL_MCP_TOOLS = (
+    "tg_rulesets",
+    "tg_ruleset_scan",
+    "tg_repo_map",
+    "tg_context_pack",
+    "tg_edit_plan",
+    "tg_context_render",
+    "tg_session_edit_plan",
+    "tg_session_context_render",
+    "tg_session_blast_radius",
+    "tg_symbol_blast_radius_plan",
+    "tg_session_blast_radius_render",
+    "tg_session_blast_radius_plan",
+    "tg_symbol_defs",
+    "tg_symbol_source",
+    "tg_symbol_impact",
+    "tg_symbol_refs",
+    "tg_symbol_callers",
+    "tg_symbol_blast_radius",
+    "tg_symbol_blast_radius_render",
+    "tg_search",
+    "tg_ast_search",
+    "tg_classify_logs",
+    "tg_devices",
+    "tg_audit_manifest_verify",
+    "tg_audit_history",
+    "tg_audit_diff",
+    "tg_review_bundle_create",
+    "tg_review_bundle_verify",
+    "tg_checkpoint_create",
+    "tg_checkpoint_list",
+    "tg_checkpoint_undo",
+    "tg_session_open",
+    "tg_session_list",
+    "tg_session_show",
+    "tg_session_refresh",
+    "tg_session_context",
+    "tg_mcp_capabilities",
+)
+_EMBEDDED_SAFE_MCP_TOOLS = ("tg_rewrite_plan", "tg_rewrite_apply")
+_NATIVE_REQUIRED_MCP_TOOLS = ("tg_index_search", "tg_rewrite_diff")
+_MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
+    **{
+        name: {
+            "mode": "python-local",
+            "native_required": False,
+            "embedded_fallback": False,
+            "native_required_options": [],
+            "notes": "Runs without a standalone native tg binary.",
+        }
+        for name in _PYTHON_LOCAL_MCP_TOOLS
+    },
+    **{
+        name: {
+            "mode": "embedded-safe",
+            "native_required": False,
+            "embedded_fallback": True,
+            "native_required_options": (
+                [
+                    "verify",
+                    "checkpoint",
+                    "audit_manifest",
+                    "audit_signing_key",
+                    "lint_cmd",
+                    "test_cmd",
+                ]
+                if name == "tg_rewrite_apply"
+                else []
+            ),
+            "notes": (
+                "Uses embedded rewrite fallback for simple requests when standalone "
+                "native tg is unavailable."
+            ),
+        }
+        for name in _EMBEDDED_SAFE_MCP_TOOLS
+    },
+    **{
+        name: {
+            "mode": "native-required",
+            "native_required": True,
+            "embedded_fallback": False,
+            "native_required_options": [],
+            "notes": "Requires a standalone native tg binary.",
+        }
+        for name in _NATIVE_REQUIRED_MCP_TOOLS
+    },
+}
 
 
 def _repo_root() -> Path:
@@ -81,6 +172,30 @@ def _rewrite_error_payload(
 
 def _rewrite_error(message: str, *, code: str) -> str:
     return json.dumps(_rewrite_error_payload(message, code=code), indent=2)
+
+
+def _native_unavailable_error(
+    *,
+    tool: str,
+    payload: dict[str, Any],
+    message: str | None = None,
+) -> str:
+    unavailable_payload = dict(payload)
+    unavailable_payload["routing_reason"] = "native-tg-unavailable"
+    unavailable_payload["tool"] = tool
+    unavailable_payload["error"] = {
+        "code": "unavailable",
+        "message": message or f"{tool} requires a standalone native tg binary.",
+        "remediation": _NATIVE_TG_REMEDIATION,
+    }
+    return json.dumps(unavailable_payload, indent=2)
+
+
+def _resolve_native_tg_binary_for_mcp() -> tuple[Path | None, str | None]:
+    try:
+        return resolve_native_tg_binary(), None
+    except FileNotFoundError as exc:
+        return None, str(exc)
 
 
 def _audit_manifest_error(message: str, *, code: str) -> str:
@@ -205,6 +320,38 @@ def _index_search_error(message: str, *, code: str, pattern: str, path: str) -> 
     payload["path"] = path
     payload["error"] = {"code": code, "message": message}
     return json.dumps(payload, indent=2)
+
+
+def _embedded_rewrite_available() -> bool:
+    try:
+        from tensor_grep.rust_core import ast_rewrite_apply_json, ast_rewrite_plan_json
+    except Exception:
+        return False
+    return callable(ast_rewrite_apply_json) and callable(ast_rewrite_plan_json)
+
+
+def _mcp_capabilities_payload() -> dict[str, Any]:
+    native_tg, native_error = _resolve_native_tg_binary_for_mcp()
+    native_tg_payload: dict[str, Any] = {
+        "available": native_tg is not None,
+        "path": None if native_tg is None else str(native_tg),
+    }
+    if native_error is not None:
+        native_tg_payload["error"] = native_error
+    return {
+        "version": _json_output_version(),
+        "routing_backend": "MCPRuntime",
+        "routing_reason": "mcp-capabilities",
+        "sidecar_used": False,
+        "native_tg": native_tg_payload,
+        "embedded_rewrite": {
+            "available": _embedded_rewrite_available(),
+        },
+        "tools": [
+            {"name": name, **capability}
+            for name, capability in sorted(_MCP_TOOL_CAPABILITIES.items())
+        ],
+    }
 
 
 def _normalize_rewrite_json_payload(payload: object) -> str:
@@ -427,7 +574,20 @@ def execute_rewrite_plan_json(
     pattern = _restore_variadic_metavar_escaping(pattern)
     replacement = _restore_variadic_metavar_escaping(replacement)
 
-    if resolve_native_tg_binary() is None:
+    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    if native_tg is None:
+        if not _embedded_rewrite_available():
+            return (
+                _native_unavailable_error(
+                    tool="tg_rewrite_plan",
+                    payload=_rewrite_envelope(),
+                    message=(
+                        "tg_rewrite_plan requires a standalone native tg binary "
+                        "or embedded native rewrite support."
+                    ),
+                ),
+                1,
+            )
         rewrite_json = _execute_embedded_rewrite_json(
             pattern=pattern,
             replacement=replacement,
@@ -506,13 +666,29 @@ def execute_rewrite_apply_json(
                 1,
             )
 
-    if resolve_native_tg_binary() is None:
+    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    if native_tg is None:
         if verify or checkpoint or audit_manifest or audit_signing_key or lint_cmd or test_cmd:
             return (
-                _rewrite_error(
-                    "Standalone native tg binary is required for verify, checkpoint, "
-                    "audit, lint, or test rewrite apply options.",
-                    code="unavailable",
+                _native_unavailable_error(
+                    tool="tg_rewrite_apply",
+                    payload=_rewrite_envelope(),
+                    message=(
+                        "tg_rewrite_apply requires a standalone native tg binary for "
+                        "verify, checkpoint, audit, lint, or test rewrite apply options."
+                    ),
+                ),
+                1,
+            )
+        if not _embedded_rewrite_available():
+            return (
+                _native_unavailable_error(
+                    tool="tg_rewrite_apply",
+                    payload=_rewrite_envelope(),
+                    message=(
+                        "tg_rewrite_apply requires a standalone native tg binary "
+                        "or embedded native rewrite support."
+                    ),
                 ),
                 1,
             )
@@ -626,6 +802,17 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
         )
 
     return _normalize_index_search_json_payload(payload, pattern=pattern, path=path)
+
+
+@mcp.tool()  # type: ignore
+def tg_mcp_capabilities() -> str:
+    """
+    Report MCP tool availability for the current runtime.
+
+    The response lets clients distinguish tools that work without a standalone native
+    tg binary from tools that require one.
+    """
+    return json.dumps(_mcp_capabilities_payload(), indent=2)
 
 
 def _record_generated_audit_manifest(payload: object) -> None:
@@ -1878,6 +2065,13 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
             path=path,
         )
 
+    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    if native_tg is None:
+        payload = _index_search_envelope()
+        payload["query"] = pattern
+        payload["path"] = path
+        return _native_unavailable_error(tool="tg_index_search", payload=payload)
+
     command = _build_index_search_command(pattern=pattern, path=path)
     return _execute_index_search_command(command, pattern=pattern, path=path)
 
@@ -1897,14 +2091,13 @@ def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") 
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")
 
-    command = _build_rewrite_command(
+    payload, _exit_code = execute_rewrite_plan_json(
         pattern=pattern,
         replacement=replacement,
         lang=lang,
         path=path,
-        mode="plan",
     )
-    return _execute_rewrite_json_command(command)
+    return payload
 
 
 @mcp.tool()  # type: ignore
@@ -2359,6 +2552,13 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
     validation_error = _validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")
+
+    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    if native_tg is None:
+        return _native_unavailable_error(
+            tool="tg_rewrite_diff",
+            payload=_rewrite_envelope(),
+        )
 
     command = _build_rewrite_command(
         pattern=pattern,

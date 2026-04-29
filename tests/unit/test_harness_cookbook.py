@@ -75,6 +75,12 @@ def test_harness_cookbook_covers_public_workflows() -> None:
     assert '"routing_backend"' in doc
     assert '"routing_reason"' in doc
     assert '"sidecar_used"' in doc
+    assert "tg_mcp_capabilities" in doc
+    assert "native_tg.available" in doc
+    assert "native-required" in doc
+    assert "embedded-safe" in doc
+    assert "native_required_options" in doc
+    assert "native-tg-unavailable" in doc
     assert '"validation"' in doc
     assert "tg_rewrite_plan" in doc
     assert "tg_rewrite_apply" in doc
@@ -117,3 +123,4 @@ def test_readme_points_harness_consumers_to_contract_and_cookbook_docs() -> None
 
     assert "docs/harness_api.md" in readme
     assert "docs/harness_cookbook.md" in readme
+    assert "tg_mcp_capabilities" in readme

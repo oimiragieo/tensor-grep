@@ -1256,8 +1256,11 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_apply(...)` through the packaged PyO3 Rust extension even when a standalone native `tg` binary is unavailable. Rewrite diff, checkpoint, audit, validation, verify, and other native-only rewrite options still require a standalone native `tg` binary via `TG_NATIVE_TG_BINARY` or an in-tree/release build.
 
+Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
+
 Current tool set:
 
+- `tg_mcp_capabilities()`
 - `tg_rulesets()`
 - `tg_ruleset_scan(ruleset, path=".", language=None, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)`
 - `tg_repo_map(path=".")`
@@ -1289,10 +1292,43 @@ Current tool set:
 - `tg_rewrite_plan(pattern, replacement, lang, path=".")`
 - `tg_rewrite_apply(pattern, replacement, lang, path=".", verify=False, checkpoint=False, lint_cmd=None, test_cmd=None)`
 - `tg_audit_manifest_verify(manifest_path, signing_key=None, previous_manifest=None)`
+- `tg_audit_history(path=".")`
+- `tg_audit_diff(previous_manifest, current_manifest)`
+- `tg_review_bundle_create(manifest_path, scan_path=None, checkpoint_id=None, previous_manifest=None, output_path=None)`
+- `tg_review_bundle_verify(bundle_path)`
 - `tg_rewrite_diff(pattern, replacement, lang, path=".")`
+
+Capability modes:
+
+| Mode | Meaning | Representative tools |
+| --- | --- | --- |
+| `python-local` | Runs without a standalone native `tg` binary. | `tg_mcp_capabilities`, `tg_repo_map`, `tg_context_pack`, `tg_search`, `tg_ast_search`, `tg_devices`, `tg_checkpoint_create`, `tg_session_context` |
+| `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
+| `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
+
+`tg_mcp_capabilities()` response fields:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | `MCPRuntime`. |
+| `routing_reason` | `string` | `mcp-capabilities`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `native_tg.available` | `boolean` | True when a standalone native `tg` binary was resolved. |
+| `native_tg.path` | `string \| null` | Resolved native binary path when available. |
+| `embedded_rewrite.available` | `boolean` | True when packaged rewrite plan/apply fallback is importable. |
+| `tools[].name` | `string` | Public MCP tool name. |
+| `tools[].mode` | `string` | One of `python-local`, `embedded-safe`, or `native-required`. |
+| `tools[].native_required` | `boolean` | True for tools that cannot run without standalone native `tg`. |
+| `tools[].embedded_fallback` | `boolean` | True for tools with simple embedded rewrite fallback. |
+| `tools[].native_required_options` | `array<string>` | Options that make an otherwise embedded-safe tool require standalone native `tg`; for `tg_rewrite_apply`, this includes `verify`, `checkpoint`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd`. |
+| `tools[].notes` | `string` | Human-readable routing note. |
+
+Native-unavailable error responses use `error.code = "unavailable"`, `routing_reason = "native-tg-unavailable"`, include the `tool` name, and include `error.remediation` with `TG_NATIVE_TG_BINARY` guidance.
 
 Response mapping:
 
+- `tg_mcp_capabilities()` returns the MCP runtime capability envelope described above
 - `tg_rulesets()` returns the same v1 envelope and payload shape as [`examples/rulesets.json`](examples/rulesets.json)
 - `tg_ruleset_scan(...)` returns the same v1 envelope and payload shape as [`examples/ruleset_scan.json`](examples/ruleset_scan.json)
 - `tg_index_search(...)` returns the same v1 envelope and payload shape as [`examples/index_search.json`](examples/index_search.json)
@@ -1315,7 +1351,7 @@ Response mapping:
 - `tg_session_blast_radius_plan(...)` returns the same payload shape as [`examples/blast_radius_plan.json`](examples/blast_radius_plan.json) plus `session_id` and `routing_reason = "session-blast-radius-plan"`
 - `tg_session_blast_radius_render(...)` returns the same payload shape as [`examples/blast_radius_render.json`](examples/blast_radius_render.json) plus `session_id` and `routing_reason = "session-blast-radius-render"`
 - `tg_rewrite_plan(...)` returns the same v1 envelope and payload shape as [`examples/rewrite_plan.json`](examples/rewrite_plan.json)
-- `tg_rewrite_apply(..., verify=True, checkpoint=True, lint_cmd=..., test_cmd=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
+- `tg_rewrite_apply(..., verify=True, checkpoint=True, audit_manifest=..., audit_signing_key=..., lint_cmd=..., test_cmd=..., policy=...)` returns the same v1 envelope and payload shape as [`examples/rewrite_apply_verify.json`](examples/rewrite_apply_verify.json)
 - `tg_audit_manifest_verify(...)` returns the same v1 envelope and payload shape as [`examples/audit_manifest_verify.json`](examples/audit_manifest_verify.json)
 - `tg_rewrite_diff(...)` returns a diff wrapper JSON object instead of raw diff text
 
@@ -1330,6 +1366,19 @@ Example diff wrapper: [`examples/mcp_rewrite_diff.json`](examples/mcp_rewrite_di
 | `routing_reason` | `string` | `ast-native`. |
 | `sidecar_used` | `boolean` | `false`. |
 | `diff` | `string` | Unified diff preview generated by the native CLI. |
+
+Native-required MCP tools return this unavailable shape when standalone native `tg` cannot be resolved:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `version` | `integer` | Contract version. |
+| `routing_backend` | `string` | Existing backend family, such as `AstBackend` or `TrigramIndex`. |
+| `routing_reason` | `string` | `native-tg-unavailable`. |
+| `sidecar_used` | `boolean` | `false`. |
+| `tool` | `string` | MCP tool that could not run. |
+| `error.code` | `string` | `unavailable`. |
+| `error.message` | `string` | Native requirement summary. |
+| `error.remediation` | `string` | Install native `tg`, expose it on PATH, or set `TG_NATIVE_TG_BINARY`. |
 
 ## Rust vs Python field differences
 
