@@ -131,6 +131,8 @@ Current repo-map lexical retrieval snapshot:
 - baseline artifact: `artifacts/bench_repo_retrieval_lexical_base.json`
 - accepted feature artifact: `artifacts/bench_repo_retrieval_lexical_feature.json`
 - curated retrieval line moved from `recall_at_5 = 0.0`, `mrr_at_5 = 0.0`, `ndcg_at_5 = 0.0` on clean `origin/main` to `recall_at_5 = 1.0`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.333333`, `line_f1 = 0.222222`
+- default smoke benchmark artifact: `artifacts/bench_repo_retrieval_benchmarks.json`; the committed dataset at `benchmarks/datasets/repo_retrieval_eval.jsonl` keeps repo-retrieval benchmarking runnable without local-only fixtures
+- latest default smoke metrics: `recall_at_5 = 1.0`, `precision_at_5 = 0.333333`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.492064`, `line_f1 = 0.492064`
 - current read: camelCase-to-snake_case symbol bridging and source-term fallback now recover the right planning file on the curated repo-map pack, while `context-render` and blast-radius remain in the same measured editor-plane band on this host instead of becoming a new cold-path speed claim
 
 Current benchmark-governed strengths:

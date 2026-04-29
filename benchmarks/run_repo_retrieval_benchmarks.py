@@ -21,11 +21,15 @@ def default_output_path() -> Path:
     return ROOT_DIR / "artifacts" / "bench_repo_retrieval_benchmarks.json"
 
 
+def default_dataset_path() -> Path:
+    return BENCHMARKS_DIR / "datasets" / "repo_retrieval_eval.jsonl"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Emit a deterministic repository retrieval benchmark artifact."
     )
-    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--dataset", default=str(default_dataset_path()))
     parser.add_argument("--output", default=str(default_output_path()))
     parser.add_argument("--top-k", type=int, default=5)
     return parser.parse_args()

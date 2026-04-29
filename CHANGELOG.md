@@ -10,10 +10,16 @@
 - Refresh the 2026-04-29 benchmark documentation across README, benchmark docs, tool comparison, GPU crossover, and paper notes.
 - Record the latest cold-path rerun as parity evidence, not a new speed baseline, because the regression gate failed on comparator drift and one `tg` row.
 - Update GPU crossover documentation to keep GPU auto-routing manual-only after the latest native GPU artifact still found no literal-search crossover.
+- Document the committed default repo-retrieval benchmark dataset and latest default smoke metrics.
+
+### Benchmarks
+
+- Add a committed default repo-retrieval benchmark dataset so `run_repo_retrieval_benchmarks.py` is runnable without local-only fixtures.
 
 ### Tests
 
 - Cover `-w/--word-regexp` in the positional early-rg benchmark launcher helper so the experimental lane is measured instead of silently falling back to `tg search`.
+- Cover the default repo-retrieval benchmark dataset path.
 
 
 ## v1.6.5 (2026-04-28)

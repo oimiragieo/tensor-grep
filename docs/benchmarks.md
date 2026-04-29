@@ -174,6 +174,7 @@ uv run python benchmarks/run_context_render_benchmarks.py
 uv run python benchmarks/run_blast_radius_benchmarks.py
 uv run python benchmarks/run_harness_loop_benchmark.py
 uv run python benchmarks/run_index_scaling_benchmark.py
+uv run python benchmarks/run_repo_retrieval_benchmarks.py
 uv run python benchmarks/run_hot_query_benchmarks.py
 uv run python benchmarks/run_gpu_native_benchmarks.py
 ```
@@ -200,7 +201,7 @@ Notes:
 - Latest harness loop medians across five iterations: search `0.343s`, plan `0.136s`, apply `0.313s`, verify `0.037s`; all iterations passed.
 - Latest index scaling rows passed build/query thresholds: 1,000 files `build 0.155s / query 0.161s`, 5,000 files `0.728s / 0.691s`, 10,000 files `1.413s / 1.327s`.
 - Latest native GPU crossover artifact still found no crossover: device `0` completed 10MB and 100MB but remained slower than `rg`, then timed out on 500MB and 1GB; device `1` (`RTX 5070`, `sm_120`) remains unsupported by the current PyTorch/CUDA sidecar stack on this host.
-- `run_repo_retrieval_benchmarks.py` now requires an explicit `--dataset`; no committed retrieval JSONL dataset was found in the repo during this refresh, so the repo-map retrieval line remains the accepted 2026-04-19 snapshot rather than a new rerun.
+- `run_repo_retrieval_benchmarks.py` now has a committed default smoke dataset at `benchmarks/datasets/repo_retrieval_eval.jsonl`, so the suite is runnable without a local-only fixture. Latest default artifact: `artifacts/bench_repo_retrieval_benchmarks.json`, with `recall_at_5 = 1.0`, `precision_at_5 = 0.333333`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.492064`, `line_f1 = 0.492064`, `p50_latency_ms = 4.8`, and `token_budget_mean = 74.333333`. This is benchmark-harness coverage, not a replacement for the accepted 2026-04-19 repo-map lexical feature line.
 - The current accepted provider hardcase artifact is `artifacts/bench_provider_navigation_click_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_click_hardcases.md`.
 - The current accepted JS/TS provider hardcase artifact is `artifacts/bench_provider_navigation_js_ts_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_js_ts_hardcases.md`.
 - The current accepted Rust provider hardcase artifact is `artifacts/bench_provider_navigation_rust_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_rust_hardcases.md`.
