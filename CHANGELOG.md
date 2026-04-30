@@ -1,30 +1,31 @@
 # CHANGELOG
 
 
-## Unreleased
-
-### Features
-
-- Add an MCP runtime capabilities contract so agent clients can distinguish local, embedded-safe, and native-required tools before executing workflows.
+## v1.7.0 (2026-04-30)
 
 ### Documentation
 
-- Document MCP capability modes, native-unavailable remediation, and capabilities-first harness flow.
-- Refresh the v1.6.5 native cold-path benchmark read after the explicit native-binary run passed the frozen Windows regression gate.
-- Add cold-path attribution notes for explicit native-binary, discovered CLI, Python module, and positional word-boundary benchmark lanes.
-- Refresh the 2026-04-29 benchmark documentation across README, benchmark docs, tool comparison, GPU crossover, and paper notes.
-- Record the latest cold-path rerun as parity evidence, not a new speed baseline, because the regression gate failed on comparator drift and one `tg` row.
-- Update GPU crossover documentation to keep GPU auto-routing manual-only after the latest native GPU artifact still found no literal-search crossover.
-- Document the committed default repo-retrieval benchmark dataset and latest default smoke metrics.
+- Refresh benchmark snapshot
+  ([`068b898`](https://github.com/oimiragieo/tensor-grep/commit/068b8981efa4d4399aa038d2e1900e5c6d018d0c))
 
-### Benchmarks
+- Refresh v1.6.5 cold-path benchmark read
+  ([`41d4e89`](https://github.com/oimiragieo/tensor-grep/commit/41d4e899711963296a63773b223f4adc97b2fd6f))
 
-- Add a committed default repo-retrieval benchmark dataset so `run_repo_retrieval_benchmarks.py` is runnable without local-only fixtures.
+### Features
 
-### Tests
+- Expose mcp runtime capabilities
+  ([`6084638`](https://github.com/oimiragieo/tensor-grep/commit/6084638b77b44142b38c543486f90081a0c13c48))
 
-- Cover `-w/--word-regexp` in the positional early-rg benchmark launcher helper so the experimental lane is measured instead of silently falling back to `tg search`.
-- Cover the default repo-retrieval benchmark dataset path.
+Add MCP runtime capability discovery, structured native-unavailable errors, and updated harness
+  documentation.
+
+### Testing
+
+- Add repo retrieval benchmark fixture
+  ([`b8267b8`](https://github.com/oimiragieo/tensor-grep/commit/b8267b8933d62cbc8749e874d204b9c563713c1e))
+
+- Cover word boundary cold-path attribution lane
+  ([`7a7716a`](https://github.com/oimiragieo/tensor-grep/commit/7a7716a6ba6c0169736d491b36ef7390e125a6b5))
 
 
 ## v1.6.5 (2026-04-28)
