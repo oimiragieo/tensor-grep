@@ -1,18 +1,25 @@
 # CHANGELOG
 
-## Unreleased
+
+## v1.7.1 (2026-04-30)
 
 ### Bug Fixes
 
-- Harden Rust test-function discovery against CodeQL ReDoS backtracking alerts.
+- Avoid rust test discovery redos
+  ([`f908840`](https://github.com/oimiragieo/tensor-grep/commit/f9088407fc40508d7ba5c02d4f56269252fb5eb3))
 
-### Documentation
+### Code Style
 
-- Record the `v1.7.0` post-release audit for MCP, GPU, AST rewrite, and release metadata parity.
+- Format python codebase
+  ([`6a175dd`](https://github.com/oimiragieo/tensor-grep/commit/6a175dd47337064b8559c06b4d237731f2f510f8))
+
+- Match ci preview formatting
+  ([`965901e`](https://github.com/oimiragieo/tensor-grep/commit/965901e048c8d5dcf4dd4136c57240fc6c65bd6c))
 
 ### Testing
 
-- Validate editable `uv.lock` version parity in the release-version validator.
+- Validate uv lock release parity
+  ([`d29204d`](https://github.com/oimiragieo/tensor-grep/commit/d29204d1f5489322af6bebd22bf44ca64f088cb7))
 
 
 ## v1.7.0 (2026-04-30)
