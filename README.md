@@ -398,6 +398,7 @@ To use it with Claude Desktop, just add this to your `claude_desktop_config.json
 ```
 
 Available MCP tools now include:
+- `tg_mcp_capabilities` (reports which MCP tools are local, embedded-safe, or native-required)
 - `tg_search`
 - `tg_ast_search`
 - `tg_classify_logs`
@@ -406,6 +407,8 @@ Available MCP tools now include:
 - `tg_rewrite_plan` (dry-run AST rewrite, returns JSON edit plan)
 - `tg_rewrite_apply` (apply AST rewrite edits with optional byte-level verification)
 - `tg_rewrite_diff` (unified diff preview of planned rewrites)
+
+Call `tg_mcp_capabilities` first when running from PyPI wheels or agent sandboxes. It reports whether a standalone native `tg` binary is available, whether embedded rewrite fallback is importable, and which tools require native `tg`.
 
 For machine consumers of CLI JSON output (`tg search ... --json`), routing metadata is included:
 - `version` (contract version, currently `1`)

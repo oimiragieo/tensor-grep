@@ -436,7 +436,7 @@ def test_stats_passthrough_matches_ripgrep_stdout_contract(tmp_path: Path):
             if line.endswith(" seconds spent searching"):
                 normalized_lines.append("<SEARCH_TIME>")
                 continue
-            if re.fullmatch(r"\d+\.\d+ seconds", line):
+            if re.fullmatch(r"\d+\.\d+ seconds(?: total)?", line):
                 normalized_lines.append("<TOTAL_TIME>")
                 continue
             normalized_lines.append(line)

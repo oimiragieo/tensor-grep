@@ -223,17 +223,19 @@ Recommended consumer behavior:
 
 Use this as the canonical MCP chain for the same task shape:
 
-1. `tg_repo_map`
-2. `tg_context_pack`
-3. `tg_symbol_defs` or `tg_symbol_callers`
-4. `tg_edit_plan`
-5. `tg_rewrite_diff`
-6. `tg_rewrite_apply`
-7. `tg_audit_manifest_verify`
+1. `tg_mcp_capabilities`
+2. `tg_repo_map`
+3. `tg_context_pack`
+4. `tg_symbol_defs` or `tg_symbol_callers`
+5. `tg_edit_plan`
+6. `tg_rewrite_diff` when `native_tg.available = true`
+7. `tg_rewrite_apply`
+8. `tg_audit_manifest_verify`
 
 Minimal MCP chain:
 
 ```text
+tg_mcp_capabilities()
 tg_repo_map(path=".")
 tg_context_pack(query="invoice payment", path=".")
 tg_symbol_defs(symbol="create_invoice", path=".")
@@ -246,10 +248,14 @@ tg_audit_manifest_verify(manifest_path="rewrite-audit.json")
 
 Recommended consumer behavior:
 
-1. preserve machine-readable envelopes from each tool instead of scraping prose
-2. treat `tg_edit_plan` as the plan contract and `tg_rewrite_apply` as the patch-attempt plus validation contract
-3. use `tg_audit_manifest_verify` when the workflow needs trust or replay validation
-4. if final outcome needs benchmark-style scoring, hand the produced patch artifact to `run_patch_bakeoff.py`
+1. call `tg_mcp_capabilities` before picking rewrite/index tools in PyPI or sandboxed installs
+2. preserve machine-readable envelopes from each tool instead of scraping prose
+3. treat `native-required` tools as unavailable unless `native_tg.available = true`
+4. inspect `native_required_options` before calling `tg_rewrite_apply`; `verify`, `checkpoint`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd` require standalone native `tg`
+5. use simple `tg_rewrite_plan` / `tg_rewrite_apply` as the embedded-safe fallback when native `tg` is unavailable
+6. treat `tg_edit_plan` as the plan contract and `tg_rewrite_apply` as the patch-attempt plus validation contract
+7. use `tg_audit_manifest_verify` when the workflow needs trust or replay validation
+8. if final outcome needs benchmark-style scoring, hand the produced patch artifact to `run_patch_bakeoff.py`
 
 ## Rewrite Planning Flow
 
@@ -535,6 +541,7 @@ Use MCP when the consumer speaks tool calls instead of shelling out directly.
 
 Available workflow tools:
 
+- `tg_mcp_capabilities`
 - `tg_repo_map`
 - `tg_context_pack`
 - `tg_symbol_defs`
@@ -557,17 +564,19 @@ Available workflow tools:
 
 Example flow:
 
-1. call `tg_index_search("ERROR", path=".")`
-2. call `tg_rewrite_plan(...)`
-3. call `tg_rewrite_diff(...)`
-4. call `tg_checkpoint_create(path=".")` if rollback is required
-5. call `tg_rewrite_apply(..., verify=True, checkpoint=True)`
+1. call `tg_mcp_capabilities()`
+2. call `tg_index_search("ERROR", path=".")` only if it is `native-required` and native `tg` is available
+3. call `tg_rewrite_plan(...)`
+4. call `tg_rewrite_diff(...)` only when native `tg` is available
+5. call `tg_checkpoint_create(path=".")` if rollback is required
+6. call `tg_rewrite_apply(..., verify=True, checkpoint=True)` only when native `tg` is available; otherwise use simple embedded-safe apply without verify/checkpoint
 
 The MCP tool payloads mirror the CLI contract envelopes. Consumers should still inspect:
 
 - `"routing_backend"`
 - `"routing_reason"`
 - `"sidecar_used"`
+- `"error.code" == "unavailable"` with `"native-tg-unavailable"` routing before retrying native-required tools
 
 ## Calibrate and Routing Flow
 

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -216,6 +217,20 @@ def _without_profiling(payload: dict[str, object]) -> dict[str, object]:
     cleaned = dict(payload)
     cleaned.pop("_profiling", None)
     return cleaned
+
+
+def _mcp_tool_names() -> set[str]:
+    from tensor_grep.cli import mcp_server
+
+    return {tool.name for tool in asyncio.run(mcp_server.mcp.list_tools())}
+
+
+def _call_mcp_tool_text(name: str, arguments: dict[str, object]) -> str:
+    from tensor_grep.cli import mcp_server
+
+    content, data = asyncio.run(mcp_server.mcp.call_tool(name, arguments))
+    assert data["result"] == content[0].text
+    return content[0].text
 
 
 def test_tg_ast_search_accepts_ast_wrapper_backend():
@@ -887,6 +902,206 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
         "def $F($$$ARGS): return $EXPR",
         "src",
     ]
+
+
+def test_tg_mcp_capabilities_is_registered_and_reports_no_native_runtime(monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(mcp_server, "_embedded_rewrite_available", lambda: True, raising=False)
+
+    assert "tg_mcp_capabilities" in _mcp_tool_names()
+
+    payload = json.loads(_call_mcp_tool_text("tg_mcp_capabilities", {}))
+
+    assert payload["version"] == 1
+    assert payload["routing_backend"] == "MCPRuntime"
+    assert payload["routing_reason"] == "mcp-capabilities"
+    assert payload["sidecar_used"] is False
+    assert payload["native_tg"] == {"available": False, "path": None}
+    assert payload["embedded_rewrite"] == {"available": True}
+
+    tools = {tool["name"]: tool for tool in payload["tools"]}
+    assert tools["tg_mcp_capabilities"]["mode"] == "python-local"
+    assert tools["tg_rewrite_plan"]["mode"] == "embedded-safe"
+    assert tools["tg_rewrite_apply"]["mode"] == "embedded-safe"
+    assert tools["tg_rewrite_apply"]["native_required_options"] == [
+        "verify",
+        "checkpoint",
+        "audit_manifest",
+        "audit_signing_key",
+        "lint_cmd",
+        "test_cmd",
+    ]
+    assert tools["tg_rewrite_diff"]["mode"] == "native-required"
+    assert tools["tg_index_search"]["mode"] == "native-required"
+
+
+def test_tg_mcp_capabilities_registry_covers_public_tools(monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(mcp_server, "_embedded_rewrite_available", lambda: False, raising=False)
+
+    payload = json.loads(mcp_server.tg_mcp_capabilities())
+    capability_names = {tool["name"] for tool in payload["tools"]}
+
+    assert capability_names == set(mcp_server._MCP_TOOL_CAPABILITIES)
+    assert capability_names == _mcp_tool_names()
+    assert payload["native_tg"] == {"available": True, "path": "tg.exe"}
+    assert payload["embedded_rewrite"] == {"available": False}
+
+
+def test_tg_mcp_capabilities_reports_bad_native_override(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    missing_binary = tmp_path / "missing-tg.exe"
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(missing_binary))
+    mcp_server.resolve_native_tg_binary.cache_clear()
+    try:
+        payload = json.loads(mcp_server.tg_mcp_capabilities())
+    finally:
+        mcp_server.resolve_native_tg_binary.cache_clear()
+
+    assert payload["native_tg"]["available"] is False
+    assert payload["native_tg"]["path"] is None
+    assert "Configured binary" in payload["native_tg"]["error"]
+
+
+def test_tg_rewrite_plan_uses_embedded_fallback_without_native_binary(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    expected = {
+        "version": 1,
+        "routing_backend": "AstBackend",
+        "routing_reason": "ast-native",
+        "sidecar_used": False,
+        "total_edits": 0,
+        "edits": [],
+    }
+
+    def fake_embedded_rewrite_json(**kwargs):
+        assert kwargs["mode"] == "plan"
+        return json.dumps(expected)
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(mcp_server, "_execute_embedded_rewrite_json", fake_embedded_rewrite_json)
+
+    out = mcp_server.tg_rewrite_plan(
+        pattern="def $F(): pass",
+        replacement="def $F(): ...",
+        lang="python",
+        path=str(tmp_path),
+    )
+
+    assert json.loads(out) == expected
+
+
+def test_tg_rewrite_plan_reports_unavailable_without_native_or_embedded(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(mcp_server, "_embedded_rewrite_available", lambda: False)
+
+    payload = json.loads(
+        mcp_server.tg_rewrite_plan(
+            pattern="def $F(): pass",
+            replacement="def $F(): ...",
+            lang="python",
+            path=str(tmp_path),
+        )
+    )
+
+    assert payload["routing_backend"] == "AstBackend"
+    assert payload["routing_reason"] == "native-tg-unavailable"
+    assert payload["tool"] == "tg_rewrite_plan"
+    assert payload["error"]["code"] == "unavailable"
+    assert "TG_NATIVE_TG_BINARY" in payload["error"]["remediation"]
+
+
+def test_tg_rewrite_apply_verify_returns_unavailable_without_native_binary(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(mcp_server, "_embedded_rewrite_available", lambda: True)
+
+    payload = json.loads(
+        mcp_server.tg_rewrite_apply(
+            pattern="def $F(): pass",
+            replacement="def $F(): ...",
+            lang="python",
+            path=str(tmp_path),
+            verify=True,
+        )
+    )
+
+    assert payload["routing_backend"] == "AstBackend"
+    assert payload["routing_reason"] == "native-tg-unavailable"
+    assert payload["tool"] == "tg_rewrite_apply"
+    assert payload["error"]["code"] == "unavailable"
+    assert "verify" in payload["error"]["message"]
+    assert "TG_NATIVE_TG_BINARY" in payload["error"]["remediation"]
+
+
+def test_tg_rewrite_diff_returns_unavailable_without_native_binary(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+
+    payload = json.loads(
+        mcp_server.tg_rewrite_diff(
+            pattern="def $F(): pass",
+            replacement="def $F(): ...",
+            lang="python",
+            path=str(tmp_path),
+        )
+    )
+
+    assert payload["routing_backend"] == "AstBackend"
+    assert payload["routing_reason"] == "native-tg-unavailable"
+    assert payload["tool"] == "tg_rewrite_diff"
+    assert payload["error"]["code"] == "unavailable"
+    assert "standalone native tg binary" in payload["error"]["message"]
+    assert "TG_NATIVE_TG_BINARY" in payload["error"]["remediation"]
+
+
+def test_tg_rewrite_diff_returns_unavailable_for_bad_native_override(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_NATIVE_TG_BINARY", str(tmp_path / "missing-tg.exe"))
+    mcp_server.resolve_native_tg_binary.cache_clear()
+    try:
+        payload = json.loads(
+            mcp_server.tg_rewrite_diff(
+                pattern="def $F(): pass",
+                replacement="def $F(): ...",
+                lang="python",
+                path=str(tmp_path),
+            )
+        )
+    finally:
+        mcp_server.resolve_native_tg_binary.cache_clear()
+
+    assert payload["routing_reason"] == "native-tg-unavailable"
+    assert payload["tool"] == "tg_rewrite_diff"
+    assert payload["error"]["code"] == "unavailable"
+
+
+def test_tg_index_search_returns_unavailable_without_native_binary(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+
+    payload = json.loads(mcp_server.tg_index_search(pattern="ERROR", path=str(tmp_path)))
+
+    assert payload["routing_backend"] == "TrigramIndex"
+    assert payload["routing_reason"] == "native-tg-unavailable"
+    assert payload["tool"] == "tg_index_search"
+    assert payload["query"] == "ERROR"
+    assert payload["path"] == str(tmp_path)
+    assert payload["error"]["code"] == "unavailable"
+    assert "standalone native tg binary" in payload["error"]["message"]
+    assert "TG_NATIVE_TG_BINARY" in payload["error"]["remediation"]
 
 
 def test_execute_rewrite_apply_json_should_use_embedded_rust_when_native_binary_missing(

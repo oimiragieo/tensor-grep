@@ -122,6 +122,15 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_context_render" in doc
     assert "tg_rulesets" in doc
     assert "tg_ruleset_scan" in doc
+    assert "tg_mcp_capabilities" in doc
+    assert "MCPRuntime" in doc
+    assert "python-local" in doc
+    assert "embedded-safe" in doc
+    assert "native-required" in doc
+    assert "native_required_options" in doc
+    assert "native-tg-unavailable" in doc
+    assert "TG_NATIVE_TG_BINARY" in doc
+    assert "error.remediation" in doc
     assert "tg_symbol_defs" in doc
     assert "tg_symbol_source" in doc
     assert "tg_symbol_impact" in doc
