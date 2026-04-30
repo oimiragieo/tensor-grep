@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.7.2 (2026-04-30)
+
+### Bug Fixes
+
+- Sync uv lock during semantic release
+  ([`7ac1b84`](https://github.com/oimiragieo/tensor-grep/commit/7ac1b844b37c33e4d30be464e5040841a67b150f))
+
+- Use literal package name for semantic release uv lock
+  ([`af5d1c9`](https://github.com/oimiragieo/tensor-grep/commit/af5d1c9895e8b97ae7167f10c8ba504e9c35f248))
+
+
 ## v1.7.1 (2026-04-30)
 
 ### Bug Fixes
