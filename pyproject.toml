@@ -154,7 +154,7 @@ version_toml = [
     "rust_core/Cargo.toml:package.version",
 ]
 branch = "main"
-build_command = "python scripts/stamp_release_assets.py && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default stable && pip install uv && uv build"
+build_command = "python scripts/stamp_release_assets.py && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . $HOME/.cargo/env && rustup default stable && pip install uv && uv lock --upgrade-package \"$PACKAGE_NAME\" && git add uv.lock && uv build"
 upload_to_pypi = false
 upload_to_release = true
 commit_message = "chore(release): v{version} [skip ci]"

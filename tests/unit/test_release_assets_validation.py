@@ -76,6 +76,47 @@ def test_should_require_uv_lock_editable_version_to_match_pyproject():
     )
 
 
+def test_should_require_semantic_release_build_to_refresh_uv_lock():
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject_content = textwrap.dedent(
+        """
+        [project]
+        name = "tensor-grep"
+        version = "1.7.1"
+
+        [tool.semantic_release]
+        version_toml = [
+            "pyproject.toml:project.version",
+            "rust_core/Cargo.toml:package.version",
+        ]
+        build_command = "python scripts/stamp_release_assets.py && pip install uv && uv build"
+        version_variables = [
+            "src/tensor_grep/cli/main.py:pkg_version",
+            "npm/package.json:version",
+            "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
+            "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
+            "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
+        ]
+        """
+    )
+
+    errors = module.validate_semantic_release_config(pyproject_content=pyproject_content)
+    joined_errors = "\n".join(errors)
+
+    assert (
+        'semantic_release.build_command must run `uv lock --upgrade-package "$PACKAGE_NAME"`'
+        in joined_errors
+    )
+    assert "semantic_release.build_command must stage `uv.lock`" in joined_errors
+
+
 def test_should_accept_readme_when_public_contract_markers_exist():
     root = Path(__file__).resolve().parents[2]
     script_path = root / "scripts" / "validate_release_assets.py"

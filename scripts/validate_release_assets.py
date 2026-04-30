@@ -2411,11 +2411,66 @@ def validate_dev_tooling_constraints(*, pyproject_content: str) -> list[str]:
     return errors
 
 
+def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
+    errors: list[str] = []
+    try:
+        pyproject_data = tomllib.loads(pyproject_content)
+    except tomllib.TOMLDecodeError as exc:
+        return [f"pyproject.toml is not valid TOML: {exc}"]
+
+    semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
+    build_command = str(semantic_release.get("build_command", ""))
+    if "scripts/stamp_release_assets.py" not in build_command:
+        errors.append(
+            "semantic_release.build_command must run scripts/stamp_release_assets.py before build"
+        )
+
+    lock_command = 'uv lock --upgrade-package "$PACKAGE_NAME"'
+    lock_position = build_command.find(lock_command)
+    git_add_position = build_command.find("git add uv.lock")
+    build_position = build_command.rfind("uv build")
+    if lock_position < 0:
+        errors.append(f"semantic_release.build_command must run `{lock_command}`")
+    if git_add_position < 0:
+        errors.append("semantic_release.build_command must stage `uv.lock`")
+    if build_position >= 0 and lock_position >= 0 and build_position < lock_position:
+        errors.append("semantic_release.build_command must refresh `uv.lock` before `uv build`")
+    if lock_position >= 0 and git_add_position >= 0 and git_add_position < lock_position:
+        errors.append("semantic_release.build_command must stage `uv.lock` after refreshing it")
+    if build_position >= 0 and git_add_position >= 0 and build_position < git_add_position:
+        errors.append("semantic_release.build_command must stage `uv.lock` before `uv build`")
+
+    version_toml = semantic_release.get("version_toml", [])
+    version_variables = semantic_release.get("version_variables", [])
+    required_toml_entries = {
+        "pyproject.toml:project.version",
+        "rust_core/Cargo.toml:package.version",
+    }
+    required_variable_entries = {
+        "src/tensor_grep/cli/main.py:pkg_version",
+        "npm/package.json:version",
+        "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
+        "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
+        "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
+    }
+    missing_toml = sorted(required_toml_entries - set(version_toml))
+    missing_variables = sorted(required_variable_entries - set(version_variables))
+    if missing_toml:
+        errors.append("semantic_release.version_toml missing entries: " + ", ".join(missing_toml))
+    if missing_variables:
+        errors.append(
+            "semantic_release.version_variables missing entries: " + ", ".join(missing_variables)
+        )
+
+    return errors
+
+
 def validate_all() -> list[str]:
     errors: list[str] = []
     py_version = _version_from_pyproject()
     cargo_version = _version_from_cargo()
     uv_lock_version = _version_from_uv_lock()
+    pyproject_content = _read(ROOT / "pyproject.toml")
     npm_root = ROOT / "npm"
     npm_manifest = json.loads(_read(ROOT / "npm" / "package.json"))
     npm_version = str(npm_manifest["version"])
@@ -2532,40 +2587,9 @@ def validate_all() -> list[str]:
     if "[SECURITY.md](SECURITY.md)" in readme and not (ROOT / "SECURITY.md").exists():
         errors.append("README links to SECURITY.md, but SECURITY.md is missing from the repo root")
 
-    pyproject_data = tomllib.loads(_read(ROOT / "pyproject.toml"))
-    errors.extend(
-        validate_uv_security_constraints(pyproject_content=_read(ROOT / "pyproject.toml"))
-    )
-    errors.extend(
-        validate_dev_tooling_constraints(pyproject_content=_read(ROOT / "pyproject.toml"))
-    )
-    semantic_release = pyproject_data.get("tool", {}).get("semantic_release", {})
-    build_command = str(semantic_release.get("build_command", ""))
-    if "scripts/stamp_release_assets.py" not in build_command:
-        errors.append(
-            "semantic_release.build_command must run scripts/stamp_release_assets.py before build"
-        )
-    version_toml = semantic_release.get("version_toml", [])
-    version_variables = semantic_release.get("version_variables", [])
-    required_toml_entries = {
-        "pyproject.toml:project.version",
-        "rust_core/Cargo.toml:package.version",
-    }
-    required_variable_entries = {
-        "src/tensor_grep/cli/main.py:pkg_version",
-        "npm/package.json:version",
-        "scripts/tensor-grep.rb:TENSOR_GREP_VERSION",
-        "scripts/oimiragieo.tensor-grep.yaml:PackageVersion",
-        "scripts/oimiragieo.tensor-grep.yaml:InstallerUrl",
-    }
-    missing_toml = sorted(required_toml_entries - set(version_toml))
-    missing_variables = sorted(required_variable_entries - set(version_variables))
-    if missing_toml:
-        errors.append("semantic_release.version_toml missing entries: " + ", ".join(missing_toml))
-    if missing_variables:
-        errors.append(
-            "semantic_release.version_variables missing entries: " + ", ".join(missing_variables)
-        )
+    errors.extend(validate_uv_security_constraints(pyproject_content=pyproject_content))
+    errors.extend(validate_dev_tooling_constraints(pyproject_content=pyproject_content))
+    errors.extend(validate_semantic_release_config(pyproject_content=pyproject_content))
 
     return errors
 
