@@ -2425,7 +2425,7 @@ def validate_semantic_release_config(*, pyproject_content: str) -> list[str]:
             "semantic_release.build_command must run scripts/stamp_release_assets.py before build"
         )
 
-    lock_command = 'uv lock --upgrade-package "$PACKAGE_NAME"'
+    lock_command = "uv lock --upgrade-package tensor-grep"
     lock_position = build_command.find(lock_command)
     git_add_position = build_command.find("git add uv.lock")
     build_position = build_command.rfind("uv build")

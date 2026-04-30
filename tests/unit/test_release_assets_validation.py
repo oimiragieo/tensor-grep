@@ -111,7 +111,7 @@ def test_should_require_semantic_release_build_to_refresh_uv_lock():
     joined_errors = "\n".join(errors)
 
     assert (
-        'semantic_release.build_command must run `uv lock --upgrade-package "$PACKAGE_NAME"`'
+        "semantic_release.build_command must run `uv lock --upgrade-package tensor-grep`"
         in joined_errors
     )
     assert "semantic_release.build_command must stage `uv.lock`" in joined_errors
