@@ -507,6 +507,34 @@ def test_rust_framework_candidates_include_plain_test_functions(tmp_path: Path) 
     assert candidates == ("is_escape", "next_flag_async")
 
 
+def test_rust_framework_candidates_handle_visibility_and_test_attributes(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    test_path = project / "tests" / "testsuite" / "attributed.rs"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(
+        "#[test]\n"
+        '#[cfg(feature = "integration")]\n'
+        "pub(crate) fn visible_smoke() {\n"
+        "    assert!(true);\n"
+        "}\n"
+        "\n"
+        '#[tokio::test(flavor = "multi_thread")]\n'
+        "// runtime smoke test\n"
+        "pub async fn async_smoke() {\n"
+        "    assert!(true);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    candidates = repo_map._framework_test_function_candidates(str(test_path.resolve()))
+    tokio_candidates = repo_map._rust_tokio_test_function_candidates(str(test_path.resolve()))
+
+    assert candidates == ("visible_smoke", "async_smoke")
+    assert tokio_candidates == ("async_smoke",)
+
+
 def test_rust_nested_integration_tests_use_targeted_commands(tmp_path: Path) -> None:
     project = tmp_path / "project"
     tests_dir = project / "tests" / "testsuite"

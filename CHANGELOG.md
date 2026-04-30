@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Bug Fixes
+
+- Harden Rust test-function discovery against CodeQL ReDoS backtracking alerts.
+
 ### Documentation
 
 - Record the `v1.7.0` post-release audit for MCP, GPU, AST rewrite, and release metadata parity.
