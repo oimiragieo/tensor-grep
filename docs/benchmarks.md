@@ -195,12 +195,12 @@ Notes:
 - Latest native CPU medians with `rg` fallback disabled: `cold_standard_corpus 0.173s vs rg 0.240s`, `large_file_200mb 0.220s vs rg 0.283s`, `large_file_200mb_count 0.072s vs rg 0.417s`, and `many_file_directory 0.159s vs rg 0.236s`; all rows passed.
 - Latest hot-query medians: repeated fixed-string `0.5671s -> 0.1470s`, repeated regex-prefilter `0.5476s -> 0.1662s`; both rows passed.
 - Latest AST search medians: single-query Python `tg 0.116s` vs `sg 0.151s` (`0.770x`); multi-language ratios were Python `0.722x`, JavaScript `0.800x`, TypeScript `0.726x`, and Rust `0.715x`.
-- Latest AST rewrite medians: plan `0.650s`, diff `0.709s`, apply `0.636s`; `sg apply 0.719s`, `tg/sg = 0.885x`, ratio gate passed.
+- Latest AST rewrite medians from the `v1.7.0` audit: plan `0.361s`, diff `0.410s`, apply `0.464s`; `sg apply 0.537s`, `tg/sg = 0.865x`, ratio gate passed.
 - Latest AST workflow medians: native `run 0.0279s`, sidecar `scan 0.2670s`, sidecar `test 0.4359s`.
 - Latest editor-plane medians: context-render `small cold/warm 0.449s/0.373s`, `medium 0.691s/0.647s`, `large 1.808s/1.925s`; blast-radius `medium depth=2 0.579s`, `large depth=2 1.446s`.
 - Latest harness loop medians across five iterations: search `0.343s`, plan `0.136s`, apply `0.313s`, verify `0.037s`; all iterations passed.
 - Latest index scaling rows passed build/query thresholds: 1,000 files `build 0.155s / query 0.161s`, 5,000 files `0.728s / 0.691s`, 10,000 files `1.413s / 1.327s`.
-- Latest native GPU crossover artifact still found no crossover: device `0` completed 10MB and 100MB but remained slower than `rg`, then timed out on 500MB and 1GB; device `1` (`RTX 5070`, `sm_120`) remains unsupported by the current PyTorch/CUDA sidecar stack on this host.
+- Latest native GPU crossover audit still found no crossover: device `0` completed 10MB and 100MB but remained slower than `rg`, then timed out on 500MB and 1GB; device `1` (`RTX 5070`, `sm_120`) remains unsupported by the current PyTorch/CUDA sidecar stack on this host.
 - `run_repo_retrieval_benchmarks.py` now has a committed default smoke dataset at `benchmarks/datasets/repo_retrieval_eval.jsonl`, so the suite is runnable without a local-only fixture. Latest default artifact: `artifacts/bench_repo_retrieval_benchmarks.json`, with `recall_at_5 = 1.0`, `precision_at_5 = 0.333333`, `mrr_at_5 = 1.0`, `ndcg_at_5 = 1.0`, `file_f1 = 0.492064`, `line_f1 = 0.492064`, `p50_latency_ms = 4.8`, and `token_budget_mean = 74.333333`. This is benchmark-harness coverage, not a replacement for the accepted 2026-04-19 repo-map lexical feature line.
 - The current accepted provider hardcase artifact is `artifacts/bench_provider_navigation_click_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_click_hardcases.md`.
 - The current accepted JS/TS provider hardcase artifact is `artifacts/bench_provider_navigation_js_ts_hardcases.json`, with a companion markdown scorecard at `artifacts/bench_provider_navigation_js_ts_hardcases.md`.
@@ -524,14 +524,14 @@ still keeps `rg` as the default baseline path where routing selects it.
 
 | Scenario | tensor-grep | Result |
 | --- | --- | --- |
-| plan median | 0.650s | PASS |
-| diff median | 0.709s | PASS |
-| apply median | 0.636s | Gate PASS |
-| `sg` apply median | 0.719s | comparison |
+| plan median | 0.361s | PASS |
+| diff median | 0.410s | PASS |
+| apply median | 0.464s | Gate PASS |
+| `sg` apply median | 0.537s | comparison |
 | total rewrites | 50,000 | completed |
-| `tg/sg` apply ratio | 0.885x | faster than `sg` |
+| `tg/sg` apply ratio | 0.865x | faster than `sg` |
 
-The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails when `tg` is more than 10% slower than `sg` on the apply phase. The current accepted local artifact is `artifacts/bench_ast_rewrite.json`; it passes the apply gate with `ratio_tg_vs_sg = 0.885`. The broader contract remains narrow: JSON, diff, checkpoint, audit, validation, verify, selector, and batch rewrite stay on the plan-first path.
+The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails when `tg` is more than 10% slower than `sg` on the apply phase. The current `v1.7.0` audit artifact is `artifacts/bench_ast_rewrite_post_v170_audit.json`; it passes the apply gate with `ratio_tg_vs_sg = 0.865`. The broader contract remains narrow: JSON, diff, checkpoint, audit, validation, verify, selector, and batch rewrite stay on the plan-first path.
 
 ### Editor-plane context render (`run_context_render_benchmarks.py`)
 
@@ -573,10 +573,10 @@ The rewrite benchmark artifact records `thresholds.max_ratio_tg_vs_sg` and fails
 
 | Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU/rg ratio | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 10MB | 0.129s | 0.133s | 0.436s | 3.388x slower | no crossover |
-| 100MB | 0.126s | 0.136s | 1.143s | 9.086x slower | no crossover |
-| 500MB | 0.143s | 0.164s | timeout | n/a | FAIL |
-| 1GB | 0.197s | 0.185s | timeout | n/a | FAIL |
+| 10MB | 0.104s | 0.113s | 0.409s | 3.950x slower | no crossover |
+| 100MB | 0.110s | 0.116s | 1.033s | 9.416x slower | no crossover |
+| 500MB | 0.126s | 0.131s | timeout | n/a | FAIL |
+| 1GB | 0.144s | 0.150s | timeout | n/a | FAIL |
 
 The current native GPU benchmark reports `passed = false`, `crossover.exists = false`, and no winning GPU rows on this Windows host. Keep explicit GPU search manual-only until the end-to-end artifact shows both correctness and a real crossover.
 
@@ -584,10 +584,10 @@ The current native GPU benchmark reports `passed = false`, `crossover.exists = f
 
 | Corpus size | `rg` | `tg --cpu` | GPU 0 (`RTX 4070`) | GPU 1 (`RTX 5070`) |
 | --- | ---: | ---: | ---: | --- |
-| 1MB | 0.151s | 0.129s | 3.432s PASS | UNSUPPORTED |
-| 10MB | 0.148s | 0.132s | 4.605s PASS | UNSUPPORTED |
-| 100MB | 0.139s | 0.145s | 17.749s PASS | UNSUPPORTED |
-| 1GB | 0.169s | 0.181s | timeout FAIL | UNSUPPORTED |
+| 1MB | 0.353s | 0.114s | 2.923s PASS | UNSUPPORTED |
+| 10MB | 0.113s | 0.117s | 3.614s PASS | UNSUPPORTED |
+| 100MB | 0.111s | 0.112s | 12.306s PASS | UNSUPPORTED |
+| 1GB | 0.179s | 0.183s | timeout FAIL | UNSUPPORTED |
 
 The Python sidecar artifact reports PyTorch `2.6.0+cu124`: RTX 4070 is operational but does not beat `rg`, while RTX 5070 / `sm_120` is dependency-bound with `no kernel image`. If the host has no operational CUDA device, this artifact should contain `status: "SKIP"`, `skipped: true`, and empty timing rows.
 

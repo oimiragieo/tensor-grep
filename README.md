@@ -139,7 +139,7 @@ Current benchmark-governed strengths:
 
 - native CPU benchmark line: with rg fallback disabled for native measurement, `tg --cpu` wins all four current native CPU rows, including `large_file_200mb_count` (`0.072s` vs `0.417s`) and `many_file_directory` (`0.159s` vs `0.236s`) in [`artifacts/bench_run_native_cpu_benchmarks.json`](artifacts/bench_run_native_cpu_benchmarks.json)
 - native AST search beats `sg` on the current AST search surfaces in [docs/benchmarks.md](docs/benchmarks.md)
-- AST rewrite remains functional and the one-shot apply path is under the `sg` ratio gate on the current local benchmark (`0.885x` in `artifacts/bench_ast_rewrite.json`)
+- AST rewrite remains functional and the one-shot apply path is under the `sg` ratio gate on the current local benchmark (`0.865x` in `artifacts/bench_ast_rewrite_post_v170_audit.json`)
 - repeated-query acceleration remains the strongest warm-path win on unchanged corpora
 
 Current CLI correctness line:

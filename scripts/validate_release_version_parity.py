@@ -36,6 +36,26 @@ def _version_from_npm() -> str:
     return str(data["version"])
 
 
+def _version_from_uv_lock() -> str:
+    data = tomllib.loads(_read(ROOT / "uv.lock"))
+    packages = data.get("package")
+    if not isinstance(packages, list):
+        raise ValueError("Missing package list in uv.lock")
+
+    for package in packages:
+        if not isinstance(package, dict) or package.get("name") != "tensor-grep":
+            continue
+        source = package.get("source")
+        if not isinstance(source, dict) or source.get("editable") != ".":
+            continue
+        version = package.get("version")
+        if not version:
+            raise ValueError("Missing editable tensor-grep version in uv.lock")
+        return str(version)
+
+    raise ValueError("Missing editable tensor-grep package in uv.lock")
+
+
 def _version_from_brew_formula() -> str:
     content = _read(ROOT / "scripts" / "tensor-grep.rb")
     constant_match = re.search(r'(?m)^\s*TENSOR_GREP_VERSION\s*=\s*"([^"]+)"\s*$', content)
@@ -178,6 +198,7 @@ def validate_release_version_parity(
         "pyproject": _version_from_pyproject(),
         "cargo": _version_from_cargo(),
         "npm": _version_from_npm(),
+        "uv.lock editable": _version_from_uv_lock(),
     }
     if check_package_managers:
         versions["homebrew"] = _version_from_brew_formula()

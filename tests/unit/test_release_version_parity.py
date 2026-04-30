@@ -29,6 +29,31 @@ def test_should_fail_when_expected_version_does_not_match_project_versions():
     assert any("npm version" in err for err in errors)
 
 
+def test_should_fail_when_uv_lock_editable_version_mismatches_expected(tmp_path):
+    module = _load_module()
+    module.ROOT = tmp_path
+
+    (tmp_path / "rust_core").mkdir()
+    (tmp_path / "npm").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "tensor-grep"\nversion = "1.7.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "rust_core" / "Cargo.toml").write_text(
+        '[package]\nname = "tensor_grep_rs"\nversion = "1.7.0"\n', encoding="utf-8"
+    )
+    (tmp_path / "npm" / "package.json").write_text('{"version": "1.7.0"}', encoding="utf-8")
+    (tmp_path / "uv.lock").write_text(
+        '[[package]]\nname = "tensor-grep"\nversion = "1.6.5"\nsource = { editable = "." }\n',
+        encoding="utf-8",
+    )
+
+    errors = module.validate_release_version_parity(
+        expected_version="1.7.0", check_package_managers=False
+    )
+
+    assert "uv.lock editable version 1.6.5 != expected 1.7.0" in errors
+
+
 def test_should_fail_when_expected_tag_mismatches_expected_version():
     module = _load_module()
     expected_version = module._version_from_pyproject()
@@ -142,6 +167,7 @@ def test_should_fail_when_package_manager_urls_do_not_target_expected_release_ve
     module._version_from_npm = lambda: expected_version
     module._version_from_brew_formula = lambda: expected_version
     module._version_from_winget_manifest = lambda: expected_version
+    module._version_from_uv_lock = lambda: expected_version
 
     def fake_read(path):
         path_str = str(path).replace("\\", "/")
@@ -174,6 +200,7 @@ def test_should_accept_templated_homebrew_urls_for_expected_release_version():
     module._version_from_npm = lambda: expected_version
     module._version_from_brew_formula = lambda: expected_version
     module._version_from_winget_manifest = lambda: expected_version
+    module._version_from_uv_lock = lambda: expected_version
 
     def fake_read(path):
         path_str = str(path).replace("\\", "/")

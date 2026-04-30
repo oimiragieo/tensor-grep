@@ -1,15 +1,15 @@
-# Native GPU crossover benchmark (2026-04-29)
+# Native GPU crossover benchmark (2026-04-30)
 
 Command used:
 
 ```powershell
-uv run python benchmarks/run_gpu_native_benchmarks.py --output artifacts/bench_run_gpu_native_benchmarks.json
+uv run python benchmarks/run_gpu_native_benchmarks.py --output artifacts/bench_run_gpu_native_benchmarks_post_v170_audit.json
 ```
 
 Environment:
 
 - Host: Windows 10 (`amd64`)
-- `tg` binary: `rust_core/target/release/tg.exe` (`tg 1.6.5`)
+- `tg` binary: `rust_core/target/release/tg.exe` (`tg 1.7.0`)
 - GPU under test: device `0` (`NVIDIA GeForce RTX 4070`, `sm_89`)
 - Corpus sizes: `10MB`, `100MB`, `500MB`, `1GB`
 - Corpus layout: 8 synthetic log shards per size
@@ -28,12 +28,12 @@ No crossover was found.
 
 | Corpus size | `rg` median | `tg --cpu` median | `tg --gpu-device-ids 0` median | GPU/rg ratio | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 10MB | 0.129s | 0.133s | 0.436s | 3.3879x | no crossover |
-| 100MB | 0.126s | 0.136s | 1.143s | 9.0860x | no crossover |
-| 500MB | 0.143s | 0.164s | timeout | n/a | FAIL |
-| 1GB | 0.197s | 0.185s | timeout | n/a | FAIL |
+| 10MB | 0.104s | 0.113s | 0.409s | 3.9499x | no crossover |
+| 100MB | 0.110s | 0.116s | 1.033s | 9.4159x | no crossover |
+| 500MB | 0.126s | 0.131s | timeout | n/a | FAIL |
+| 1GB | 0.144s | 0.150s | timeout | n/a | FAIL |
 
-Exact throughput and correctness metadata are recorded in `artifacts/bench_run_gpu_native_benchmarks.json`.
+Exact throughput and correctness metadata are recorded in `artifacts/bench_run_gpu_native_benchmarks_post_v170_audit.json`.
 
 ## Correctness parity
 
@@ -59,7 +59,7 @@ Some fault cases are simulation-backed through `TG_TEST_CUDA_BEHAVIOR`.
 
 ## Gap analysis
 
-The best measured GPU/rg ratio was at `10MB`, where GPU was still **3.3879x slower** than `rg`.
+The best measured GPU/rg ratio was at `10MB`, where GPU was still **3.9499x slower** than `rg`.
 The gap remained negative where the command completed, and larger corpora timed out before they could establish correctness or throughput.
 
 The current native GPU path is explicit and benchmarkable, but this artifact is not correctness-valid across all measured sizes and is not performance-competitive for this literal-search workload on Windows.

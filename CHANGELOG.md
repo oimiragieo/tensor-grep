@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## Unreleased
+
+### Documentation
+
+- Record the `v1.7.0` post-release audit for MCP, GPU, AST rewrite, and release metadata parity.
+
+### Testing
+
+- Validate editable `uv.lock` version parity in the release-version validator.
+
 
 ## v1.7.0 (2026-04-30)
 
