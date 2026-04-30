@@ -62,12 +62,10 @@ def resolve_native_tg_binary() -> Path | None:
     candidates = []
 
     # Priority 2: In-tree build
-    candidates.extend(
-        [
-            repo_root / "rust_core" / "target" / "release" / binary_name,
-            repo_root / "rust_core" / "target" / "debug" / binary_name,
-        ]
-    )
+    candidates.extend([
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "rust_core" / "target" / "debug" / binary_name,
+    ])
 
     existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
     if existing:

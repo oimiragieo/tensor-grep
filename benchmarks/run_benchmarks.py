@@ -478,35 +478,31 @@ def build_benchmark_scenarios(
         tg_args = [
             str(bench_dir) if arg == "bench_data" else arg for arg in scenario["tg_args"][2:]
         ]
-        scenarios.append(
-            {
-                "name": scenario["name"],
-                "rg_cmd": [resolved_rg_binary, "--no-ignore", *rg_args],
-                "tg_cmd": build_tg_benchmark_cmd(
-                    tg_args,
-                    binary=binary,
-                    force_cpu=False,
-                    launcher_mode=launcher_mode,
-                ),
-            }
-        )
+        scenarios.append({
+            "name": scenario["name"],
+            "rg_cmd": [resolved_rg_binary, "--no-ignore", *rg_args],
+            "tg_cmd": build_tg_benchmark_cmd(
+                tg_args,
+                binary=binary,
+                force_cpu=False,
+                launcher_mode=launcher_mode,
+            ),
+        })
 
     if force_cpu and large_file_path is not None and many_file_dir is not None:
         for extra in _extra_native_cpu_scenarios(large_file_path, many_file_dir):
             extra_tg_args = [extra["pattern"], extra["target"]]
             extra_rg_cmd = [resolved_rg_binary, "--no-ignore", extra["pattern"], extra["target"]]
-            scenarios.append(
-                {
-                    "name": extra["name"],
-                    "rg_cmd": extra_rg_cmd,
-                    "tg_cmd": build_tg_benchmark_cmd(
-                        extra_tg_args,
-                        binary=binary,
-                        force_cpu=False,
-                        launcher_mode=launcher_mode,
-                    ),
-                }
-            )
+            scenarios.append({
+                "name": extra["name"],
+                "rg_cmd": extra_rg_cmd,
+                "tg_cmd": build_tg_benchmark_cmd(
+                    extra_tg_args,
+                    binary=binary,
+                    force_cpu=False,
+                    launcher_mode=launcher_mode,
+                ),
+            })
 
     return scenarios
 
@@ -766,13 +762,11 @@ def main() -> int:
         "artifact": "bench_run_benchmarks",
         "suite": "run_benchmarks",
         "generated_at_epoch_s": time.time(),
-        "benchmark_host_key": benchmark_host_key(
-            {
-                "platform": platform.system().lower(),
-                "machine": platform.machine().lower(),
-                "python_version": platform.python_version(),
-            }
-        ),
+        "benchmark_host_key": benchmark_host_key({
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
+        }),
         "timing_samples_per_scenario": TIMING_SAMPLES_PER_SCENARIO,
         "native_cpu_forced": args.native,
         "native_cpu_mode": "direct_binary" if args.native else "default_binary",
@@ -783,15 +777,13 @@ def main() -> int:
             "tg_binary_source": tg_binary_source,
             "tg_launcher_mode": tg_launcher_mode,
         },
-        "host_provenance": _build_host_provenance(
-            {
-                "platform": platform.system().lower(),
-                "machine": platform.machine().lower(),
-                "python_version": platform.python_version(),
-                "tg_binary_source": tg_binary_source,
-                "tg_launcher_mode": tg_launcher_mode,
-            }
-        ),
+        "host_provenance": _build_host_provenance({
+            "platform": platform.system().lower(),
+            "machine": platform.machine().lower(),
+            "python_version": platform.python_version(),
+            "tg_binary_source": tg_binary_source,
+            "tg_launcher_mode": tg_launcher_mode,
+        }),
         "rows": rows,
         "parity_failures": parity_failures,
     }

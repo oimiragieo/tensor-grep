@@ -114,20 +114,16 @@ def main():
         def avg(lst):
             return sum(lst[1:]) / (len(lst) - 1) if len(lst) > 1 else (lst[0] if lst else 0)
 
-        results.append(
-            {
-                "name": f"ast_scan_{name}_cold",
-                "tg_time_s": avg(cold_scan_times),
-                "backend": "native",
-            }
-        )
-        results.append(
-            {
-                "name": f"ast_test_{name}_cold",
-                "tg_time_s": avg(cold_test_times),
-                "backend": "native",
-            }
-        )
+        results.append({
+            "name": f"ast_scan_{name}_cold",
+            "tg_time_s": avg(cold_scan_times),
+            "backend": "native",
+        })
+        results.append({
+            "name": f"ast_test_{name}_cold",
+            "tg_time_s": avg(cold_test_times),
+            "backend": "native",
+        })
 
         # 2. Resident path
         subprocess.Popen([str(BIN_PATH), "worker", "--port", "12349"], cwd=str(b_dir))
@@ -150,20 +146,16 @@ def main():
             if code == 0:
                 resident_test_times.append(t)
 
-        results.append(
-            {
-                "name": f"ast_scan_{name}_resident",
-                "tg_time_s": avg(resident_scan_times),
-                "backend": "native_resident",
-            }
-        )
-        results.append(
-            {
-                "name": f"ast_test_{name}_resident",
-                "tg_time_s": avg(resident_test_times),
-                "backend": "native_resident",
-            }
-        )
+        results.append({
+            "name": f"ast_scan_{name}_resident",
+            "tg_time_s": avg(resident_scan_times),
+            "backend": "native_resident",
+        })
+        results.append({
+            "name": f"ast_test_{name}_resident",
+            "tg_time_s": avg(resident_test_times),
+            "backend": "native_resident",
+        })
 
         subprocess.run([str(BIN_PATH), "worker", "--stop"], capture_output=True, cwd=str(b_dir))
 

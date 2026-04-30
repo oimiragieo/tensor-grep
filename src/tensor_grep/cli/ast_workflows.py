@@ -306,33 +306,27 @@ def _load_rule_specs_and_meta(
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append(
-                    {
-                        "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                        "pattern": pattern,
-                        "language": str(
-                            item.get("language") or payload.get("language") or default_language
-                        ),
-                        "severity": str(
-                            item.get("severity") or payload.get("severity") or "warning"
-                        ),
-                        "message": str(item.get("message") or payload.get("message") or ""),
-                    }
-                )
+                specs.append({
+                    "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
+                    "pattern": pattern,
+                    "language": str(
+                        item.get("language") or payload.get("language") or default_language
+                    ),
+                    "severity": str(item.get("severity") or payload.get("severity") or "warning"),
+                    "message": str(item.get("message") or payload.get("message") or ""),
+                })
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append(
-            {
-                "id": str(payload.get("id") or rule_file.stem),
-                "pattern": pattern,
-                "language": str(payload.get("language") or default_language),
-                "severity": str(payload.get("severity") or "warning"),
-                "message": str(payload.get("message") or ""),
-            }
-        )
+        specs.append({
+            "id": str(payload.get("id") or rule_file.stem),
+            "pattern": pattern,
+            "language": str(payload.get("language") or default_language),
+            "severity": str(payload.get("severity") or "warning"),
+            "message": str(payload.get("message") or ""),
+        })
 
     return specs, meta
 
@@ -968,12 +962,10 @@ def scan_command(
             ev_data: dict[str, list[dict[str, Any]]] = {}
             for m in result.matches:
                 if m.file:
-                    ev_data.setdefault(m.file, []).append(
-                        {
-                            "line_number": m.line_number,
-                            "text": m.text[:max_evidence_snippet_chars],
-                        }
-                    )
+                    ev_data.setdefault(m.file, []).append({
+                        "line_number": m.line_number,
+                        "text": m.text[:max_evidence_snippet_chars],
+                    })
 
             evidence = []
             if ev_data:
@@ -995,18 +987,16 @@ def scan_command(
                             item["snippets"] = []
                         evidence.append(item)
 
-            findings.append(
-                {
-                    "rule_id": rule["id"],
-                    "language": rule["language"],
-                    "severity": rule.get("severity", "warning"),
-                    "message": rule.get("message", ""),
-                    "matches": rule_matches,
-                    "files": files_list,
-                    "fingerprint": fingerprint,
-                    "evidence": evidence,
-                }
-            )
+            findings.append({
+                "rule_id": rule["id"],
+                "language": rule["language"],
+                "severity": rule.get("severity", "warning"),
+                "message": rule.get("message", ""),
+                "matches": rule_matches,
+                "files": files_list,
+                "fingerprint": fingerprint,
+                "evidence": evidence,
+            })
 
     # Process other results (native or individual wrapper)
     for rule, rule_cfg, backend in other_resolved:
@@ -1053,12 +1043,10 @@ def scan_command(
         ev_data = {}
         for m in result.matches:
             if m.file:
-                ev_data.setdefault(m.file, []).append(
-                    {
-                        "line_number": m.line_number,
-                        "text": m.text[:max_evidence_snippet_chars],
-                    }
-                )
+                ev_data.setdefault(m.file, []).append({
+                    "line_number": m.line_number,
+                    "text": m.text[:max_evidence_snippet_chars],
+                })
 
         evidence = []
         if ev_data:
@@ -1080,18 +1068,16 @@ def scan_command(
                         item["snippets"] = []
                     evidence.append(item)
 
-        findings.append(
-            {
-                "rule_id": rule["id"],
-                "language": rule["language"],
-                "severity": rule.get("severity", "warning"),
-                "message": rule.get("message", ""),
-                "matches": rule_matches,
-                "files": files_list,
-                "fingerprint": fingerprint,
-                "evidence": evidence,
-            }
-        )
+        findings.append({
+            "rule_id": rule["id"],
+            "language": rule["language"],
+            "severity": rule.get("severity", "warning"),
+            "message": rule.get("message", ""),
+            "matches": rule_matches,
+            "files": files_list,
+            "fingerprint": fingerprint,
+            "evidence": evidence,
+        })
 
     if json_mode:
         payload: dict[str, Any] = {

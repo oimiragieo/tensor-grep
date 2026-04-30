@@ -84,19 +84,15 @@ def resolve_gpu_sidecar_python(raw: str | None = None) -> Path | None:
 
     candidates = []
     if os.name == "nt":
-        candidates.extend(
-            [
-                ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
-                ROOT_DIR / ".venv" / "Scripts" / "python.exe",
-            ]
-        )
+        candidates.extend([
+            ROOT_DIR / ".venv_cuda" / "Scripts" / "python.exe",
+            ROOT_DIR / ".venv" / "Scripts" / "python.exe",
+        ])
     else:
-        candidates.extend(
-            [
-                ROOT_DIR / ".venv_cuda" / "bin" / "python",
-                ROOT_DIR / ".venv" / "bin" / "python",
-            ]
-        )
+        candidates.extend([
+            ROOT_DIR / ".venv_cuda" / "bin" / "python",
+            ROOT_DIR / ".venv" / "bin" / "python",
+        ])
 
     for candidate in candidates:
         if candidate.exists():
@@ -483,14 +479,12 @@ def analyze_gpu_auto_recommendation(rows: list[dict[str, object]]) -> dict[str, 
             speedup_vs_rg_pct = round((rg_median - gpu_median) / rg_median * 100.0, 2)
             gpu_result["speedup_vs_rg_pct"] = speedup_vs_rg_pct
             if speedup_vs_rg_pct >= 20.0:
-                winners.append(
-                    {
-                        "device_id": gpu_result.get("device_id"),
-                        "size_label": row.get("size_label"),
-                        "size_bytes": row.get("size_bytes"),
-                        "speedup_vs_rg_pct": speedup_vs_rg_pct,
-                    }
-                )
+                winners.append({
+                    "device_id": gpu_result.get("device_id"),
+                    "size_label": row.get("size_label"),
+                    "size_bytes": row.get("size_bytes"),
+                    "speedup_vs_rg_pct": speedup_vs_rg_pct,
+                })
 
     if not winners:
         return {
@@ -589,14 +583,12 @@ def run_gpu_scale_benchmarks(
                 "capability": device.get("capability"),
             }
             if not device.get("operational", False):
-                entry.update(
-                    {
-                        "status": "UNSUPPORTED",
-                        "median_s": None,
-                        "samples_s": [],
-                        "stderr": device.get("error", "device probe failed"),
-                    }
-                )
+                entry.update({
+                    "status": "UNSUPPORTED",
+                    "median_s": None,
+                    "samples_s": [],
+                    "stderr": device.get("error", "device probe failed"),
+                })
             else:
                 result = benchmark_search_command(
                     build_tg_gpu_search_command(
@@ -768,21 +760,19 @@ def main() -> int:
     }
 
     if not tg_binary.exists():
-        payload.update(
-            {
-                "errors": [f"tg binary not found: {tg_binary}"],
-                "warnings": [],
-                "rows": [],
-                "correctness_checks": [],
-                "corpus_sizes": [],
-                "devices": [],
-                "gpu_auto_recommendation": {
-                    "should_add_flag": False,
-                    "reason": "Benchmark did not run because the tg binary was missing.",
-                    "winning_rows": [],
-                },
-            }
-        )
+        payload.update({
+            "errors": [f"tg binary not found: {tg_binary}"],
+            "warnings": [],
+            "rows": [],
+            "correctness_checks": [],
+            "corpus_sizes": [],
+            "devices": [],
+            "gpu_auto_recommendation": {
+                "should_add_flag": False,
+                "reason": "Benchmark did not run because the tg binary was missing.",
+                "winning_rows": [],
+            },
+        })
         output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return 1
 

@@ -69,12 +69,10 @@ def test_session_serve_uses_in_memory_cache_after_first_request(
         session_id,
         str(project),
         input_stream=StringIO(
-            "\n".join(
-                [
-                    json.dumps({"command": "repo_map"}),
-                    json.dumps({"command": "repo_map"}),
-                ]
-            )
+            "\n".join([
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "repo_map"}),
+            ])
             + "\n"
         ),
         output_stream=stdout,
@@ -95,12 +93,10 @@ def test_session_serve_stats_reports_cache_size_uptime_and_request_count(tmp_pat
         session_id,
         str(project),
         input_stream=StringIO(
-            "\n".join(
-                [
-                    json.dumps({"command": "repo_map"}),
-                    json.dumps({"command": "stats"}),
-                ]
-            )
+            "\n".join([
+                json.dumps({"command": "repo_map"}),
+                json.dumps({"command": "stats"}),
+            ])
             + "\n"
         ),
         output_stream=stdout,
@@ -129,20 +125,16 @@ def test_session_serve_can_hold_sessions_from_multiple_roots(tmp_path: Path) -> 
         session_a,
         str(project_a),
         input_stream=StringIO(
-            "\n".join(
-                [
-                    json.dumps({"command": "defs", "symbol": "create_invoice"}),
-                    json.dumps(
-                        {
-                            "session_id": session_b,
-                            "path": str(project_b),
-                            "command": "defs",
-                            "symbol": "settle_invoice",
-                        }
-                    ),
-                    json.dumps({"command": "stats"}),
-                ]
-            )
+            "\n".join([
+                json.dumps({"command": "defs", "symbol": "create_invoice"}),
+                json.dumps({
+                    "session_id": session_b,
+                    "path": str(project_b),
+                    "command": "defs",
+                    "symbol": "settle_invoice",
+                }),
+                json.dumps({"command": "stats"}),
+            ])
             + "\n"
         ),
         output_stream=stdout,
@@ -273,14 +265,12 @@ def test_session_daemon_retries_initial_missing_session_payload(
         handler.server = server
         handler.rfile = BytesIO(
             (
-                json.dumps(
-                    {
-                        "command": "context",
-                        "session_id": opened.session_id,
-                        "path": str(project),
-                        "query": "invoice",
-                    }
-                )
+                json.dumps({
+                    "command": "context",
+                    "session_id": opened.session_id,
+                    "path": str(project),
+                    "query": "invoice",
+                })
                 + "\n"
             ).encode("utf-8")
         )
