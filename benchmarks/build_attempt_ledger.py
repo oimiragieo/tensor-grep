@@ -99,12 +99,14 @@ def _infer_partial_retry_ledger(
         if not parent_id or parent_id not in by_parent:
             continue
         parent = by_parent[parent_id]
-        retry_rows.append({
-            "attempt_id": parent["attempt_id"],
-            "resumed_from": parent.get("retry_stage", "full_attempt"),
-            "resumed_as": attempt["attempt_id"],
-            "reason": parent.get("retry_reason", parent.get("status", "retry")),
-        })
+        retry_rows.append(
+            {
+                "attempt_id": parent["attempt_id"],
+                "resumed_from": parent.get("retry_stage", "full_attempt"),
+                "resumed_as": attempt["attempt_id"],
+                "reason": parent.get("retry_reason", parent.get("status", "retry")),
+            }
+        )
     return retry_rows
 
 

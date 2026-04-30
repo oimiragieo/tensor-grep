@@ -53,18 +53,20 @@ def build_prediction_attempt_ledgers(
             system = str(row["system"])
             status = prediction_attempt_status(row)
             any_completed = any_completed or status == "completed"
-            attempts.append({
-                "attempt_id": f"{instance_id}:{system}",
-                "kind": "patch_prediction",
-                "status": status,
-                "retryable": status != "completed",
-                "retry_stage": "none" if status == "completed" else "full_attempt",
-                "retry_reason": reason_getter(instance_id, row),
-                "validation_success": False,
-                "score_artifact": "run_patch_bakeoff",
-                "inputs": [system],
-                "outputs": outputs_getter(instance_id, row),
-            })
+            attempts.append(
+                {
+                    "attempt_id": f"{instance_id}:{system}",
+                    "kind": "patch_prediction",
+                    "status": status,
+                    "retryable": status != "completed",
+                    "retry_stage": "none" if status == "completed" else "full_attempt",
+                    "retry_reason": reason_getter(instance_id, row),
+                    "validation_success": False,
+                    "score_artifact": "run_patch_bakeoff",
+                    "inputs": [system],
+                    "outputs": outputs_getter(instance_id, row),
+                }
+            )
         final_status = "completed" if any_completed else "needs_retry"
         ledger_input = {
             "generated_at_epoch_s": time.time(),
@@ -106,18 +108,22 @@ def build_scored_attempt_ledgers(
         attempts: list[dict[str, Any]] = []
         for row in instance_rows:
             status = scored_attempt_status(row)
-            attempts.append({
-                "attempt_id": f"{instance_id}:{row['system']}",
-                "kind": "rewrite_apply_verify",
-                "status": status,
-                "retryable": not bool(row.get("validation_passed")),
-                "retry_stage": "validation" if bool(row.get("patch_applied")) else "full_attempt",
-                "retry_reason": str(row.get("reason") or status),
-                "validation_success": bool(row.get("validation_passed")),
-                "score_artifact": payload.get("artifact"),
-                "inputs": [str(row["system"])],
-                "outputs": [str(row.get("reason") or "")],
-            })
+            attempts.append(
+                {
+                    "attempt_id": f"{instance_id}:{row['system']}",
+                    "kind": "rewrite_apply_verify",
+                    "status": status,
+                    "retryable": not bool(row.get("validation_passed")),
+                    "retry_stage": "validation"
+                    if bool(row.get("patch_applied"))
+                    else "full_attempt",
+                    "retry_reason": str(row.get("reason") or status),
+                    "validation_success": bool(row.get("validation_passed")),
+                    "score_artifact": payload.get("artifact"),
+                    "inputs": [str(row["system"])],
+                    "outputs": [str(row.get("reason") or "")],
+                }
+            )
         ledger_input = {
             "generated_at_epoch_s": float(payload.get("generated_at_epoch_s", time.time())),
             "task_id": instance_id,

@@ -709,14 +709,16 @@ def test_main_returns_nonzero_and_writes_structured_validation_error(
         module,
         "load_scenarios",
         lambda path: (_ for _ in ()).throw(
-            module.ScenarioValidationError([
-                {
-                    "scenario_index": 0,
-                    "field": "mode",
-                    "code": "invalid_choice",
-                    "expected": ["context-render", "blast-radius"],
-                }
-            ])
+            module.ScenarioValidationError(
+                [
+                    {
+                        "scenario_index": 0,
+                        "field": "mode",
+                        "code": "invalid_choice",
+                        "expected": ["context-render", "blast-radius"],
+                    }
+                ]
+            )
         ),
     )
     monkeypatch.setattr(
