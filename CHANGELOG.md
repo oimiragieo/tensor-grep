@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.0 (2026-05-01)
+
+### Features
+
+- Add managed lsp provider setup
+  ([`bd5dc89`](https://github.com/oimiragieo/tensor-grep/commit/bd5dc89eb766bb94ec70d2389874c894b69228df))
+
+Adds managed LSP provider setup, pins Node-backed providers, gates toolchain-mutating providers
+  behind an explicit flag, and updates installer/docs contracts.
+
+
 ## v1.7.2 (2026-04-30)
 
 ### Bug Fixes
