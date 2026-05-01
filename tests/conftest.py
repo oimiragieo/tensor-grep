@@ -53,3 +53,14 @@ def rg_path():
     if not path:
         pytest.skip("ripgrep not installed")
     return path
+
+
+@pytest.fixture(autouse=True)
+def cleanup_external_lsp_providers():
+    yield
+    repo_map_module = sys.modules.get("tensor_grep.cli.repo_map")
+    if repo_map_module is None:
+        return
+    manager = getattr(repo_map_module, "_EXTERNAL_LSP_PROVIDER_MANAGER", None)
+    if manager is not None:
+        manager.stop_all()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import atexit
 import json
 import math
 import os
@@ -45,6 +46,7 @@ _RUST_TEST_FN_PATTERN = re.compile(
 _JS_TS_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
 _RUST_REPO_CONTEXTS: dict[str, dict[str, Any]] = {}
 _EXTERNAL_LSP_PROVIDER_MANAGER = ExternalLSPProviderManager()
+atexit.register(_EXTERNAL_LSP_PROVIDER_MANAGER.stop_all)
 
 
 class _ValidationRunnerInfo(NamedTuple):

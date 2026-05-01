@@ -36,6 +36,14 @@ def test_install_ps1_should_target_native_frontdoor_instead_of_venv_console_scri
     assert r"$installDir\.venv\Scripts\tg.exe" not in content
 
 
+def test_install_ps1_should_refresh_managed_lsp_providers_via_frontdoor():
+    content = _read_script("scripts/install.ps1")
+
+    assert "Installing managed external LSP providers" in content
+    assert "& $frontdoorCmdPath lsp-setup --json | Out-Null" in content
+    assert "Managed external LSP provider setup failed; run 'tg lsp-setup' manually." in content
+
+
 def test_install_sh_should_target_native_frontdoor_instead_of_venv_console_script():
     content = _read_script("scripts/install.sh")
 
@@ -48,3 +56,11 @@ def test_install_sh_should_target_native_frontdoor_instead_of_venv_console_scrip
         )
     )
     assert '"$INSTALL_DIR/.venv/bin/tg"' not in content
+
+
+def test_install_sh_should_refresh_managed_lsp_providers_via_frontdoor():
+    content = _read_script("scripts/install.sh")
+
+    assert "Installing managed external LSP providers" in content
+    assert 'if "$INSTALL_DIR/bin/tg" lsp-setup --json > /dev/null; then' in content
+    assert "Managed external LSP provider setup failed; run 'tg lsp-setup' manually." in content

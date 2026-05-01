@@ -43,6 +43,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "devices",
     "context",
     "lsp",
+    "lsp-setup",
     "map",
     "session",
     "doctor",

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from tensor_grep.core.config import SearchConfig
 
 if TYPE_CHECKING:
-    from pathspec.pathspec import PathSpec
+    from pathspec.gitignore import GitIgnoreSpec
 
 # Attempt to load the blazing fast Rust PyO3 gitignore scanner
 try:
@@ -27,7 +27,7 @@ class DirectoryScanner:
     def __init__(self, config: SearchConfig | None = None):
         self.config = config or SearchConfig()
 
-    def _load_ignore_spec(self, base_path: Path) -> "PathSpec | None":
+    def _load_ignore_spec(self, base_path: Path) -> "GitIgnoreSpec | None":
         if self.config.no_ignore or self.config.no_ignore_vcs or self.config.no_ignore_files:
             return None
 

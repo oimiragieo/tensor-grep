@@ -13,6 +13,8 @@
 
 The install scripts create an isolated environment, print `tg --version` at the end, and keep Python-level dependencies away from your system interpreter.
 
+They also run `tg lsp-setup --json` after creating the front-door `tg` command. That attempts the safe default managed provider setup under `~/.tensor-grep/providers` for pinned Node-backed providers and warns without failing the core install if optional provider setup is unavailable. If you install through `pip`, `uv`, or a package-manager channel and need provider-backed planning, run `tg lsp-setup` manually. Use `tg lsp-setup --include-toolchain-providers` only when you want tensor-grep to copy or install Rust, Go, and C# provider binaries through local toolchains.
+
 **Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.ps1 | iex
