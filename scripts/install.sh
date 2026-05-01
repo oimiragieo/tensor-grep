@@ -104,6 +104,13 @@ cat > "$INSTALL_DIR/bin/tg" << EOF
 EOF
 chmod +x "$INSTALL_DIR/bin/tg"
 
+echo "      Installing managed external LSP providers..."
+if "$INSTALL_DIR/bin/tg" lsp-setup --json > /dev/null; then
+  echo "      Managed external LSP providers installed."
+else
+  echo "      Managed external LSP provider setup failed; run 'tg lsp-setup' manually." >&2
+fi
+
 SHIM_DIRS=("$HOME/.local/bin" "$HOME/bin")
 INSTALLED_SHIMS=()
 for SHIM_DIR in "${SHIM_DIRS[@]}"; do

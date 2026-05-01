@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -86,6 +87,75 @@ def test_provider_status_reports_configured_timeouts_without_cached_client(
     assert status["initialize_timeout_seconds"] == 21.0
 
 
+def test_provider_status_prefers_managed_provider_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider_root = tmp_path / "providers"
+    suffix = ".cmd" if os.name == "nt" else ""
+    binary = (
+        provider_root / "node-packages" / "node_modules" / ".bin" / f"pyright-langserver{suffix}"
+    )
+    binary.parent.mkdir(parents=True)
+    binary.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TENSOR_GREP_LSP_PROVIDER_HOME", str(provider_root))
+
+    manager = ExternalLSPProviderManager()
+    status = manager.provider_status(language="python", workspace_root=tmp_path)
+
+    assert status["available"] is True
+    assert status["command"] == [str(binary.resolve()), "--stdio"]
+    assert status["command_source"] == "managed"
+    assert status["managed_provider_root"] == str(provider_root.resolve())
+
+
+def test_external_provider_client_starts_managed_provider_with_managed_runtime_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    provider_root = tmp_path / "providers"
+    suffix = ".cmd" if os.name == "nt" else ""
+    binary = (
+        provider_root / "node-packages" / "node_modules" / ".bin" / f"pyright-langserver{suffix}"
+    )
+    binary.parent.mkdir(parents=True)
+    binary.write_text("", encoding="utf-8")
+    monkeypatch.setenv("TENSOR_GREP_LSP_PROVIDER_HOME", str(provider_root))
+    captured: dict[str, object] = {}
+
+    class _FakeProcess:
+        stdin = None
+        stdout = None
+        stderr = None
+
+        def poll(self) -> None:
+            return None
+
+    def _fake_popen(*args: object, **kwargs: object) -> _FakeProcess:
+        captured["env"] = kwargs["env"]
+        return _FakeProcess()
+
+    monkeypatch.setattr(provider_module.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(
+        ExternalLSPClient,
+        "request",
+        lambda self, method, params: {"capabilities": {}},
+    )
+    monkeypatch.setattr(ExternalLSPClient, "notify", lambda self, method, params: None)
+
+    client = ExternalLSPClient(language="python", workspace_root=tmp_path)
+    client.start()
+
+    env = captured["env"]
+    assert isinstance(env, dict)
+    expected_node_path = (
+        provider_root / "node-runtime"
+        if os.name == "nt"
+        else provider_root / "node-runtime" / "bin"
+    )
+    assert str(expected_node_path) in str(env["PATH"]).split(os.pathsep)
+
+
 def test_external_provider_client_respects_retry_cooldown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -103,3 +173,23 @@ def test_external_provider_client_respects_retry_cooldown(
 
     with pytest.raises(Exception, match="timeout waiting for LSP response: initialize"):
         client.start()
+
+
+def test_provider_manager_stop_all_stops_and_forgets_cached_clients(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        provider_module,
+        "_provider_command",
+        lambda _language: ["fake-lsp", "--stdio"],
+    )
+    manager = ExternalLSPProviderManager()
+    client = manager.get_client(language="python", workspace_root=tmp_path)
+    stopped: list[bool] = []
+    monkeypatch.setattr(client, "stop", lambda: stopped.append(True))
+
+    manager.stop_all()
+
+    assert stopped == [True]
+    assert manager.get_client(language="python", workspace_root=tmp_path) is not client

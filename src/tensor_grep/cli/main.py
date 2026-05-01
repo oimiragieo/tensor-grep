@@ -22,6 +22,10 @@ import typer
 
 from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.cli.lsp_provider_setup import (
+    install_managed_lsp_providers,
+    supported_lsp_languages,
+)
 from tensor_grep.cli.runtime_paths import (
     env_flag_enabled,
     resolve_native_tg_binary,
@@ -225,7 +229,7 @@ def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
 
 
 def _doctor_lsp_languages() -> list[str]:
-    return ["python", "javascript", "typescript", "rust"]
+    return supported_lsp_languages()
 
 
 def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
@@ -436,10 +440,14 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
             command_str = " ".join(str(part) for part in command) if command else "missing"
             status = "running" if current.get("running") else "idle"
             availability = "available" if current.get("available") else "unavailable"
+            source = current.get("command_source", "path")
+            managed_root = current.get("managed_provider_root")
             last_error = current.get("last_error")
             suffix = f" last_error={last_error}" if last_error else ""
+            if managed_root:
+                suffix = f" managed_root={managed_root}{suffix}"
             lines.append(
-                f"  {current['language']}: {availability}/{status} command={command_str}{suffix}"
+                f"  {current['language']}: {availability}/{status} source={source} command={command_str}{suffix}"
             )
     else:
         lines.append("lsp_providers: disabled")
@@ -4258,6 +4266,53 @@ def lsp(
 
     os.environ["TG_LSP_PROVIDER"] = provider
     run_lsp()
+
+
+@app.command(name="lsp-setup")
+def lsp_setup(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    include_toolchain_providers: bool = typer.Option(
+        False,
+        "--include-toolchain-providers",
+        help=(
+            "Also install/copy rust-analyzer, gopls, and csharp-ls using local "
+            "toolchains. Off by default to avoid mutating external toolchains during "
+            "normal installs."
+        ),
+    ),
+) -> None:
+    """Install managed external LSP providers under the tensor-grep install root."""
+    payload = install_managed_lsp_providers(
+        python_executable=sys.executable,
+        managed_root=None,
+        include_toolchain_providers=include_toolchain_providers,
+    )
+    has_install_errors = bool(payload.get("install_errors"))
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+        if has_install_errors:
+            raise typer.Exit(code=1)
+        return
+    if has_install_errors:
+        typer.echo(
+            f"Managed external LSP provider setup completed with errors under {payload['managed_provider_root']}"
+        )
+    else:
+        typer.echo(
+            f"Managed external LSP provider setup complete under {payload['managed_provider_root']}"
+        )
+    providers = cast(dict[str, dict[str, Any]], payload["providers"])
+    for language in supported_lsp_languages():
+        provider = providers.get(language, {})
+        command = provider.get("command") or []
+        source = provider.get("command_source", "missing")
+        availability = "available" if provider.get("available") else "missing"
+        command_text = " ".join(str(part) for part in command) if command else "missing"
+        install_error = provider.get("install_error")
+        suffix = f", error={install_error}" if install_error else ""
+        typer.echo(f"  {language}: {command_text} [{source}, {availability}{suffix}]")
+    if has_install_errors:
+        raise typer.Exit(code=1)
 
 
 app.add_typer(checkpoint_app, name="checkpoint")

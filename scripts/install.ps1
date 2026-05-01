@@ -99,6 +99,18 @@ try {
     $frontdoorCmdContent = "@echo off`r`n`"$installDir\.venv\Scripts\python.exe`" -m tensor_grep %*`r`n"
     Set-Content -Path $frontdoorCmdPath -Value $frontdoorCmdContent -Encoding ascii
 
+    Write-Host "      Installing managed external LSP providers..."
+    try {
+        & $frontdoorCmdPath lsp-setup --json | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Managed external LSP provider setup failed; run 'tg lsp-setup' manually."
+        } else {
+            Write-Host "      Managed external LSP providers installed."
+        }
+    } catch {
+        Write-Warning "Managed external LSP provider setup failed; run 'tg lsp-setup' manually."
+    }
+
     $shimDirs = @(
         "$env:USERPROFILE\.local\bin",
         "$env:USERPROFILE\bin"

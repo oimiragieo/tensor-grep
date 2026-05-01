@@ -178,6 +178,7 @@ Important constraint:
 - **It has a validated ripgrep-compatible common search surface.** `tg search` has a benchmarked compatibility contract for the day-to-day flags that matter most in code and log search, with the currently validated rows documented in [docs/CONTRACTS.md](docs/CONTRACTS.md).
 - **Output replacement and actual rewrites are separate tools.** `tg search --replace` rewrites emitted match text in ripgrep style, while `tg run --rewrite ... --apply` performs real file edits through the AST rewrite path.
 - **Native structural search and rewrite.** Run `tg run`, `tg scan`, and batch rewrite flows against the native AST backend instead of text-only matching.
+- **Managed semantic provider setup.** Run `tg lsp-setup` to provision pinned Node-backed LSP providers for optional `lsp` / `hybrid` planning modes without depending on ad hoc workstation PATH state. Rust, Go, and C# toolchain-backed providers require the explicit `--include-toolchain-providers` flag.
 - **Repeated-query acceleration.** Indexed literal and regex-prefilter paths are benchmarked separately from cold scans. See [docs/benchmarks.md](docs/benchmarks.md) for the current measured line instead of relying on stale microbench numbers.
 - **Semantic Understanding:** `tg classify` uses `cyBERT` when the NLP stack is installed and reachable. Treat it as an optional path, not part of the default hot search loop.
 - **Unified Harness API (NEW).** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
@@ -207,6 +208,8 @@ The binary name for `tensor-grep` is `tg`.
 
 ### Zero-Dependency Installation (Recommended)
 To ensure PyTorch bindings and CUDA/ROCm versions exactly match your hardware without conflicting with your system Python, we recommend using our automated install scripts. These scripts use `uv` to intelligently probe your GPU and build a highly isolated Python 3.12 environment in the background.
+
+The install scripts also run `tg lsp-setup --json` after creating the front-door `tg` command. That attempts the safe default managed provider setup under `~/.tensor-grep/providers` for pinned Node-backed providers and warns without failing the core install if optional provider setup is unavailable. If you install through `pip`, `uv`, or a package-manager path and need provider-backed planning, run `tg lsp-setup` manually. Use `tg lsp-setup --include-toolchain-providers` only when you want tensor-grep to copy or install Rust, Go, and C# provider binaries through local toolchains.
 
 **Windows (PowerShell):**
 ```powershell

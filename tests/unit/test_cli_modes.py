@@ -32,6 +32,7 @@ TOP_LEVEL_HELP_REQUIRED_SNIPPETS = (
     "tg PATTERN [PATH ...]",
     "upgrade",
     "update",
+    "lsp-setup",
     "checkpoint",
 )
 
@@ -514,6 +515,17 @@ def test_lsp_help_mentions_provider_modes() -> None:
     assert "--provider hybrid" in result.stdout
 
 
+def test_lsp_setup_help_mentions_managed_provider_install() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["lsp-setup", "--help"], color=False)
+    help_text = _strip_ansi(result.stdout)
+
+    assert result.exit_code == 0
+    assert "--json" in help_text
+    assert "managed external LSP providers" in re.sub(r"\s+", " ", help_text)
+
+
 def test_doctor_help_mentions_lsp_and_json() -> None:
     runner = CliRunner()
 
@@ -547,6 +559,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
                 "available": True,
                 "running": False,
                 "command": ["pyright-langserver", "--stdio"],
+                "command_source": "managed",
+                "managed_provider_root": str(tmp_path / "providers"),
                 "last_error": None,
             }
         ],
@@ -571,6 +585,126 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["session_daemon"]["running"] is True
     assert payload["lsp"]["enabled"] is True
     assert payload["lsp"]["providers"][0]["language"] == "python"
+    assert payload["lsp"]["providers"][0]["command_source"] == "managed"
+    assert payload["lsp"]["providers"][0]["managed_provider_root"] == str(tmp_path / "providers")
+
+
+def test_lsp_setup_runs_managed_provider_installer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_install(
+        *,
+        python_executable: str,
+        managed_root: Path | None,
+        include_toolchain_providers: bool,
+    ) -> dict[str, object]:
+        seen["python_executable"] = python_executable
+        seen["managed_root"] = managed_root
+        seen["include_toolchain_providers"] = include_toolchain_providers
+        return {
+            "managed_provider_root": str(tmp_path / "providers"),
+            "include_toolchain_providers": include_toolchain_providers,
+            "node": {"installed": True},
+            "providers": {
+                "python": {
+                    "command": [str(tmp_path / "providers" / "pyright-langserver"), "--stdio"],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "php": {
+                    "command": [str(tmp_path / "providers" / "intelephense"), "--stdio"],
+                    "available": True,
+                    "command_source": "managed",
+                },
+                "go": {
+                    "command": [str(tmp_path / "providers" / "gopls")],
+                    "available": True,
+                    "command_source": "managed",
+                },
+            },
+        }
+
+    monkeypatch.setattr("tensor_grep.cli.main.install_managed_lsp_providers", _fake_install)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["lsp-setup", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["managed_provider_root"] == str(tmp_path / "providers")
+    assert payload["providers"]["python"]["command"][0].endswith("pyright-langserver")
+    assert payload["providers"]["php"]["command"][0].endswith("intelephense")
+    assert payload["providers"]["go"]["command"][0].endswith("gopls")
+    assert seen["python_executable"] == sys.executable
+    assert seen["managed_root"] is None
+    assert seen["include_toolchain_providers"] is False
+
+
+def test_lsp_setup_can_enable_toolchain_provider_install(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def _fake_install(
+        *,
+        python_executable: str,
+        managed_root: Path | None,
+        include_toolchain_providers: bool,
+    ) -> dict[str, object]:
+        seen["include_toolchain_providers"] = include_toolchain_providers
+        return {
+            "managed_provider_root": str(tmp_path / "providers"),
+            "include_toolchain_providers": include_toolchain_providers,
+            "node": {"installed": True},
+            "providers": {},
+        }
+
+    monkeypatch.setattr("tensor_grep.cli.main.install_managed_lsp_providers", _fake_install)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["lsp-setup", "--json", "--include-toolchain-providers"])
+
+    assert result.exit_code == 0
+    assert seen["include_toolchain_providers"] is True
+
+
+def test_lsp_setup_json_exits_nonzero_when_install_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def _fake_install(
+        *,
+        python_executable: str,
+        managed_root: Path | None,
+        include_toolchain_providers: bool,
+    ) -> dict[str, object]:
+        return {
+            "managed_provider_root": str(tmp_path / "providers"),
+            "include_toolchain_providers": include_toolchain_providers,
+            "node": {"installed": False},
+            "providers": {
+                "python": {
+                    "command": None,
+                    "available": False,
+                    "command_source": "missing",
+                    "install_error": "network unavailable",
+                }
+            },
+            "install_errors": {"node": "network unavailable"},
+        }
+
+    monkeypatch.setattr("tensor_grep.cli.main.install_managed_lsp_providers", _fake_install)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["lsp-setup", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["install_errors"]["node"] == "network unavailable"
 
 
 def test_doctor_json_passes_non_default_config_to_payload_builder(

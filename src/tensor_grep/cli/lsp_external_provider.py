@@ -3,12 +3,20 @@ from __future__ import annotations
 import json
 import os
 import queue
-import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any, cast
+
+from tensor_grep.cli.lsp_provider_setup import (
+    canonical_language,
+    managed_provider_env,
+    resolved_provider_command,
+)
+from tensor_grep.cli.lsp_provider_setup import (
+    managed_provider_root as _managed_provider_root,
+)
 
 
 class LSPTransportError(RuntimeError):
@@ -64,25 +72,27 @@ def _write_message(stream: Any, payload: dict[str, Any]) -> None:
 
 
 def _provider_command(language: str) -> list[str]:
-    normalized = language.lower()
-    if normalized == "python":
-        binary = shutil.which("pyright-langserver")
-        if not binary:
-            raise FileNotFoundError("pyright-langserver binary not found on PATH")
-        return [binary, "--stdio"]
-    if normalized in {"javascript", "typescript"}:
-        binary = shutil.which("typescript-language-server")
-        if not binary:
-            raise FileNotFoundError("typescript-language-server binary not found on PATH")
-        return [binary, "--stdio"]
-    if normalized == "rust":
-        binary = shutil.which("rust-analyzer")
-        if not binary:
-            cargo_bin = Path.home() / ".cargo" / "bin" / "rust-analyzer.exe"
-            if cargo_bin.exists():
-                return [str(cargo_bin)]
-            raise FileNotFoundError("rust-analyzer binary not found on PATH")
-        return [binary]
+    normalized = canonical_language(language)
+    command = resolved_provider_command(normalized, managed_root=_managed_provider_root())
+    if command is not None:
+        return command
+    missing_binary_by_language = {
+        "python": "pyright-langserver",
+        "javascript": "typescript-language-server",
+        "typescript": "typescript-language-server",
+        "go": "gopls",
+        "rust": "rust-analyzer",
+        "java": "jdtls",
+        "c": "clangd",
+        "cpp": "clangd",
+        "csharp": "csharp-ls",
+        "php": "intelephense",
+        "kotlin": "kotlin-lsp",
+        "swift": "sourcekit-lsp",
+        "lua": "lua-language-server",
+    }
+    if normalized in missing_binary_by_language:
+        raise FileNotFoundError(f"{missing_binary_by_language[normalized]} binary not found")
     raise ValueError(f"Unsupported LSP language: {language}")
 
 
@@ -140,6 +150,7 @@ class ExternalLSPClient:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=managed_provider_env(self.command, managed_root=_managed_provider_root()),
         )
         self._message_queue = queue.Queue()
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
@@ -169,21 +180,51 @@ class ExternalLSPClient:
         self.notify("initialized", {})
 
     def stop(self) -> None:
-        if self.process is None:
+        process = self.process
+        if process is None:
             return
+        reader_thread = self._reader_thread
         with self._lock:
             try:
                 self._write_notification("shutdown", {})
             except Exception:
                 pass
             try:
-                self.process.terminate()
+                if process.stdin is not None:
+                    process.stdin.close()
             except Exception:
                 pass
-            self.process = None
+            try:
+                process.terminate()
+            except Exception:
+                pass
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            try:
+                process.wait(timeout=2.0)
+            except Exception:
+                pass
+        finally:
+            for stream in (process.stdout, process.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:
+                    pass
+        if reader_thread is not None and reader_thread.is_alive():
+            reader_thread.join(timeout=2.0)
+        with self._lock:
+            if self.process is process:
+                self.process = None
             self._opened_documents.clear()
             self.capabilities = {}
-            self._reader_thread = None
+            if self._reader_thread is reader_thread:
+                self._reader_thread = None
             self._message_queue = queue.Queue()
 
     def request(self, method: str, params: dict[str, Any]) -> Any:
@@ -262,6 +303,8 @@ class ExternalLSPClient:
             "language": self.language,
             "workspace_root": str(self.workspace_root),
             "command": list(self.command),
+            "command_source": _command_source(self.command),
+            "managed_provider_root": str(_managed_provider_root()),
             "running": self.process is not None and self.process.poll() is None,
             "capabilities": dict(self.capabilities),
             "last_error": self.last_error,
@@ -332,6 +375,8 @@ class ExternalLSPProviderManager:
                 "available": False,
                 "running": False,
                 "command": [],
+                "command_source": "missing",
+                "managed_provider_root": str(_managed_provider_root()),
                 "capabilities": {},
                 "last_error": str(exc),
                 "opened_documents": 0,
@@ -350,6 +395,8 @@ class ExternalLSPProviderManager:
             "available": True,
             "running": False,
             "command": command,
+            "command_source": _command_source(command),
+            "managed_provider_root": str(_managed_provider_root()),
             "capabilities": {},
             "last_error": None,
             "opened_documents": 0,
@@ -364,7 +411,26 @@ class ExternalLSPProviderManager:
             "cooldown_remaining_s": 0.0,
         }
 
+    def stop_all(self) -> None:
+        clients = list(self._clients.values())
+        self._clients.clear()
+        for client in clients:
+            client.stop()
+
     def close_all(self) -> None:
         for current in self._clients.values():
             current.stop()
         self._clients.clear()
+
+
+def _command_source(command: list[str]) -> str:
+    if not command:
+        return "missing"
+    try:
+        command_path = Path(command[0]).resolve()
+        command_path.relative_to(_managed_provider_root())
+    except ValueError:
+        return "path"
+    except OSError:
+        return "path"
+    return "managed"

@@ -540,6 +540,8 @@ Provider health, fallback state, and agreement metadata are exposed in the JSON 
   * `lsp`: `89.79s`
   * `hybrid`: `89.382s`
 
+Operational update (2026-04-30): provider-backed modes now have a managed setup surface instead of relying only on workstation PATH state. `tg lsp-setup` provisions pinned Node-backed providers under `~/.tensor-grep/providers`, keeps Rust/Go/C# toolchain mutation behind `--include-toolchain-providers`, install scripts call the safe default through the front-door `tg` command, and `tg doctor` reports whether each provider came from the managed root, PATH, or is missing. This improves reproducibility for optional provider experiments but does not change the default-mode benchmark decision or introduce a new speed claim.
+
 That broad-pack result is still the default-mode decision. However, the new focused provider hard-case artifacts (`artifacts/bench_provider_navigation_click_hardcases.json`, `artifacts/bench_provider_navigation_click_hardcases.md`, `artifacts/bench_provider_navigation_js_ts_hardcases.json`, `artifacts/bench_provider_navigation_js_ts_hardcases.md`, `artifacts/bench_provider_navigation_rust_hardcases.json`, `artifacts/bench_provider_navigation_rust_hardcases.md`, and `artifacts/bench_provider_navigation_hardcases_combined.md`) change the narrower product read:
 
 * on a 2-scenario Click-style Python alias-wrapper pack, `native` caller hit rate = `0.0` and `hybrid` caller hit rate = `1.0`

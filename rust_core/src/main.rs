@@ -448,6 +448,12 @@ pub enum Commands {
     },
     /// Start the Language Server Protocol (LSP) server
     Lsp,
+    /// Provision managed external LSP providers for optional semantic modes
+    #[command(name = "lsp-setup", disable_help_flag = true)]
+    LspSetup {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     #[cfg(feature = "cuda")]
     #[command(hide = true, name = "__gpu-native-stats")]
     GpuNativeStats(GpuNativeStatsArgs),
@@ -1473,6 +1479,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
             }
         }
         Commands::Lsp => handle_python_passthrough("lsp", vec![]),
+        Commands::LspSetup { args } => handle_python_passthrough("lsp-setup", args),
         #[cfg(feature = "cuda")]
         Commands::GpuNativeStats(args) => handle_gpu_native_stats_command(args),
         #[cfg(feature = "cuda")]

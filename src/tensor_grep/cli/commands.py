@@ -37,6 +37,7 @@ KNOWN_COMMANDS = {
     "devices",
     "context",
     "lsp",
+    "lsp-setup",
     "__gpu-native-stats",
     "__gpu-transfer-bench",
     "__gpu-cuda-graphs",
