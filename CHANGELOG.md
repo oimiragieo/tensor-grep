@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.8.7 (2026-05-02)
+
+### Bug Fixes
+
+- Bound blast radius default output
+  ([`04fe4e2`](https://github.com/oimiragieo/tensor-grep/commit/04fe4e2ac1b7df7271e41fce168f3bbfe3b0cf68))
+
+
 ## v1.8.6 (2026-05-02)
 
 ### Bug Fixes
