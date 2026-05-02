@@ -1282,15 +1282,13 @@ def test_tg_rewrite_apply_supports_optional_policy_parameter(tmp_path):
 
     policy_path = tmp_path / "apply-policy.json"
     policy_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "lint_cmd": None,
-                "test_cmd": None,
-                "ruleset_scan": None,
-                "on_failure": "warn",
-            }
-        ),
+        json.dumps({
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "warn",
+        }),
         encoding="utf-8",
     )
 
@@ -1331,14 +1329,12 @@ def test_tg_rewrite_apply_returns_structured_invalid_policy_error(tmp_path):
 
     policy_path = tmp_path / "apply-policy.json"
     policy_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "lint_cmd": None,
-                "test_cmd": None,
-                "ruleset_scan": None,
-            }
-        ),
+        json.dumps({
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": None,
+        }),
         encoding="utf-8",
     )
 
@@ -2183,18 +2179,14 @@ def test_session_serve_render_commands_include_enriched_edit_plan_seed(tmp_path)
 
     session_id = session_store.open_session(str(project)).session_id
     stdin = StringIO(
-        "\n".join(
-            [
-                json.dumps({"command": "context_render", "query": "create invoice"}),
-                json.dumps(
-                    {
-                        "command": "blast_radius_render",
-                        "symbol": "create_invoice",
-                        "max_depth": 1,
-                    }
-                ),
-            ]
-        )
+        "\n".join([
+            json.dumps({"command": "context_render", "query": "create invoice"}),
+            json.dumps({
+                "command": "blast_radius_render",
+                "symbol": "create_invoice",
+                "max_depth": 1,
+            }),
+        ])
         + "\n"
     )
     stdout = StringIO()
@@ -2772,12 +2764,10 @@ def test_tg_edit_plan_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "vitest-project",
-                "devDependencies": {"vitest": "^1.0.0"},
-            }
-        ),
+        json.dumps({
+            "name": "vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+        }),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"

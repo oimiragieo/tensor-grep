@@ -76,6 +76,41 @@ class RustCoreBackend(ComputeBackend):
         except OSError:
             return False
 
+    @staticmethod
+    def _binary_notice_text(file_path: str) -> str:
+        try:
+            offset = Path(file_path).read_bytes().find(b"\0")
+        except OSError:
+            offset = -1
+        if offset < 0:
+            offset = 0
+        return f'binary file matches (found "/0" byte around offset {offset})'
+
+    @staticmethod
+    def _binary_file_matches_pattern(
+        file_path: str, pattern: str, config: SearchConfig | None
+    ) -> bool:
+        try:
+            haystack = Path(file_path).read_bytes()
+        except OSError:
+            return False
+
+        ignore_case = bool(
+            config and (config.ignore_case or (config.smart_case and pattern.islower()))
+        )
+        pattern_bytes = pattern.encode("utf-8", errors="surrogateescape")
+        if config and config.fixed_strings:
+            if ignore_case:
+                return pattern_bytes.lower() in haystack.lower()
+            return pattern_bytes in haystack
+
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            return re.search(pattern_bytes, haystack, flags=flags) is not None
+        except re.error:
+            escaped = re.escape(pattern_bytes)
+            return re.search(escaped, haystack, flags=flags) is not None
+
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
@@ -126,12 +161,22 @@ class RustCoreBackend(ComputeBackend):
             )
 
         if not self._should_search_binary_as_text(config) and self._is_binary_file(str(file_path)):
+            matches = []
+            if self._binary_file_matches_pattern(str(file_path), pattern, config):
+                matches.append(
+                    MatchLine(
+                        line_number=1,
+                        text=self._binary_notice_text(str(file_path)),
+                        file=str(file_path),
+                        meta_variables={"binary_notice": True},
+                    )
+                )
             return SearchResult(
-                matches=[],
-                total_files=0,
-                total_matches=0,
+                matches=matches,
+                total_files=1 if matches else 0,
+                total_matches=len(matches),
                 routing_backend="RustCoreBackend",
-                routing_reason="rust_binary_skipped",
+                routing_reason="rust_binary_notice" if matches else "rust_binary_skipped",
                 routing_distributed=False,
                 routing_worker_count=1,
             )

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import SearchResult
+from tensor_grep.core.result import MatchLine, SearchResult
 
 
 class RipgrepFormatter(OutputFormatter):
@@ -19,6 +19,17 @@ class RipgrepFormatter(OutputFormatter):
         if offset < 0:
             offset = 0
         return f'binary file matches (found "/0" byte around offset {offset})'
+
+    @staticmethod
+    def _is_binary_notice_match(match: MatchLine) -> bool:
+        if match.meta_variables and match.meta_variables.get("binary_notice") is True:
+            return True
+        return "\0" in str(match.text)
+
+    def _binary_notice_for_match(self, match: MatchLine) -> str:
+        if match.meta_variables and match.meta_variables.get("binary_notice") is True:
+            return str(match.text)
+        return self._binary_notice(match.file)
 
     def format(self, result: SearchResult) -> str:
         lines = []
@@ -50,10 +61,13 @@ class RipgrepFormatter(OutputFormatter):
             return "\n".join(lines)
 
         if not self.config.text and not self.config.binary:
-            binary_files = {match.file for match in result.matches if "\0" in str(match.text)}
-            if binary_files:
-                for file_path in sorted(binary_files):
-                    message = self._binary_notice(file_path)
+            binary_notice_matches = [
+                match for match in result.matches if self._is_binary_notice_match(match)
+            ]
+            if binary_notice_matches:
+                for match in sorted(binary_notice_matches, key=lambda current: current.file):
+                    message = self._binary_notice_for_match(match)
+                    file_path = match.file
                     if self.config.with_filename or (
                         self.config.file_patterns is None
                         and not self.config.no_filename
@@ -64,7 +78,7 @@ class RipgrepFormatter(OutputFormatter):
                         lines.append(message)
 
                 non_binary_matches = [
-                    match for match in result.matches if match.file not in binary_files
+                    match for match in result.matches if not self._is_binary_notice_match(match)
                 ]
             else:
                 non_binary_matches = result.matches

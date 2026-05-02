@@ -124,6 +124,32 @@ class TestFormatters:
 
         assert fmt.format(result) == 'binary file matches (found "/0" byte around offset 16)'
 
+    def test_binary_notice_sentinel_formats_clean_text_and_json(self):
+        result = SearchResult(
+            matches=[
+                MatchLine(
+                    line_number=1,
+                    text='binary file matches (found "/0" byte around offset 16)',
+                    file="sample.bin",
+                    meta_variables={"binary_notice": True},
+                )
+            ],
+            total_files=1,
+            total_matches=1,
+            routing_backend="RustCoreBackend",
+            routing_reason="rust_binary_notice",
+        )
+
+        text_output = RipgrepFormatter(config=SearchConfig()).format(result)
+        json_output = json.loads(JsonFormatter().format(result))
+        ndjson_output = json.loads(NdjsonFormatter().format(result))
+
+        assert text_output == 'binary file matches (found "/0" byte around offset 16)'
+        assert json_output["matches"][0]["text"] == text_output
+        assert json_output["matches"][0]["metaVariables"] == {"binary_notice": True}
+        assert ndjson_output["text"] == text_output
+        assert ndjson_output["metaVariables"] == {"binary_notice": True}
+
     def test_binary_matches_respect_text_mode(self, tmp_path: Path):
         binary_file = tmp_path / "sample.bin"
         binary_file.write_bytes(b"some binary data\0hello\0more data")

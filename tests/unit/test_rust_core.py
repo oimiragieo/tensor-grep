@@ -107,7 +107,7 @@ def test_rust_backend_skips_file_over_max_filesize(monkeypatch, tmp_path: Path):
     assert result.routing_reason == "rust_max_filesize_skipped"
 
 
-def test_rust_backend_skips_binary_files_unless_text_or_binary_flag_is_set(
+def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     monkeypatch, tmp_path: Path
 ):
     from tensor_grep.backends import rust_backend as rb
@@ -124,13 +124,19 @@ def test_rust_backend_skips_binary_files_unless_text_or_binary_flag_is_set(
     binary_file = tmp_path / "compiled.pyc"
     binary_file.write_bytes(b"\x80ERROR\x00hidden")
 
-    skipped = backend.search(str(binary_file), "ERROR", config=SearchConfig())
+    notice = backend.search(str(binary_file), "ERROR", config=SearchConfig())
+    no_match = backend.search(str(binary_file), "MISSING", config=SearchConfig())
     text_result = backend.search(str(binary_file), "ERROR", config=SearchConfig(text=True))
     binary_result = backend.search(str(binary_file), "ERROR", config=SearchConfig(binary=True))
 
-    assert skipped.total_matches == 0
-    assert skipped.total_files == 0
-    assert skipped.routing_reason == "rust_binary_skipped"
+    assert notice.total_matches == 1
+    assert notice.total_files == 1
+    assert notice.matches[0].text == 'binary file matches (found "/0" byte around offset 6)'
+    assert notice.matches[0].meta_variables == {"binary_notice": True}
+    assert notice.routing_reason == "rust_binary_notice"
+    assert no_match.total_matches == 0
+    assert no_match.total_files == 0
+    assert no_match.routing_reason == "rust_binary_skipped"
     assert text_result.total_matches == 1
     assert binary_result.total_matches == 1
 
