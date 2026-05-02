@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.8.6 (2026-05-02)
+
+### Bug Fixes
+
+- Bound broad blast radius scans
+  ([`97f8b1c`](https://github.com/oimiragieo/tensor-grep/commit/97f8b1c8279ae6d07cc0fce53589745b9d66b25e))
+
+
 ## v1.8.5 (2026-05-02)
 
 ### Bug Fixes
