@@ -89,10 +89,10 @@ What is now contract-tested:
 - no-match symbol lookups return compact `no_match` payloads instead of dumping unrelated repo inventories
 - CommonJS exported functions in `.cjs` files are discoverable by `map`, `defs`, `source`, `refs`, and context-render ranking
 - repo fallback validation prefers package-manager scripts such as `pnpm test` over guessed `npx jest` when a real `package.json` test script exists
-- `node --test` package scripts emit targeted file-level validation commands before the broader package-manager fallback
+- `node --test` package scripts and `node:test` test files emit targeted file-level validation commands before the broader package-manager fallback
 - broad blast-radius scans sample source/test buckets before miscellaneous root noise so capped `.` runs are less likely to miss real code
 - `context-render --json` defaults to the LLM compact profile; explicit `--render-profile llm` / `compact` omit full inventories and raw source duplication while preserving rendered source, `navigation_pack`, and validation commands
-- raw `blast-radius --json` accepts `--max-callers` and `--max-files` for bounded agent loops, including capped per-file symbol summaries and total/returned/omitted counts
+- raw `blast-radius` output defaults to a 25-caller / 25-file agent budget and accepts `--max-callers` / `--max-files` for broader analysis, including capped per-file symbol summaries and total/returned/omitted counts
 - capped blast-radius no-matches can seed literal symbol files outside the initial scan cap through a bounded scan before returning a compact no-match
 - both the CPU fallback and Rust extension backend skip binary blobs unless `-a/--text` or `--binary` explicitly opts in, avoiding `.pyc`/bytecode dumps in agent JSON
 

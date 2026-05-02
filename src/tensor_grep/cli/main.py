@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
 _DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
+_DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS = 25
+_DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
 
 app = typer.Typer(
     help="""tensor-grep (tg) - Fast text, AST, indexed, and GPU-aware search CLI
@@ -3214,16 +3216,16 @@ def blast_radius(
         help="Maximum repo files to scan before returning a bounded result.",
     ),
     max_callers: int | None = typer.Option(
-        None,
+        _DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS,
         "--max-callers",
         min=1,
-        help="Maximum caller records to include in JSON output.",
+        help="Maximum caller records to include in output; raise for fuller broad impact analysis.",
     ),
     max_files: int | None = typer.Option(
-        None,
+        _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES,
         "--max-files",
         min=1,
-        help="Maximum impacted files to include in JSON output.",
+        help="Maximum impacted files to include in output; raise for fuller broad impact analysis.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:

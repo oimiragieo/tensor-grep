@@ -5734,6 +5734,22 @@ def _javascript_test_script_uses_node_test(test_script: str | None) -> bool:
     return bool(normalized) and "node" in normalized and "--test" in normalized
 
 
+@lru_cache(maxsize=256)
+def _javascript_test_file_uses_node_test(test_path: str) -> bool:
+    path = Path(test_path)
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return bool(
+        re.search(
+            r"""\b(?:import\s+test\s+from\s+["']node:test["']|require\(["']node:test["']\))""",
+            source,
+        )
+        or re.search(r"""\bnode:test\b""", source)
+    )
+
+
 def _rust_file_level_command(test_path: Path, repo_root: Path) -> str | None:
     try:
         relative = test_path.resolve().relative_to(repo_root)
@@ -5927,7 +5943,13 @@ def _validation_plan_for_tests(
                 primary_symbol_name=primary_symbol_name,
                 query=query,
             )
-            if _javascript_test_script_uses_node_test(detected.js_test_script):
+            script_uses_node_test = _javascript_test_script_uses_node_test(detected.js_test_script)
+            primary_file_uses_node_test = (
+                is_primary_test
+                and not script_uses_node_test
+                and _javascript_test_file_uses_node_test(absolute_path)
+            )
+            if script_uses_node_test or primary_file_uses_node_test:
                 add_step(
                     _javascript_node_test_file_command(relative_path),
                     scope="file",

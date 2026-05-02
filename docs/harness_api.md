@@ -1056,7 +1056,7 @@ Use `--max-callers <n>` and `--max-files <n>` for bounded agent loops. When eith
 | `symbols` | `array<object>` | Ranked symbol matches reused from the impact surface. |
 | `related_paths` | `array<string>` | Stable union of radius files and tests. |
 | `graph_completeness` | `string` | Optional graph trust label surfaced on caller-tree nodes and related graph metadata. |
-| `output_limit` | `object` | Present when `--max-callers` or `--max-files` is used. Includes `max_callers`, `max_files`, `callers_truncated`, and `files_truncated`. |
+| `output_limit` | `object` | Present when caller/file output budgets are active. Raw CLI `blast-radius` defaults to a 25-caller / 25-file budget; pass `--max-callers` or `--max-files` to raise or lower it. Includes `max_callers`, `max_files`, `callers_truncated`, `files_truncated`, total/returned/omitted caller counts, and total/returned/omitted file counts. |
 
 Each `definitions[]` object may additionally include:
 

@@ -206,6 +206,71 @@ def test_node_test_script_prefers_targeted_file_command(tmp_path: Path) -> None:
     assert commands[-1] == "pnpm test"
 
 
+def test_node_test_file_prefers_targeted_command_with_generic_package_script(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    tests_dir = project / "tests" / "scripts"
+    tests_dir.mkdir(parents=True)
+    _write_package_json(
+        project,
+        package_manager="pnpm@10.0.0",
+        scripts={"test": "pnpm run test:unit"},
+    )
+    test_path = tests_dir / "run-cursor-worker.test.cjs"
+    test_path.write_text(
+        "const test = require('node:test');\ntest('runCursorWorker invokes cursor', () => {});\n",
+        encoding="utf-8",
+    )
+
+    commands = _validation_commands(
+        project,
+        [test_path],
+        primary_test=test_path,
+        primary_symbol_name="runCursorWorker",
+        query="run cursor worker",
+    )
+
+    assert commands[0] == "node --test tests/scripts/run-cursor-worker.test.cjs"
+    assert commands[-1] == "pnpm test"
+
+
+def test_node_test_file_probe_only_reads_primary_test(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    tests_dir = project / "tests" / "scripts"
+    tests_dir.mkdir(parents=True)
+    _write_package_json(
+        project,
+        package_manager="pnpm@10.0.0",
+        scripts={"test": "pnpm run test:unit"},
+    )
+    primary_path = tests_dir / "run-cursor-worker.test.cjs"
+    related_path = tests_dir / "unrelated.test.cjs"
+    primary_path.write_text("test('primary', () => {});\n", encoding="utf-8")
+    related_path.write_text("test('related', () => {});\n", encoding="utf-8")
+    probed_paths: list[Path] = []
+
+    def fake_node_test_probe(test_path: str) -> bool:
+        probed_paths.append(Path(test_path))
+        return Path(test_path) == primary_path.resolve()
+
+    monkeypatch.setattr(repo_map, "_javascript_test_file_uses_node_test", fake_node_test_probe)
+
+    commands = _validation_commands(
+        project,
+        [primary_path, related_path],
+        primary_test=primary_path,
+        primary_symbol_name="runCursorWorker",
+    )
+
+    assert probed_paths == [primary_path.resolve()]
+    assert commands[0] == "node --test tests/scripts/run-cursor-worker.test.cjs"
+    assert "node --test tests/scripts/unrelated.test.cjs" not in commands
+
+
 @pytest.mark.parametrize(
     ("dependencies", "expected_specific_command", "expected_file_command", "expected_fallback"),
     [

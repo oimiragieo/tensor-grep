@@ -2063,6 +2063,45 @@ def test_blast_radius_json_supports_output_limits(tmp_path):
     }
 
 
+def test_blast_radius_json_defaults_to_bounded_agent_output(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "target.py").write_text(
+        "def safe_parse_json(value):\n    return value\n",
+        encoding="utf-8",
+    )
+    for index in range(60):
+        (src_dir / f"caller_{index:02}.py").write_text(
+            "from src.target import safe_parse_json\n\n"
+            f"def caller_{index}(value):\n"
+            "    return safe_parse_json(value)\n",
+            encoding="utf-8",
+        )
+
+    result = runner.invoke(
+        app,
+        [
+            "blast-radius",
+            "--symbol",
+            "safe_parse_json",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert len(payload["callers"]) <= 25
+    assert len(payload["files"]) <= 25
+    assert payload["output_limit"]["max_callers"] == 25
+    assert payload["output_limit"]["max_files"] == 25
+    assert payload["output_limit"]["total_callers"] == 60
+    assert payload["output_limit"]["omitted_callers"] == 35
+    assert len(result.stdout.encode("utf-8")) < 80_000
+
+
 def test_commonjs_repo_map_extracts_exported_function_symbols(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
