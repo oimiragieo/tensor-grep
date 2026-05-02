@@ -250,7 +250,7 @@ impl RustBackend {
             color,
             replace,
             patterns,
-            path,
+            paths: vec![path],
             pcre2,
             max_filesize,
         };

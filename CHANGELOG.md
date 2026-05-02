@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Harden agent-navigation trust contracts for broad repo scans, compact no-match symbol output,
+  CommonJS symbol/source extraction, duplicate reference output, package-script validation
+  inference, Markdown context fallback, test-only map inventories, doctor version parity
+  reporting, and multi-root native `--ndjson` search.
+
+
 ## v1.8.1 (2026-05-02)
 
 ### Bug Fixes

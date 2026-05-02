@@ -214,11 +214,12 @@ Use this shape when an agent needs a deterministic repository inventory before c
 | `sidecar_used` | `boolean` | Always `false`. |
 | `coverage` | `object` | Self-description for the current inventory/navigation coverage. |
 | `path` | `string` | Absolute root path inventoried. |
-| `files` | `array<string>` | Non-test files included in the inventory. |
+| `files` | `array<string>` | Non-test files included in the inventory. If the requested root only contains tests, this falls back to the test files so agent inventory is not empty. |
 | `symbols` | `array<object>` | Deterministic symbol inventory. |
 | `imports` | `array<object>` | Per-file import inventory. |
 | `tests` | `array<string>` | Test files associated with the inventory root. |
 | `related_paths` | `array<string>` | Stable union of relevant source and test paths. |
+| `scan_limit` | `object` | Optional; present when the inventory was built with `--max-repo-files` / `max_repo_files`. Includes `max_repo_files`, `scanned_files`, and `possibly_truncated`. |
 
 Each `symbols[]` object has:
 
@@ -413,6 +414,7 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `query` | `string` | Query text used for ranking and rendering. |
 | `path` | `string` | Absolute root path inventoried. |
+| `scan_limit` | `object` | Optional bounded-scan metadata with `max_repo_files`, `scanned_files`, and `possibly_truncated`. Agent-facing CLI commands default to bounded broad scans. |
 | `files` | `array<string>` | Ranked source files included in the render bundle. |
 | `file_matches` | `array<object>` | Ranked source file metadata with stable `path`, `score`, optional `graph_score`, and `reasons`. |
 | `file_summaries` | `array<object>` | Compact top-level symbol skeletons for the rendered files. |
@@ -421,7 +423,7 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `tests` | `array<string>` | Ranked related tests. |
 | `test_matches` | `array<object>` | Ranked related test metadata with `path`, `score`, optional `graph_score`, and `reasons`. |
 | `related_paths` | `array<string>` | Stable merged order of rendered source and test paths. |
-| `sources` | `array<object>` | Exact source blocks selected from the highest-value ranked symbols. |
+| `sources` | `array<object>` | Exact source blocks selected from the highest-value ranked symbols, or bounded file snippets for ranked text/Markdown files that have no symbols. |
 | `max_files` | `integer` | Maximum files allowed in the render bundle. |
 | `max_sources` | `integer` | Maximum exact source blocks allowed in the render bundle. |
 | `max_symbols_per_file` | `integer` | Maximum summary symbols emitted per file. |
@@ -867,6 +869,8 @@ Example: [`examples/defs.json`](examples/defs.json)
 | `provider_status` | `object` | Provider health snapshot including attempted providers, capabilities, and last error. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
+| `no_match` | `boolean` | Optional; `true` when no exact definition was found. No-match payloads intentionally keep `files`, `symbols`, `imports`, `tests`, and `related_paths` empty. |
+| `message` | `string` | Optional human-readable no-match summary. |
 | `files` | `array<string>` | Files containing exact definitions. |
 | `tests` | `array<string>` | Test files in the inventory root. |
 | `related_paths` | `array<string>` | Stable union of definition files and tests. |
@@ -897,6 +901,8 @@ Example: [`examples/source.json`](examples/source.json)
 | `provider_status` | `object` | Same provider health snapshot exposed by Symbol Defs JSON. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `sources` | `array<object>` | Exact Python blocks or heuristic JS/TS/Rust blocks for the resolved symbol. |
+| `no_match` | `boolean` | Optional; `true` when no exact definition/source block was found. No-match payloads intentionally stay compact. |
+| `message` | `string` | Optional human-readable no-match summary. |
 | `files` | `array<string>` | Files containing exact definitions. |
 | `tests` | `array<string>` | Test files in the inventory root. |
 | `related_paths` | `array<string>` | Stable union of definition files and tests. |

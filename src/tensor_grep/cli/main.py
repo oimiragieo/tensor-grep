@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
+_DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
+
 app = typer.Typer(
     help="""tensor-grep (tg) - Fast text, AST, indexed, and GPU-aware search CLI
 
@@ -259,6 +261,14 @@ def _doctor_rust_binary_version(native_tg_binary: Path | None) -> str | None:
         return None
 
 
+def _doctor_rust_binary_version_matches(
+    expected_version: str, rust_binary_version: str | None
+) -> bool | None:
+    if rust_binary_version is None:
+        return None
+    return bool(re.search(rf"\b{re.escape(expected_version)}\b", rust_binary_version))
+
+
 def _doctor_gpu_status() -> dict[str, Any]:
     status: dict[str, Any] = {"available": False, "devices": [], "error": None}
     try:
@@ -355,8 +365,10 @@ def _build_doctor_payload(
         "TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS",
         "TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS",
     ]
+    installed_version = _doctor_installed_version()
+    rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
     payload: dict[str, Any] = {
-        "version": _doctor_installed_version(),
+        "version": installed_version,
         "platform": sys.platform,
         "python_executable": sys.executable,
         "python_version": ".".join([str(x) for x in sys.version_info[:3]]),
@@ -365,7 +377,12 @@ def _build_doctor_payload(
         "config": str(resolved_config),
         "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
         "native_tg_binary_exists": native_tg_binary is not None,
-        "rust_binary_version": _doctor_rust_binary_version(native_tg_binary),
+        "rust_binary_version": rust_binary_version,
+        "rust_binary_expected_version": installed_version,
+        "rust_binary_version_matches": _doctor_rust_binary_version_matches(
+            installed_version,
+            rust_binary_version,
+        ),
         "gpu": _doctor_gpu_status(),
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
         "resident_worker": _doctor_resident_worker_status(str(root)),
@@ -395,6 +412,10 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
     if rust_version := payload.get("rust_binary_version"):
         lines.append(f"rust_binary_version:\n  {rust_version.replace(chr(10), chr(10) + '  ')}")
+    if payload.get("rust_binary_version_matches") is False:
+        lines.append(
+            f"rust_binary_version_warning: expected {payload.get('rust_binary_expected_version')}"
+        )
 
     gpu_payload = cast(dict[str, Any], payload.get("gpu", {}))
     lines.append(f"gpu: available={gpu_payload.get('available', False)}")
@@ -2789,6 +2810,12 @@ def context_render(
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the render bundle."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
     max_sources: int = typer.Option(
         5, "--max-sources", min=1, help="Maximum exact source blocks to include."
     ),
@@ -2829,6 +2856,7 @@ def context_render(
                     query,
                     path,
                     max_files=max_files,
+                    max_repo_files=max_repo_files,
                     max_sources=max_sources,
                     max_symbols_per_file=max_symbols_per_file,
                     max_render_chars=max_render_chars,
@@ -2845,6 +2873,7 @@ def context_render(
             query,
             path,
             max_files=max_files,
+            max_repo_files=max_repo_files,
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
@@ -2917,6 +2946,12 @@ def defs(
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact definition locations for a symbol."""
@@ -2924,10 +2959,22 @@ def defs(
 
     try:
         if json_output:
-            typer.echo(build_symbol_defs_json(symbol, path, semantic_provider=provider))
+            typer.echo(
+                build_symbol_defs_json(
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                )
+            )
             return
 
-        payload = build_symbol_defs(symbol, path, semantic_provider=provider)
+        payload = build_symbol_defs(
+            symbol,
+            path,
+            semantic_provider=provider,
+            max_repo_files=max_repo_files,
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2943,6 +2990,12 @@ def source(
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact source blocks for a symbol definition."""
@@ -2950,10 +3003,22 @@ def source(
 
     try:
         if json_output:
-            typer.echo(build_symbol_source_json(symbol, path, semantic_provider=provider))
+            typer.echo(
+                build_symbol_source_json(
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                )
+            )
             return
 
-        payload = build_symbol_source(symbol, path, semantic_provider=provider)
+        payload = build_symbol_source(
+            symbol,
+            path,
+            semantic_provider=provider,
+            max_repo_files=max_repo_files,
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2969,6 +3034,12 @@ def impact(
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return likely impacted files and tests for a symbol change."""
@@ -2976,10 +3047,22 @@ def impact(
 
     try:
         if json_output:
-            typer.echo(build_symbol_impact_json(symbol, path, semantic_provider=provider))
+            typer.echo(
+                build_symbol_impact_json(
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                )
+            )
             return
 
-        payload = build_symbol_impact(symbol, path, semantic_provider=provider)
+        payload = build_symbol_impact(
+            symbol,
+            path,
+            semantic_provider=provider,
+            max_repo_files=max_repo_files,
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -2995,6 +3078,12 @@ def refs(
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first symbol references across the inventory root."""
@@ -3002,10 +3091,22 @@ def refs(
 
     try:
         if json_output:
-            typer.echo(build_symbol_refs_json(symbol, path, semantic_provider=provider))
+            typer.echo(
+                build_symbol_refs_json(
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                )
+            )
             return
 
-        payload = build_symbol_refs(symbol, path, semantic_provider=provider)
+        payload = build_symbol_refs(
+            symbol,
+            path,
+            semantic_provider=provider,
+            max_repo_files=max_repo_files,
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -3021,6 +3122,12 @@ def callers(
     provider: str = typer.Option(
         "native", "--provider", help="Semantic provider: native, lsp, or hybrid."
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return Python-first call sites and likely impacted tests for a symbol."""
@@ -3028,10 +3135,22 @@ def callers(
 
     try:
         if json_output:
-            typer.echo(build_symbol_callers_json(symbol, path, semantic_provider=provider))
+            typer.echo(
+                build_symbol_callers_json(
+                    symbol,
+                    path,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                )
+            )
             return
 
-        payload = build_symbol_callers(symbol, path, semantic_provider=provider)
+        payload = build_symbol_callers(
+            symbol,
+            path,
+            semantic_provider=provider,
+            max_repo_files=max_repo_files,
+        )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -3053,6 +3172,12 @@ def blast_radius(
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
     ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return exact callers plus a transitive file/test blast radius for a symbol."""
@@ -3065,13 +3190,21 @@ def blast_radius(
         if json_output:
             typer.echo(
                 build_symbol_blast_radius_json(
-                    symbol, path, max_depth=max_depth, semantic_provider=provider
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
                 )
             )
             return
 
         payload = build_symbol_blast_radius(
-            symbol, path, max_depth=max_depth, semantic_provider=provider
+            symbol,
+            path,
+            max_depth=max_depth,
+            semantic_provider=provider,
+            max_repo_files=max_repo_files,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -3096,6 +3229,12 @@ def blast_radius_render(
         "--max-depth",
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the render bundle."
@@ -3145,6 +3284,7 @@ def blast_radius_render(
                     render_profile=render_profile,
                     profile=profile,
                     semantic_provider=provider,
+                    max_repo_files=max_repo_files,
                 )
             )
             return
@@ -3161,6 +3301,7 @@ def blast_radius_render(
             render_profile=render_profile,
             profile=profile,
             semantic_provider=provider,
+            max_repo_files=max_repo_files,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)
@@ -3181,6 +3322,12 @@ def blast_radius_plan(
         "--max-depth",
         min=0,
         help="Maximum reverse-import depth to include in the blast radius.",
+    ),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repo files to scan before returning a bounded result.",
     ),
     max_files: int = typer.Option(
         3, "--max-files", min=1, help="Maximum files to include in the plan."
@@ -3206,6 +3353,7 @@ def blast_radius_plan(
                     max_files=max_files,
                     max_symbols=max_symbols,
                     semantic_provider=provider,
+                    max_repo_files=max_repo_files,
                 )
             )
             return
@@ -3217,6 +3365,7 @@ def blast_radius_plan(
             max_files=max_files,
             max_symbols=max_symbols,
             semantic_provider=provider,
+            max_repo_files=max_repo_files,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)

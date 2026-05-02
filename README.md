@@ -60,6 +60,16 @@ Current accepted full-suite artifact:
 
 For large internal-library roots, `tensor-grep` supports a bounded context-render path that keeps the AI handoff compact and actionable without letting symbol navigation escape the capped repo-map universe.
 
+Agent-facing broad-scan commands now default to bounded repo-map scans and report that boundary in JSON via `scan_limit`:
+
+```powershell
+tg context-render . --query "how auth routing works" --max-repo-files 512 --json
+tg defs . --symbol runCursorWorker --max-repo-files 512 --json
+tg source . --symbol safeParseJSON --max-repo-files 512 --json
+tg refs . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --json
+tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --json
+```
+
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
@@ -75,6 +85,10 @@ What is now contract-tested:
 
 - `include_edit_plan_seed=False` keeps the fast lightweight path
 - `include_edit_plan_seed=True` returns full `edit_plan_seed`, `candidate_edit_targets`, and `navigation_pack` while honoring `max_repo_files`
+- broad `context-render`, `defs`, `source`, `refs`, `callers`, `impact`, and blast-radius CLI commands expose `--max-repo-files`
+- no-match symbol lookups return compact `no_match` payloads instead of dumping unrelated repo inventories
+- CommonJS exported functions in `.cjs` files are discoverable by `map`, `defs`, `source`, `refs`, and context-render ranking
+- repo fallback validation prefers package-manager scripts such as `pnpm test` over guessed `npx jest` when a real `package.json` test script exists
 
 Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
 
@@ -145,6 +159,7 @@ Current benchmark-governed strengths:
 Current CLI correctness line:
 
 - plain-text and `--json` invocations now share the same routed command surface for `doctor`, `map`, `session`, `checkpoint`, `rulesets`, `context-render`, `edit-plan`, and the blast-radius family
+- agent-navigation commands now favor reliable compact output over maximal inventory dumps: bounded scan metadata, compact no-match responses, deduped references, and package-script validation commands are covered by unit and MCP-adjacent checks
 - `tg search --replace` rewrites emitted match text in ripgrep style without mutating files
 - `tg search -o` now mirrors ripgrep single-file output formatting instead of forcing `file:line:text`
 - `tg run --json` emits structured output even without `--apply`
@@ -363,7 +378,7 @@ $ tg devices --json
 Emit search results as newline-delimited JSON (one object per match) for streaming consumption:
 
 ```bash
-$ tg search --ndjson "ERROR" ./logs
+$ tg search --ndjson "ERROR" ./src ./tests ./docs
 ```
 
 Apply multiple AST rewrite rules in a single pass with a JSON config file:

@@ -590,6 +590,32 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert payload["lsp"]["providers"][0]["managed_provider_root"] == str(tmp_path / "providers")
 
 
+def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.1")
+    monkeypatch.setattr(
+        "tensor_grep.cli.main.resolve_native_tg_binary",
+        lambda: tmp_path / "rust_core" / "target" / "release" / "tg.exe",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_binary_version",
+        lambda _binary: "tg 1.8.0",
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["version"] == "1.8.1"
+    assert payload["rust_binary_version"] == "tg 1.8.0"
+    assert payload["rust_binary_version_matches"] is False
+    assert payload["rust_binary_expected_version"] == "1.8.1"
+
+
 def test_lsp_setup_runs_managed_provider_installer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1168,6 +1194,34 @@ def test_source_json_returns_exact_symbol_source_blocks(tmp_path):
     assert "subtotal = total + tax" in payload["sources"][0]["source"]
 
 
+def test_symbol_no_match_outputs_are_compact(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+    (src_dir / "worker.py").write_text(
+        "def run_cursor_worker():\n    return True\n", encoding="utf-8"
+    )
+    (tests_dir / "test_worker.py").write_text(
+        "from src.worker import run_cursor_worker\n", encoding="utf-8"
+    )
+
+    defs_payload = repo_map.build_symbol_defs("safeParseJSON", project)
+    source_payload = repo_map.build_symbol_source("safeParseJSON", project)
+
+    for payload in (defs_payload, source_payload):
+        assert payload["no_match"] is True
+        assert payload["definitions"] == []
+        assert payload["files"] == []
+        assert payload["symbols"] == []
+        assert payload["imports"] == []
+        assert payload["tests"] == []
+        assert payload["related_paths"] == []
+        assert "No exact definition found" in payload["message"]
+    assert source_payload["sources"] == []
+
+
 def test_refs_json_returns_python_references_for_symbol(tmp_path):
     project = tmp_path / "project"
     src_dir = project / "src"
@@ -1194,6 +1248,38 @@ def test_refs_json_returns_python_references_for_symbol(tmp_path):
     assert payload["symbol"] == "create_invoice"
     assert any(ref["file"] == str(other_path.resolve()) for ref in payload["references"])
     assert str(other_path.resolve()) in payload["files"]
+
+
+def test_refs_json_deduplicates_parser_call_references(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "worker.cjs"
+    module_path.write_text(
+        "function prepareCursorWorkerInvocation(input) {\n"
+        "  return input;\n"
+        "}\n"
+        "\n"
+        "function runCursorWorker() {\n"
+        "  return prepareCursorWorkerInvocation({});\n"
+        "}\n"
+        "\n"
+        "module.exports = { prepareCursorWorkerInvocation, runCursorWorker };\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_refs("prepareCursorWorkerInvocation", project)
+
+    keys = [(str(ref["file"]), int(ref["line"]), str(ref["text"])) for ref in payload["references"]]
+    assert len(keys) == len(set(keys))
+    assert keys == [
+        (
+            str(module_path.resolve()),
+            6,
+            "  return prepareCursorWorkerInvocation({});",
+        )
+    ]
 
 
 def test_callers_json_returns_python_call_sites_for_symbol(tmp_path):
@@ -1403,6 +1489,137 @@ def test_build_context_render_full_seed_reuses_bounded_repo_map(monkeypatch, tmp
     assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
     assert payload["edit_plan_seed"]["dependent_files"] == [str(service_path.resolve())]
     assert unbounded_walks == 0
+
+
+def test_context_render_json_reports_bounded_repo_scan(tmp_path):
+    runner = CliRunner()
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "first.py").write_text("def first():\n    return 1\n", encoding="utf-8")
+    (project / "second.py").write_text("def second():\n    return 2\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "context-render",
+            "--query",
+            "first",
+            "--max-repo-files",
+            "1",
+            "--json",
+            str(project),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["scan_limit"] == {
+        "max_repo_files": 1,
+        "scanned_files": 1,
+        "possibly_truncated": True,
+    }
+
+
+def test_context_render_json_includes_markdown_file_sources(tmp_path):
+    runner = CliRunner()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    guide_path = docs / "routing_policy.md"
+    guide_path.write_text(
+        "# Routing Policy\n\n"
+        "The routing policy explains how tensor-grep chooses native CPU, rg, and GPU paths.\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "context-render",
+            "--query",
+            "routing policy native GPU",
+            "--json",
+            str(docs),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["ranking_quality"] == "strong"
+    assert payload["sources"][0]["kind"] == "file"
+    assert payload["sources"][0]["file"] == str(guide_path.resolve())
+    assert "Routing Policy" in payload["rendered_context"]
+
+
+def test_commonjs_repo_map_extracts_exported_function_symbols(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    module_path = project / "worker.cjs"
+    module_path.write_text(
+        "const fs = require('fs');\n"
+        "\n"
+        "function prepareCursorWorkerInvocation(input) {\n"
+        "  return input;\n"
+        "}\n"
+        "\n"
+        "module.exports = {\n"
+        "  prepareCursorWorkerInvocation,\n"
+        "  safeParseJSON: function safeParseJSON(value) {\n"
+        "    return JSON.parse(value);\n"
+        "  },\n"
+        "  runCursorWorker: async function runCursorWorker() {\n"
+        "    return prepareCursorWorkerInvocation({});\n"
+        "  },\n"
+        "};\n"
+        "\n"
+        "exports.waitForHandoff = async function waitForHandoff() {\n"
+        "  return true;\n"
+        "};\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_repo_map(project)
+
+    names = {str(symbol["name"]) for symbol in payload["symbols"]}
+    assert {
+        "prepareCursorWorkerInvocation",
+        "safeParseJSON",
+        "runCursorWorker",
+        "waitForHandoff",
+    } <= names
+    assert not any(name.startswith(("module", "exports", "function")) for name in names)
+
+    source_payload = repo_map.build_symbol_source("safeParseJSON", project)
+    assert source_payload["sources"][0]["file"] == str(module_path.resolve())
+    assert "return JSON.parse(value);" in source_payload["sources"][0]["source"]
+
+
+def test_js_repo_map_uses_byte_safe_symbol_names(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    module_path = project / "unicode-prefix.mjs"
+    module_path.write_text(
+        "const label = 'ééé';\nclass Engine {\n  run() {\n    return label;\n  }\n}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_repo_map(project)
+
+    names = {str(symbol["name"]) for symbol in payload["symbols"]}
+    assert "Engine" in names
+    assert not any(" " in name or "{" in name or "\n" in name for name in names)
+
+
+def test_test_only_repo_map_keeps_files_non_empty_for_agent_inventory(tmp_path):
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    test_path = tests_dir / "test_worker.py"
+    test_path.write_text("def test_worker():\n    assert True\n", encoding="utf-8")
+
+    payload = repo_map.build_repo_map(tests_dir)
+
+    assert payload["files"] == [str(test_path.resolve())]
+    assert payload["tests"] == [str(test_path.resolve())]
+    assert payload["related_paths"] == [str(test_path.resolve())]
 
 
 def test_iter_repo_files_does_not_resolve_every_child_file(monkeypatch, tmp_path):
@@ -1683,7 +1900,7 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     )
 
 
-def test_edit_plan_json_discovers_ancestor_package_json_for_nested_ts_subdir(tmp_path):
+def test_edit_plan_json_prefers_ancestor_package_script_for_nested_ts_subdir(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
     package_root = project / "packages" / "core"
@@ -1729,9 +1946,9 @@ def test_edit_plan_json_discovers_ancestor_package_json_for_nested_ts_subdir(tmp
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["edit_plan_seed"]["validation_plan"][0]["runner"] == "vitest"
+    assert payload["edit_plan_seed"]["validation_plan"][0]["runner"] == "javascript"
     assert payload["edit_plan_seed"]["validation_plan"][0]["scope"] == "repo"
-    assert payload["edit_plan_seed"]["validation_commands"][0] == "npx vitest run"
+    assert payload["edit_plan_seed"]["validation_commands"][0] == "npm test"
 
 
 def test_edit_plan_json_uses_js_fallback_for_manifest_free_tsx_subdir(tmp_path):

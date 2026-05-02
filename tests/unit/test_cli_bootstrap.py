@@ -357,6 +357,34 @@ def test_main_entry_should_delegate_ndjson_flag_to_native_tg(monkeypatch):
     assert seen == {"binary_name": "tg.exe", "search_args": ["ERROR", ".", "--ndjson"]}
 
 
+def test_main_entry_should_delegate_ndjson_multi_root_to_native_tg(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "ERROR", "src", "tests", "docs", "--ndjson"],
+    )
+    monkeypatch.setattr(bootstrap, "resolve_native_tg_binary", lambda: "tg.exe")
+    monkeypatch.setattr(
+        bootstrap,
+        "_run_native_tg_search",
+        lambda binary_name, search_args: (
+            seen.update({"binary_name": binary_name, "search_args": list(search_args)}) or 0
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    assert excinfo.value.code == 0
+    assert seen == {
+        "binary_name": "tg.exe",
+        "search_args": ["ERROR", "src", "tests", "docs", "--ndjson"],
+    }
+
+
 def test_root_cli_should_generate_powershell_completion_script(monkeypatch) -> None:
     monkeypatch.setenv("_TYPER_COMPLETE_TEST_DISABLE_SHELL_DETECTION", "1")
     result = CliRunner().invoke(app, ["--show-completion", "powershell"], prog_name="tg")

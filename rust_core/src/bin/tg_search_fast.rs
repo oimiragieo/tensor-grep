@@ -43,7 +43,7 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         color: None,
         replace: None,
         patterns: Vec::new(),
-        path: String::new(),
+        paths: Vec::new(),
         no_ignore_vcs: false,
         pcre2: false,
         max_filesize: None,
@@ -131,11 +131,11 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         index += 1;
     }
 
-    if positionals.len() != 2 {
-        bail!("tg-search-fast requires exactly a pattern and path");
+    if positionals.len() < 2 {
+        bail!("tg-search-fast requires a pattern and at least one path");
     }
 
     args.patterns.push(positionals[0].clone());
-    args.path = positionals[1].clone();
+    args.paths = positionals[1..].to_vec();
     Ok(args)
 }

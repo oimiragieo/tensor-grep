@@ -117,32 +117,34 @@ When an agent is ready to move from discovery into editing, prefer `edit-plan` o
 Resolve exact definitions:
 
 ```powershell
-tg defs --symbol create_invoice --json .\src
+tg defs --symbol create_invoice --max-repo-files 512 --json .\src
 ```
 
 Fetch the exact source block:
 
 ```powershell
-tg source --symbol create_invoice --json .\src
+tg source --symbol create_invoice --max-repo-files 512 --json .\src
 ```
 
 Estimate likely change impact:
 
 ```powershell
-tg impact --symbol create_invoice --json .
+tg impact --symbol create_invoice --max-repo-files 512 --json .
 ```
 
 Find reference sites:
 
 ```powershell
-tg refs --symbol create_invoice --json .
+tg refs --symbol create_invoice --max-repo-files 512 --json .
 ```
 
 Find call sites plus likely impacted tests:
 
 ```powershell
-tg callers --symbol create_invoice --json .
+tg callers --symbol create_invoice --max-repo-files 512 --json .
 ```
+
+For broad repo roots, read `scan_limit` before assuming the inventory is complete. If `no_match` is true on `defs` or `source`, treat the compact payload as a real miss and refine the symbol/query instead of scanning unrelated inventories.
 
 ## Session Reuse Flow
 
@@ -518,7 +520,7 @@ Current behavior:
 Use NDJSON when you want incremental consumption for large result sets.
 
 ```powershell
-tg.exe search --ndjson ERROR .\logs
+tg.exe search --ndjson ERROR .\src .\tests .\docs
 ```
 
 Each line is a standalone JSON object with:

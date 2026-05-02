@@ -70,8 +70,9 @@ pub struct PositionalCli {
     /// The search pattern (regex or string)
     pub pattern: Option<String>,
 
-    /// Path to search
-    pub path: Option<String>,
+    /// Paths to search
+    #[arg(value_name = "PATH")]
+    pub path: Vec<String>,
 
     /// Count matching lines
     #[arg(short = 'c', long)]
@@ -284,8 +285,9 @@ pub struct SearchArgs {
     #[arg(required_unless_present = "regexp")]
     pub pattern: Option<String>,
 
-    /// Path to search
-    pub path: Option<String>,
+    /// Paths to search
+    #[arg(value_name = "PATH")]
+    pub path: Vec<String>,
 
     /// Use PCRE2 regex engine
     #[arg(short = 'P', long)]
@@ -661,7 +663,7 @@ pub struct GpuOomProbeArgs {
 #[derive(Debug, Clone)]
 struct ResolvedSearchRequest {
     patterns: Vec<String>,
-    path: String,
+    paths: Vec<String>,
 }
 
 impl ResolvedSearchRequest {
@@ -671,6 +673,23 @@ impl ResolvedSearchRequest {
         } else {
             self.patterns.join(" | ")
         }
+    }
+
+    fn primary_path(&self) -> &str {
+        self.paths.first().map(String::as_str).unwrap_or(".")
+    }
+
+    fn path_display(&self) -> String {
+        if self.paths.is_empty() {
+            ".".to_string()
+        } else {
+            self.paths.join(" ")
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn path_bufs(&self) -> Vec<PathBuf> {
+        self.paths.iter().map(PathBuf::from).collect()
     }
 }
 
@@ -891,7 +910,7 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         color: None,
         replace: None,
         patterns: Vec::new(),
-        path: String::new(),
+        paths: Vec::new(),
         no_ignore_vcs: false,
         pcre2: false,
         max_filesize: None,
@@ -959,11 +978,11 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         index += 1;
     }
 
-    if positionals.len() != 2 {
+    if positionals.len() < 2 {
         return None;
     }
     args.patterns.push(positionals[0].clone());
-    args.path = positionals[1].clone();
+    args.paths = positionals[1..].to_vec();
     Some(args)
 }
 
@@ -978,7 +997,11 @@ fn parse_default_search_frontdoor_args(raw_args: &[OsString]) -> Option<RipgrepS
 fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> {
     let cli = PositionalCli::try_parse_from(raw_args).ok()?;
     let pattern = cli.pattern.clone()?;
-    let path = cli.path.clone().unwrap_or_else(|| ".".to_string());
+    let paths = if cli.path.is_empty() {
+        vec![".".to_string()]
+    } else {
+        cli.path.clone()
+    };
 
     if cli.replace.is_some() || cli.force_cpu || !cli.gpu_device_ids.is_empty() {
         return None;
@@ -987,7 +1010,7 @@ fn parse_early_positional_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepS
         return None;
     }
 
-    Some(positional_ripgrep_args(&cli, &pattern, &path))
+    Some(positional_ripgrep_args(&cli, &pattern, &paths))
 }
 
 #[cfg(test)]
@@ -1007,6 +1030,43 @@ mod tests {
     fn parse_args(tokens: &[&str]) -> RipgrepSearchArgs {
         let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
         parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
+    }
+
+    fn parse_search_args(tokens: &[&str]) -> SearchArgs {
+        use clap::Parser;
+        let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
+        let cli = CommandCli::try_parse_from(&raw_args).expect("expected CLI args to parse");
+        match cli.command {
+            Commands::Search(args) => args,
+            _ => panic!("expected search command"),
+        }
+    }
+
+    #[test]
+    fn search_request_preserves_multiple_path_roots_for_structured_output() {
+        let args =
+            parse_search_args(&["tg", "search", "ERROR", "src", "tests", "docs", "--ndjson"]);
+        let request = resolve_search_request(&args).expect("expected search request");
+        let decision = RoutingDecision::native_cpu_json(false);
+
+        assert_eq!(request.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(
+            request.paths,
+            vec!["src".to_string(), "tests".to_string(), "docs".to_string()]
+        );
+        assert_eq!(request.path_display(), "src tests docs");
+        assert_eq!(
+            command_ripgrep_args(&args, &request).paths,
+            vec!["src".to_string(), "tests".to_string(), "docs".to_string()]
+        );
+        assert_eq!(
+            native_search_config_for_command(&args, "ERROR", &request.paths, decision).paths,
+            vec![
+                PathBuf::from("src"),
+                PathBuf::from("tests"),
+                PathBuf::from("docs")
+            ]
+        );
     }
 
     #[test]
@@ -1228,7 +1288,7 @@ mod tests {
 
         assert!(parsed.ignore_case);
         assert_eq!(parsed.patterns, vec!["warning".to_string()]);
-        assert_eq!(parsed.path, "bench_data".to_string());
+        assert_eq!(parsed.paths, vec!["bench_data".to_string()]);
     }
 
     #[test]
@@ -1243,7 +1303,7 @@ mod tests {
 
         assert_eq!(parsed.max_count, Some(1));
         assert_eq!(parsed.patterns, vec!["warning".to_string()]);
-        assert_eq!(parsed.path, "bench_data".to_string());
+        assert_eq!(parsed.paths, vec!["bench_data".to_string()]);
     }
 
     #[test]
@@ -1265,7 +1325,7 @@ mod tests {
         for parsed in [short, long] {
             assert!(parsed.word_regexp);
             assert_eq!(parsed.patterns, vec!["word".to_string()]);
-            assert_eq!(parsed.path, "bench_data".to_string());
+            assert_eq!(parsed.paths, vec!["bench_data".to_string()]);
         }
     }
 
@@ -1295,7 +1355,7 @@ mod tests {
             .expect("expected default search frontdoor args to parse");
 
         assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
-        assert_eq!(parsed.path, "bench_data".to_string());
+        assert_eq!(parsed.paths, vec!["bench_data".to_string()]);
         assert!(!parsed.line_number);
     }
 
@@ -1314,13 +1374,13 @@ mod tests {
             .expect("expected default search frontdoor case-insensitive args to parse");
         assert!(parsed_ignore_case.ignore_case);
         assert_eq!(parsed_ignore_case.patterns, vec!["warning".to_string()]);
-        assert_eq!(parsed_ignore_case.path, "bench_data".to_string());
+        assert_eq!(parsed_ignore_case.paths, vec!["bench_data".to_string()]);
 
         let parsed_max_count = parse_default_search_frontdoor_args(&max_count)
             .expect("expected default search frontdoor max-count args to parse");
         assert_eq!(parsed_max_count.max_count, Some(5));
         assert_eq!(parsed_max_count.patterns, vec!["ERROR".to_string()]);
-        assert_eq!(parsed_max_count.path, "bench_data".to_string());
+        assert_eq!(parsed_max_count.paths, vec!["bench_data".to_string()]);
     }
 
     #[test]
@@ -1335,7 +1395,7 @@ mod tests {
 
         assert_eq!(parsed.max_count, Some(5));
         assert_eq!(parsed.patterns, vec!["ERROR".to_string()]);
-        assert_eq!(parsed.path, "bench_data".to_string());
+        assert_eq!(parsed.paths, vec!["bench_data".to_string()]);
     }
 
     #[test]
@@ -1690,46 +1750,60 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
     }
 
     let pattern = cli.pattern.clone().unwrap();
-    let path = cli.path.clone().unwrap_or_else(|| ".".to_string());
+    let paths = if cli.path.is_empty() {
+        vec![".".to_string()]
+    } else {
+        cli.path.clone()
+    };
+    let primary_path = paths.first().map(String::as_str).unwrap_or(".");
 
     let rg_available = ripgrep_is_available();
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
     let structured_output = cli.json || cli.ndjson;
     let explicit_gpu = !cli.gpu_device_ids.is_empty();
     let auto_gpu_ids: [i32; 0] = [];
+    if paths.len() != 1 && explicit_gpu {
+        anyhow::bail!("GPU search currently supports exactly one path root");
+    }
 
     #[cfg(feature = "cuda")]
-    let corpus_bytes = count_search_corpus_bytes(&[PathBuf::from(&path)], true, &[]).unwrap_or(0);
+    let corpus_bytes = count_search_corpus_bytes(
+        &paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
+        true,
+        &[],
+    )
+    .unwrap_or(0);
     #[cfg(not(feature = "cuda"))]
     let corpus_bytes = 0u64;
 
     #[cfg(feature = "cuda")]
-    let gpu_auto_supported = gpu_native_fallback_reason(&GpuSearchParams {
-        patterns: std::slice::from_ref(&pattern),
-        query: &pattern,
-        path: &path,
-        line_number: true,
-        ignore_case: cli.ignore_case,
-        fixed_strings: cli.fixed_strings,
-        invert_match: cli.invert_match,
-        count: cli.count,
-        context: None,
-        max_count: cli.max_count,
-        word_regexp: cli.word_regexp,
-        globs: Vec::new(),
-        no_ignore: true,
-        gpu_device_ids: &auto_gpu_ids,
-        json: cli.json,
-        ndjson: cli.ndjson,
-        verbose: cli.verbose,
-    })
-    .is_none();
+    let gpu_auto_supported = paths.len() == 1
+        && gpu_native_fallback_reason(&GpuSearchParams {
+            patterns: std::slice::from_ref(&pattern),
+            query: &pattern,
+            path: primary_path,
+            line_number: true,
+            ignore_case: cli.ignore_case,
+            fixed_strings: cli.fixed_strings,
+            invert_match: cli.invert_match,
+            count: cli.count,
+            context: None,
+            max_count: cli.max_count,
+            word_regexp: cli.word_regexp,
+            globs: Vec::new(),
+            no_ignore: true,
+            gpu_device_ids: &auto_gpu_ids,
+            json: cli.json,
+            ndjson: cli.ndjson,
+            verbose: cli.verbose,
+        })
+        .is_none();
 
     #[cfg(not(feature = "cuda"))]
     let gpu_auto_supported = false;
 
     #[cfg(feature = "cuda")]
-    let calibration = load_search_routing_calibration(Path::new(&path));
+    let calibration = load_search_routing_calibration(Path::new(primary_path));
     #[cfg(not(feature = "cuda"))]
     let calibration: Option<SearchRoutingCalibration> = None;
 
@@ -1767,7 +1841,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             let params = GpuSearchParams {
                 patterns: std::slice::from_ref(&pattern),
                 query: &pattern,
-                path: &path,
+                path: primary_path,
                 line_number: true,
                 ignore_case: cli.ignore_case,
                 fixed_strings: cli.fixed_strings,
@@ -1790,10 +1864,10 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
                     RoutingDecision::native_cpu_gpu_fallback(rg_available, structured_output);
                 let rg_fallback = fallback_decision
                     .allow_rg_fallback
-                    .then(|| positional_ripgrep_args(&cli, &pattern, &path));
+                    .then(|| positional_ripgrep_args(&cli, &pattern, &paths));
                 return handle_auto_gpu_search(
                     params,
-                    native_search_config_for_positional(&cli, &pattern, &path, fallback_decision),
+                    native_search_config_for_positional(&cli, &pattern, &paths, fallback_decision),
                     rg_fallback,
                 );
             }
@@ -1814,10 +1888,10 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
 
             let rg_fallback = decision
                 .allow_rg_fallback
-                .then(|| positional_ripgrep_args(&cli, &pattern, &path));
+                .then(|| positional_ripgrep_args(&cli, &pattern, &paths));
 
             run_native_search_with_optional_rg_fallback(
-                native_search_config_for_positional(&cli, &pattern, &path, decision),
+                native_search_config_for_positional(&cli, &pattern, &paths, decision),
                 rg_fallback,
             )
         }
@@ -1827,7 +1901,7 @@ fn run_positional_cli(cli: PositionalCli) -> anyhow::Result<()> {
             }
 
             let exit_code =
-                execute_ripgrep_search(&positional_ripgrep_args(&cli, &pattern, &path))?;
+                execute_ripgrep_search(&positional_ripgrep_args(&cli, &pattern, &paths))?;
             if exit_code != 0 {
                 std::process::exit(exit_code.max(1));
             }
@@ -1864,20 +1938,25 @@ fn should_use_positional_cli(raw_args: &[OsString]) -> bool {
 
 fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchRequest> {
     let mut patterns = args.regexp.clone();
-    let path = if args.regexp.is_empty() {
+    let paths = if args.regexp.is_empty() {
         if let Some(pattern) = args.pattern.as_ref() {
             patterns.push(pattern.clone());
         }
-        args.path.clone().unwrap_or_else(|| ".".to_string())
+        if args.path.is_empty() {
+            vec![".".to_string()]
+        } else {
+            args.path.clone()
+        }
     } else {
-        match (&args.pattern, &args.path) {
-            (Some(first), Some(path)) => {
-                patterns.push(first.clone());
-                path.clone()
-            }
-            (Some(path), None) => path.clone(),
-            (None, Some(path)) => path.clone(),
-            (None, None) => ".".to_string(),
+        let mut paths = Vec::new();
+        if let Some(path) = args.pattern.as_ref() {
+            paths.push(path.clone());
+        }
+        paths.extend(args.path.clone());
+        if paths.is_empty() {
+            vec![".".to_string()]
+        } else {
+            paths
         }
     };
 
@@ -1885,7 +1964,7 @@ fn resolve_search_request(args: &SearchArgs) -> anyhow::Result<ResolvedSearchReq
         anyhow::bail!("search requires a pattern or at least one -e/--regexp pattern");
     }
 
-    Ok(ResolvedSearchRequest { patterns, path })
+    Ok(ResolvedSearchRequest { patterns, paths })
 }
 
 fn detect_warm_index_state(
@@ -1893,6 +1972,7 @@ fn detect_warm_index_state(
     request: &ResolvedSearchRequest,
 ) -> IndexRoutingState {
     if args.index
+        || request.paths.len() != 1
         || args.invert_match
         || search_has_context(args)
         || args.max_count.is_some()
@@ -1904,7 +1984,7 @@ fn detect_warm_index_state(
         return IndexRoutingState::default();
     }
 
-    let index_path = resolve_index_path(&request.path);
+    let index_path = resolve_index_path(request.primary_path());
     if !index_path.exists() {
         return IndexRoutingState::default();
     }
@@ -2021,7 +2101,11 @@ fn auto_gpu_available_for_routing() -> bool {
         .unwrap_or(false)
 }
 
-fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> RipgrepSearchArgs {
+fn positional_ripgrep_args(
+    cli: &PositionalCli,
+    pattern: &str,
+    paths: &[String],
+) -> RipgrepSearchArgs {
     RipgrepSearchArgs {
         ignore_case: cli.ignore_case,
         fixed_strings: cli.fixed_strings,
@@ -2049,7 +2133,7 @@ fn positional_ripgrep_args(cli: &PositionalCli, pattern: &str, path: &str) -> Ri
         color: cli.color.clone(),
         replace: cli.replace.clone(),
         patterns: vec![pattern.to_string()],
-        path: path.to_string(),
+        paths: paths.to_vec(),
         pcre2: cli.pcre2,
         max_filesize: cli.max_filesize.clone(),
     }
@@ -2083,7 +2167,7 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         color: args.color.clone(),
         replace: args.replace.clone(),
         patterns: request.patterns.clone(),
-        path: request.path.clone(),
+        paths: request.paths.clone(),
         pcre2: args.pcre2,
         max_filesize: args.max_filesize.clone(),
     }
@@ -2128,12 +2212,12 @@ fn search_effective_context(args: &SearchArgs) -> Option<usize> {
 fn native_search_config_for_positional(
     cli: &PositionalCli,
     pattern: &str,
-    path: &str,
+    paths: &[String],
     decision: RoutingDecision,
 ) -> NativeSearchConfig {
     NativeSearchConfig {
         pattern: pattern.to_string(),
-        paths: vec![PathBuf::from(path)],
+        paths: paths.iter().map(PathBuf::from).collect(),
         routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used(),
@@ -2157,12 +2241,12 @@ fn native_search_config_for_positional(
 fn native_search_config_for_command(
     args: &SearchArgs,
     pattern: &str,
-    path: &str,
+    paths: &[String],
     decision: RoutingDecision,
 ) -> NativeSearchConfig {
     NativeSearchConfig {
         pattern: pattern.to_string(),
-        paths: vec![PathBuf::from(path)],
+        paths: paths.iter().map(PathBuf::from).collect(),
         routing_backend: decision.routing_backend(),
         routing_reason: decision.reason,
         sidecar_used: decision.sidecar_used(),
@@ -2316,6 +2400,7 @@ fn run_native_search_with_optional_rg_fallback(
 fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
     let request = resolve_search_request(&args)?;
     let query = request.query_display();
+    let path_display = request.path_display();
     let rg_available = ripgrep_is_available();
     #[cfg_attr(not(feature = "cuda"), allow(unused_variables))]
     let structured_output = args.json || args.ndjson;
@@ -2332,42 +2417,46 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if request.paths.len() != 1 && !args.gpu_device_ids.is_empty() {
+        anyhow::bail!("GPU search currently supports exactly one path root");
+    }
+
     #[cfg(feature = "cuda")]
     let corpus_bytes =
-        count_search_corpus_bytes(&[PathBuf::from(&request.path)], args.no_ignore, &args.globs)
-            .unwrap_or(0);
+        count_search_corpus_bytes(&request.path_bufs(), args.no_ignore, &args.globs).unwrap_or(0);
     #[cfg(not(feature = "cuda"))]
     let corpus_bytes = 0u64;
 
     let index_state = detect_warm_index_state(&args, &request);
 
     #[cfg(feature = "cuda")]
-    let gpu_auto_supported = gpu_native_fallback_reason(&GpuSearchParams {
-        patterns: &request.patterns,
-        query: &query,
-        path: &request.path,
-        line_number: false,
-        ignore_case: args.ignore_case,
-        fixed_strings: args.fixed_strings,
-        invert_match: args.invert_match,
-        count: args.count,
-        context: search_effective_context(&args),
-        max_count: args.max_count,
-        word_regexp: args.word_regexp,
-        globs: args.globs.clone(),
-        no_ignore: args.no_ignore,
-        gpu_device_ids: &auto_gpu_ids,
-        json: args.json,
-        ndjson: args.ndjson,
-        verbose: args.verbose,
-    })
-    .is_none();
+    let gpu_auto_supported = request.paths.len() == 1
+        && gpu_native_fallback_reason(&GpuSearchParams {
+            patterns: &request.patterns,
+            query: &query,
+            path: request.primary_path(),
+            line_number: false,
+            ignore_case: args.ignore_case,
+            fixed_strings: args.fixed_strings,
+            invert_match: args.invert_match,
+            count: args.count,
+            context: search_effective_context(&args),
+            max_count: args.max_count,
+            word_regexp: args.word_regexp,
+            globs: args.globs.clone(),
+            no_ignore: args.no_ignore,
+            gpu_device_ids: &auto_gpu_ids,
+            json: args.json,
+            ndjson: args.ndjson,
+            verbose: args.verbose,
+        })
+        .is_none();
 
     #[cfg(not(feature = "cuda"))]
     let gpu_auto_supported = false;
 
     #[cfg(feature = "cuda")]
-    let calibration = load_search_routing_calibration(Path::new(&request.path));
+    let calibration = load_search_routing_calibration(Path::new(request.primary_path()));
     #[cfg(not(feature = "cuda"))]
     let calibration: Option<SearchRoutingCalibration> = None;
 
@@ -2406,7 +2495,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
             let params = GpuSearchParams {
                 patterns: &request.patterns,
                 query: &query,
-                path: &request.path,
+                path: request.primary_path(),
                 line_number: false,
                 ignore_case: args.ignore_case,
                 fixed_strings: args.fixed_strings,
@@ -2435,7 +2524,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                     native_search_config_for_command(
                         &args,
                         &request.patterns[0],
-                        &request.path,
+                        &request.paths,
                         fallback_decision,
                     ),
                     rg_fallback,
@@ -2466,14 +2555,14 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                     native_search_config_for_command(
                         &args,
                         &request.patterns[0],
-                        &request.path,
+                        &request.paths,
                         decision,
                     ),
                 )?;
                 return emit_multi_pattern_native_results(
                     decision,
                     &query,
-                    &request.path,
+                    &path_display,
                     args.json,
                     args.ndjson,
                     args.count,
@@ -2485,7 +2574,7 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
                 native_search_config_for_command(
                     &args,
                     &request.patterns[0],
-                    &request.path,
+                    &request.paths,
                     decision,
                 ),
                 rg_fallback,
@@ -2520,7 +2609,10 @@ fn handle_index_search(
     request: &ResolvedSearchRequest,
     query: &str,
 ) -> anyhow::Result<()> {
-    let search_path = Path::new(&request.path);
+    if request.paths.len() != 1 {
+        anyhow::bail!("index search currently supports exactly one path root");
+    }
+    let search_path = Path::new(request.primary_path());
     if !search_path.exists() {
         anyhow::bail!(
             "index search path does not exist: {}",
@@ -2528,7 +2620,7 @@ fn handle_index_search(
         );
     }
 
-    let index_path = resolve_index_path(&request.path);
+    let index_path = resolve_index_path(request.primary_path());
 
     let index = if index_path.exists() {
         let loaded = match TrigramIndex::load(&index_path) {
@@ -2536,8 +2628,10 @@ fn handle_index_search(
             Err(e) => {
                 eprintln!("[index] warning: failed to load index: {e}, rebuilding...");
                 let started = Instant::now();
-                let fresh =
-                    TrigramIndex::build_with_options(Path::new(&request.path), args.no_ignore)?;
+                let fresh = TrigramIndex::build_with_options(
+                    Path::new(request.primary_path()),
+                    args.no_ignore,
+                )?;
                 fresh.save(&index_path)?;
                 if args.verbose {
                     eprintln!(
@@ -2556,8 +2650,10 @@ fn handle_index_search(
                 eprintln!("[index] stale: {reason}");
             }
             let started = Instant::now();
-            let update = loaded
-                .rebuild_incremental_with_options(Path::new(&request.path), args.no_ignore)?;
+            let update = loaded.rebuild_incremental_with_options(
+                Path::new(request.primary_path()),
+                args.no_ignore,
+            )?;
             update.index.save(&index_path)?;
             if args.verbose {
                 eprintln!(
@@ -2587,11 +2683,12 @@ fn handle_index_search(
         if args.verbose {
             eprintln!(
                 "[index] full rebuild: building index for {}...",
-                request.path
+                request.primary_path()
             );
         }
         let started = Instant::now();
-        let fresh = TrigramIndex::build_with_options(Path::new(&request.path), args.no_ignore)?;
+        let fresh =
+            TrigramIndex::build_with_options(Path::new(request.primary_path()), args.no_ignore)?;
         fresh.save(&index_path)?;
         if args.verbose {
             eprintln!(
@@ -2637,7 +2734,7 @@ fn run_index_query(
         return emit_json_search_results(
             RoutingDecision::warm_index(),
             query,
-            &request.path,
+            request.primary_path(),
             matches,
         );
     }
@@ -2646,7 +2743,7 @@ fn run_index_query(
         return emit_ndjson_search_results(
             RoutingDecision::warm_index(),
             query,
-            &request.path,
+            request.primary_path(),
             matches,
         );
     }
@@ -2656,7 +2753,7 @@ fn run_index_query(
         return Ok(());
     }
 
-    emit_plain_search_matches(&request.path, &matches);
+    emit_plain_search_matches(request.primary_path(), &matches);
 
     Ok(())
 }
@@ -4817,7 +4914,7 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 color: None,
                                 replace: None,
                                 patterns: params.patterns.to_vec(),
-                                path: params.path.to_string(),
+                                paths: vec![params.path.to_string()],
                                 no_ignore_vcs: false,
                                 pcre2: false,
                                 max_filesize: None,

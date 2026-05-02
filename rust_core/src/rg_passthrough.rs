@@ -41,7 +41,7 @@ pub struct RipgrepSearchArgs {
     pub color: Option<String>,
     pub replace: Option<String>,
     pub patterns: Vec<String>,
-    pub path: String,
+    pub paths: Vec<String>,
     pub pcre2: bool,
     pub max_filesize: Option<String>,
 }
@@ -145,7 +145,9 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
         command.arg("-e").arg(pattern);
     }
 
-    command.arg(&args.path);
+    for path in &args.paths {
+        command.arg(path);
+    }
 
     let status = command.status().context("failed to execute ripgrep")?;
     Ok(status.code().unwrap_or(1))

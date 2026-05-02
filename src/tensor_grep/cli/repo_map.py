@@ -55,6 +55,7 @@ class _ValidationRunnerInfo(NamedTuple):
     has_javascript: bool
     js_runners: tuple[str, ...]
     ts_runners: tuple[str, ...]
+    js_script_command: str | None
     js_fallback_command: str | None
 
 
@@ -362,6 +363,30 @@ def _symbol_navigation_provenance_for_path(path: str) -> str:
     if suffix in _RUST_SUFFIXES:
         return "tree-sitter" if _rust_parser() is not None else "regex-heuristic"
     return "heuristic"
+
+
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_FALLBACK_SOURCE_SUFFIXES = {
+    ".adoc",
+    ".cfg",
+    ".ini",
+    ".json",
+    ".md",
+    ".markdown",
+    ".rst",
+    ".toml",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+
+
+def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
+    return source_bytes[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+
+
+def _is_clean_symbol_name(name: str) -> bool:
+    return bool(_CLEAN_SYMBOL_NAME_RE.match(name))
 
 
 def _symbol_record(
@@ -2014,6 +2039,27 @@ def _relevant_tests_for_symbol(
     return []
 
 
+def _dedupe_symbol_records(symbols: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int, str, str]] = set()
+    for current in symbols:
+        line = int(current.get("line", current.get("start_line", 0)) or 0)
+        end_line = int(current.get("end_line", line) or line)
+        key = (
+            str(current.get("file", "")),
+            line,
+            end_line,
+            str(current.get("kind", "")),
+            str(current.get("name", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(dict(current))
+    deduped.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
+    return deduped
+
+
 def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
         return [], []
@@ -2030,6 +2076,11 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
         if path.suffix in _JS_TS_SUFFIXES:
             import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
             export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
+            require_match = re.match(
+                r"^\s*(?:const|let|var)\s+(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)"
+                r'\s*=\s*require\(["\']([^"\']+)["\']\)',
+                line,
+            )
             class_match = re.match(
                 r"^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)",
                 line,
@@ -2038,10 +2089,27 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
                 r"^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
                 line,
             )
+            variable_function_match = re.match(
+                r"^\s*(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
+                line,
+            )
+            commonjs_export_function_match = re.match(
+                r"^\s*(?:module\.)?exports\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
+                line,
+            )
+            object_export_function_match = re.match(
+                r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"
+                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
+                line,
+            )
             if import_match:
                 imports.append(import_match.group(1))
             if export_from_match:
                 imports.append(export_from_match.group(1))
+            if require_match:
+                imports.append(require_match.group(1))
             if class_match:
                 end_line, _ = _extract_braced_block(lines, line_number - 1)
                 symbols.append(
@@ -2058,6 +2126,23 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
                 symbols.append(
                     _symbol_record(
                         name=function_match.group(1),
+                        kind="function",
+                        file=path,
+                        start_line=line_number,
+                        end_line=end_line,
+                    )
+                )
+            for current_match in (
+                variable_function_match,
+                commonjs_export_function_match,
+                object_export_function_match,
+            ):
+                if current_match is None:
+                    continue
+                end_line, _ = _extract_braced_block(lines, line_number - 1)
+                symbols.append(
+                    _symbol_record(
+                        name=current_match.group(1),
                         kind="function",
                         file=path,
                         start_line=line_number,
@@ -2130,8 +2215,7 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
                 )
 
     imports = sorted(dict.fromkeys(imports))
-    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
-    return imports, symbols
+    return imports, _dedupe_symbol_records(symbols)
 
 
 def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
@@ -2150,25 +2234,28 @@ def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    tree = parser.parse(source.encode("utf-8"))
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
     symbols: list[dict[str, Any]] = []
 
     def _node_text(node: Any) -> str:
-        return source[node.start_byte : node.end_byte]
+        return _tree_sitter_node_text(source_bytes, node)
 
     def _walk(node: Any) -> None:
         if node.type in {"function_declaration", "class_declaration"}:
             name_node = node.child_by_field_name("name")
             if name_node is not None:
-                symbols.append(
-                    _symbol_record(
-                        name=_node_text(name_node),
-                        kind="class" if node.type == "class_declaration" else "function",
-                        file=path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
+                name = _node_text(name_node)
+                if _is_clean_symbol_name(name):
+                    symbols.append(
+                        _symbol_record(
+                            name=name,
+                            kind="class" if node.type == "class_declaration" else "function",
+                            file=path,
+                            start_line=node.start_point[0] + 1,
+                            end_line=node.end_point[0] + 1,
+                        )
                     )
-                )
         for child in node.children:
             _walk(child)
 
@@ -2190,11 +2277,12 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    tree = parser.parse(source.encode("utf-8"))
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
     symbols: list[dict[str, Any]] = []
 
     def _node_text(node: Any) -> str:
-        return source[node.start_byte : node.end_byte]
+        return _tree_sitter_node_text(source_bytes, node)
 
     def _walk(node: Any) -> None:
         kind_map = {
@@ -2211,15 +2299,17 @@ def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
                         name_node = child
                         break
             if name_node is not None:
-                symbols.append(
-                    _symbol_record(
-                        name=_node_text(name_node),
-                        kind=kind_map[node.type],
-                        file=path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
+                name = _node_text(name_node)
+                if _is_clean_symbol_name(name):
+                    symbols.append(
+                        _symbol_record(
+                            name=name,
+                            kind=kind_map[node.type],
+                            file=path,
+                            start_line=node.start_point[0] + 1,
+                            end_line=node.end_point[0] + 1,
+                        )
                     )
-                )
         for child in node.children:
             _walk(child)
 
@@ -2513,7 +2603,8 @@ def _js_ts_references_and_calls(
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    tree = parser.parse(source.encode("utf-8"))
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
     lines = source.splitlines()
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
@@ -2550,7 +2641,7 @@ def _js_ts_references_and_calls(
     alias_names = {name for name in alias_resolution_by_name if name}
 
     def _node_text(node: Any) -> str:
-        return source[node.start_byte : node.end_byte]
+        return _tree_sitter_node_text(source_bytes, node)
 
     def _line_text(node: Any) -> str:
         line_index = node.start_point[0]
@@ -2821,7 +2912,8 @@ def _rust_references_and_calls(
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    tree = parser.parse(source.encode("utf-8"))
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
     lines = source.splitlines()
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
@@ -2838,7 +2930,7 @@ def _rust_references_and_calls(
     local_names = {name for name in local_name_resolution_by_name if name}
 
     def _node_text(node: Any) -> str:
-        return source[node.start_byte : node.end_byte]
+        return _tree_sitter_node_text(source_bytes, node)
 
     def _line_text(node: Any) -> str:
         line_index = node.start_point[0]
@@ -3114,11 +3206,12 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
     except (OSError, UnicodeDecodeError):
         return []
 
-    tree = parser.parse(source.encode("utf-8"))
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
     sources: list[dict[str, Any]] = []
 
     def _node_text(node: Any) -> str:
-        return source[node.start_byte : node.end_byte]
+        return _tree_sitter_node_text(source_bytes, node)
 
     def _walk(node: Any) -> None:
         if node.type in {"function_declaration", "class_declaration"}:
@@ -3156,7 +3249,8 @@ def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
     except (OSError, UnicodeDecodeError):
         return []
 
-    tree = parser.parse(source.encode("utf-8"))
+    source_bytes = source.encode("utf-8")
+    tree = parser.parse(source_bytes)
     sources: list[dict[str, Any]] = []
     kind_map = {
         "function_item": "function",
@@ -3166,7 +3260,7 @@ def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
     }
 
     def _node_text(node: Any) -> str:
-        return source[node.start_byte : node.end_byte]
+        return _tree_sitter_node_text(source_bytes, node)
 
     def _walk(node: Any) -> None:
         if node.type in kind_map:
@@ -3225,14 +3319,36 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
         return []
 
     if path.suffix in _JS_TS_SUFFIXES:
+        escaped_symbol = re.escape(symbol)
         patterns = [
             (
                 "class",
-                re.compile(rf"^\s*(?:export\s+)?class\s+({re.escape(symbol)})\b"),
+                re.compile(rf"^\s*(?:export\s+)?class\s+({escaped_symbol})\b"),
             ),
             (
                 "function",
-                re.compile(rf"^\s*(?:export\s+)?function\s+({re.escape(symbol)})\b"),
+                re.compile(rf"^\s*(?:export\s+)?(?:default\s+)?function\s+({escaped_symbol})\b"),
+            ),
+            (
+                "function",
+                re.compile(
+                    rf"^\s*(?:const|let|var)\s+({escaped_symbol})\s*=\s*"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
+                ),
+            ),
+            (
+                "function",
+                re.compile(
+                    rf"^\s*(?:module\.)?exports\.({escaped_symbol})\s*=\s*"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
+                ),
+            ),
+            (
+                "function",
+                re.compile(
+                    rf"^\s*({escaped_symbol})\s*:\s*"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
+                ),
             ),
         ]
     else:
@@ -3287,10 +3403,11 @@ def _imports_and_symbols_for_path(
     with _profiling_phase(_profiling_collector, "file_parse"):
         current_imports, current_symbols = _python_imports_and_symbols(path)
         if path.suffix in _JS_TS_SUFFIXES:
-            current_imports, _ = _regex_imports_and_symbols(path)
-            current_symbols = _js_ts_parser_symbols(path)
-            if not current_symbols:
-                _, current_symbols = _regex_imports_and_symbols(path)
+            current_imports, regex_symbols = _regex_imports_and_symbols(path)
+            current_symbols = _dedupe_symbol_records([
+                *_js_ts_parser_symbols(path),
+                *regex_symbols,
+            ])
         elif path.suffix in _RUST_SUFFIXES:
             current_imports, _ = _regex_imports_and_symbols(path)
             current_symbols = _rust_parser_symbols(path)
@@ -3339,6 +3456,7 @@ def build_repo_map(
     root = Path(path).expanduser().resolve()
     if not root.exists():
         raise FileNotFoundError(f"Path not found: {root}")
+    normalized_max_repo_files = max(1, int(max_repo_files)) if max_repo_files is not None else None
 
     with _profiling_phase(_profiling_collector, "repo_map_build"):
         context_root = root if root.is_dir() else root.parent
@@ -3346,15 +3464,18 @@ def build_repo_map(
         _prime_rust_repo_context(context_root)
         payload = _envelope(root)
         if _profiling_collector is None:
-            all_files = _iter_repo_files(root, max_files=max_repo_files)
+            all_files = _iter_repo_files(root, max_files=normalized_max_repo_files)
         else:
             all_files = _iter_repo_files(
                 root,
-                max_files=max_repo_files,
+                max_files=normalized_max_repo_files,
                 _profiling_collector=_profiling_collector,
             )
         tests = [str(current) for current in all_files if _is_test_file(current)]
-        source_files = [str(current) for current in all_files if not _is_test_file(current)]
+        non_test_source_files = [
+            str(current) for current in all_files if not _is_test_file(current)
+        ]
+        source_files = non_test_source_files or tests
 
         imports: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
@@ -3379,6 +3500,12 @@ def build_repo_map(
         payload["imports"] = imports
         payload["tests"] = tests
         payload["related_paths"] = sorted(dict.fromkeys([*source_files, *tests]))
+        if normalized_max_repo_files is not None:
+            payload["scan_limit"] = {
+                "max_repo_files": normalized_max_repo_files,
+                "scanned_files": len(all_files),
+                "possibly_truncated": len(all_files) >= normalized_max_repo_files,
+            }
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -4291,7 +4418,16 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
         current_sources = sources_by_file.setdefault(current, [])
         current_sources.append(source)
 
-    for summary in payload.get("file_summaries", [])[: int(payload.get("max_files", 3))]:
+    max_files = int(payload.get("max_files", 3))
+    summaries = list(payload.get("file_summaries", []))[:max_files]
+    summarized_paths = {str(summary["path"]) for summary in summaries}
+    for current in [str(path) for path in payload.get("files", [])[:max_files]]:
+        if current in summarized_paths or current not in sources_by_file:
+            continue
+        summaries.append({"path": current, "symbols": []})
+        summarized_paths.add(current)
+
+    for summary in summaries:
         current_path = str(summary["path"])
         summary_lines = [f"File: {current_path}", "Summary:"]
         for symbol in summary.get("symbols", [])[: int(payload.get("max_symbols_per_file", 6))]:
@@ -4933,6 +5069,18 @@ def _javascript_repo_fallback_command(package_manager: str) -> str:
     return "npm test"
 
 
+def _package_test_script_command(root: Path, package_json: dict[str, Any]) -> str | None:
+    scripts = package_json.get("scripts")
+    if not isinstance(scripts, dict):
+        return None
+    test_script = scripts.get("test")
+    if not isinstance(test_script, str) or not test_script.strip():
+        return None
+    if "no test specified" in test_script.lower():
+        return None
+    return _javascript_repo_fallback_command(_infer_js_package_manager(root, package_json))
+
+
 def _package_json_dependency_names(package_json: dict[str, Any]) -> set[str]:
     dependency_names: set[str] = set()
     for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
@@ -4976,7 +5124,7 @@ def _ts_jest_configured(
 
 def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
     if not root.exists():
-        return _ValidationRunnerInfo(False, False, False, (), (), None)
+        return _ValidationRunnerInfo(False, False, False, (), (), None, None)
 
     all_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
     has_python = any(current.suffix == ".py" for current in all_files)
@@ -5015,6 +5163,7 @@ def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
         if has_javascript
         else None
     )
+    js_script_command = _package_test_script_command(root, package_json) if has_javascript else None
 
     return _ValidationRunnerInfo(
         has_python=has_python,
@@ -5022,6 +5171,7 @@ def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
         has_javascript=has_javascript,
         js_runners=js_runners,
         ts_runners=tuple(ts_runners),
+        js_script_command=js_script_command,
         js_fallback_command=js_fallback_command,
     )
 
@@ -5414,6 +5564,7 @@ def _validation_plan_for_tests(
         detected.has_javascript
         or detected.js_runners
         or detected.ts_runners
+        or detected.js_script_command
         or detected.js_fallback_command
     )
     primary_symbol_name = (
@@ -5597,24 +5748,32 @@ def _validation_plan_for_tests(
 
     if include_python_fallback:
         add_step("uv run pytest -q", scope="repo", runner="pytest", confidence=0.55)
-    for runner in requested_javascript_runners:
+    if detected.js_script_command and (requested_javascript_runners or detected.has_javascript):
         add_step(
-            _javascript_runner_fallback_command(runner),
-            scope="repo",
-            runner=runner,
-            confidence=0.5,
-        )
-    if (
-        detected.has_javascript
-        and not requested_javascript_runners
-        and detected.js_fallback_command
-    ):
-        add_step(
-            detected.js_fallback_command,
+            detected.js_script_command,
             scope="repo",
             runner="javascript",
-            confidence=0.45,
+            confidence=0.65,
         )
+    else:
+        for runner in requested_javascript_runners:
+            add_step(
+                _javascript_runner_fallback_command(runner),
+                scope="repo",
+                runner=runner,
+                confidence=0.5,
+            )
+        if (
+            detected.has_javascript
+            and not requested_javascript_runners
+            and detected.js_fallback_command
+        ):
+            add_step(
+                detected.js_fallback_command,
+                scope="repo",
+                runner="javascript",
+                confidence=0.45,
+            )
     if include_rust_fallback:
         add_step("cargo test", scope="repo", runner="cargo", confidence=0.55)
 
@@ -6941,6 +7100,41 @@ def build_context_render(
     )
 
 
+def _fallback_file_source(
+    path: Path, *, max_lines: int = 120, max_chars: int = 6_000
+) -> dict[str, Any] | None:
+    source_suffixes = _FALLBACK_SOURCE_SUFFIXES | _JS_TS_SUFFIXES | _RUST_SUFFIXES | {".py"}
+    if path.suffix.lower() not in source_suffixes:
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    lines = text.splitlines()
+    if not lines:
+        return None
+    snippet_lines: list[str] = []
+    rendered_chars = 0
+    for line in lines[:max_lines]:
+        rendered_chars += len(line) + 1
+        if rendered_chars > max_chars:
+            break
+        snippet_lines.append(line)
+    if not snippet_lines:
+        return None
+    source = "\n".join(snippet_lines)
+    if not source.endswith("\n"):
+        source = f"{source}\n"
+    return {
+        "name": path.name,
+        "kind": "file",
+        "file": str(path),
+        "start_line": 1,
+        "end_line": len(snippet_lines),
+        "source": source,
+    }
+
+
 def build_context_render_from_map(
     repo_map: dict[str, Any],
     query: str,
@@ -7001,6 +7195,26 @@ def build_context_render_from_map(
             break
         if len(sources) >= max_sources:
             break
+
+    if len(sources) < max_sources:
+        for current_file in context_payload.get("files", [])[:max_files]:
+            current_file = str(current_file)
+            if current_file in seen_source_files:
+                continue
+            fallback_source = _fallback_file_source(Path(current_file))
+            if fallback_source is None:
+                continue
+            sources.append(
+                _render_source_block(
+                    fallback_source,
+                    render_profile=normalized_profile,
+                    optimize_context=optimize_context,
+                    _profiling_collector=collector,
+                )
+            )
+            seen_source_files.add(current_file)
+            if len(sources) >= max_sources:
+                break
 
     payload = dict(context_payload)
     payload["routing_reason"] = "context-render"
@@ -7064,6 +7278,7 @@ def build_context_render_json(
     path: str | Path = ".",
     *,
     max_files: int = 3,
+    max_repo_files: int | None = None,
     max_sources: int = 5,
     max_symbols_per_file: int = 6,
     max_render_chars: int | None = None,
@@ -7078,6 +7293,7 @@ def build_context_render_json(
             query,
             path,
             max_files=max_files,
+            max_repo_files=max_repo_files,
             max_sources=max_sources,
             max_symbols_per_file=max_symbols_per_file,
             max_render_chars=max_render_chars,
@@ -7403,8 +7619,9 @@ def build_symbol_defs(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> dict[str, Any]:
-    payload = build_repo_map(path)
+    payload = build_repo_map(path, max_repo_files=max_repo_files)
     return build_symbol_defs_from_map(payload, symbol, semantic_provider=semantic_provider)
 
 
@@ -7495,6 +7712,15 @@ def build_symbol_defs_from_map(
         languages=_provider_languages_for_symbol(repo_map, symbol, definitions),
         fallback_used=fallback_used,
     )
+    if not definitions:
+        payload["no_match"] = True
+        payload["message"] = f"No exact definition found for symbol {symbol!r}."
+        payload["files"] = []
+        payload["symbols"] = []
+        payload["imports"] = []
+        payload["tests"] = []
+        payload["related_paths"] = []
+        payload["graph_completeness"] = "empty"
     return payload
 
 
@@ -7503,9 +7729,16 @@ def build_symbol_defs_json(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_defs(symbol, path, semantic_provider=semantic_provider), indent=2
+        build_symbol_defs(
+            symbol,
+            path,
+            semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
+        ),
+        indent=2,
     )
 
 
@@ -7514,9 +7747,14 @@ def build_symbol_source(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    repo_map = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        _profiling_collector=_profiling_collector,
+    )
     return build_symbol_source_from_map(
         repo_map,
         symbol,
@@ -7572,6 +7810,9 @@ def build_symbol_source_from_map(
     payload["tests"] = defs_payload["tests"]
     payload["related_paths"] = related_paths
     payload["sources"] = sources
+    if defs_payload.get("no_match"):
+        payload["no_match"] = True
+        payload["message"] = str(defs_payload.get("message", "No exact definition found."))
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
@@ -7583,9 +7824,16 @@ def build_symbol_source_json(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_source(symbol, path, semantic_provider=semantic_provider), indent=2
+        build_symbol_source(
+            symbol,
+            path,
+            semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
+        ),
+        indent=2,
     )
 
 
@@ -7594,9 +7842,14 @@ def build_symbol_impact(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    payload = build_repo_map(path, _profiling_collector=_profiling_collector)
+    payload = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        _profiling_collector=_profiling_collector,
+    )
     return build_symbol_impact_from_map(
         payload,
         symbol,
@@ -7620,6 +7873,17 @@ def build_symbol_impact_from_map(
         semantic_provider=semantic_provider,
         definitions=defs_payload.get("definitions"),
     )
+    if defs_payload.get("no_match"):
+        payload = dict(defs_payload)
+        payload["routing_reason"] = "symbol-impact"
+        payload["file_matches"] = []
+        payload["file_summaries"] = []
+        payload["test_matches"] = []
+        payload["ranking_quality"] = "empty"
+        payload["coverage_summary"] = _coverage_summary(payload)
+        payload["provider_agreement"] = dict(default_agreement)
+        payload["provider_status"] = dict(default_status)
+        return _attach_profiling(payload, _profiling_collector)
     context_payload = build_context_pack_from_map(
         repo_map,
         symbol,
@@ -7737,10 +8001,38 @@ def build_symbol_impact_json(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_impact(symbol, path, semantic_provider=semantic_provider), indent=2
+        build_symbol_impact(
+            symbol,
+            path,
+            semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
+        ),
+        indent=2,
     )
+
+
+def _dedupe_symbol_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, int, str, str]] = set()
+    for current in references:
+        line = int(current.get("line", 0) or 0)
+        end_line = int(current.get("end_line", line) or line)
+        key = (
+            str(current.get("file", "")),
+            line,
+            end_line,
+            str(current.get("name", "")),
+            str(current.get("text", "")).strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(dict(current))
+    deduped.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", ""))))
+    return deduped
 
 
 def build_symbol_refs(
@@ -7748,8 +8040,9 @@ def build_symbol_refs(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path)
+    repo_map = build_repo_map(path, max_repo_files=max_repo_files)
     return build_symbol_refs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
 
 
@@ -7760,6 +8053,12 @@ def build_symbol_refs_from_map(
     semantic_provider: str = "native",
 ) -> dict[str, Any]:
     payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    if payload.get("no_match"):
+        payload["routing_reason"] = "symbol-refs"
+        payload["references"] = []
+        payload["ranking_quality"] = "empty"
+        payload["coverage_summary"] = _coverage_summary(payload)
+        return payload
     context_payload = build_context_pack_from_map(repo_map, symbol)
     repo_root = Path(str(repo_map["path"])).resolve()
     bounded_files = _repo_map_file_universe(repo_map)
@@ -7859,6 +8158,7 @@ def build_symbol_refs_from_map(
                 key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
             )
 
+    references = _dedupe_symbol_references(references)
     referenced_files = sorted(dict.fromkeys(str(current["file"]) for current in references))
     related_paths: list[str] = []
     for current in [*payload["files"], *referenced_files, *payload["tests"]]:
@@ -7901,9 +8201,16 @@ def build_symbol_refs_json(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_refs(symbol, path, semantic_provider=semantic_provider), indent=2
+        build_symbol_refs(
+            symbol,
+            path,
+            semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
+        ),
+        indent=2,
     )
 
 
@@ -7912,9 +8219,14 @@ def build_symbol_callers(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    repo_map = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        _profiling_collector=_profiling_collector,
+    )
     return build_symbol_callers_from_map(
         repo_map,
         symbol,
@@ -7931,6 +8243,13 @@ def build_symbol_callers_from_map(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     defs_payload = build_symbol_defs_from_map(repo_map, symbol, semantic_provider=semantic_provider)
+    if defs_payload.get("no_match"):
+        payload = dict(defs_payload)
+        payload["routing_reason"] = "symbol-callers"
+        payload["callers"] = []
+        payload["ranking_quality"] = "empty"
+        payload["coverage_summary"] = _coverage_summary(payload)
+        return _attach_profiling(payload, _profiling_collector)
     repo_root = Path(str(repo_map["path"])).resolve()
     bounded_files = _repo_map_file_universe(repo_map)
     bounded_file_set = {str(current) for current in bounded_files}
@@ -8197,9 +8516,16 @@ def build_symbol_callers_json(
     path: str | Path = ".",
     *,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_callers(symbol, path, semantic_provider=semantic_provider), indent=2
+        build_symbol_callers(
+            symbol,
+            path,
+            semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
+        ),
+        indent=2,
     )
 
 
@@ -8209,9 +8535,14 @@ def build_symbol_blast_radius(
     *,
     max_depth: int = 3,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    repo_map = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        _profiling_collector=_profiling_collector,
+    )
     return build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
@@ -8237,6 +8568,28 @@ def build_symbol_blast_radius_from_map(
         semantic_provider=semantic_provider,
         definitions=defs_payload.get("definitions"),
     )
+    if defs_payload.get("no_match"):
+        payload = dict(defs_payload)
+        payload["routing_reason"] = "symbol-blast-radius"
+        payload["max_depth"] = max(0, int(max_depth))
+        payload["callers"] = []
+        payload["file_matches"] = []
+        payload["file_summaries"] = []
+        payload["test_matches"] = []
+        payload["caller_tree"] = []
+        payload["rendered_caller_tree"] = str(
+            defs_payload.get("message", "No exact definition found.")
+        )
+        payload["graph_trust_summary"] = {
+            "graph_completeness": "empty",
+            "edge_confidence": "none",
+            "evidence_counts": {"parser_backed": 0, "heuristic": 0},
+        }
+        payload["ranking_quality"] = "empty"
+        payload["coverage_summary"] = _coverage_summary(payload)
+        payload["provider_agreement"] = dict(default_agreement)
+        payload["provider_status"] = dict(default_status)
+        return _attach_profiling(payload, _profiling_collector)
     callers_payload = build_symbol_callers_from_map(
         repo_map,
         symbol,
@@ -8536,10 +8889,15 @@ def build_symbol_blast_radius_json(
     *,
     max_depth: int = 3,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
         build_symbol_blast_radius(
-            symbol, path, max_depth=max_depth, semantic_provider=semantic_provider
+            symbol,
+            path,
+            max_depth=max_depth,
+            semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
         ),
         indent=2,
     )
@@ -8553,9 +8911,14 @@ def build_symbol_blast_radius_plan(
     max_files: int = 3,
     max_symbols: int = 5,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    repo_map = build_repo_map(path, _profiling_collector=_profiling_collector)
+    repo_map = build_repo_map(
+        path,
+        max_repo_files=max_repo_files,
+        _profiling_collector=_profiling_collector,
+    )
     return build_symbol_blast_radius_plan_from_map(
         repo_map,
         symbol,
@@ -8618,6 +8981,7 @@ def build_symbol_blast_radius_plan_json(
     max_files: int = 3,
     max_symbols: int = 5,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
         build_symbol_blast_radius_plan(
@@ -8627,6 +8991,7 @@ def build_symbol_blast_radius_plan_json(
             max_files=max_files,
             max_symbols=max_symbols,
             semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
         ),
         indent=2,
     )
@@ -8645,10 +9010,11 @@ def build_symbol_blast_radius_render(
     render_profile: str = "full",
     profile: bool = False,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    repo_map = build_repo_map(path, _profiling_collector=collector)
+    repo_map = build_repo_map(path, max_repo_files=max_repo_files, _profiling_collector=collector)
     return build_symbol_blast_radius_render_from_map(
         repo_map,
         symbol,
@@ -8786,6 +9152,7 @@ def build_symbol_blast_radius_render_json(
     render_profile: str = "full",
     profile: bool = False,
     semantic_provider: str = "native",
+    max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
         build_symbol_blast_radius_render(
@@ -8800,6 +9167,7 @@ def build_symbol_blast_radius_render_json(
             render_profile=render_profile,
             profile=profile,
             semantic_provider=semantic_provider,
+            max_repo_files=max_repo_files,
         ),
         indent=2,
     )

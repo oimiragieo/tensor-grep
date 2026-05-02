@@ -450,7 +450,7 @@ def test_cli_defs_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         repo_map,
         "build_symbol_defs_json",
-        lambda symbol, path, semantic_provider="native": json.dumps({
+        lambda symbol, path, semantic_provider="native", **_: json.dumps({
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
@@ -470,7 +470,7 @@ def test_cli_impact_accepts_provider_option(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(
         repo_map,
         "build_symbol_impact_json",
-        lambda symbol, path, semantic_provider="native": json.dumps({
+        lambda symbol, path, semantic_provider="native", **_: json.dumps({
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
@@ -490,7 +490,7 @@ def test_cli_source_accepts_provider_option(tmp_path: Path, monkeypatch) -> None
     monkeypatch.setattr(
         repo_map,
         "build_symbol_source_json",
-        lambda symbol, path, semantic_provider="native": json.dumps({
+        lambda symbol, path, semantic_provider="native", **_: json.dumps({
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
@@ -511,7 +511,7 @@ def test_cli_blast_radius_accepts_provider_option(tmp_path: Path, monkeypatch) -
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_json",
-        lambda symbol, path, max_depth=3, semantic_provider="native": json.dumps({
+        lambda symbol, path, max_depth=3, semantic_provider="native", **_: json.dumps({
             "symbol": symbol,
             "path": str(path),
             "max_depth": max_depth,
@@ -541,7 +541,7 @@ def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypat
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_plan_json",
-        lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native": (
+        lambda symbol, path, max_depth=3, max_files=3, max_symbols=5, semantic_provider="native", **_: (
             json.dumps({
                 "symbol": symbol,
                 "path": str(path),
@@ -575,7 +575,7 @@ def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path, monkeyp
     monkeypatch.setattr(
         repo_map,
         "build_symbol_blast_radius_render_json",
-        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, semantic_provider="native": (
+        lambda symbol, path, max_depth=3, max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full", profile=False, semantic_provider="native", **_: (
             json.dumps({
                 "symbol": symbol,
                 "path": str(path),

@@ -30,9 +30,15 @@ def _write_package_json(
     *,
     dependencies: dict[str, str] | None = None,
     dev_dependencies: dict[str, str] | None = None,
+    scripts: dict[str, str] | None = None,
+    package_manager: str | None = None,
     jest: dict[str, object] | None = None,
 ) -> None:
     payload: dict[str, object] = {}
+    if package_manager:
+        payload["packageManager"] = package_manager
+    if scripts:
+        payload["scripts"] = scripts
     if dependencies:
         payload["dependencies"] = dependencies
     if dev_dependencies:
@@ -365,6 +371,26 @@ def test_repo_wide_fallback_detection(
     commands = _validation_commands(project, command_tests)
 
     assert commands == expected
+
+
+def test_javascript_repo_fallback_prefers_package_test_script(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    _write_package_json(
+        project,
+        dev_dependencies={"jest": "^29.0.0"},
+        scripts={"test": "jest --runInBand"},
+        package_manager="pnpm@10.0.0",
+    )
+    (src_dir / "worker.cjs").write_text(
+        "function runCursorWorker() {\n    return true;\n}\n",
+        encoding="utf-8",
+    )
+
+    commands = _validation_commands(project, [])
+
+    assert commands == ["pnpm test"]
 
 
 def test_multi_language_repo_includes_commands_for_all_detected_languages(tmp_path: Path) -> None:
