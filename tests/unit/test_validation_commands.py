@@ -179,6 +179,33 @@ def test_python_commands_use_relative_paths(
     assert not any(str(project.resolve()) in command for command in commands)
 
 
+def test_node_test_script_prefers_targeted_file_command(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    tests_dir = project / "tests" / "scripts"
+    tests_dir.mkdir(parents=True)
+    _write_package_json(
+        project,
+        package_manager="pnpm@10.0.0",
+        scripts={"test": "node --test tests/**/*.test.cjs"},
+    )
+    test_path = tests_dir / "run-cursor-worker.test.cjs"
+    test_path.write_text(
+        "const test = require('node:test');\ntest('runCursorWorker invokes cursor', () => {});\n",
+        encoding="utf-8",
+    )
+
+    commands = _validation_commands(
+        project,
+        [test_path],
+        primary_test=test_path,
+        primary_symbol_name="runCursorWorker",
+        query="run cursor worker",
+    )
+
+    assert commands[0] == "node --test tests/scripts/run-cursor-worker.test.cjs"
+    assert commands[-1] == "pnpm test"
+
+
 @pytest.mark.parametrize(
     ("dependencies", "expected_specific_command", "expected_file_command", "expected_fallback"),
     [

@@ -104,6 +104,7 @@ class _ValidationRunnerInfo(NamedTuple):
     ts_runners: tuple[str, ...]
     js_script_command: str | None
     js_fallback_command: str | None
+    js_test_script: str | None
 
 
 class _ProfilePhase:
@@ -448,7 +449,7 @@ def _literal_symbol_seed_files(
     existing = {str(_safe_resolve(path)) for path in existing_files}
     seed_files: list[Path] = []
     scanned = 0
-    for current in _iter_repo_files(normalized_root):
+    for current in _iter_repo_files(normalized_root, max_files=_SYMBOL_LITERAL_SEED_SCAN_LIMIT):
         if scanned >= _SYMBOL_LITERAL_SEED_SCAN_LIMIT:
             break
         scanned += 1
@@ -5304,6 +5305,13 @@ def _javascript_repo_fallback_command(package_manager: str) -> str:
 
 
 def _package_test_script_command(root: Path, package_json: dict[str, Any]) -> str | None:
+    test_script = _package_test_script(package_json)
+    if test_script is None:
+        return None
+    return _javascript_repo_fallback_command(_infer_js_package_manager(root, package_json))
+
+
+def _package_test_script(package_json: dict[str, Any]) -> str | None:
     scripts = package_json.get("scripts")
     if not isinstance(scripts, dict):
         return None
@@ -5312,7 +5320,7 @@ def _package_test_script_command(root: Path, package_json: dict[str, Any]) -> st
         return None
     if "no test specified" in test_script.lower():
         return None
-    return _javascript_repo_fallback_command(_infer_js_package_manager(root, package_json))
+    return test_script.strip()
 
 
 def _package_json_dependency_names(package_json: dict[str, Any]) -> set[str]:
@@ -5358,7 +5366,7 @@ def _ts_jest_configured(
 
 def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
     if not root.exists():
-        return _ValidationRunnerInfo(False, False, False, (), (), None, None)
+        return _ValidationRunnerInfo(False, False, False, (), (), None, None, None)
 
     all_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
     has_python = any(current.suffix == ".py" for current in all_files)
@@ -5397,6 +5405,7 @@ def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
         if has_javascript
         else None
     )
+    js_test_script = _package_test_script(package_json) if has_javascript else None
     js_script_command = _package_test_script_command(root, package_json) if has_javascript else None
 
     return _ValidationRunnerInfo(
@@ -5407,6 +5416,7 @@ def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
         ts_runners=tuple(ts_runners),
         js_script_command=js_script_command,
         js_fallback_command=js_fallback_command,
+        js_test_script=js_test_script,
     )
 
 
@@ -5715,6 +5725,15 @@ def _javascript_runner_fallback_command(runner: str) -> str:
     return "npx jest"
 
 
+def _javascript_node_test_file_command(relative_path: str) -> str:
+    return f"node --test {relative_path}"
+
+
+def _javascript_test_script_uses_node_test(test_script: str | None) -> bool:
+    normalized = (test_script or "").strip().lower()
+    return bool(normalized) and "node" in normalized and "--test" in normalized
+
+
 def _rust_file_level_command(test_path: Path, repo_root: Path) -> str | None:
     try:
         relative = test_path.resolve().relative_to(repo_root)
@@ -5908,6 +5927,14 @@ def _validation_plan_for_tests(
                 primary_symbol_name=primary_symbol_name,
                 query=query,
             )
+            if _javascript_test_script_uses_node_test(detected.js_test_script):
+                add_step(
+                    _javascript_node_test_file_command(relative_path),
+                    scope="file",
+                    runner="node:test",
+                    target=relative_path,
+                    confidence=0.84,
+                )
             for runner in detected.js_runners:
                 remember_runner(runner)
                 if test_filter:
@@ -9171,6 +9198,14 @@ def _apply_blast_radius_output_limits(
         "files_truncated": (
             normalized_max_files is not None and len(original_files) > normalized_max_files
         ),
+        "total_callers": len(original_callers),
+        "returned_callers": len(_list_of_dicts(limited.get("callers"))),
+        "omitted_callers": max(
+            0, len(original_callers) - len(_list_of_dicts(limited.get("callers")))
+        ),
+        "total_files": len(original_files),
+        "returned_files": len(_list_of_strings(limited.get("files"))),
+        "omitted_files": max(0, len(original_files) - len(_list_of_strings(limited.get("files")))),
     }
     return limited
 

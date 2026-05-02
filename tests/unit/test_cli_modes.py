@@ -1597,6 +1597,78 @@ def test_blast_radius_seeds_literal_symbol_file_when_source_bucket_hits_cap(tmp_
     assert str(source_file.resolve()) in payload["scan_limit"]["literal_seed_files"]
 
 
+def test_blast_radius_literal_seed_scan_stays_bounded(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    source_dir = project / ".claude" / "lib"
+    source_dir.mkdir(parents=True)
+    for index in range(20):
+        (source_dir / f"aaa_unrelated_{index:02}.cjs").write_text(
+            f"function unrelatedTool{index}() {{ return {index}; }}\n",
+            encoding="utf-8",
+        )
+    source_file = source_dir / "zzz_safe_parse.cjs"
+    source_file.write_text(
+        "function safeParseJSON(value) {\n  return JSON.parse(value);\n}\n",
+        encoding="utf-8",
+    )
+    original_iter_repo_files = repo_map._iter_repo_files
+    unbounded_walks = 0
+
+    def _bounded_iter_guard(root, **kwargs):
+        nonlocal unbounded_walks
+        if Path(root).resolve() == project.resolve() and kwargs.get("max_files") is None:
+            unbounded_walks += 1
+            raise AssertionError("literal symbol seed scan must stay bounded")
+        return original_iter_repo_files(root, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_iter_repo_files", _bounded_iter_guard)
+
+    payload = repo_map.build_symbol_blast_radius(
+        "safeParseJSON",
+        project,
+        max_repo_files=5,
+    )
+
+    assert payload.get("no_match") is not True
+    assert payload["definitions"][0]["file"] == str(source_file.resolve())
+    assert unbounded_walks == 0
+
+
+def test_blast_radius_output_limit_reports_omitted_counts():
+    payload = {
+        "symbol": "safeParseJSON",
+        "callers": [{"file": f"caller_{index}.cjs"} for index in range(4)],
+        "caller_tree": [{"depth": 1, "files": [f"caller_{index}.cjs" for index in range(4)]}],
+        "files": [f"file_{index}.cjs" for index in range(5)],
+        "file_matches": [{"path": f"file_{index}.cjs"} for index in range(5)],
+        "file_summaries": [{"path": f"file_{index}.cjs", "symbols": []} for index in range(5)],
+        "tests": [],
+        "test_matches": [],
+        "related_paths": [f"file_{index}.cjs" for index in range(5)],
+        "symbols": [],
+        "imports": [],
+    }
+
+    limited = repo_map._apply_blast_radius_output_limits(
+        payload,
+        max_callers=2,
+        max_files=3,
+    )
+
+    assert limited["output_limit"] == {
+        "max_callers": 2,
+        "max_files": 3,
+        "callers_truncated": True,
+        "files_truncated": True,
+        "total_callers": 4,
+        "returned_callers": 2,
+        "omitted_callers": 2,
+        "total_files": 5,
+        "returned_files": 3,
+        "omitted_files": 2,
+    }
+
+
 def test_context_render_json_includes_enriched_edit_plan_seed_fields(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
@@ -1982,6 +2054,12 @@ def test_blast_radius_json_supports_output_limits(tmp_path):
         "max_files": 2,
         "callers_truncated": True,
         "files_truncated": True,
+        "total_callers": 6,
+        "returned_callers": 2,
+        "omitted_callers": 4,
+        "total_files": 7,
+        "returned_files": 2,
+        "omitted_files": 5,
     }
 
 
