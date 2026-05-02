@@ -1,17 +1,12 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.8.3 (2026-05-02)
 
 ### Bug Fixes
 
-- Tighten the remaining dogfood agent contracts: `-e/--regexp` search parsing now works
-  with `--glob` and explicit paths, recursive globs match relative POSIX paths on
-  Windows, symbol-specific `defs`/`source` JSON omits unrelated repo symbol inventory,
-  `doctor` distinguishes the embedded Rust extension from a standalone native binary,
-  bounded blast-radius scans prioritize source directories over loose root files and
-  generated build artifacts before archive/docs spillover, and native structured
-  search suppresses binary-file warnings so stdout and stderr stay agent-friendly.
+- Harden agent search contracts
+  ([`f6284f9`](https://github.com/oimiragieo/tensor-grep/commit/f6284f985cd2396ec94de5896875b1679e4914ad))
 
 
 ## v1.8.2 (2026-05-02)
