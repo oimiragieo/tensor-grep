@@ -1,8 +1,8 @@
-# Winget Manifest for tensor-grep v1.8.3
+# Winget Manifest for tensor-grep v1.8.4
 # Submit this to the microsoft/winget-pkgs repository
 
 PackageIdentifier: oimiragieo.tensor-grep
-PackageVersion: 1.8.3
+PackageVersion: 1.8.4
 PackageName: tensor-grep
 Publisher: oimiragieo
 License: MIT
@@ -12,7 +12,7 @@ Moniker: tg
 Installers:
   - Architecture: x64
     InstallerType: portable
-    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.8.3/tg-windows-amd64-cpu.exe
+    InstallerUrl: https://github.com/oimiragieo/tensor-grep/releases/download/v1.8.4/tg-windows-amd64-cpu.exe
     Commands:
       - tg
 
