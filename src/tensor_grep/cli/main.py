@@ -245,6 +245,14 @@ def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
     ]
 
 
+def _doctor_rust_core_extension_available() -> bool:
+    try:
+        from tensor_grep.backends.rust_backend import HAVE_RUST
+    except Exception:
+        return False
+    return bool(HAVE_RUST)
+
+
 def _doctor_rust_binary_version(native_tg_binary: Path | None) -> str | None:
     if not native_tg_binary:
         return None
@@ -367,6 +375,7 @@ def _build_doctor_payload(
     ]
     installed_version = _doctor_installed_version()
     rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
+    rust_core_extension_available = _doctor_rust_core_extension_available()
     payload: dict[str, Any] = {
         "version": installed_version,
         "platform": sys.platform,
@@ -377,6 +386,17 @@ def _build_doctor_payload(
         "config": str(resolved_config),
         "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
         "native_tg_binary_exists": native_tg_binary is not None,
+        "native_tg_binary_kind": (
+            "standalone-executable" if native_tg_binary is not None else "missing"
+        ),
+        "rust_core_extension_available": rust_core_extension_available,
+        "search_acceleration_backend": (
+            "standalone-native-tg"
+            if native_tg_binary is not None
+            else "rust-core-extension"
+            if rust_core_extension_available
+            else "python"
+        ),
         "rust_binary_version": rust_binary_version,
         "rust_binary_expected_version": installed_version,
         "rust_binary_version_matches": _doctor_rust_binary_version_matches(
@@ -410,6 +430,9 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     ]
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
+    lines.append(
+        f"search_acceleration_backend: {payload.get('search_acceleration_backend', 'unknown')}"
+    )
     if rust_version := payload.get("rust_binary_version"):
         lines.append(f"rust_binary_version:\n  {rust_version.replace(chr(10), chr(10) + '  ')}")
     if payload.get("rust_binary_version_matches") is False:
@@ -2204,6 +2227,7 @@ def search_command(
     # Note: Full flag wiring will require mapping these dozens of parameters into the Pipeline/Core components.
     args = positionals or []
     pattern = ""
+    regexp_patterns = regexp or []
     if generate is not None:
         typer.echo(_generate_shell_completion_script(generator=generate))
         raise typer.Exit(0)
@@ -2212,6 +2236,15 @@ def search_command(
             typer.echo("Error: Please provide at least one PATH to search.", err=True)
             sys.exit(1)
         paths_to_search = args
+    elif regexp_patterns:
+        pattern = regexp_patterns[0]
+        if pattern == "":
+            typer.echo("Error: PATTERN must not be empty.", err=True)
+            sys.exit(2)
+        paths_to_search = args
+        if not paths_to_search:
+            typer.echo("Error: Please provide at least one PATH to search.", err=True)
+            sys.exit(1)
     else:
         if not args:
             typer.echo("Error: Please provide a PATTERN to search.", err=True)
@@ -5284,7 +5317,7 @@ def main_entry() -> None:
     known_commands = _KNOWN_COMMANDS
 
     if len(sys.argv) == 1:
-        app(args=["--help"])
+        app(args=["--help"], windows_expand_args=False)
         return
 
     if len(sys.argv) > 1:
@@ -5296,7 +5329,7 @@ def main_entry() -> None:
         ):
             sys.argv.insert(1, "search")
 
-    app()
+    app(windows_expand_args=False)
 
 
 if __name__ == "__main__":

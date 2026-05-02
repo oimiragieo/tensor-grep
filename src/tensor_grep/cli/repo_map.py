@@ -26,15 +26,57 @@ _SKIP_DIR_NAMES = {
     ".hg",
     ".svn",
     ".venv",
-    "venv",
-    "__pycache__",
-    "node_modules",
     ".mypy_cache",
     ".pytest_cache",
+    ".ruff_cache",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
 }
 _JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
 _TS_SUFFIXES = {".ts", ".tsx"}
 _RUST_SUFFIXES = {".rs"}
+_SOURCE_FIRST_DIR_NAMES = {
+    ".claude",
+    "app",
+    "apps",
+    "bin",
+    "cmd",
+    "crates",
+    "lib",
+    "packages",
+    "rust_core",
+    "scripts",
+    "src",
+    "tools",
+}
+_TEST_DIR_NAMES = {"__tests__", "spec", "specs", "test", "tests"}
+_SOURCE_FIRST_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cjs",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".go",
+    ".h",
+    ".hpp",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".lua",
+    ".mjs",
+    ".php",
+    ".py",
+    ".rs",
+    ".swift",
+    ".tsx",
+    ".ts",
+}
 _RENDER_PROFILES = {"full", "compact", "llm"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
@@ -209,6 +251,22 @@ def _is_test_file(path: Path) -> bool:
     )
 
 
+def _repo_walk_dir_sort_key(name: str) -> tuple[int, str]:
+    normalized = name.lower()
+    if normalized in _SOURCE_FIRST_DIR_NAMES:
+        return (0, normalized)
+    if normalized in _TEST_DIR_NAMES:
+        return (1, normalized)
+    return (2, normalized)
+
+
+def _repo_walk_file_sort_key(name: str) -> tuple[int, str]:
+    suffix = Path(name).suffix.lower()
+    if suffix in _SOURCE_FIRST_SUFFIXES:
+        return (0, name.lower())
+    return (1, name.lower())
+
+
 def _iter_repo_files(
     root: Path,
     *,
@@ -221,20 +279,49 @@ def _iter_repo_files(
 
         files: list[Path] = []
         normalized_root = root.resolve()
-        for current_root, dirnames, filenames in os.walk(normalized_root, topdown=True):
-            dirnames[:] = sorted(current for current in dirnames if current not in _SKIP_DIR_NAMES)
-            current_root_path = Path(current_root)
-            for filename in sorted(filenames):
-                current = current_root_path / filename
+
+        def append_file(current: Path) -> bool:
+            try:
+                is_file = current.is_file()
+            except OSError:
+                return False
+            if not is_file:
+                return False
+            files.append(current)
+            return max_files is not None and len(files) >= max(1, max_files)
+
+        def visit_dir(current_root: Path) -> bool:
+            try:
+                entries = list(os.scandir(current_root))
+            except OSError:
+                return False
+
+            dir_paths: list[Path] = []
+            file_paths: list[Path] = []
+            for entry in entries:
                 try:
-                    is_file = current.is_file()
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name.lower() not in _SKIP_DIR_NAMES:
+                            dir_paths.append(Path(entry.path))
+                    elif entry.is_file(follow_symlinks=False):
+                        file_paths.append(Path(entry.path))
                 except OSError:
                     continue
-                if not is_file:
-                    continue
-                files.append(current)
-                if max_files is not None and len(files) >= max(1, max_files):
-                    return files
+
+            dir_paths.sort(key=lambda path: _repo_walk_dir_sort_key(path.name))
+            file_paths.sort(key=lambda path: _repo_walk_file_sort_key(path.name))
+            source_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] <= 1]
+            other_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] > 1]
+
+            for directory in source_dirs:
+                if visit_dir(directory):
+                    return True
+            for file_path in file_paths:
+                if append_file(file_path):
+                    return True
+            return any(visit_dir(directory) for directory in other_dirs)
+
+        visit_dir(normalized_root)
         return files
 
 
@@ -7696,6 +7783,21 @@ def build_symbol_defs_from_map(
     payload["symbol"] = symbol
     payload["definitions"] = definitions
     payload["files"] = sorted(dict.fromkeys(definition_files))
+    definition_file_set = set(payload["files"])
+    compact_symbols = [
+        current
+        for current in payload["symbols"]
+        if str(current.get("name", "")) == symbol
+        and (not definition_file_set or str(current.get("file", "")) in definition_file_set)
+    ]
+    if not compact_symbols and definitions:
+        compact_symbols = [dict(current) for current in definitions]
+    payload["symbols"] = _dedupe_symbol_records(compact_symbols)
+    payload["imports"] = [
+        current
+        for current in payload["imports"]
+        if str(current.get("file", "")) in definition_file_set
+    ]
     payload["related_paths"] = related_paths
     payload["graph_completeness"] = "strong"
     payload["semantic_provider"] = normalized_provider
@@ -7715,6 +7817,12 @@ def build_symbol_defs_from_map(
     if not definitions:
         payload["no_match"] = True
         payload["message"] = f"No exact definition found for symbol {symbol!r}."
+        scan_limit = payload.get("scan_limit")
+        if isinstance(scan_limit, dict) and scan_limit.get("possibly_truncated"):
+            payload["message"] += (
+                f" The broad scan stopped after {scan_limit.get('scanned_files')} files; "
+                "narrow PATH or raise --max-repo-files."
+            )
         payload["files"] = []
         payload["symbols"] = []
         payload["imports"] = []

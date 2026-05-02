@@ -171,7 +171,7 @@ def test_main_entry_does_not_rewrite_new_trust_commands(monkeypatch) -> None:
 
     observed_argv: dict[str, list[str]] = {}
 
-    def _fake_app() -> None:
+    def _fake_app(*_args: object, **_kwargs: object) -> None:
         observed_argv["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)

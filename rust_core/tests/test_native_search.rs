@@ -497,6 +497,47 @@ fn test_native_search_ndjson_output_is_valid() {
 }
 
 #[test]
+fn test_native_structured_search_suppresses_binary_warnings() {
+    let dir = tempdir().unwrap();
+    let src_dir = dir.path().join("src").join("tensor_grep").join("cli");
+    let cache_dir = src_dir.join("__pycache__");
+    fs::create_dir_all(&cache_dir).unwrap();
+    fs::write(src_dir.join("main.py"), "def search_command():\n    pass\n").unwrap();
+    fs::write(
+        cache_dir.join("main.cpython-314.pyc"),
+        b"\0search_command\0",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tg"))
+        .arg("search")
+        .arg("--json")
+        .arg("--glob")
+        .arg("src/tensor_grep/cli/**")
+        .arg("-e")
+        .arg("search_command")
+        .arg(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={}\nstderr={}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert_eq!(payload["total_matches"], 1);
+    assert!(
+        !stderr.contains("Binary file") && !stderr.contains("binary file"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
 fn test_native_search_skips_binary_files_by_default() {
     let dir = tempdir().unwrap();
     let text_path = dir.path().join("text.log");

@@ -1584,27 +1584,23 @@ fn binary_file_matches_pattern(
 
 fn emit_binary_match_warning(
     output_target: &NativeOutputTarget,
-    path: &Path,
+    _path: &Path,
     binary_byte_offset: Option<u64>,
     structured_output: bool,
 ) -> Result<()> {
-    let mut bytes = Vec::new();
     if structured_output {
-        writeln!(bytes, "Binary file {} matches", path.display())?;
-        let mut stderr = io::stderr().lock();
-        stderr.write_all(&bytes)?;
-        stderr.flush()?;
-        Ok(())
-    } else {
-        match binary_byte_offset {
-            Some(offset) => writeln!(
-                bytes,
-                "binary file matches (found \"/0\" byte around offset {offset})"
-            )?,
-            None => writeln!(bytes, "binary file matches")?,
-        }
-        output_target.write_all(&bytes)
+        return Ok(());
     }
+
+    let mut bytes = Vec::new();
+    match binary_byte_offset {
+        Some(offset) => writeln!(
+            bytes,
+            "binary file matches (found \"/0\" byte around offset {offset})"
+        )?,
+        None => writeln!(bytes, "binary file matches")?,
+    }
+    output_target.write_all(&bytes)
 }
 
 fn search_file_count_with_searcher(

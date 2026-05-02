@@ -779,6 +779,33 @@ def test_doctor_text_reports_disabled_lsp_and_stopped_daemon(monkeypatch, tmp_pa
     assert "lsp_providers: disabled" in result.stdout
 
 
+def test_doctor_json_explains_rust_core_extension_when_standalone_binary_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.2")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_lsp_provider_statuses", lambda path: [])
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["native_tg_binary"] is None
+    assert payload["native_tg_binary_exists"] is False
+    assert payload["rust_core_extension_available"] is True
+    assert payload["search_acceleration_backend"] == "rust-core-extension"
+
+
 def test_cli_should_parse_gpu_device_ids_into_search_config(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
     _FAKE_WALK = {".": ["a.log"]}
@@ -935,6 +962,37 @@ def test_cli_should_emit_ndjson_without_native_binary(monkeypatch):
     assert rows[0]["text"] == "ERROR visible"
     assert rows[0]["routing_backend"] == "FakeBackend"
     assert rows[0]["routing_reason"] == "unit_test_fake_pipeline"
+
+
+def test_cli_should_treat_regexp_as_pattern_when_glob_precedes_path(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="runCursorWorker()", file="a.log")],
+                matched_file_paths=["a.log"],
+                match_counts_by_file={"a.log": 1},
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _LAST_PIPELINE_CONFIG = None
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        ["search", "--json", "--glob", "scripts/agents/**", "-e", "runCursorWorker", "."],
+    )
+
+    assert result.exit_code == 0
+    assert _LAST_PIPELINE_CONFIG is not None
+    assert _LAST_PIPELINE_CONFIG.regexp == ["runCursorWorker"]
+    assert _LAST_PIPELINE_CONFIG.glob == ["scripts/agents/**"]
+    assert "runCursorWorker()" in result.stdout
 
 
 def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
@@ -1129,6 +1187,7 @@ def test_defs_json_returns_exact_symbol_definitions(tmp_path):
     assert payload["definitions"][0]["name"] == "create_invoice"
     assert payload["definitions"][0]["file"] == str(module_path.resolve())
     assert payload["files"] == [str(module_path.resolve())]
+    assert [symbol["name"] for symbol in payload["symbols"]] == ["create_invoice"]
 
 
 def test_impact_json_returns_ranked_files_and_tests_for_symbol(tmp_path):
@@ -1192,6 +1251,35 @@ def test_source_json_returns_exact_symbol_source_blocks(tmp_path):
     assert payload["sources"][0]["start_line"] == 1
     assert payload["sources"][0]["end_line"] == 3
     assert "subtotal = total + tax" in payload["sources"][0]["source"]
+    assert [symbol["name"] for symbol in payload["symbols"]] == ["create_invoice"]
+
+
+def test_symbol_source_json_omits_unrelated_symbol_inventory(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    module_path = src_dir / "worker.cjs"
+    module_path.write_text(
+        "\n".join([
+            "function safeParseJSON(raw) {",
+            "  return JSON.parse(raw);",
+            "}",
+            "",
+            *[f"function unrelatedSymbol{i}() {{ return {i}; }}" for i in range(50)],
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    defs_payload = repo_map.build_symbol_defs("safeParseJSON", project)
+    source_payload = repo_map.build_symbol_source("safeParseJSON", project)
+
+    for payload in (defs_payload, source_payload):
+        assert payload.get("no_match") is not True
+        assert payload["definitions"][0]["file"] == str(module_path.resolve())
+        assert [symbol["name"] for symbol in payload["symbols"]] == ["safeParseJSON"]
+        assert "unrelatedSymbol49" not in json.dumps(payload)
 
 
 def test_symbol_no_match_outputs_are_compact(tmp_path):
@@ -1372,6 +1460,82 @@ def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
     assert any(level["depth"] == 0 for level in payload["caller_tree"])
     assert any(level["depth"] == 1 for level in payload["caller_tree"])
     assert "Depth 0:" in payload["rendered_caller_tree"]
+
+
+def test_blast_radius_prioritizes_source_dirs_before_bounded_scan_cap(tmp_path):
+    project = tmp_path / "project"
+    archive_dir = project / "aaa_archive"
+    source_dir = project / "scripts" / "agents"
+    archive_dir.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    for index in range(5):
+        (archive_dir / f"note_{index}.md").write_text(f"# note {index}\n", encoding="utf-8")
+    source_file = source_dir / "worker.cjs"
+    source_file.write_text(
+        "function prepareCursorWorkerInvocation(input) {\n  return input;\n}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_blast_radius(
+        "prepareCursorWorkerInvocation",
+        project,
+        max_repo_files=1,
+    )
+
+    assert payload.get("no_match") is not True
+    assert payload["definitions"][0]["file"] == str(source_file.resolve())
+
+
+def test_blast_radius_skips_build_artifacts_before_bounded_scan_cap(tmp_path):
+    project = tmp_path / "project"
+    build_dir = project / "rust_core" / "target" / "debug"
+    source_dir = project / "src" / "tensor_grep" / "cli"
+    build_dir.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    for index in range(5):
+        (build_dir / f"artifact_{index}.rs").write_text(
+            f"fn generated_{index}() {{}}\n",
+            encoding="utf-8",
+        )
+    source_file = source_dir / "main.py"
+    source_file.write_text(
+        "def main_entry() -> None:\n    pass\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_blast_radius(
+        "main_entry",
+        project,
+        max_repo_files=1,
+    )
+
+    assert payload.get("no_match") is not True
+    assert payload["definitions"][0]["file"] == str(source_file.resolve())
+
+
+def test_blast_radius_defers_root_files_before_bounded_source_scan(tmp_path):
+    project = tmp_path / "project"
+    source_dir = project / "src"
+    source_dir.mkdir(parents=True)
+    for index in range(5):
+        (project / f"root_note_{index}.md").write_text(
+            f"# root clutter {index}\n",
+            encoding="utf-8",
+        )
+    source_file = source_dir / "worker.py"
+    source_file.write_text(
+        "def runCursorWorker() -> None:\n    pass\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_blast_radius(
+        "runCursorWorker",
+        project,
+        max_repo_files=1,
+    )
+
+    assert payload.get("no_match") is not True
+    assert payload["definitions"][0]["file"] == str(source_file.resolve())
 
 
 def test_context_render_json_includes_enriched_edit_plan_seed_fields(tmp_path):
@@ -4834,6 +4998,37 @@ def test_main_entry_should_not_rewrite_devices_subcommand(monkeypatch):
     assert seen["argv"] == ["tg", "devices", "--json"]
 
 
+def test_main_entry_should_disable_click_windows_arg_expansion_for_globs(monkeypatch):
+    from tensor_grep.cli import main as cli_main
+
+    seen: dict[str, object] = {}
+
+    def _fake_app(*_args, **kwargs):
+        seen["argv"] = list(sys.argv)
+        seen["kwargs"] = dict(kwargs)
+
+    monkeypatch.setattr(cli_main, "app", _fake_app)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["tg", "search", "--json", "--glob", "src/tensor_grep/cli/**", "-e", "needle", "."],
+    )
+
+    cli_main.main_entry()
+
+    assert seen["argv"] == [
+        "tg",
+        "search",
+        "--json",
+        "--glob",
+        "src/tensor_grep/cli/**",
+        "-e",
+        "needle",
+        ".",
+    ]
+    assert seen["kwargs"]["windows_expand_args"] is False
+
+
 def test_main_entry_should_not_rewrite_map_subcommand(monkeypatch):
     from tensor_grep.cli import main as cli_main
 
@@ -4855,7 +5050,7 @@ def test_main_entry_should_not_rewrite_doctor_subcommand(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)
@@ -4871,7 +5066,7 @@ def test_main_entry_should_not_rewrite_checkpoint_subcommand(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)
@@ -4887,7 +5082,7 @@ def test_main_entry_should_not_rewrite_session_subcommand(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)
@@ -4903,7 +5098,7 @@ def test_main_entry_should_not_rewrite_calibrate_subcommand(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)
@@ -4919,7 +5114,7 @@ def test_main_entry_should_not_rewrite_top_level_help(monkeypatch):
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)
@@ -5375,7 +5570,7 @@ def test_main_entry_should_rewrite_raw_pattern_to_search_subcommand(monkeypatch)
 
     seen: dict[str, list[str]] = {}
 
-    def _fake_app():
+    def _fake_app(*_args, **_kwargs):
         seen["argv"] = list(sys.argv)
 
     monkeypatch.setattr(cli_main, "app", _fake_app)

@@ -47,7 +47,7 @@ class DirectoryScanner:
             return
 
         if base_path.is_file():
-            if self._should_include_file(base_path):
+            if self._should_include_file(base_path, Path(base_path.name)):
                 yield str(base_path)
             return
 
@@ -98,20 +98,21 @@ class DirectoryScanner:
                     continue
 
                 file_path = Path(root) / file_name
-                if ignore_spec is not None and ignore_spec.match_file(_relative_posix(file_path)):
+                relative_path = Path(_relative_posix(file_path))
+                if ignore_spec is not None and ignore_spec.match_file(relative_path.as_posix()):
                     continue
-                if self._should_include_file(file_path):
+                if self._should_include_file(file_path, relative_path):
                     yield str(file_path)
 
-    def _should_include_file(self, file_path: Path) -> bool:
+    def _should_include_file(self, file_path: Path, relative_path: Path | None = None) -> bool:
         # Check explicit globs
         if self.config.glob:
             matched_glob = False
-            file_name = file_path.name
-            file_path_str = str(file_path)
+            candidates = [file_path.name, str(file_path), file_path.as_posix()]
+            if relative_path is not None:
+                candidates.append(relative_path.as_posix())
             if self.config.glob_case_insensitive:
-                file_name = file_name.lower()
-                file_path_str = file_path_str.lower()
+                candidates = [candidate.lower() for candidate in candidates]
             for g in self.config.glob:
                 # Simplistic handling: if it starts with !, it's an exclusion
                 is_exclude = g.startswith("!")
@@ -119,7 +120,7 @@ class DirectoryScanner:
                 if self.config.glob_case_insensitive:
                     pattern = pattern.lower()
 
-                if fnmatch.fnmatch(file_name, pattern) or fnmatch.fnmatch(file_path_str, pattern):
+                if any(fnmatch.fnmatch(candidate, pattern) for candidate in candidates):
                     if is_exclude:
                         return False
                     matched_glob = True

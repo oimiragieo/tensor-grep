@@ -984,7 +984,7 @@ fn test_search_ndjson_emits_one_parseable_json_object_per_match() {
 }
 
 #[test]
-fn test_search_ndjson_keeps_stdout_json_when_binary_warning_is_emitted() {
+fn test_search_ndjson_suppresses_binary_warning_for_agent_contract() {
     let dir = tempdir().unwrap();
     let text_path = dir.path().join("text.log");
     let binary_path = dir.path().join("binary.bin");
@@ -1010,11 +1010,7 @@ fn test_search_ndjson_keeps_stdout_json_when_binary_warning_is_emitted() {
     );
     assert_eq!(payloads[0]["file"], text_path.display().to_string());
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains(&format!("Binary file {} matches", binary_path.display())),
-        "stderr={stderr}"
-    );
+    assert_eq!("", String::from_utf8_lossy(&output.stderr));
 }
 
 #[test]

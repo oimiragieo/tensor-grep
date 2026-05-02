@@ -121,6 +121,24 @@ class TestDirectoryScanner:
 
         assert files == [str(file1)]
 
+    def test_should_match_recursive_glob_against_relative_posix_paths(self, tmp_path):
+        scripts_dir = tmp_path / "scripts" / "agents"
+        tests_dir = tmp_path / "tests" / "scripts"
+        scripts_dir.mkdir(parents=True)
+        tests_dir.mkdir(parents=True)
+
+        agent_file = scripts_dir / "worker.mjs"
+        test_file = tests_dir / "worker.test.mjs"
+        agent_file.write_text("runCursorWorker()\n", encoding="utf-8")
+        test_file.write_text("runCursorWorker()\n", encoding="utf-8")
+
+        config = SearchConfig(glob=["scripts/agents/**"])
+        scanner = DirectoryScanner(config)
+
+        files = list(scanner.walk(str(tmp_path)))
+
+        assert files == [str(agent_file)]
+
     def test_should_filterType_when_dashT_provided(self, tmp_path):
         import os
 
