@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.1 (2026-05-02)
+
+### Bug Fixes
+
+- Format dogfood output contract patch
+  ([`c3ff42f`](https://github.com/oimiragieo/tensor-grep/commit/c3ff42f81ffdbf5a8984844986d60b51689a7840))
+
+- Harden dogfood output contracts
+  ([`98e504e`](https://github.com/oimiragieo/tensor-grep/commit/98e504e57523c201d33145691421a8347f98140a))
+
+
 ## v1.8.0 (2026-05-01)
 
 ### Features
