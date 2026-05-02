@@ -1,14 +1,12 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.8.2 (2026-05-02)
 
 ### Bug Fixes
 
-- Harden agent-navigation trust contracts for broad repo scans, compact no-match symbol output,
-  CommonJS symbol/source extraction, duplicate reference output, package-script validation
-  inference, Markdown context fallback, test-only map inventories, doctor version parity
-  reporting, and multi-root native `--ndjson` search.
+- Harden dogfood agent contracts
+  ([`bd543ef`](https://github.com/oimiragieo/tensor-grep/commit/bd543ef9739753b9e4ad5b514b289c4ab9f132b3))
 
 
 ## v1.8.1 (2026-05-02)
