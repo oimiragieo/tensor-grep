@@ -1,16 +1,15 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.8.5 (2026-05-02)
 
 ### Bug Fixes
 
-- Bound the remaining dogfood agent-output gaps: `context-render --json` now defaults to
-  the LLM compact profile with compact JSON wire formatting, raw `blast-radius --json`
-  supports `--max-callers` and `--max-files`, capped blast-radius no-matches can seed
-  literal symbol files outside the initial scan cap, and the Rust extension backend emits
-  rg-style binary match notices instead of dumping NUL-bearing binary content unless
-  `--text` or `--binary` opts in.
+- Bound agent output contracts
+  ([`3789da7`](https://github.com/oimiragieo/tensor-grep/commit/3789da7dd9d8e77626d24d59c92136892ae73a72))
+
+- Preserve binary search notices
+  ([`b5ad06f`](https://github.com/oimiragieo/tensor-grep/commit/b5ad06fe82f7587c8d03cdca4995b4f990a01862))
 
 
 ## v1.8.4 (2026-05-02)
