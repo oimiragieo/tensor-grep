@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
@@ -15,7 +16,7 @@ from typer.completion import get_completion_script
 from typer.testing import CliRunner
 
 from tensor_grep.cli import repo_map
-from tensor_grep.cli.main import _select_ast_backend_for_pattern, app
+from tensor_grep.cli.main import _safe_stdout_line, _select_ast_backend_for_pattern, app
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
@@ -879,6 +880,37 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
     assert seen["cmd"] == ["tg.exe", "search", "--ndjson", "ERROR", "."]
 
 
+def test_cli_should_emit_ndjson_without_native_binary(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR visible", file="a.log")],
+                matched_file_paths=["a.log"],
+                match_counts_by_file={"a.log": 1},
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--ndjson"])
+
+    assert result.exit_code == 0
+    rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["version"] == 1
+    assert rows[0]["file"] == "a.log"
+    assert rows[0]["line_number"] == 1
+    assert rows[0]["text"] == "ERROR visible"
+    assert rows[0]["routing_backend"] == "FakeBackend"
+    assert rows[0]["routing_reason"] == "unit_test_fake_pipeline"
+
+
 def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
     seen: dict[str, object] = {}
     _patch_cli_dependencies(monkeypatch)
@@ -897,6 +929,37 @@ def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
     assert result.exit_code == 0
     assert seen["cmd"] == ["tg.exe", "search", "--json", "ERROR", "."]
     assert seen["check"] is False
+
+
+def test_search_help_should_describe_json_as_aggregate_json() -> None:
+    result = CliRunner().invoke(app, ["search", "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    assert "--json" in help_text
+    assert "aggregate JSON object." in help_text
+    assert "Print results in JSON Lines format." not in help_text
+
+
+def test_safe_stdout_line_writes_utf8_when_console_encoding_rejects_unicode(monkeypatch):
+    class _FailingStdout:
+        encoding = "cp1252"
+
+        def __init__(self) -> None:
+            self.buffer = io.BytesIO()
+
+        def write(self, text: str) -> int:
+            raise UnicodeEncodeError("cp1252", text, 0, 1, "simulated")
+
+        def flush(self) -> None:
+            return None
+
+    stdout = _FailingStdout()
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    _safe_stdout_line("symbol: \u25cf")
+
+    assert stdout.buffer.getvalue() == "symbol: \u25cf\n".encode("utf-8")
 
 
 def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatch):
@@ -1375,11 +1438,13 @@ def test_repo_map_file_universe_does_not_resolve_child_files(monkeypatch, tmp_pa
 
     monkeypatch.setattr(repo_map.Path, "resolve", _guarded_resolve)
 
-    files = repo_map._repo_map_file_universe({
-        "path": str(project_root),
-        "files": [str(child_file)],
-        "tests": [],
-    })
+    files = repo_map._repo_map_file_universe(
+        {
+            "path": str(project_root),
+            "files": [str(child_file)],
+            "tests": [],
+        }
+    )
 
     assert files == [child_file]
 
@@ -1571,10 +1636,12 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps({
-            "name": "vitest-project",
-            "devDependencies": {"vitest": "^1.0.0"},
-        }),
+        json.dumps(
+            {
+                "name": "vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+            }
+        ),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"
@@ -1630,11 +1697,13 @@ def test_edit_plan_json_discovers_ancestor_package_json_for_nested_ts_subdir(tmp
     tests_dir.mkdir(parents=True)
 
     (package_root / "package.json").write_text(
-        json.dumps({
-            "name": "nested-vitest-project",
-            "devDependencies": {"vitest": "^1.0.0"},
-            "scripts": {"test": "vitest run"},
-        }),
+        json.dumps(
+            {
+                "name": "nested-vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+                "scripts": {"test": "vitest run"},
+            }
+        ),
         encoding="utf-8",
     )
     module_path = nested_src_dir / "glob.ts"
@@ -1746,11 +1815,13 @@ def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_with
     cli_dir = project / ".claude" / "tools" / "cli"
     cli_dir.mkdir(parents=True)
     (project / "package.json").write_text(
-        json.dumps({
-            "name": "agent-studio-like",
-            "packageManager": "pnpm@10.0.0",
-            "scripts": {"test": "pnpm test"},
-        }),
+        json.dumps(
+            {
+                "name": "agent-studio-like",
+                "packageManager": "pnpm@10.0.0",
+                "scripts": {"test": "pnpm test"},
+            }
+        ),
         encoding="utf-8",
     )
     (project / "scripts").mkdir()
@@ -1923,12 +1994,14 @@ def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_p
     assert len(groups) == 1
     assert groups[0]["label"] == "primary"
     assert sorted(groups[0]["roles"]) == ["primary", "related", "related", "test"]
-    assert sorted(groups[0]["files"]) == sorted([
-        str(module_path.resolve()),
-        str(sibling_a.resolve()),
-        str(sibling_b.resolve()),
-        str(test_path.resolve()),
-    ])
+    assert sorted(groups[0]["files"]) == sorted(
+        [
+            str(module_path.resolve()),
+            str(sibling_a.resolve()),
+            str(sibling_b.resolve()),
+            str(test_path.resolve()),
+        ]
+    )
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
@@ -3551,12 +3624,14 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     )
 
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join([
-        "id: no-print",
-        "language: python",
-        "rule:",
-        "  pattern: print($A)",
-    ])
+    inline_rules = "\n".join(
+        [
+            "id: no-print",
+            "language: python",
+            "rule:",
+            "  pattern: print($A)",
+        ]
+    )
     runner = CliRunner()
 
     result = runner.invoke(
@@ -4029,12 +4104,14 @@ def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
         lang: str,
         path: str,
     ) -> tuple[str, int]:
-        seen.update({
-            "pattern": pattern,
-            "replacement": replacement,
-            "lang": lang,
-            "path": path,
-        })
+        seen.update(
+            {
+                "pattern": pattern,
+                "replacement": replacement,
+                "lang": lang,
+                "path": path,
+            }
+        )
         return '{"total_edits": 1, "edits": []}', 0
 
     monkeypatch.setattr(ast_workflows, "execute_rewrite_plan_json", _fake_execute_rewrite_plan_json)

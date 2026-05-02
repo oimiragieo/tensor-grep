@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from tensor_grep.cli.formatters.csv_fmt import CsvFormatter
-from tensor_grep.cli.formatters.json_fmt import JsonFormatter
+from tensor_grep.cli.formatters.json_fmt import JsonFormatter, NdjsonFormatter
 from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 from tensor_grep.cli.formatters.table_fmt import TableFormatter
 from tensor_grep.core.config import SearchConfig
@@ -52,6 +52,24 @@ class TestFormatters:
         ]
         assert parsed["routing_distributed"] is True
         assert parsed["routing_worker_count"] == 2
+
+    def test_ndjson_output_emits_one_json_object_per_match(self):
+        fmt = NdjsonFormatter()
+        output = fmt.format(self.result)
+        rows = [json.loads(line) for line in output.splitlines()]
+
+        assert len(rows) == 1
+        assert rows[0]["version"] == 1
+        assert rows[0]["file"] == "test.log"
+        assert rows[0]["line_number"] == 2
+        assert rows[0]["text"] == "ERROR test"
+        assert rows[0]["routing_backend"] == "CuDFBackend"
+        assert rows[0]["routing_reason"] == "gpu_explicit_ids_cudf"
+        assert rows[0]["routing_gpu_device_ids"] == [7, 3]
+        assert rows[0]["routing_gpu_chunk_plan_mb"] == [
+            {"device_id": 7, "chunk_mb": 256},
+            {"device_id": 3, "chunk_mb": 512},
+        ]
 
     def test_table_output_has_headers(self):
         fmt = TableFormatter()
