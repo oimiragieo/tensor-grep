@@ -83,6 +83,10 @@ _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
 _DEFAULT_EDIT_PLAN_MAX_DEPTH = 3
 _VALIDATION_RUNNER_SCAN_LIMIT = 512
 _SOURCE_FALLBACK_SCAN_LIMIT = 8
+_SYMBOL_LITERAL_SEED_SCAN_LIMIT = 4096
+_SYMBOL_LITERAL_SEED_MAX_FILES = 16
+_SYMBOL_LITERAL_SEED_MAX_BYTES = 2_000_000
+_BLAST_RADIUS_LIMITED_SYMBOLS_PER_FILE = 3
 _RUST_TEST_FN_PATTERN = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
 )
@@ -217,9 +221,12 @@ def _attach_profiling(
     collector: _ProfileCollector | None,
 ) -> dict[str, Any]:
     if collector is not None and collector.enabled:
-        payload["_profiling"] = collector.result()
+        profile_result = collector.result()
+        payload["_profiling"] = profile_result
+        payload["profile"] = {"enabled": True, **profile_result}
     else:
         payload.pop("_profiling", None)
+        payload.pop("profile", None)
     return payload
 
 
@@ -360,16 +367,20 @@ def _iter_repo_files(
                     if entry.is_dir(follow_symlinks=False):
                         if entry.name.lower() not in _SKIP_DIR_NAMES:
                             path = Path(entry.path)
-                            buckets.append((
-                                _repo_walk_bucket_sort_key(path, normalized_root),
-                                _iter_repo_bucket_files(path),
-                            ))
+                            buckets.append(
+                                (
+                                    _repo_walk_bucket_sort_key(path, normalized_root),
+                                    _iter_repo_bucket_files(path),
+                                )
+                            )
                     elif entry.is_file(follow_symlinks=False):
                         path = Path(entry.path)
-                        buckets.append((
-                            _repo_walk_bucket_sort_key(path, normalized_root),
-                            iter([path]),
-                        ))
+                        buckets.append(
+                            (
+                                _repo_walk_bucket_sort_key(path, normalized_root),
+                                iter([path]),
+                            )
+                        )
                 except OSError:
                     continue
 
@@ -398,6 +409,62 @@ def _iter_repo_files(
         files = list(_iter_repo_bucket_files(normalized_root))
         files.sort(key=lambda path: _repo_walk_path_sort_key(path, normalized_root))
         return files
+
+
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
+def _literal_symbol_candidate(path: Path) -> bool:
+    return path.suffix.lower() in _SOURCE_FIRST_SUFFIXES
+
+
+def _file_contains_literal_symbol(path: Path, symbol: str) -> bool:
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    if stat.st_size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
+        return False
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return False
+    if b"\0" in data[:8192]:
+        return False
+    return symbol.encode("utf-8") in data
+
+
+def _literal_symbol_seed_files(
+    root: Path,
+    symbol: str | None,
+    *,
+    existing_files: list[Path],
+) -> list[Path]:
+    normalized_symbol = (symbol or "").strip()
+    if not normalized_symbol or root.is_file():
+        return []
+
+    normalized_root = root.resolve()
+    existing = {str(_safe_resolve(path)) for path in existing_files}
+    seed_files: list[Path] = []
+    scanned = 0
+    for current in _iter_repo_files(normalized_root):
+        if scanned >= _SYMBOL_LITERAL_SEED_SCAN_LIMIT:
+            break
+        scanned += 1
+        resolved = _safe_resolve(current)
+        if str(resolved) in existing or not _literal_symbol_candidate(resolved):
+            continue
+        if not _file_contains_literal_symbol(resolved, normalized_symbol):
+            continue
+        seed_files.append(resolved)
+        if len(seed_files) >= _SYMBOL_LITERAL_SEED_MAX_FILES:
+            break
+    return seed_files
 
 
 def _repo_map_file_universe(repo_map: dict[str, Any]) -> list[Path]:
@@ -607,14 +674,16 @@ def _js_ts_named_import_bindings(source: str) -> list[dict[str, Any]]:
                 imported = specifier
                 local = specifier
             if imported and local:
-                bindings.append({
-                    "module": module_name,
-                    "imported": imported,
-                    "local": local,
-                    "statement_kind": statement_kind,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                })
+                bindings.append(
+                    {
+                        "module": module_name,
+                        "imported": imported,
+                        "local": local,
+                        "statement_kind": statement_kind,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                    }
+                )
     return bindings
 
 
@@ -626,10 +695,12 @@ def _js_ts_namespace_import_bindings(source: str) -> list[dict[str, str]]:
         """
     )
     for match in pattern.finditer(source):
-        bindings.append({
-            "module": match.group("module").strip(),
-            "local": match.group("local").strip(),
-        })
+        bindings.append(
+            {
+                "module": match.group("module").strip(),
+                "local": match.group("local").strip(),
+            }
+        )
     return bindings
 
 
@@ -649,12 +720,14 @@ def _js_ts_default_import_bindings(source: str) -> list[dict[str, Any]]:
     )
     for match in pattern.finditer(source):
         start_line, end_line = _line_span_from_offsets(source, match.start(), match.end())
-        bindings.append({
-            "module": match.group("module").strip(),
-            "local": match.group("local").strip(),
-            "start_line": start_line,
-            "end_line": end_line,
-        })
+        bindings.append(
+            {
+                "module": match.group("module").strip(),
+                "local": match.group("local").strip(),
+                "start_line": start_line,
+                "end_line": end_line,
+            }
+        )
     return bindings
 
 
@@ -953,11 +1026,13 @@ def _js_ts_resolve_exported_symbol(
             )
             if nested is None:
                 continue
-            provenance = _dedupe_labels([
-                *list(candidate_info.get("provenance", [])),
-                *list(nested.get("provenance", [])),
-                "re-export-chain",
-            ])
+            provenance = _dedupe_labels(
+                [
+                    *list(candidate_info.get("provenance", [])),
+                    *list(nested.get("provenance", [])),
+                    "re-export-chain",
+                ]
+            )
             confidence = float(nested.get("confidence", 0.2))
             if float(candidate_info.get("confidence", 0.0)) > 0.0:
                 confidence = min(confidence, float(candidate_info["confidence"]))
@@ -985,10 +1060,12 @@ def _js_ts_resolve_imported_symbol(
         resolved = _js_ts_resolve_exported_symbol(candidate, imported_name, repo_root)
         if resolved is None:
             continue
-        provenance = _dedupe_labels([
-            *list(candidate_info.get("provenance", [])),
-            *list(resolved.get("provenance", [])),
-        ])
+        provenance = _dedupe_labels(
+            [
+                *list(candidate_info.get("provenance", [])),
+                *list(resolved.get("provenance", [])),
+            ]
+        )
         confidence = float(resolved.get("confidence", 0.2))
         if float(candidate_info.get("confidence", 0.0)) > 0.0:
             confidence = min(confidence, float(candidate_info["confidence"]))
@@ -1105,12 +1182,14 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
             if not normalized:
                 continue
             if normalized.endswith("::*"):
-                bindings.append({
-                    "module": normalized[:-3].strip(),
-                    "wildcard": True,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                })
+                bindings.append(
+                    {
+                        "module": normalized[:-3].strip(),
+                        "wildcard": True,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                    }
+                )
                 continue
 
             if " as " in normalized:
@@ -1125,15 +1204,17 @@ def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
                 module_name = ""
                 imported_name = imported_path
 
-            bindings.append({
-                "module": module_name.strip(),
-                "imported": imported_name.strip(),
-                "local": local_name.strip(),
-                "path": imported_path.strip(),
-                "wildcard": False,
-                "start_line": start_line,
-                "end_line": end_line,
-            })
+            bindings.append(
+                {
+                    "module": module_name.strip(),
+                    "imported": imported_name.strip(),
+                    "local": local_name.strip(),
+                    "path": imported_path.strip(),
+                    "wildcard": False,
+                    "start_line": start_line,
+                    "end_line": end_line,
+                }
+            )
     return bindings
 
 
@@ -1397,11 +1478,13 @@ def _rust_partial_candidate_paths(
         provenance = ["partial-resolution"]
         if module_parts[1:]:
             provenance.append("mod-declaration")
-        inferred_candidates.append({
-            "path": str(candidate_path),
-            "provenance": provenance,
-            "confidence": 0.2,
-        })
+        inferred_candidates.append(
+            {
+                "path": str(candidate_path),
+                "provenance": provenance,
+                "confidence": 0.2,
+            }
+        )
     return inferred_candidates
 
 
@@ -1424,11 +1507,13 @@ def _rust_module_candidates(
         resolved_path = str(path.expanduser().resolve())
         if any(str(current["path"]) == resolved_path for current in candidates):
             return
-        candidates.append({
-            "path": resolved_path,
-            "provenance": list(provenance),
-            "confidence": float(confidence),
-        })
+        candidates.append(
+            {
+                "path": resolved_path,
+                "provenance": list(provenance),
+                "confidence": float(confidence),
+            }
+        )
 
     crate_entry = _rust_crate_entry_for_path(normalized_importer)
     if parts[0] == "crate" and crate_entry is not None:
@@ -2499,24 +2584,28 @@ def _python_references_and_calls(
     class Visitor(ast.NodeVisitor):
         def visit_Name(self, node: ast.Name) -> None:
             if node.id == symbol:
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "file": str(path),
-                    "line": node.lineno,
-                    "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
-                })
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.lineno,
+                        "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+                    }
+                )
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute) -> None:
             if node.attr == symbol:
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "file": str(path),
-                    "line": node.lineno,
-                    "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
-                })
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.lineno,
+                        "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+                    }
+                )
             self.generic_visit(node)
 
         def visit_Call(self, node: ast.Call) -> None:
@@ -2526,13 +2615,15 @@ def _python_references_and_calls(
             elif isinstance(node.func, ast.Attribute) and node.func.attr == symbol:
                 matched = True
             if matched:
-                calls.append({
-                    "name": symbol,
-                    "kind": "call",
-                    "file": str(path),
-                    "line": node.lineno,
-                    "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
-                })
+                calls.append(
+                    {
+                        "name": symbol,
+                        "kind": "call",
+                        "file": str(path),
+                        "line": node.lineno,
+                        "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+                    }
+                )
             self.generic_visit(node)
 
     Visitor().visit(tree)
@@ -2621,15 +2712,17 @@ def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]
         alias_name = _binding_name(node.func)
         if alias_name not in alias_names:
             continue
-        calls.append({
-            "name": symbol,
-            "kind": "call",
-            "file": str(path),
-            "line": node.lineno,
-            "end_line": getattr(node, "end_lineno", node.lineno),
-            "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
-            "alias": alias_name,
-        })
+        calls.append(
+            {
+                "name": symbol,
+                "kind": "call",
+                "file": str(path),
+                "line": node.lineno,
+                "end_line": getattr(node, "end_lineno", node.lineno),
+                "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
+                "alias": alias_name,
+            }
+        )
 
     calls.sort(key=lambda item: (item["file"], item["line"], item.get("alias", ""), item["text"]))
     deduped: list[dict[str, Any]] = []
@@ -2720,25 +2813,29 @@ def _regex_references_and_calls(
 
     for line_number, line in enumerate(lines, start=1):
         if symbol_pattern.search(line):
-            references.append({
-                "name": symbol,
-                "kind": "reference",
-                "file": str(path),
-                "line": line_number,
-                "text": line,
-            })
+            references.append(
+                {
+                    "name": symbol,
+                    "kind": "reference",
+                    "file": str(path),
+                    "line": line_number,
+                    "text": line,
+                }
+            )
         supports_template_strings = path.suffix in _JS_TS_SUFFIXES
         sanitized_line = _strip_line_string_and_comment_noise(
             line, supports_template_strings=supports_template_strings
         )
         if call_pattern.search(sanitized_line):
-            calls.append({
-                "name": symbol,
-                "kind": "call",
-                "file": str(path),
-                "line": line_number,
-                "text": line,
-            })
+            calls.append(
+                {
+                    "name": symbol,
+                    "kind": "call",
+                    "file": str(path),
+                    "line": line_number,
+                    "text": line,
+                }
+            )
 
     references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
     calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
@@ -2835,25 +2932,27 @@ def _js_ts_references_and_calls(
                 alias_reference_resolution = (
                     alias_resolution_by_name.get(node_text) if node_type == "identifier" else None
                 )
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(
-                                alias_reference_resolution.get("provenance", [])
-                            ),
-                            "resolution_confidence": float(
-                                alias_reference_resolution.get("confidence", 0.95)
-                            ),
-                        }
-                        if alias_reference_resolution
-                        else {}
-                    ),
-                })
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    alias_reference_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    alias_reference_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if alias_reference_resolution
+                            else {}
+                        ),
+                    }
+                )
         elif node_type == "call_expression":
             function_node = node.child_by_field_name("function")
             matched = False
@@ -2872,23 +2971,27 @@ def _js_ts_references_and_calls(
                         property_node is not None and _node_text(property_node) == symbol
                     )
             if matched:
-                calls.append({
-                    "name": symbol,
-                    "kind": "call",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                            "resolution_confidence": float(
-                                alias_resolution.get("confidence", 0.95)
-                            ),
-                        }
-                        if alias_resolution
-                        else {}
-                    ),
-                })
+                calls.append(
+                    {
+                        "name": symbol,
+                        "kind": "call",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    alias_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    alias_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if alias_resolution
+                            else {}
+                        ),
+                    }
+                )
         for child in node.children:
             _walk(child)
 
@@ -3027,17 +3130,19 @@ def _js_ts_provider_alias_calls(
             if not re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line):
                 continue
             alias_resolution = alias_resolution_by_name.get(alias_name, {})
-            calls.append({
-                "name": symbol,
-                "kind": "call",
-                "file": str(path),
-                "line": line_number,
-                "end_line": line_number,
-                "text": line,
-                "alias": alias_name,
-                "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                "resolution_confidence": float(alias_resolution.get("confidence", 0.95)),
-            })
+            calls.append(
+                {
+                    "name": symbol,
+                    "kind": "call",
+                    "file": str(path),
+                    "line": line_number,
+                    "end_line": line_number,
+                    "text": line,
+                    "alias": alias_name,
+                    "resolution_provenance": list(alias_resolution.get("provenance", [])),
+                    "resolution_confidence": float(alias_resolution.get("confidence", 0.95)),
+                }
+            )
     calls.sort(
         key=lambda item: (item["file"], item["line"], str(item.get("alias", "")), item["text"])
     )
@@ -3114,23 +3219,27 @@ def _rust_references_and_calls(
                 and not _is_definition_identifier(node)
                 and not _node_has_ancestor_type(node, {"use_declaration"})
             ):
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                            "resolution_confidence": float(
-                                alias_resolution.get("confidence", 0.95)
-                            ),
-                        }
-                        if alias_resolution
-                        else {}
-                    ),
-                })
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    alias_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    alias_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if alias_resolution
+                            else {}
+                        ),
+                    }
+                )
         elif node_type == "call_expression":
             function_node = node.child_by_field_name("function")
             matched = False
@@ -3147,36 +3256,48 @@ def _rust_references_and_calls(
                     name_node = function_node.child_by_field_name("name")
                     matched = bool(name_node is not None and _node_text(name_node) == symbol)
             if matched:
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(call_resolution.get("provenance", [])),
-                            "resolution_confidence": float(call_resolution.get("confidence", 0.95)),
-                        }
-                        if call_resolution
-                        else {}
-                    ),
-                })
-                calls.append({
-                    "name": symbol,
-                    "kind": "call",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(call_resolution.get("provenance", [])),
-                            "resolution_confidence": float(call_resolution.get("confidence", 0.95)),
-                        }
-                        if call_resolution
-                        else {}
-                    ),
-                })
+                references.append(
+                    {
+                        "name": symbol,
+                        "kind": "reference",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    call_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    call_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if call_resolution
+                            else {}
+                        ),
+                    }
+                )
+                calls.append(
+                    {
+                        "name": symbol,
+                        "kind": "call",
+                        "file": str(path),
+                        "line": node.start_point[0] + 1,
+                        "text": _line_text(node),
+                        **(
+                            {
+                                "resolution_provenance": list(
+                                    call_resolution.get("provenance", [])
+                                ),
+                                "resolution_confidence": float(
+                                    call_resolution.get("confidence", 0.95)
+                                ),
+                            }
+                            if call_resolution
+                            else {}
+                        ),
+                    }
+                )
         for child in node.children:
             _walk(child)
 
@@ -3281,17 +3402,19 @@ def _rust_provider_alias_calls(
             if not re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line):
                 continue
             alias_resolution = alias_resolution_by_name.get(alias_name, {})
-            calls.append({
-                "name": symbol,
-                "kind": "call",
-                "file": str(path),
-                "line": line_number,
-                "end_line": line_number,
-                "text": line,
-                "alias": alias_name,
-                "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                "resolution_confidence": float(alias_resolution.get("confidence", 0.95)),
-            })
+            calls.append(
+                {
+                    "name": symbol,
+                    "kind": "call",
+                    "file": str(path),
+                    "line": line_number,
+                    "end_line": line_number,
+                    "text": line,
+                    "alias": alias_name,
+                    "resolution_provenance": list(alias_resolution.get("provenance", [])),
+                    "resolution_confidence": float(alias_resolution.get("confidence", 0.95)),
+                }
+            )
     calls.sort(
         key=lambda item: (item["file"], item["line"], str(item.get("alias", "")), item["text"])
     )
@@ -3339,14 +3462,16 @@ def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
         if block:
             block = f"{block}\n"
         kind = "class" if isinstance(node, ast.ClassDef) else "function"
-        sources.append({
-            "name": symbol,
-            "kind": kind,
-            "file": str(path),
-            "start_line": node.lineno,
-            "end_line": end_lineno,
-            "source": block,
-        })
+        sources.append(
+            {
+                "name": symbol,
+                "kind": kind,
+                "file": str(path),
+                "start_line": node.lineno,
+                "end_line": end_lineno,
+                "source": block,
+            }
+        )
 
     sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
     return sources
@@ -3382,14 +3507,16 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
                 block = _node_text(node)
                 if block and not block.endswith("\n"):
                     block = f"{block}\n"
-                sources.append({
-                    "name": symbol,
-                    "kind": "class" if node.type == "class_declaration" else "function",
-                    "file": str(path),
-                    "start_line": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
-                    "source": block,
-                })
+                sources.append(
+                    {
+                        "name": symbol,
+                        "kind": "class" if node.type == "class_declaration" else "function",
+                        "file": str(path),
+                        "start_line": node.start_point[0] + 1,
+                        "end_line": node.end_point[0] + 1,
+                        "source": block,
+                    }
+                )
         for child in node.children:
             _walk(child)
 
@@ -3436,14 +3563,16 @@ def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
                 block = _node_text(node)
                 if block and not block.endswith("\n"):
                     block = f"{block}\n"
-                sources.append({
-                    "name": symbol,
-                    "kind": kind_map[node.type],
-                    "file": str(path),
-                    "start_line": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
-                    "source": block,
-                })
+                sources.append(
+                    {
+                        "name": symbol,
+                        "kind": kind_map[node.type],
+                        "file": str(path),
+                        "start_line": node.start_point[0] + 1,
+                        "end_line": node.end_point[0] + 1,
+                        "source": block,
+                    }
+                )
         for child in node.children:
             _walk(child)
 
@@ -3544,14 +3673,16 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
             continue
 
         end_line, block = _extract_braced_block(lines, line_number - 1)
-        sources.append({
-            "name": symbol,
-            "kind": matched_kind,
-            "file": str(path),
-            "start_line": line_number,
-            "end_line": end_line,
-            "source": block,
-        })
+        sources.append(
+            {
+                "name": symbol,
+                "kind": matched_kind,
+                "file": str(path),
+                "start_line": line_number,
+                "end_line": end_line,
+                "source": block,
+            }
+        )
 
     sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
     return sources
@@ -3566,10 +3697,12 @@ def _imports_and_symbols_for_path(
         current_imports, current_symbols = _python_imports_and_symbols(path)
         if path.suffix in _JS_TS_SUFFIXES:
             current_imports, regex_symbols = _regex_imports_and_symbols(path)
-            current_symbols = _dedupe_symbol_records([
-                *_js_ts_parser_symbols(path),
-                *regex_symbols,
-            ])
+            current_symbols = _dedupe_symbol_records(
+                [
+                    *_js_ts_parser_symbols(path),
+                    *regex_symbols,
+                ]
+            )
         elif path.suffix in _RUST_SUFFIXES:
             current_imports, _ = _regex_imports_and_symbols(path)
             current_symbols = _rust_parser_symbols(path)
@@ -3613,6 +3746,7 @@ def build_repo_map(
     path: str | Path = ".",
     *,
     max_repo_files: int | None = None,
+    extra_files: list[Path] | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     root = Path(path).expanduser().resolve()
@@ -3633,6 +3767,14 @@ def build_repo_map(
                 max_files=normalized_max_repo_files,
                 _profiling_collector=_profiling_collector,
             )
+        capped_file_count = len(all_files)
+        if extra_files:
+            seen_files = {str(_safe_resolve(current)) for current in all_files}
+            for extra_file in extra_files:
+                normalized_extra_file = _safe_resolve(extra_file)
+                if str(normalized_extra_file) not in seen_files:
+                    all_files.append(normalized_extra_file)
+                    seen_files.add(str(normalized_extra_file))
         tests = [str(current) for current in all_files if _is_test_file(current)]
         non_test_source_files = [
             str(current) for current in all_files if not _is_test_file(current)
@@ -3650,11 +3792,13 @@ def build_repo_map(
                     _profiling_collector=_profiling_collector,
                 )
             if current_imports:
-                imports.append({
-                    "file": str(current),
-                    "imports": current_imports,
-                    "provenance": _symbol_navigation_provenance_for_path(str(current)),
-                })
+                imports.append(
+                    {
+                        "file": str(current),
+                        "imports": current_imports,
+                        "provenance": _symbol_navigation_provenance_for_path(str(current)),
+                    }
+                )
             symbols.extend(current_symbols)
 
         payload["files"] = source_files
@@ -3665,8 +3809,8 @@ def build_repo_map(
         if normalized_max_repo_files is not None:
             payload["scan_limit"] = {
                 "max_repo_files": normalized_max_repo_files,
-                "scanned_files": len(all_files),
-                "possibly_truncated": len(all_files) >= normalized_max_repo_files,
+                "scanned_files": capped_file_count,
+                "possibly_truncated": capped_file_count >= normalized_max_repo_files,
             }
     return _attach_profiling(payload, _profiling_collector)
 
@@ -3697,9 +3841,9 @@ def build_repo_map_incremental(
         ]
         for entry in previous_map.get("imports", [])
     }
-    previous_symbols_by_file = _group_symbols_by_file([
-        dict(symbol) for symbol in previous_map.get("symbols", [])
-    ])
+    previous_symbols_by_file = _group_symbols_by_file(
+        [dict(symbol) for symbol in previous_map.get("symbols", [])]
+    )
 
     all_files = _iter_repo_files(root)
     current_files_by_path = {str(current): current for current in all_files}
@@ -3732,11 +3876,13 @@ def build_repo_map_incremental(
             else previous_symbols_by_file.get(current_path, [])
         )
         if current_imports:
-            imports.append({
-                "file": current_path,
-                "imports": current_imports,
-                "provenance": _symbol_navigation_provenance_for_path(current_path),
-            })
+            imports.append(
+                {
+                    "file": current_path,
+                    "imports": current_imports,
+                    "provenance": _symbol_navigation_provenance_for_path(current_path),
+                }
+            )
         symbols.extend(current_symbols)
 
     payload["files"] = source_files
@@ -4045,11 +4191,13 @@ def _file_summaries(symbols: list[dict[str, Any]], ranked_files: list[str]) -> l
     for symbol in symbols:
         current_path = str(symbol["file"])
         current_symbols = symbols_by_file.setdefault(current_path, [])
-        current_symbols.append({
-            "name": str(symbol["name"]),
-            "kind": str(symbol["kind"]),
-            "line": int(symbol["line"]),
-        })
+        current_symbols.append(
+            {
+                "name": str(symbol["name"]),
+                "kind": str(symbol["kind"]),
+                "line": int(symbol["line"]),
+            }
+        )
     for current_symbols in symbols_by_file.values():
         current_symbols.sort(
             key=lambda item: (int(item["line"]), str(item["kind"]), str(item["name"]))
@@ -4557,22 +4705,26 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     tests = [str(current) for current in payload.get("tests", [])]
     if tests:
         test_lines = ["Tests:", *[f"- {current}" for current in tests[:3]]]
-        parts.append({
-            "kind": "tests",
-            "text": "\n".join(test_lines),
-            "paths": tests[:3],
-            "provenance": {
-                "matches": [
-                    {
-                        "path": current,
-                        "score": int(test_matches_by_path.get(current, {}).get("score", 0)),
-                        "graph_score": test_matches_by_path.get(current, {}).get("graph_score"),
-                        "reasons": list(test_matches_by_path.get(current, {}).get("reasons", [])),
-                    }
-                    for current in tests[:3]
-                ]
-            },
-        })
+        parts.append(
+            {
+                "kind": "tests",
+                "text": "\n".join(test_lines),
+                "paths": tests[:3],
+                "provenance": {
+                    "matches": [
+                        {
+                            "path": current,
+                            "score": int(test_matches_by_path.get(current, {}).get("score", 0)),
+                            "graph_score": test_matches_by_path.get(current, {}).get("graph_score"),
+                            "reasons": list(
+                                test_matches_by_path.get(current, {}).get("reasons", [])
+                            ),
+                        }
+                        for current in tests[:3]
+                    ]
+                },
+            }
+        )
 
     sources_by_file: dict[str, list[dict[str, Any]]] = {}
     for source in payload.get("sources", []):
@@ -4595,37 +4747,41 @@ def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
         for symbol in summary.get("symbols", [])[: int(payload.get("max_symbols_per_file", 6))]:
             summary_lines.append(f"- {symbol['kind']} {symbol['name']} @ line {symbol['line']}")
         file_match = file_matches_by_path.get(current_path, {})
-        parts.append({
-            "kind": "summary",
-            "path": current_path,
-            "text": "\n".join(summary_lines),
-            "provenance": {
+        parts.append(
+            {
+                "kind": "summary",
                 "path": current_path,
-                "score": int(file_match.get("score", 0)),
-                "graph_score": file_match.get("graph_score"),
-                "reasons": list(file_match.get("reasons", [])),
-            },
-        })
-        for source in sources_by_file.get(current_path, [])[:2]:
-            file_match = file_matches_by_path.get(current_path, {})
-            symbol_name = str(source["name"])
-            parts.append({
-                "kind": "source",
-                "path": current_path,
-                "symbol": symbol_name,
+                "text": "\n".join(summary_lines),
                 "provenance": {
                     "path": current_path,
-                    "symbol": symbol_name,
                     "score": int(file_match.get("score", 0)),
                     "graph_score": file_match.get("graph_score"),
                     "reasons": list(file_match.get("reasons", [])),
-                    "symbol_score": symbol_scores_by_key.get((current_path, symbol_name), 0),
                 },
-                "text": (
-                    "Source:\n```text\n"
-                    f"{str(source.get('rendered_source', source['source'])).rstrip()}\n```"
-                ),
-            })
+            }
+        )
+        for source in sources_by_file.get(current_path, [])[:2]:
+            file_match = file_matches_by_path.get(current_path, {})
+            symbol_name = str(source["name"])
+            parts.append(
+                {
+                    "kind": "source",
+                    "path": current_path,
+                    "symbol": symbol_name,
+                    "provenance": {
+                        "path": current_path,
+                        "symbol": symbol_name,
+                        "score": int(file_match.get("score", 0)),
+                        "graph_score": file_match.get("graph_score"),
+                        "reasons": list(file_match.get("reasons", [])),
+                        "symbol_score": symbol_scores_by_key.get((current_path, symbol_name), 0),
+                    },
+                    "text": (
+                        "Source:\n```text\n"
+                        f"{str(source.get('rendered_source', source['source'])).rstrip()}\n```"
+                    ),
+                }
+            )
     return parts
 
 
@@ -4820,17 +4976,19 @@ def _render_context_string_and_sections(
                         _profiling_collector=_profiling_collector,
                     )
                     rendered_parts.append(chunk)
-                    sections.append({
-                        "kind": str(part["kind"]),
-                        "start": offset,
-                        "end": offset + len(chunk),
-                        "token_estimate": section_token_estimate,
-                        **{
-                            key: value
-                            for key, value in part.items()
-                            if key not in {"text", "chunk", "score", "token_estimate"}
-                        },
-                    })
+                    sections.append(
+                        {
+                            "kind": str(part["kind"]),
+                            "start": offset,
+                            "end": offset + len(chunk),
+                            "token_estimate": section_token_estimate,
+                            **{
+                                key: value
+                                for key, value in part.items()
+                                if key not in {"text", "chunk", "score", "token_estimate"}
+                            },
+                        }
+                    )
                     offset += len(chunk)
                     total_token_estimate += section_token_estimate
                     partially_rendered_current = True
@@ -4841,17 +4999,19 @@ def _render_context_string_and_sections(
                 break
             rendered_parts.append(chunk)
             section_token_estimate = int(part["token_estimate"])
-            sections.append({
-                "kind": str(part["kind"]),
-                "start": offset,
-                "end": offset + len(chunk),
-                "token_estimate": section_token_estimate,
-                **{
-                    key: value
-                    for key, value in part.items()
-                    if key not in {"text", "chunk", "score", "token_estimate"}
-                },
-            })
+            sections.append(
+                {
+                    "kind": str(part["kind"]),
+                    "start": offset,
+                    "end": offset + len(chunk),
+                    "token_estimate": section_token_estimate,
+                    **{
+                        key: value
+                        for key, value in part.items()
+                        if key not in {"text", "chunk", "score", "token_estimate"}
+                    },
+                }
+            )
             offset += len(chunk)
             total_token_estimate += section_token_estimate
         omitted_sections = [
@@ -5049,12 +5209,14 @@ def _render_source_block(
         if normalized_profile == "full":
             rendered_source = block
             if original_lines:
-                line_map.append({
-                    "rendered_start_line": 1,
-                    "rendered_end_line": len(original_lines),
-                    "original_start_line": int(source["start_line"]),
-                    "original_end_line": int(source["end_line"]),
-                })
+                line_map.append(
+                    {
+                        "rendered_start_line": 1,
+                        "rendered_end_line": len(original_lines),
+                        "original_start_line": int(source["start_line"]),
+                        "original_end_line": int(source["end_line"]),
+                    }
+                )
             diagnostics["rendered_line_count"] = len(original_lines)
         else:
             kept_lines: list[str] = []
@@ -6037,13 +6199,15 @@ def _ordered_dependent_file_matches(
         depth = int(current.get("depth", max_depth + 1))
         if depth > max_depth:
             continue
-        matches.append({
-            "path": current_path,
-            "depth": depth,
-            "score": int(current.get("score", 0)),
-            "reasons": list(current.get("reasons", [])),
-            "graph_score": float(current.get("graph_score", 0.0)),
-        })
+        matches.append(
+            {
+                "path": current_path,
+                "depth": depth,
+                "score": int(current.get("score", 0)),
+                "reasons": list(current.get("reasons", [])),
+                "graph_score": float(current.get("graph_score", 0.0)),
+            }
+        )
 
     matches = _narrow_python_depth_two_dependency_matches(matches, primary_file=primary_file)
 
@@ -6192,24 +6356,26 @@ def _candidate_edit_spans(
     if primary_symbol is not None:
         span = _primary_span_for_symbol(primary_symbol)
         if span is not None and primary_symbol.get("file") and primary_symbol.get("name"):
-            spans.append({
-                "file": str(primary_symbol["file"]),
-                "symbol": str(primary_symbol["name"]),
-                "start_line": int(span["start_line"]),
-                "end_line": int(span["end_line"]),
-                "depth": 0,
-                "score": int(primary_file_match.get("score", 0))
-                + int(primary_symbol.get("score", 0)),
-                "reasons": list(primary_file_match.get("reasons", [])) or ["primary"],
-                "provenance": _provenance_from_reasons(
-                    list(primary_file_match.get("reasons", [])) or ["primary"]
-                ),
-                "rationale": _span_rationale(
-                    str(primary_symbol["name"]),
-                    list(primary_file_match.get("reasons", [])) or ["primary"],
-                    0,
-                ),
-            })
+            spans.append(
+                {
+                    "file": str(primary_symbol["file"]),
+                    "symbol": str(primary_symbol["name"]),
+                    "start_line": int(span["start_line"]),
+                    "end_line": int(span["end_line"]),
+                    "depth": 0,
+                    "score": int(primary_file_match.get("score", 0))
+                    + int(primary_symbol.get("score", 0)),
+                    "reasons": list(primary_file_match.get("reasons", [])) or ["primary"],
+                    "provenance": _provenance_from_reasons(
+                        list(primary_file_match.get("reasons", [])) or ["primary"]
+                    ),
+                    "rationale": _span_rationale(
+                        str(primary_symbol["name"]),
+                        list(primary_file_match.get("reasons", [])) or ["primary"],
+                        0,
+                    ),
+                }
+            )
     spans.extend(dict(current) for current in related_spans)
     spans.sort(
         key=lambda current: (
@@ -6286,17 +6452,19 @@ def _navigation_pack(
         if key in seen:
             return
         seen.add(key)
-        follow_up_reads.append({
-            "file": file_path,
-            "symbol": symbol_name,
-            "start_line": start_line,
-            "end_line": end_line,
-            "mention_ref": _mention_ref(file_path, start_line, end_line),
-            "role": role,
-            "rationale": str(entry.get("rationale", "") or ""),
-            "reasons": list(entry.get("reasons", [])),
-            "provenance": list(entry.get("provenance", [])),
-        })
+        follow_up_reads.append(
+            {
+                "file": file_path,
+                "symbol": symbol_name,
+                "start_line": start_line,
+                "end_line": end_line,
+                "mention_ref": _mention_ref(file_path, start_line, end_line),
+                "role": role,
+                "rationale": str(entry.get("rationale", "") or ""),
+                "reasons": list(entry.get("reasons", [])),
+                "provenance": list(entry.get("provenance", [])),
+            }
+        )
 
     if primary_file and primary_symbol_name and primary_start > 0:
         add_read(
@@ -6398,36 +6566,45 @@ def _navigation_pack(
                 primary_files.append(file_path)
             if role:
                 primary_roles.append(role)
-        parallel_read_groups.append({
-            "phase": len(parallel_read_groups),
-            "label": "primary",
-            "can_parallelize": False,
-            "mentions": primary_mentions,
-            "files": primary_files,
-            "roles": primary_roles,
-        })
+        parallel_read_groups.append(
+            {
+                "phase": len(parallel_read_groups),
+                "label": "primary",
+                "can_parallelize": False,
+                "mentions": primary_mentions,
+                "files": primary_files,
+                "roles": primary_roles,
+            }
+        )
     if grouped_reads["related"]:
-        parallel_read_groups.append({
-            "phase": len(parallel_read_groups),
-            "label": "related",
-            "can_parallelize": True,
-            "mentions": [
-                str(current.get("mention_ref", "") or "") for current in grouped_reads["related"]
-            ],
-            "files": [str(current.get("file", "") or "") for current in grouped_reads["related"]],
-            "roles": ["related"],
-        })
+        parallel_read_groups.append(
+            {
+                "phase": len(parallel_read_groups),
+                "label": "related",
+                "can_parallelize": True,
+                "mentions": [
+                    str(current.get("mention_ref", "") or "")
+                    for current in grouped_reads["related"]
+                ],
+                "files": [
+                    str(current.get("file", "") or "") for current in grouped_reads["related"]
+                ],
+                "roles": ["related"],
+            }
+        )
     if grouped_reads["test"]:
-        parallel_read_groups.append({
-            "phase": len(parallel_read_groups),
-            "label": "test",
-            "can_parallelize": True,
-            "mentions": [
-                str(current.get("mention_ref", "") or "") for current in grouped_reads["test"]
-            ],
-            "files": [str(current.get("file", "") or "") for current in grouped_reads["test"]],
-            "roles": ["test"],
-        })
+        parallel_read_groups.append(
+            {
+                "phase": len(parallel_read_groups),
+                "label": "test",
+                "can_parallelize": True,
+                "mentions": [
+                    str(current.get("mention_ref", "") or "") for current in grouped_reads["test"]
+                ],
+                "files": [str(current.get("file", "") or "") for current in grouped_reads["test"]],
+                "roles": ["test"],
+            }
+        )
 
     return {
         "primary_target": primary_target,
@@ -7299,6 +7476,166 @@ def _fallback_file_source(
 
 _COMPACT_CONTEXT_RENDER_PROFILES = {"compact", "llm"}
 _COMPACT_CONTEXT_RENDER_OMITTED_KEYS = ("symbols", "imports", "related_paths")
+_LLM_CONTEXT_RENDER_OMITTED_KEYS = (
+    "candidate_edit_targets",
+    "coverage",
+    "coverage_summary",
+    "file_matches",
+    "file_summaries",
+    "graph_trust_summary",
+    "test_matches",
+)
+
+
+def _list_of_dicts(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(current) for current in value if isinstance(current, dict)]
+
+
+def _list_of_strings(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    strings: list[str] = []
+    for current in value:
+        if current is None:
+            continue
+        text = str(current)
+        if text:
+            strings.append(text)
+    return strings
+
+
+def _compact_symbol_record(symbol: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(symbol, dict):
+        return None
+    keys = (
+        "name",
+        "kind",
+        "file",
+        "line",
+        "start_line",
+        "end_line",
+        "score",
+        "provenance",
+    )
+    return {key: symbol[key] for key in keys if key in symbol}
+
+
+def _compact_span_record(span: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "file",
+        "symbol",
+        "start_line",
+        "end_line",
+        "depth",
+        "score",
+        "provenance",
+        "rationale",
+    )
+    return {key: span[key] for key in keys if key in span}
+
+
+def _compact_suggested_edit(edit: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "file",
+        "symbol",
+        "start_line",
+        "end_line",
+        "edit_kind",
+        "confidence",
+        "provenance",
+        "rationale",
+    )
+    return {key: edit[key] for key in keys if key in edit}
+
+
+def _compact_edit_plan_seed(seed: object, *, max_files: int) -> dict[str, Any]:
+    if not isinstance(seed, dict):
+        return {}
+    compact = dict(seed)
+    ordering_limit = max(1, max_files) + 1
+    validation_limit = max(1, max_files) + 2
+    compact["primary_symbol"] = _compact_symbol_record(
+        seed.get("primary_symbol") if isinstance(seed.get("primary_symbol"), dict) else None
+    )
+    compact["validation_tests"] = _list_of_strings(seed.get("validation_tests"))[:max_files]
+    compact["validation_commands"] = _list_of_strings(seed.get("validation_commands"))[
+        :validation_limit
+    ]
+    compact["dependent_files"] = _list_of_strings(seed.get("dependent_files"))[:max_files]
+    compact["edit_ordering"] = _list_of_strings(seed.get("edit_ordering"))[:ordering_limit]
+    compact["related_spans"] = [
+        _compact_span_record(current) for current in _list_of_dicts(seed.get("related_spans"))
+    ][:max_files]
+    compact["suggested_edits"] = [
+        _compact_suggested_edit(current) for current in _list_of_dicts(seed.get("suggested_edits"))
+    ][:max_files]
+    compact["validation_plan"] = _list_of_dicts(seed.get("validation_plan"))[
+        : max(1, max_files) + 2
+    ]
+    return compact
+
+
+def _compact_navigation_group(group: dict[str, Any], *, max_files: int) -> dict[str, Any]:
+    compact = dict(group)
+    compact["mentions"] = _list_of_strings(group.get("mentions"))[:max_files]
+    compact["files"] = _list_of_strings(group.get("files"))[:max_files]
+    compact["roles"] = _list_of_strings(group.get("roles"))[:max_files]
+    return compact
+
+
+def _compact_navigation_pack(pack: object, *, max_files: int) -> dict[str, Any]:
+    if not isinstance(pack, dict):
+        return {}
+    compact = dict(pack)
+    ordering_limit = max(1, max_files) + 1
+    validation_limit = max(1, max_files) + 2
+    compact["follow_up_reads"] = _list_of_dicts(pack.get("follow_up_reads"))[:max_files]
+    compact["parallel_read_groups"] = [
+        _compact_navigation_group(current, max_files=max_files)
+        for current in _list_of_dicts(pack.get("parallel_read_groups"))
+    ][: max(1, max_files) + 1]
+    compact["related_tests"] = _list_of_strings(pack.get("related_tests"))[:max_files]
+    compact["validation_commands"] = _list_of_strings(pack.get("validation_commands"))[
+        :validation_limit
+    ]
+    compact["edit_ordering"] = _list_of_strings(pack.get("edit_ordering"))[:ordering_limit]
+    return compact
+
+
+def _compact_candidate_edit_targets(targets: object, *, max_files: int) -> dict[str, Any]:
+    if not isinstance(targets, dict):
+        return {}
+    compact = dict(targets)
+    compact["files"] = _list_of_strings(targets.get("files"))[:max_files]
+    compact["symbols"] = [
+        current
+        for current in (
+            _compact_symbol_record(symbol) for symbol in _list_of_dicts(targets.get("symbols"))
+        )
+        if current is not None
+    ][:max_files]
+    compact["tests"] = _list_of_strings(targets.get("tests"))[:max_files]
+    compact["spans"] = [
+        _compact_span_record(current) for current in _list_of_dicts(targets.get("spans"))
+    ][:max_files]
+    return compact
+
+
+def _compact_context_sources(sources: object, *, max_sources: int) -> list[dict[str, Any]]:
+    compact_sources: list[dict[str, Any]] = []
+    for source in _list_of_dicts(sources)[:max_sources]:
+        compact_sources.append({key: value for key, value in source.items() if key != "source"})
+    return compact_sources
+
+
+def _compact_context_sections(sections: object) -> list[dict[str, Any]]:
+    compact_sections: list[dict[str, Any]] = []
+    for section in _list_of_dicts(sections):
+        keys = ("kind", "start", "end", "token_estimate", "path", "symbol")
+        compact_sections.append({key: section[key] for key in keys if key in section})
+    return compact_sections
 
 
 def _compact_context_render_payload(
@@ -7317,17 +7654,40 @@ def _compact_context_render_payload(
         if key in compact:
             compact.pop(key)
             omitted_keys.append(key)
+    if render_profile == "llm":
+        for key in _LLM_CONTEXT_RENDER_OMITTED_KEYS:
+            if key in compact:
+                compact.pop(key)
+                omitted_keys.append(key)
 
     compact["tests"] = list(compact.get("tests", []))[:max_files]
-    compact["test_matches"] = list(compact.get("test_matches", []))[:max_files]
-    compact["sources"] = [
-        {key: value for key, value in dict(source).items() if key != "source"}
-        for source in list(compact.get("sources", []))[:max_sources]
-    ]
+    compact["sources"] = _compact_context_sources(
+        compact.get("sources"),
+        max_sources=max_sources,
+    )
+    compact["sections"] = _compact_context_sections(compact.get("sections"))
+    compact["edit_plan_seed"] = _compact_edit_plan_seed(
+        compact.get("edit_plan_seed"),
+        max_files=max_files,
+    )
+    compact["navigation_pack"] = _compact_navigation_pack(
+        compact.get("navigation_pack"),
+        max_files=max_files,
+    )
+    if "candidate_edit_targets" in compact:
+        compact["candidate_edit_targets"] = _compact_candidate_edit_targets(
+            compact.get("candidate_edit_targets"),
+            max_files=max_files,
+        )
+    navigation_commands = compact.get("navigation_pack", {}).get("validation_commands", [])
+    seed_commands = compact.get("edit_plan_seed", {}).get("validation_commands", [])
+    compact["validation_commands"] = _list_of_strings(navigation_commands or seed_commands)
     compact["context_payload_profile"] = f"{render_profile}-compact"
     compact["payload_compaction"] = {
         "omitted_keys": omitted_keys,
         "raw_source_omitted": True,
+        "source_diagnostics_omitted": False,
+        "agent_metadata_compacted": True,
         "max_files": max_files,
         "max_sources": max_sources,
     }
@@ -7453,6 +7813,17 @@ def build_context_render_from_map(
             max_files=max_files,
             max_symbols=max_sources,
         )
+    navigation_commands = (
+        payload.get("navigation_pack", {}).get("validation_commands", [])
+        if isinstance(payload.get("navigation_pack"), dict)
+        else []
+    )
+    seed_commands = (
+        payload.get("edit_plan_seed", {}).get("validation_commands", [])
+        if isinstance(payload.get("edit_plan_seed"), dict)
+        else []
+    )
+    payload["validation_commands"] = _list_of_strings(navigation_commands or seed_commands)
     (
         rendered_context,
         sections,
@@ -7493,23 +7864,23 @@ def build_context_render_json(
     render_profile: str = "full",
     profile: bool = False,
 ) -> str:
-    return json.dumps(
-        build_context_render(
-            query,
-            path,
-            max_files=max_files,
-            max_repo_files=max_repo_files,
-            max_sources=max_sources,
-            max_symbols_per_file=max_symbols_per_file,
-            max_render_chars=max_render_chars,
-            max_tokens=max_tokens,
-            model=model,
-            optimize_context=optimize_context,
-            render_profile=render_profile,
-            profile=profile,
-        ),
-        indent=2,
+    payload = build_context_render(
+        query,
+        path,
+        max_files=max_files,
+        max_repo_files=max_repo_files,
+        max_sources=max_sources,
+        max_symbols_per_file=max_symbols_per_file,
+        max_render_chars=max_render_chars,
+        max_tokens=max_tokens,
+        model=model,
+        optimize_context=optimize_context,
+        render_profile=render_profile,
+        profile=profile,
     )
+    if payload.get("render_profile") == "llm":
+        return json.dumps(payload, separators=(",", ":"))
+    return json.dumps(payload, indent=2)
 
 
 def build_context_pack_from_map(
@@ -7717,14 +8088,16 @@ def _external_workspace_symbols(
                 resolved_path = Path(str(file_path))
             else:
                 resolved_path = file_path
-            matches.append({
-                "name": symbol,
-                "kind": _lsp_symbol_kind_name(current.get("kind")),
-                "file": str(resolved_path.resolve()),
-                "line": int(payload_start.get("line") or 0) + 1,
-                "end_line": int(payload_end.get("line") or payload_start.get("line") or 0) + 1,
-                "provenance": f"lsp-{language}",
-            })
+            matches.append(
+                {
+                    "name": symbol,
+                    "kind": _lsp_symbol_kind_name(current.get("kind")),
+                    "file": str(resolved_path.resolve()),
+                    "line": int(payload_start.get("line") or 0) + 1,
+                    "end_line": int(payload_end.get("line") or payload_start.get("line") or 0) + 1,
+                    "provenance": f"lsp-{language}",
+                }
+            )
     matches.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, int, int, str]] = set()
@@ -7798,15 +8171,17 @@ def _external_references(
                 lines = []
             line_number = int(start.get("line", 0)) + 1
             text = lines[line_number - 1].strip() if 0 < line_number <= len(lines) else symbol
-            references.append({
-                "name": symbol,
-                "kind": "reference",
-                "file": str(resolved_path),
-                "line": line_number,
-                "end_line": int(end.get("line") or start.get("line") or 0) + 1,
-                "text": text,
-                "provenance": f"lsp-{language}",
-            })
+            references.append(
+                {
+                    "name": symbol,
+                    "kind": "reference",
+                    "file": str(resolved_path),
+                    "line": line_number,
+                    "end_line": int(end.get("line") or start.get("line") or 0) + 1,
+                    "text": text,
+                    "provenance": f"lsp-{language}",
+                }
+            )
     references.sort(key=lambda item: (str(item["file"]), int(item["line"])))
     deduped: list[dict[str, Any]] = []
     seen_refs: set[tuple[str, int, int]] = set()
@@ -8406,11 +8781,13 @@ def build_symbol_refs_from_map(
     payload["semantic_provider"] = normalized_provider
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
-        native_count=len([
-            current
-            for current in references
-            if not str(current.get("provenance", "")).startswith("lsp-")
-        ]),
+        native_count=len(
+            [
+                current
+                for current in references
+                if not str(current.get("provenance", "")).startswith("lsp-")
+            ]
+        ),
         lsp_count=len(external_refs),
         merged_count=len(references),
         fallback_used=fallback_used,
@@ -8567,20 +8944,24 @@ def build_symbol_callers_from_map(
         for external_ref in external_refs:
             text = str(external_ref.get("text", ""))
             if f"{symbol}(" in text or f"{symbol}!" in text or symbol in text:
-                external_calls.append({
-                    **dict(external_ref),
-                    "kind": "call",
-                })
+                external_calls.append(
+                    {
+                        **dict(external_ref),
+                        "kind": "call",
+                    }
+                )
         for python_file in sorted(python_external_files):
             alias_calls = _python_provider_alias_calls(Path(python_file), symbol)
             for alias_call in alias_calls:
-                external_calls.append({
-                    **dict(alias_call),
-                    "provenance": python_external_provenance.get(
-                        python_file,
-                        f"lsp-{_language_for_path(Path(python_file))}",
-                    ),
-                })
+                external_calls.append(
+                    {
+                        **dict(alias_call),
+                        "provenance": python_external_provenance.get(
+                            python_file,
+                            f"lsp-{_language_for_path(Path(python_file))}",
+                        ),
+                    }
+                )
         for js_ts_file in sorted(js_ts_external_files):
             alias_calls = _js_ts_provider_alias_calls(
                 Path(js_ts_file),
@@ -8589,13 +8970,15 @@ def build_symbol_callers_from_map(
                 include_assignment_wrappers=True,
             )
             for alias_call in alias_calls:
-                external_calls.append({
-                    **dict(alias_call),
-                    "provenance": js_ts_external_provenance.get(
-                        js_ts_file,
-                        f"lsp-{_language_for_path(Path(js_ts_file))}",
-                    ),
-                })
+                external_calls.append(
+                    {
+                        **dict(alias_call),
+                        "provenance": js_ts_external_provenance.get(
+                            js_ts_file,
+                            f"lsp-{_language_for_path(Path(js_ts_file))}",
+                        ),
+                    }
+                )
         for rust_file in sorted(rust_external_files):
             alias_calls = _rust_provider_alias_calls(
                 Path(rust_file),
@@ -8604,22 +8987,26 @@ def build_symbol_callers_from_map(
                 include_assignment_wrappers=True,
             )
             for alias_call in alias_calls:
-                external_calls.append({
-                    **dict(alias_call),
-                    "provenance": rust_external_provenance.get(
-                        rust_file,
-                        f"lsp-{_language_for_path(Path(rust_file))}",
-                    ),
-                })
+                external_calls.append(
+                    {
+                        **dict(alias_call),
+                        "provenance": rust_external_provenance.get(
+                            rust_file,
+                            f"lsp-{_language_for_path(Path(rust_file))}",
+                        ),
+                    }
+                )
         if not external_calls:
             fallback_used = True
             for python_file in sorted(python_files):
                 alias_calls = _python_provider_alias_calls(Path(python_file), symbol)
                 for alias_call in alias_calls:
-                    external_calls.append({
-                        **dict(alias_call),
-                        "provenance": f"lsp-{_language_for_path(Path(python_file))}-fallback",
-                    })
+                    external_calls.append(
+                        {
+                            **dict(alias_call),
+                            "provenance": f"lsp-{_language_for_path(Path(python_file))}-fallback",
+                        }
+                    )
             js_ts_files = sorted(
                 str(current)
                 for current in bounded_files
@@ -8633,10 +9020,12 @@ def build_symbol_callers_from_map(
                     include_assignment_wrappers=True,
                 )
                 for alias_call in alias_calls:
-                    external_calls.append({
-                        **dict(alias_call),
-                        "provenance": f"lsp-{_language_for_path(Path(js_ts_file))}-fallback",
-                    })
+                    external_calls.append(
+                        {
+                            **dict(alias_call),
+                            "provenance": f"lsp-{_language_for_path(Path(js_ts_file))}-fallback",
+                        }
+                    )
             rust_files = sorted(
                 str(current)
                 for current in bounded_files
@@ -8650,10 +9039,12 @@ def build_symbol_callers_from_map(
                     include_assignment_wrappers=True,
                 )
                 for alias_call in alias_calls:
-                    external_calls.append({
-                        **dict(alias_call),
-                        "provenance": f"lsp-{_language_for_path(Path(rust_file))}-fallback",
-                    })
+                    external_calls.append(
+                        {
+                            **dict(alias_call),
+                            "provenance": f"lsp-{_language_for_path(Path(rust_file))}-fallback",
+                        }
+                    )
         if normalized_provider == "lsp":
             calls = external_calls or calls
         else:
@@ -8721,11 +9112,13 @@ def build_symbol_callers_from_map(
     payload["semantic_provider"] = normalized_provider
     payload["provider_agreement"] = _merge_agreement_status(
         semantic_provider=normalized_provider,
-        native_count=len([
-            current
-            for current in calls
-            if not str(current.get("provenance", "")).startswith("lsp-")
-        ]),
+        native_count=len(
+            [
+                current
+                for current in calls
+                if not str(current.get("provenance", "")).startswith("lsp-")
+            ]
+        ),
         lsp_count=len(external_calls),
         merged_count=len(calls),
         fallback_used=fallback_used,
@@ -8765,6 +9158,8 @@ def build_symbol_blast_radius(
     max_depth: int = 3,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    max_callers: int | None = None,
+    max_files: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     repo_map = build_repo_map(
@@ -8772,13 +9167,139 @@ def build_symbol_blast_radius(
         max_repo_files=max_repo_files,
         _profiling_collector=_profiling_collector,
     )
-    return build_symbol_blast_radius_from_map(
+    payload = build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
         semantic_provider=semantic_provider,
         _profiling_collector=_profiling_collector,
     )
+    scan_limit = payload.get("scan_limit")
+    if (
+        payload.get("no_match")
+        and isinstance(scan_limit, dict)
+        and scan_limit.get("possibly_truncated")
+    ):
+        seed_files = _literal_symbol_seed_files(
+            Path(path).expanduser().resolve(),
+            symbol,
+            existing_files=_repo_map_file_universe(repo_map),
+        )
+        if seed_files:
+            repo_map = build_repo_map(
+                path,
+                max_repo_files=max_repo_files,
+                extra_files=seed_files,
+                _profiling_collector=_profiling_collector,
+            )
+            payload = build_symbol_blast_radius_from_map(
+                repo_map,
+                symbol,
+                max_depth=max_depth,
+                semantic_provider=semantic_provider,
+                _profiling_collector=_profiling_collector,
+            )
+            payload_scan_limit = payload.get("scan_limit")
+            if isinstance(payload_scan_limit, dict):
+                payload_scan_limit["literal_seed_files"] = [str(current) for current in seed_files]
+    return _apply_blast_radius_output_limits(
+        payload,
+        max_callers=max_callers,
+        max_files=max_files,
+    )
+
+
+def _apply_blast_radius_output_limits(
+    payload: dict[str, Any],
+    *,
+    max_callers: int | None = None,
+    max_files: int | None = None,
+) -> dict[str, Any]:
+    normalized_max_callers = max(1, int(max_callers)) if max_callers is not None else None
+    normalized_max_files = max(1, int(max_files)) if max_files is not None else None
+    if normalized_max_callers is None and normalized_max_files is None:
+        return payload
+
+    limited = dict(payload)
+    original_callers = _list_of_dicts(payload.get("callers"))
+    original_files = _list_of_strings(payload.get("files"))
+
+    if normalized_max_callers is not None:
+        limited["callers"] = original_callers[:normalized_max_callers]
+        limited["caller_tree"] = _list_of_dicts(payload.get("caller_tree"))[:normalized_max_callers]
+
+    if normalized_max_files is not None:
+        selected_files = original_files[:normalized_max_files]
+        selected_file_set = set(selected_files)
+        limited["files"] = selected_files
+        limited["file_matches"] = [
+            current
+            for current in _list_of_dicts(payload.get("file_matches"))
+            if str(current.get("path")) in selected_file_set
+        ][:normalized_max_files]
+        limited["file_summaries"] = [
+            {
+                **current,
+                "symbols": [
+                    compact_symbol
+                    for compact_symbol in (
+                        _compact_symbol_record(symbol)
+                        for symbol in _list_of_dicts(current.get("symbols"))
+                    )
+                    if compact_symbol is not None
+                ][:_BLAST_RADIUS_LIMITED_SYMBOLS_PER_FILE],
+            }
+            for current in _list_of_dicts(payload.get("file_summaries"))
+            if str(current.get("path")) in selected_file_set
+        ][:normalized_max_files]
+        limited["tests"] = _list_of_strings(payload.get("tests"))[:normalized_max_files]
+        selected_test_set = set(limited["tests"])
+        limited["test_matches"] = [
+            current
+            for current in _list_of_dicts(payload.get("test_matches"))
+            if str(current.get("path")) in selected_test_set
+        ][:normalized_max_files]
+        limited["related_paths"] = _list_of_strings(payload.get("related_paths"))[
+            :normalized_max_files
+        ]
+        limited["symbols"] = [
+            current
+            for current in _list_of_dicts(payload.get("symbols"))
+            if str(current.get("file")) in selected_file_set
+        ]
+        limited["imports"] = [
+            current
+            for current in _list_of_dicts(payload.get("imports"))
+            if str(current.get("file")) in selected_file_set
+        ]
+        limited_caller_tree: list[dict[str, Any]] = []
+        for current in _list_of_dicts(limited.get("caller_tree", payload.get("caller_tree"))):
+            depth_files = [
+                path for path in _list_of_strings(current.get("files")) if path in selected_file_set
+            ][:normalized_max_files]
+            if not depth_files:
+                continue
+            compact_level = dict(current)
+            compact_level["files"] = depth_files
+            limited_caller_tree.append(compact_level)
+        limited["caller_tree"] = limited_caller_tree
+        rendered_lines = [f"Blast radius for {payload.get('symbol', '')}:"]
+        for current in limited_caller_tree:
+            rendered_lines.append(f"Depth {current.get('depth')}:")
+            rendered_lines.extend(f"- {path}" for path in _list_of_strings(current.get("files")))
+        limited["rendered_caller_tree"] = "\n".join(rendered_lines)
+
+    limited["output_limit"] = {
+        "max_callers": normalized_max_callers,
+        "max_files": normalized_max_files,
+        "callers_truncated": (
+            normalized_max_callers is not None and len(original_callers) > normalized_max_callers
+        ),
+        "files_truncated": (
+            normalized_max_files is not None and len(original_files) > normalized_max_files
+        ),
+    }
+    return limited
 
 
 def build_symbol_blast_radius_from_map(
@@ -9064,21 +9585,23 @@ def build_symbol_blast_radius_from_map(
             edge_confidence = "moderate"
         else:
             edge_confidence = "weak"
-        caller_tree.append({
-            "depth": depth,
-            "files": depth_files,
-            "provenance": edge_provenance,
-            "graph_completeness": "moderate",
-            "edge_summary": {
-                "edge_kind": "reverse-import",
-                "confidence": edge_confidence,
+        caller_tree.append(
+            {
+                "depth": depth,
+                "files": depth_files,
                 "provenance": edge_provenance,
-                "evidence_counts": {
-                    "parser_backed": parser_backed_edges,
-                    "heuristic": heuristic_edges,
+                "graph_completeness": "moderate",
+                "edge_summary": {
+                    "edge_kind": "reverse-import",
+                    "confidence": edge_confidence,
+                    "provenance": edge_provenance,
+                    "evidence_counts": {
+                        "parser_backed": parser_backed_edges,
+                        "heuristic": heuristic_edges,
+                    },
                 },
-            },
-        })
+            }
+        )
         rendered_lines.append(f"Depth {depth}:")
         rendered_lines.extend(f"- {current}" for current in depth_files)
 
@@ -9123,6 +9646,8 @@ def build_symbol_blast_radius_json(
     max_depth: int = 3,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    max_callers: int | None = None,
+    max_files: int | None = None,
 ) -> str:
     return json.dumps(
         build_symbol_blast_radius(
@@ -9131,6 +9656,8 @@ def build_symbol_blast_radius_json(
             max_depth=max_depth,
             semantic_provider=semantic_provider,
             max_repo_files=max_repo_files,
+            max_callers=max_callers,
+            max_files=max_files,
         ),
         indent=2,
     )

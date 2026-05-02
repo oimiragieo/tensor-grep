@@ -110,7 +110,15 @@ def test_cli_json_planning_surfaces_include_trust_metadata(tmp_path: Path) -> No
 
     render_result = runner.invoke(
         app,
-        ["context-render", "--query", "create invoice", "--json", str(project)],
+        [
+            "context-render",
+            "--query",
+            "create invoice",
+            "--render-profile",
+            "full",
+            "--json",
+            str(project),
+        ],
     )
     edit_plan_result = runner.invoke(
         app,

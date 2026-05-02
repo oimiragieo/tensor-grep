@@ -52,6 +52,7 @@ def _build_project(tmp_path: Path) -> Path:
 def _without_profiling(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned = dict(payload)
     cleaned.pop("_profiling", None)
+    cleaned.pop("profile", None)
     return cleaned
 
 

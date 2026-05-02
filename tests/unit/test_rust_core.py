@@ -107,6 +107,34 @@ def test_rust_backend_skips_file_over_max_filesize(monkeypatch, tmp_path: Path):
     assert result.routing_reason == "rust_max_filesize_skipped"
 
 
+def test_rust_backend_skips_binary_files_unless_text_or_binary_flag_is_set(
+    monkeypatch, tmp_path: Path
+):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    class FakeNativeRustBackend:
+        def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
+            return [(1, "ERROR\0hidden")]
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    binary_file = tmp_path / "compiled.pyc"
+    binary_file.write_bytes(b"\x80ERROR\x00hidden")
+
+    skipped = backend.search(str(binary_file), "ERROR", config=SearchConfig())
+    text_result = backend.search(str(binary_file), "ERROR", config=SearchConfig(text=True))
+    binary_result = backend.search(str(binary_file), "ERROR", config=SearchConfig(binary=True))
+
+    assert skipped.total_matches == 0
+    assert skipped.total_files == 0
+    assert skipped.routing_reason == "rust_binary_skipped"
+    assert text_result.total_matches == 1
+    assert binary_result.total_matches == 1
+
+
 def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_path: Path):
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.core.config import SearchConfig

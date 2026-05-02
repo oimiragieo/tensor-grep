@@ -45,6 +45,7 @@ def _build_project(tmp_path: Path) -> Path:
 def _without_profiling(payload: dict[str, object]) -> dict[str, object]:
     cleaned = dict(payload)
     cleaned.pop("_profiling", None)
+    cleaned.pop("profile", None)
     return cleaned
 
 
@@ -110,22 +111,28 @@ def test_session_serve_profile_requests_include_profiling_without_changing_outpu
         return responses[0]
 
     baseline_context = serve_once({"command": "context_render", "query": "create invoice"})
-    profiled_context = serve_once({
-        "command": "context_render",
-        "query": "create invoice",
-        "profile": True,
-    })
-    baseline_blast = serve_once({
-        "command": "blast_radius_render",
-        "symbol": "create_invoice",
-        "max_depth": 1,
-    })
-    profiled_blast = serve_once({
-        "command": "blast_radius_render",
-        "symbol": "create_invoice",
-        "max_depth": 1,
-        "profile": True,
-    })
+    profiled_context = serve_once(
+        {
+            "command": "context_render",
+            "query": "create invoice",
+            "profile": True,
+        }
+    )
+    baseline_blast = serve_once(
+        {
+            "command": "blast_radius_render",
+            "symbol": "create_invoice",
+            "max_depth": 1,
+        }
+    )
+    profiled_blast = serve_once(
+        {
+            "command": "blast_radius_render",
+            "symbol": "create_invoice",
+            "max_depth": 1,
+            "profile": True,
+        }
+    )
 
     assert "_profiling" not in baseline_context
     assert profiled_context["_profiling"]["phases"]

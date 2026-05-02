@@ -61,6 +61,21 @@ class RustCoreBackend(ComputeBackend):
         except OSError:
             return False
 
+    @staticmethod
+    def _should_search_binary_as_text(config: SearchConfig | None) -> bool:
+        return bool(config and (config.text or config.binary))
+
+    @staticmethod
+    def _is_binary_file(file_path: str) -> bool:
+        path = Path(file_path)
+        if not path.is_file():
+            return False
+        try:
+            with path.open("rb") as handle:
+                return b"\0" in handle.read(8192)
+        except OSError:
+            return False
+
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
@@ -106,6 +121,17 @@ class RustCoreBackend(ComputeBackend):
                 total_matches=0,
                 routing_backend="RustCoreBackend",
                 routing_reason="rust_max_filesize_skipped",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+        if not self._should_search_binary_as_text(config) and self._is_binary_file(str(file_path)):
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="RustCoreBackend",
+                routing_reason="rust_binary_skipped",
                 routing_distributed=False,
                 routing_worker_count=1,
             )

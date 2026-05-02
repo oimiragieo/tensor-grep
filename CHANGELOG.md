@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Bound the remaining dogfood agent-output gaps: `context-render --json` now defaults to
+  the LLM compact profile with compact JSON wire formatting, raw `blast-radius --json`
+  supports `--max-callers` and `--max-files`, capped blast-radius no-matches can seed
+  literal symbol files outside the initial scan cap, and the Rust extension backend skips
+  NUL-bearing binary files unless `--text` or `--binary` opts in.
+
+
 ## v1.8.4 (2026-05-02)
 
 ### Bug Fixes

@@ -405,24 +405,26 @@ Example: [`examples/context_render.json`](examples/context_render.json)
 
 Use this shape when an agent wants a prompt-ready bundle instead of only the raw ranked context inventory.
 
+For CLI use, `tg.exe context-render --json` defaults to the `llm` render profile. That profile uses compact JSON wire formatting and intentionally omits duplicated top-level inventories such as `symbols`, `imports`, `related_paths`, `file_matches`, `file_summaries`, `test_matches`, `coverage`, and `candidate_edit_targets`; agents should read `rendered_context`, `sources`, `edit_plan_seed`, `navigation_pack`, and top-level `validation_commands` first. Use `--render-profile full` when a full pretty-printed inventory is required.
+
 | Field | Type | Notes |
 | --- | --- | --- |
 | `version` | `integer` | Contract version. |
 | `routing_backend` | `string` | `RepoMap`. |
 | `routing_reason` | `string` | `context-render`. |
 | `sidecar_used` | `boolean` | Always `false`. |
-| `coverage` | `object` | Same coverage contract as Repo Map JSON. |
+| `coverage` | `object` | Same coverage contract as Repo Map JSON. Omitted by the CLI `llm` JSON profile. |
 | `query` | `string` | Query text used for ranking and rendering. |
 | `path` | `string` | Absolute root path inventoried. |
 | `scan_limit` | `object` | Optional bounded-scan metadata with `max_repo_files`, `scanned_files`, and `possibly_truncated`. Agent-facing CLI commands default to bounded broad scans. |
 | `files` | `array<string>` | Ranked source files included in the render bundle. |
-| `file_matches` | `array<object>` | Ranked source file metadata with stable `path`, `score`, optional `graph_score`, and `reasons`. |
-| `file_summaries` | `array<object>` | Compact top-level symbol skeletons for the rendered files. |
-| `symbols` | `array<object>` | Ranked symbols that seeded the selected source blocks. |
-| `imports` | `array<object>` | Ranked import rows carried through from the context pack path. |
+| `file_matches` | `array<object>` | Ranked source file metadata with stable `path`, `score`, optional `graph_score`, and `reasons`. Omitted by the CLI `llm` JSON profile. |
+| `file_summaries` | `array<object>` | Compact top-level symbol skeletons for the rendered files. Omitted by the CLI `llm` JSON profile. |
+| `symbols` | `array<object>` | Ranked symbols that seeded the selected source blocks. Omitted by compact and `llm` profiles. |
+| `imports` | `array<object>` | Ranked import rows carried through from the context pack path. Omitted by compact and `llm` profiles. |
 | `tests` | `array<string>` | Ranked related tests. |
-| `test_matches` | `array<object>` | Ranked related test metadata with `path`, `score`, optional `graph_score`, and `reasons`. |
-| `related_paths` | `array<string>` | Stable merged order of rendered source and test paths. |
+| `test_matches` | `array<object>` | Ranked related test metadata with `path`, `score`, optional `graph_score`, and `reasons`. Omitted by the CLI `llm` JSON profile. |
+| `related_paths` | `array<string>` | Stable merged order of rendered source and test paths. Omitted by compact and `llm` profiles. |
 | `sources` | `array<object>` | Exact source blocks selected from the highest-value ranked symbols, or bounded file snippets for ranked text/Markdown files that have no symbols. |
 | `max_files` | `integer` | Maximum files allowed in the render bundle. |
 | `max_sources` | `integer` | Maximum exact source blocks allowed in the render bundle. |
@@ -430,11 +432,14 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 | `max_render_chars` | `integer \| null` | Optional render-text budget applied to `rendered_context`. |
 | `optimize_context` | `boolean` | Whether comment-only and blank lines were stripped from rendered source blocks. |
 | `render_profile` | `string` | Render profile used for source compaction: `full`, `compact`, or `llm`. |
+| `context_payload_profile` | `string` | Present for compact profiles, such as `llm-compact`. |
+| `payload_compaction` | `object` | Present for compact profiles; records omitted keys and the applied source/file limits. |
 | `truncated` | `boolean` | Whether `rendered_context` was clipped to satisfy `max_render_chars`. |
 | `sections` | `array<object>` | Machine-readable section metadata for the rendered bundle, including byte offsets, section type, and provenance for why each section was included. |
-| `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. |
+| `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. Omitted by the CLI `llm` JSON profile. |
 | `edit_plan_seed` | `object` | Default primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
 | `navigation_pack` | `object` | Compact AI-facing navigation bundle mirroring Edit Plan JSON so planner/executor loops can reuse one shape. |
+| `validation_commands` | `array<string>` | Top-level copy of the best validation commands from `navigation_pack` or `edit_plan_seed` for quick agent access. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
 
 `edit_plan_seed` currently includes:
@@ -1021,6 +1026,8 @@ Example: [`examples/blast_radius.json`](examples/blast_radius.json)
 
 Use this shape when an agent needs an explicit downstream change radius instead of only flat caller rows or ranked impact files.
 
+Use `--max-callers <n>` and `--max-files <n>` for bounded agent loops. When either limit is present, the payload includes `output_limit` metadata and caps `callers`, `caller_tree`, `files`, `file_matches`, `file_summaries`, `tests`, `test_matches`, `related_paths`, `symbols`, and `imports`; each retained `file_summaries[].symbols` list is also capped to compact symbol records. Capped no-match scans may include `scan_limit.literal_seed_files` when a literal symbol seed outside the initial repo-map cap recovered the definition.
+
 | Field | Type | Notes |
 | --- | --- | --- |
 | `version` | `integer` | Contract version. |
@@ -1029,6 +1036,7 @@ Use this shape when an agent needs an explicit downstream change radius instead 
 | `sidecar_used` | `boolean` | `false`. |
 | `coverage` | `object` | Same coverage contract as Repo Map JSON. |
 | `path` | `string` | Inventory root. |
+| `scan_limit` | `object` | Optional bounded-scan metadata with `max_repo_files`, `scanned_files`, `possibly_truncated`, and optional `literal_seed_files` when capped symbol seeding was used. |
 | `symbol` | `string` | Exact symbol name evaluated. |
 | `semantic_provider` | `string` | Effective semantic provider used for navigation, currently `native`, `lsp`, or `hybrid`. |
 | `provider_agreement` | `object` | Same native-vs-provider merge summary exposed by Symbol Callers JSON. |
@@ -1048,6 +1056,7 @@ Use this shape when an agent needs an explicit downstream change radius instead 
 | `symbols` | `array<object>` | Ranked symbol matches reused from the impact surface. |
 | `related_paths` | `array<string>` | Stable union of radius files and tests. |
 | `graph_completeness` | `string` | Optional graph trust label surfaced on caller-tree nodes and related graph metadata. |
+| `output_limit` | `object` | Present when `--max-callers` or `--max-files` is used. Includes `max_callers`, `max_files`, `callers_truncated`, and `files_truncated`. |
 
 Each `definitions[]` object may additionally include:
 

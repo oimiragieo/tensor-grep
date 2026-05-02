@@ -90,8 +90,10 @@ What is now contract-tested:
 - CommonJS exported functions in `.cjs` files are discoverable by `map`, `defs`, `source`, `refs`, and context-render ranking
 - repo fallback validation prefers package-manager scripts such as `pnpm test` over guessed `npx jest` when a real `package.json` test script exists
 - broad blast-radius scans sample source/test buckets before miscellaneous root noise so capped `.` runs are less likely to miss real code
-- `--render-profile llm` and `--render-profile compact` omit full symbol/import inventories and raw source duplication from context-render JSON while preserving rendered source, `navigation_pack`, and validation commands
-- the CPU fallback skips binary blobs unless `-a/--text` or `--binary` explicitly opts in, avoiding `.pyc`/bytecode dumps in agent JSON
+- `context-render --json` defaults to the LLM compact profile; explicit `--render-profile llm` / `compact` omit full inventories and raw source duplication while preserving rendered source, `navigation_pack`, and validation commands
+- raw `blast-radius --json` accepts `--max-callers` and `--max-files` for bounded agent loops, including capped per-file symbol summaries
+- capped blast-radius no-matches can seed literal symbol files outside the initial scan cap before returning a compact no-match
+- both the CPU fallback and Rust extension backend skip binary blobs unless `-a/--text` or `--binary` explicitly opts in, avoiding `.pyc`/bytecode dumps in agent JSON
 
 Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
 
