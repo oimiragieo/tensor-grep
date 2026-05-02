@@ -29,6 +29,18 @@ class CPUBackend(ComputeBackend):
         return stat_result.st_mtime_ns, stat_result.st_size
 
     @staticmethod
+    def _should_search_binary_as_text(config: SearchConfig | None) -> bool:
+        return bool(config and (config.text or config.binary))
+
+    @staticmethod
+    def _is_binary_file(path: Path) -> bool:
+        try:
+            with open(path, "rb") as file_obj:
+                return b"\x00" in file_obj.read(4096)
+        except OSError:
+            return False
+
+    @staticmethod
     def _is_persistent_prefilter_enabled() -> bool:
         return os.environ.get("TENSOR_GREP_CPU_REGEX_INDEX", "1").strip().lower() not in {
             "0",
@@ -203,6 +215,17 @@ class CPUBackend(ComputeBackend):
                 total_matches=0,
                 routing_backend="CPUBackend",
                 routing_reason="cpu_missing_file",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+        if not self._should_search_binary_as_text(config) and self._is_binary_file(path):
+            return SearchResult(
+                matches=[],
+                total_files=0,
+                total_matches=0,
+                routing_backend="CPUBackend",
+                routing_reason="cpu_binary_skipped",
                 routing_distributed=False,
                 routing_worker_count=1,
             )

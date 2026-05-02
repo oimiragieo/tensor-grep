@@ -49,6 +49,27 @@ class TestCPUBackend:
         result = backend.search(str(binary_file), "ERROR")
         assert getattr(result, "total_matches", 0) >= 0
 
+    def test_should_skip_binary_files_unless_text_or_binary_flag_is_set(self, tmp_path):
+        binary_file = tmp_path / "test.pyc"
+        binary_file.write_bytes(b"\x00\x01ERROR\x02\n")
+        backend = CPUBackend()
+
+        rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+        class FailingRustBackend:
+            def search(self, **_kwargs):
+                raise RuntimeError("force python fallback")
+
+        rust_mod.RustBackend = FailingRustBackend
+
+        with patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}):
+            skipped = backend.search(str(binary_file), "ERROR", config=SearchConfig())
+            text_result = backend.search(str(binary_file), "ERROR", config=SearchConfig(text=True))
+
+        assert skipped.total_matches == 0
+        assert skipped.routing_reason == "cpu_binary_skipped"
+        assert text_result.total_matches == 1
+
     def test_should_handle_empty_file(self, tmp_path):
         empty_file = tmp_path / "empty.log"
         empty_file.write_text("")

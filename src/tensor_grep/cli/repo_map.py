@@ -9,6 +9,7 @@ import re
 import threading
 import time
 import tomllib
+from collections.abc import Iterator
 from contextlib import nullcontext
 from functools import lru_cache
 from pathlib import Path
@@ -237,6 +238,12 @@ def _envelope(path: Path) -> dict[str, Any]:
     }
 
 
+def _copy_scan_limit(payload: dict[str, Any], source: dict[str, Any]) -> None:
+    scan_limit = source.get("scan_limit")
+    if isinstance(scan_limit, dict):
+        payload["scan_limit"] = dict(scan_limit)
+
+
 def _is_test_file(path: Path) -> bool:
     name = path.name
     return (
@@ -267,6 +274,68 @@ def _repo_walk_file_sort_key(name: str) -> tuple[int, str]:
     return (1, name.lower())
 
 
+def _repo_walk_path_sort_key(path: Path, root: Path) -> tuple[int, int, int, str]:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        relative = path
+    try:
+        group_parts = relative.parts if path.is_dir() else relative.parts[:-1]
+    except OSError:
+        group_parts = relative.parts[:-1]
+    normalized_group_parts = {part.lower() for part in group_parts}
+    if normalized_group_parts & _SOURCE_FIRST_DIR_NAMES:
+        group = 0
+    elif normalized_group_parts & _TEST_DIR_NAMES:
+        group = 1
+    elif len(relative.parts) == 1 and not path.is_dir():
+        group = 2
+    else:
+        group = 3
+    file_group, file_name = _repo_walk_file_sort_key(path.name)
+    return (group, file_group, len(relative.parts), relative.as_posix().lower() or file_name)
+
+
+def _repo_walk_bucket_sort_key(path: Path, root: Path) -> tuple[int, str]:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        relative = path
+    path_group = _repo_walk_path_sort_key(path, root)[0]
+    top_level = relative.parts[0].lower() if relative.parts else path.name.lower()
+    return (path_group, top_level)
+
+
+def _iter_repo_bucket_files(root: Path) -> Iterator[Path]:
+    try:
+        entries = list(os.scandir(root))
+    except OSError:
+        return
+
+    dir_paths: list[Path] = []
+    file_paths: list[Path] = []
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name.lower() not in _SKIP_DIR_NAMES:
+                    dir_paths.append(Path(entry.path))
+            elif entry.is_file(follow_symlinks=False):
+                file_paths.append(Path(entry.path))
+        except OSError:
+            continue
+
+    dir_paths.sort(key=lambda path: _repo_walk_dir_sort_key(path.name))
+    file_paths.sort(key=lambda path: _repo_walk_file_sort_key(path.name))
+    source_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] <= 1]
+    other_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] > 1]
+
+    for directory in source_dirs:
+        yield from _iter_repo_bucket_files(directory)
+    yield from file_paths
+    for directory in other_dirs:
+        yield from _iter_repo_bucket_files(directory)
+
+
 def _iter_repo_files(
     root: Path,
     *,
@@ -279,49 +348,55 @@ def _iter_repo_files(
 
         files: list[Path] = []
         normalized_root = root.resolve()
-
-        def append_file(current: Path) -> bool:
+        if max_files is not None:
             try:
-                is_file = current.is_file()
+                entries = list(os.scandir(normalized_root))
             except OSError:
-                return False
-            if not is_file:
-                return False
-            files.append(current)
-            return max_files is not None and len(files) >= max(1, max_files)
+                return []
 
-        def visit_dir(current_root: Path) -> bool:
-            try:
-                entries = list(os.scandir(current_root))
-            except OSError:
-                return False
-
-            dir_paths: list[Path] = []
-            file_paths: list[Path] = []
+            buckets: list[tuple[tuple[int, str], Iterator[Path]]] = []
             for entry in entries:
                 try:
                     if entry.is_dir(follow_symlinks=False):
                         if entry.name.lower() not in _SKIP_DIR_NAMES:
-                            dir_paths.append(Path(entry.path))
+                            path = Path(entry.path)
+                            buckets.append((
+                                _repo_walk_bucket_sort_key(path, normalized_root),
+                                _iter_repo_bucket_files(path),
+                            ))
                     elif entry.is_file(follow_symlinks=False):
-                        file_paths.append(Path(entry.path))
+                        path = Path(entry.path)
+                        buckets.append((
+                            _repo_walk_bucket_sort_key(path, normalized_root),
+                            iter([path]),
+                        ))
                 except OSError:
                     continue
 
-            dir_paths.sort(key=lambda path: _repo_walk_dir_sort_key(path.name))
-            file_paths.sort(key=lambda path: _repo_walk_file_sort_key(path.name))
-            source_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] <= 1]
-            other_dirs = [path for path in dir_paths if _repo_walk_dir_sort_key(path.name)[0] > 1]
+            selected: list[Path] = []
+            limit = max(1, max_files)
+            bucket_groups: dict[int, list[tuple[tuple[int, str], Iterator[Path]]]] = {}
+            for key, iterator in buckets:
+                bucket_groups.setdefault(key[0], []).append((key, iterator))
+            for group in sorted(bucket_groups):
+                active_buckets = sorted(bucket_groups[group], key=lambda item: item[0])
+                while active_buckets and len(selected) < limit:
+                    next_buckets: list[tuple[tuple[int, str], Iterator[Path]]] = []
+                    for key, iterator in active_buckets:
+                        try:
+                            selected.append(next(iterator))
+                        except StopIteration:
+                            continue
+                        if len(selected) >= limit:
+                            break
+                        next_buckets.append((key, iterator))
+                    active_buckets = next_buckets
+                if len(selected) >= limit:
+                    break
+            return selected
 
-            for directory in source_dirs:
-                if visit_dir(directory):
-                    return True
-            for file_path in file_paths:
-                if append_file(file_path):
-                    return True
-            return any(visit_dir(directory) for directory in other_dirs)
-
-        visit_dir(normalized_root)
+        files = list(_iter_repo_bucket_files(normalized_root))
+        files.sort(key=lambda path: _repo_walk_path_sort_key(path, normalized_root))
         return files
 
 
@@ -7222,6 +7297,43 @@ def _fallback_file_source(
     }
 
 
+_COMPACT_CONTEXT_RENDER_PROFILES = {"compact", "llm"}
+_COMPACT_CONTEXT_RENDER_OMITTED_KEYS = ("symbols", "imports", "related_paths")
+
+
+def _compact_context_render_payload(
+    payload: dict[str, Any],
+    *,
+    render_profile: str,
+    max_files: int,
+    max_sources: int,
+) -> dict[str, Any]:
+    if render_profile not in _COMPACT_CONTEXT_RENDER_PROFILES:
+        return payload
+
+    compact = dict(payload)
+    omitted_keys: list[str] = []
+    for key in _COMPACT_CONTEXT_RENDER_OMITTED_KEYS:
+        if key in compact:
+            compact.pop(key)
+            omitted_keys.append(key)
+
+    compact["tests"] = list(compact.get("tests", []))[:max_files]
+    compact["test_matches"] = list(compact.get("test_matches", []))[:max_files]
+    compact["sources"] = [
+        {key: value for key, value in dict(source).items() if key != "source"}
+        for source in list(compact.get("sources", []))[:max_sources]
+    ]
+    compact["context_payload_profile"] = f"{render_profile}-compact"
+    compact["payload_compaction"] = {
+        "omitted_keys": omitted_keys,
+        "raw_source_omitted": True,
+        "max_files": max_files,
+        "max_sources": max_sources,
+    }
+    return compact
+
+
 def build_context_render_from_map(
     repo_map: dict[str, Any],
     query: str,
@@ -7357,6 +7469,12 @@ def build_context_render_from_map(
     payload["truncated"] = truncated
     payload["token_estimate"] = token_estimate
     payload["omitted_sections"] = omitted_sections
+    payload = _compact_context_render_payload(
+        payload,
+        render_profile=normalized_profile,
+        max_files=max_files,
+        max_sources=max_sources,
+    )
     return _attach_profiling(payload, collector)
 
 
@@ -7924,6 +8042,7 @@ def build_symbol_source_from_map(
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
+    _copy_scan_limit(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -8101,6 +8220,7 @@ def build_symbol_impact_from_map(
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
+    _copy_scan_limit(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -8616,6 +8736,7 @@ def build_symbol_callers_from_map(
         languages=_provider_languages_for_symbol(repo_map, symbol, defs_payload["definitions"]),
         fallback_used=fallback_used,
     )
+    _copy_scan_limit(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -8697,6 +8818,8 @@ def build_symbol_blast_radius_from_map(
         payload["coverage_summary"] = _coverage_summary(payload)
         payload["provider_agreement"] = dict(default_agreement)
         payload["provider_status"] = dict(default_status)
+        if "scan_limit" in repo_map:
+            payload["scan_limit"] = dict(repo_map["scan_limit"])
         return _attach_profiling(payload, _profiling_collector)
     callers_payload = build_symbol_callers_from_map(
         repo_map,
@@ -8988,6 +9111,8 @@ def build_symbol_blast_radius_from_map(
         callers_payload.get("provider_agreement", default_agreement)
     )
     payload["provider_status"] = dict(callers_payload.get("provider_status", default_status))
+    if "scan_limit" in repo_map:
+        payload["scan_limit"] = dict(repo_map["scan_limit"])
     return _attach_profiling(payload, _profiling_collector)
 
 

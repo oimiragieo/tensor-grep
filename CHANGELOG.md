@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Harden broad agent handoff contracts: capped blast-radius scans now sample source/test
+  buckets before miscellaneous root noise, compact/LLM context-render JSON omits full
+  repo inventories and raw source duplication, and the CPU fallback skips binary blobs
+  unless text/binary search is explicitly requested.
+
+
 ## v1.8.3 (2026-05-02)
 
 ### Bug Fixes

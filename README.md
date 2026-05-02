@@ -63,7 +63,7 @@ For large internal-library roots, `tensor-grep` supports a bounded context-rende
 Agent-facing broad-scan commands now default to bounded repo-map scans and report that boundary in JSON via `scan_limit`:
 
 ```powershell
-tg context-render . --query "how auth routing works" --max-repo-files 512 --json
+tg context-render . --query "how auth routing works" --render-profile llm --max-repo-files 512 --json
 tg defs . --symbol runCursorWorker --max-repo-files 512 --json
 tg source . --symbol safeParseJSON --max-repo-files 512 --json
 tg refs . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --json
@@ -89,6 +89,9 @@ What is now contract-tested:
 - no-match symbol lookups return compact `no_match` payloads instead of dumping unrelated repo inventories
 - CommonJS exported functions in `.cjs` files are discoverable by `map`, `defs`, `source`, `refs`, and context-render ranking
 - repo fallback validation prefers package-manager scripts such as `pnpm test` over guessed `npx jest` when a real `package.json` test script exists
+- broad blast-radius scans sample source/test buckets before miscellaneous root noise so capped `.` runs are less likely to miss real code
+- `--render-profile llm` and `--render-profile compact` omit full symbol/import inventories and raw source duplication from context-render JSON while preserving rendered source, `navigation_pack`, and validation commands
+- the CPU fallback skips binary blobs unless `-a/--text` or `--binary` explicitly opts in, avoiding `.pyc`/bytecode dumps in agent JSON
 
 Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
 

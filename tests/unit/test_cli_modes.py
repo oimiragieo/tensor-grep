@@ -1484,6 +1484,11 @@ def test_blast_radius_prioritizes_source_dirs_before_bounded_scan_cap(tmp_path):
 
     assert payload.get("no_match") is not True
     assert payload["definitions"][0]["file"] == str(source_file.resolve())
+    assert payload["scan_limit"] == {
+        "max_repo_files": 1,
+        "scanned_files": 1,
+        "possibly_truncated": True,
+    }
 
 
 def test_blast_radius_skips_build_artifacts_before_bounded_scan_cap(tmp_path):
@@ -1532,6 +1537,33 @@ def test_blast_radius_defers_root_files_before_bounded_source_scan(tmp_path):
         "runCursorWorker",
         project,
         max_repo_files=1,
+    )
+
+    assert payload.get("no_match") is not True
+    assert payload["definitions"][0]["file"] == str(source_file.resolve())
+
+
+def test_blast_radius_samples_sibling_source_trees_before_bounded_scan_cap(tmp_path):
+    project = tmp_path / "project"
+    claude_dir = project / ".claude" / "tools"
+    source_dir = project / "scripts" / "agents"
+    claude_dir.mkdir(parents=True)
+    source_dir.mkdir(parents=True)
+    for index in range(8):
+        (claude_dir / f"tool_{index}.cjs").write_text(
+            f"function unrelatedTool{index}() {{ return {index}; }}\n",
+            encoding="utf-8",
+        )
+    source_file = source_dir / "worker.cjs"
+    source_file.write_text(
+        "function prepareCursorWorkerInvocation(input) {\n  return input;\n}\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_symbol_blast_radius(
+        "prepareCursorWorkerInvocation",
+        project,
+        max_repo_files=5,
     )
 
     assert payload.get("no_match") is not True
@@ -1712,6 +1744,37 @@ def test_context_render_json_includes_markdown_file_sources(tmp_path):
     assert payload["sources"][0]["kind"] == "file"
     assert payload["sources"][0]["file"] == str(guide_path.resolve())
     assert "Routing Policy" in payload["rendered_context"]
+
+
+def test_context_render_llm_profile_omits_full_inventories(tmp_path):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    for index in range(8):
+        (src_dir / f"worker_{index}.py").write_text(
+            f"def create_invoice_{index}(total):\n"
+            f"    subtotal = total + {index}\n"
+            "    return subtotal\n",
+            encoding="utf-8",
+        )
+
+    payload = repo_map.build_context_render(
+        "create invoice",
+        project,
+        max_files=2,
+        max_sources=2,
+        optimize_context=True,
+        render_profile="llm",
+    )
+
+    assert payload["render_profile"] == "llm"
+    assert payload["context_payload_profile"] == "llm-compact"
+    assert "symbols" not in payload
+    assert "imports" not in payload
+    assert "related_paths" not in payload
+    assert all("source" not in source for source in payload["sources"])
+    assert all("rendered_source" in source for source in payload["sources"])
+    assert payload["navigation_pack"]["primary_target"]["file"] in payload["files"]
 
 
 def test_commonjs_repo_map_extracts_exported_function_symbols(tmp_path):
