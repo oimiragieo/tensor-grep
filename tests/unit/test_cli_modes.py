@@ -1261,16 +1261,14 @@ def test_symbol_source_json_omits_unrelated_symbol_inventory(tmp_path):
 
     module_path = src_dir / "worker.cjs"
     module_path.write_text(
-        "\n".join(
-            [
-                "function safeParseJSON(raw) {",
-                "  return JSON.parse(raw);",
-                "}",
-                "",
-                *[f"function unrelatedSymbol{i}() {{ return {i}; }}" for i in range(50)],
-                "",
-            ]
-        ),
+        "\n".join([
+            "function safeParseJSON(raw) {",
+            "  return JSON.parse(raw);",
+            "}",
+            "",
+            *[f"function unrelatedSymbol{i}() {{ return {i}; }}" for i in range(50)],
+            "",
+        ]),
         encoding="utf-8",
     )
 
@@ -2264,13 +2262,11 @@ def test_repo_map_file_universe_does_not_resolve_child_files(monkeypatch, tmp_pa
 
     monkeypatch.setattr(repo_map.Path, "resolve", _guarded_resolve)
 
-    files = repo_map._repo_map_file_universe(
-        {
-            "path": str(project_root),
-            "files": [str(child_file)],
-            "tests": [],
-        }
-    )
+    files = repo_map._repo_map_file_universe({
+        "path": str(project_root),
+        "files": [str(child_file)],
+        "tests": [],
+    })
 
     assert files == [child_file]
 
@@ -2462,12 +2458,10 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "vitest-project",
-                "devDependencies": {"vitest": "^1.0.0"},
-            }
-        ),
+        json.dumps({
+            "name": "vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+        }),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"
@@ -2523,13 +2517,11 @@ def test_edit_plan_json_prefers_ancestor_package_script_for_nested_ts_subdir(tmp
     tests_dir.mkdir(parents=True)
 
     (package_root / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "nested-vitest-project",
-                "devDependencies": {"vitest": "^1.0.0"},
-                "scripts": {"test": "vitest run"},
-            }
-        ),
+        json.dumps({
+            "name": "nested-vitest-project",
+            "devDependencies": {"vitest": "^1.0.0"},
+            "scripts": {"test": "vitest run"},
+        }),
         encoding="utf-8",
     )
     module_path = nested_src_dir / "glob.ts"
@@ -2641,13 +2633,11 @@ def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_with
     cli_dir = project / ".claude" / "tools" / "cli"
     cli_dir.mkdir(parents=True)
     (project / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "agent-studio-like",
-                "packageManager": "pnpm@10.0.0",
-                "scripts": {"test": "pnpm test"},
-            }
-        ),
+        json.dumps({
+            "name": "agent-studio-like",
+            "packageManager": "pnpm@10.0.0",
+            "scripts": {"test": "pnpm test"},
+        }),
         encoding="utf-8",
     )
     (project / "scripts").mkdir()
@@ -2820,14 +2810,12 @@ def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_p
     assert len(groups) == 1
     assert groups[0]["label"] == "primary"
     assert sorted(groups[0]["roles"]) == ["primary", "related", "related", "test"]
-    assert sorted(groups[0]["files"]) == sorted(
-        [
-            str(module_path.resolve()),
-            str(sibling_a.resolve()),
-            str(sibling_b.resolve()),
-            str(test_path.resolve()),
-        ]
-    )
+    assert sorted(groups[0]["files"]) == sorted([
+        str(module_path.resolve()),
+        str(sibling_a.resolve()),
+        str(sibling_b.resolve()),
+        str(test_path.resolve()),
+    ])
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
@@ -4450,14 +4438,12 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     )
 
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join(
-        [
-            "id: no-print",
-            "language: python",
-            "rule:",
-            "  pattern: print($A)",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "rule:",
+        "  pattern: print($A)",
+    ])
     runner = CliRunner()
 
     result = runner.invoke(
@@ -4930,14 +4916,12 @@ def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
         lang: str,
         path: str,
     ) -> tuple[str, int]:
-        seen.update(
-            {
-                "pattern": pattern,
-                "replacement": replacement,
-                "lang": lang,
-                "path": path,
-            }
-        )
+        seen.update({
+            "pattern": pattern,
+            "replacement": replacement,
+            "lang": lang,
+            "path": path,
+        })
         return '{"total_edits": 1, "edits": []}', 0
 
     monkeypatch.setattr(ast_workflows, "execute_rewrite_plan_json", _fake_execute_rewrite_plan_json)
