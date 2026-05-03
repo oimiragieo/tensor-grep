@@ -132,6 +132,18 @@ This dedicated `tg-search-fast` binary uses a manual parser for the benchmark su
 
 The benchmark suite name and artifact file name should stay aligned with the script that produced them.
 
+## Blast-Radius Boundedness Snapshot (2026-05-03)
+
+The `v1.8.8` blast-radius follow-up is an agent-reliability line, not a global speedup claim.
+
+- accepted artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
+- accepted mechanism: skip expensive caller extraction for files that do not contain the target symbol literal, while preserving import/use evidence for languages that can call a symbol through aliases, default imports, or re-export chains
+- same-host live probe: `blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 1000 --json` moved from about `11.9s` before the patch to about `6.2s` after the patch
+- artifact rows: medium depth-1/2/3 `0.3421s` / `0.3437s` / `0.3537s`; large depth-1/2/3 `1.4714s` / `1.4664s` / `1.5980s`
+- release validation: CI run `25268784228` and CodeQL run `25268784130` were green on `d084c15`, then semantic-release published `v1.8.8` from release commit `8fdc0b5`
+
+The accepted read is narrow: broad impact analysis is now more predictable under high file caps, but `rg` remains the raw cold text-search benchmark and `tg` earns agent-default usage through bounded structured outputs.
+
 ## Acceptance Rules
 
 - **Control-plane changes require artifacts:** If a patch changes launcher routing, frontend dispatch, or output formatting, it MUST include updated benchmark artifacts (e.g., `artifacts/bench_run_benchmarks.json`).

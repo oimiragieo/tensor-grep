@@ -73,6 +73,8 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
+- `v1.8.8` release closeout: CI run `25268784228` and CodeQL run `25268784130` passed, semantic-release published GitHub release `v1.8.8`, and PyPI reports `tensor-grep` latest as `1.8.8`
+- blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:
 
@@ -94,6 +96,7 @@ What is now contract-tested:
 - `context-render --json` defaults to the LLM compact profile; explicit `--render-profile llm` / `compact` omit full inventories and raw source duplication while preserving rendered source, `navigation_pack`, and validation commands
 - raw `blast-radius` output defaults to a 25-caller / 25-file agent budget and accepts `--max-callers` / `--max-files` for broader analysis, including capped per-file symbol summaries and total/returned/omitted counts
 - capped blast-radius no-matches can seed literal symbol files outside the initial scan cap through a bounded scan before returning a compact no-match
+- high-cap blast-radius caller scans now skip files that cannot contain the target symbol literal before running language-specific caller extraction, while preserving import/use evidence for alias/default-import/re-export callers
 - both the CPU fallback and Rust extension backend skip binary blobs unless `-a/--text` or `--binary` explicitly opts in, avoiding `.pyc`/bytecode dumps in agent JSON
 
 Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
@@ -166,6 +169,8 @@ Current CLI correctness line:
 
 - plain-text and `--json` invocations now share the same routed command surface for `doctor`, `map`, `session`, `checkpoint`, `rulesets`, `context-render`, `edit-plan`, and the blast-radius family
 - agent-navigation commands now favor reliable compact output over maximal inventory dumps: bounded scan metadata, compact no-match responses, deduped references, and package-script validation commands are covered by unit and MCP-adjacent checks
+- release validation must include `uv run ruff format --check --preview .`; CI can fail preview-format drift even when `uv run ruff check .` passes
+- after semantic-release publishes, fetch tags/main and fast-forward local `main` before checking version files, because the release commit is created after the fix commit
 - `tg search --replace` rewrites emitted match text in ripgrep style without mutating files
 - `tg search -o` now mirrors ripgrep single-file output formatting instead of forcing `file:line:text`
 - `tg run --json` emits structured output even without `--apply`

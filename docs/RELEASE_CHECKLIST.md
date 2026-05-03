@@ -74,22 +74,38 @@ Before calling a release enterprise-ready, confirm the exact release commit has:
    - release commit
    - Git tag `vX.Y.Z`
    - GitHub release metadata
-4. If `publish_pypi=true`, confirm downstream jobs pass:
+4. Fetch the release commit before local final verification:
+   ```bash
+   git fetch origin main --tags
+   git pull --ff-only origin main
+   ```
+   This matters because local `main` can otherwise remain on the pre-release fix commit while
+   `origin/main` has already advanced to `chore(release): vX.Y.Z [skip ci]`.
+5. If `publish_pypi=true`, confirm downstream jobs pass:
    - `build-pypi-wheels`
    - `build-pypi-sdist`
    - `validate-pypi-artifacts`
    - `publish-pypi`
    - `publish-success-gate`
    - parity gate step `Verify release version parity across tag/assets/PyPI`
-5. On tag release workflow, confirm GitHub release asset verification passes:
+6. Confirm registry visibility with API evidence, not only local pip cache:
+   ```bash
+   python - << 'PY'
+   import json, urllib.request
+   data = json.load(urllib.request.urlopen("https://pypi.org/pypi/tensor-grep/json"))
+   print(data["info"]["version"])
+   PY
+   ```
+   `python -m pip index versions tensor-grep` can lag because of client/cache behavior.
+7. On tag release workflow, confirm GitHub release asset verification passes:
    - `verify-release-assets`
    - step `Verify uploaded release assets and checksum coverage`
    - includes required package-manager bundle assets (`tensor-grep.rb`, `oimiragieo.tensor-grep.yaml`, `PUBLISH_INSTRUCTIONS.md`)
    - includes `BUNDLE_CHECKSUMS.txt` parity validation for package-manager bundle assets
-6. Confirm terminal publish gate is green:
+8. Confirm terminal publish gate is green:
    - `release-success-gate` (depends on parity + npm publish + docs deploy)
    - includes final npm + PyPI registry parity re-checks before success confirmation
-7. Verify published version parity:
+9. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version
    - npm registry `latest` equals `X.Y.Z` (verified by release workflow parity step)

@@ -78,6 +78,10 @@ surface, because those extras are included in the locked Python audit graph.
 Formatter parity also depends on an exact Ruff dev pin. CI runs Ruff in preview mode, and Ruff's
 versioning allows formatter behavior to change across releases, so keep the repo-owned
 `ruff==0.15.11` pin and the validator tests in sync when intentionally upgrading the formatter.
+Operationally, local release gates must run both `uv run ruff check .` and
+`uv run ruff format --check --preview .`. A non-preview local format pass is not sufficient,
+because preview formatting can reflow files differently and fail the `Formatting & Linting`
+job after push.
 
 The Rust license policy for `cargo deny check` is owned in-repo at `rust_core/deny.toml`. If the Rust dependency graph changes, update that policy and the audit workflow contract tests together rather than relying on cargo-deny defaults.
 
@@ -128,9 +132,15 @@ If you touch `.github/workflows/*.yml`, `.github/dependabot.yml`, or release/pac
 
 ```bash
 uv run ruff check .
+uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
 uv run pytest -q
 uv run python scripts/validate_release_assets.py
 ```
 
 Do not hand-wave workflow changes. This repo treats CI behavior as a versioned contract.
+
+After a release-bearing push to `main`, semantic-release may create and push a follow-up
+`chore(release): vX.Y.Z [skip ci]` commit that updates `CHANGELOG.md`, version files, package
+manager manifests, and `uv.lock`. Operators and agents must fetch tags/main and fast-forward the
+local checkout before checking version files or declaring the release complete.

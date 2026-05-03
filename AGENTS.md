@@ -29,11 +29,14 @@ Run these before push for normal code changes:
 
 ```powershell
 uv run ruff check .
+uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
 uv run pytest -q
 ```
 
-`uv run pytest -q` takes about 70-90 seconds on this Windows machine, so use a timeout of at least 120 seconds when running it through automation.
+CI runs Ruff formatting in preview mode. Running only `uv run ruff check .` is not enough to prove formatter parity.
+
+`uv run pytest -q` can take substantially longer than 70-90 seconds on this Windows machine when the full JS/TS and e2e surface is hot; use a timeout of at least 120 seconds for narrow suites and a much larger timeout for the full suite when running it through automation.
 
 For focused changes, run the relevant narrow suite first, then the full suite if the change is intended to land:
 
@@ -183,6 +186,7 @@ Preferred approach:
 2. rebase/reset to current `origin/main`
 3. rerun narrow checks and relevant benchmarks
 4. push only the accepted change
+5. after semantic-release completes, `git fetch origin main --tags` and fast-forward local `main` to the release commit before reporting the final version state
 
 ## PR Title And Release Intent
 
