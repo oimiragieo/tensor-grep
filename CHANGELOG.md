@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.8.10 (2026-05-03)
+
+### Bug Fixes
+
+- Harden agent search contracts
+  ([`667634b`](https://github.com/oimiragieo/tensor-grep/commit/667634b48e16861e3c6f2f57afffdce040e5eefe))
+
+
 ## v1.8.9 (2026-05-03)
 
 ### Bug Fixes
