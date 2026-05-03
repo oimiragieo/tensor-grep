@@ -482,6 +482,59 @@ def test_search_generate_should_reject_unsupported_generator() -> None:
     assert "complete-powershell" in result.output
 
 
+def test_search_generate_help_lists_only_supported_generators() -> None:
+    result = CliRunner().invoke(app, ["search", "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    assert "complete-bash" in help_text
+    assert "e.g. man" not in help_text
+
+
+def test_search_pcre2_version_should_run_special_action_without_pattern(
+    monkeypatch, tmp_path: Path
+) -> None:
+    rg_binary = tmp_path / "rg.exe"
+    rg_binary.write_text("", encoding="utf-8")
+    seen: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_ripgrep_binary", lambda: rg_binary)
+
+    def _fake_run(cmd, capture_output=False, text=False):
+        seen["cmd"] = list(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="PCRE2 10.42\n", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    result = CliRunner().invoke(app, ["search", "--pcre2-version"])
+
+    assert result.exit_code == 0
+    assert seen["cmd"] == [str(rg_binary), "--pcre2-version"]
+    assert "PCRE2 10.42" in result.stdout
+
+
+def test_search_type_list_should_run_special_action_without_pattern(
+    monkeypatch, tmp_path: Path
+) -> None:
+    rg_binary = tmp_path / "rg.exe"
+    rg_binary.write_text("", encoding="utf-8")
+    seen: dict[str, object] = {}
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_ripgrep_binary", lambda: rg_binary)
+
+    def _fake_run(cmd, capture_output=False, text=False):
+        seen["cmd"] = list(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="rust: *.rs\n", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    result = CliRunner().invoke(app, ["search", "--type-list"])
+
+    assert result.exit_code == 0
+    assert seen["cmd"] == [str(rg_binary), "--type-list"]
+    assert "rust: *.rs" in result.stdout
+
+
 def test_session_daemon_help_lists_lifecycle_commands() -> None:
     runner = CliRunner()
 
@@ -911,6 +964,113 @@ def test_cli_should_force_cpu_pipeline_when_env_override_is_enabled(monkeypatch)
     assert _LAST_PIPELINE_CONFIG.force_cpu is True
 
 
+def test_cli_search_without_path_defaults_to_current_directory(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND, _LAST_PIPELINE_CONFIG
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[MatchLine(line_number=1, text="safeParseJSON", file="a.log")],
+                matched_file_paths=["a.log"],
+                match_counts_by_file={"a.log": 1},
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _LAST_PIPELINE_CONFIG = None
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "safeParseJSON", "--cpu"])
+
+    assert result.exit_code == 0
+    assert _LAST_PIPELINE_CONFIG is not None
+    assert "safeParseJSON" in result.stdout
+
+
+def test_cli_json_no_match_emits_valid_empty_payload(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "a.log": SearchResult(
+                matches=[],
+                matched_file_paths=[],
+                match_counts_by_file={},
+                total_files=0,
+                total_matches=0,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "__missing__", ".", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["total_matches"] == 0
+    assert payload["total_files"] == 0
+    assert payload["matches"] == []
+
+
+def test_cli_invalid_regex_reports_diagnostic_and_error_exit(monkeypatch):
+    from tensor_grep.backends.cpu_backend import InvalidRegexError
+
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(results_by_file={})
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    class _InvalidRegexBackend:
+        def search(self, file_path, pattern, config=None):
+            raise InvalidRegexError("invalid regex pattern: missing ), unterminated subpattern")
+
+    class _InvalidRegexPipeline(_FakePipeline):
+        def __init__(self, force_cpu=False, config=None):
+            super().__init__(force_cpu=force_cpu, config=config)
+            self.backend = _InvalidRegexBackend()
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _InvalidRegexPipeline)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "(", ".", "--cpu"])
+
+    assert result.exit_code == 2
+    assert "invalid regex" in result.stderr.lower()
+    assert "Use --fixed-strings" in result.stderr
+
+
+def test_cli_wrapped_rg_regex_parse_error_reports_diagnostic(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(results_by_file={})
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    class _WrappedRgInvalidRegexBackend:
+        def search(self, file_path, pattern, config=None):
+            raise RuntimeError("rg failed with exit code 2: error parsing regex: missing )")
+
+    class _WrappedRgInvalidRegexPipeline(_FakePipeline):
+        def __init__(self, force_cpu=False, config=None):
+            super().__init__(force_cpu=force_cpu, config=config)
+            self.backend = _WrappedRgInvalidRegexBackend()
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _WrappedRgInvalidRegexPipeline)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "(", ".", "--cpu"])
+
+    assert result.exit_code == 2
+    assert "error parsing regex" in result.stderr.lower()
+    assert "Use --fixed-strings" in result.stderr
+
+
 def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_code(monkeypatch):
     seen: dict[str, object] = {}
 
@@ -1015,6 +1175,48 @@ def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
     assert seen["check"] is False
 
 
+def test_cli_should_delegate_native_rg_output_flags(monkeypatch):
+    seen: dict[str, object] = {}
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        seen["check"] = check
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "search",
+            "ERROR",
+            ".",
+            "--json",
+            "--column",
+            "--vimgrep",
+            "--path-separator",
+            "/",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert seen["cmd"] == [
+        "tg.exe",
+        "search",
+        "--column",
+        "--path-separator",
+        "/",
+        "--vimgrep",
+        "--json",
+        "ERROR",
+        ".",
+    ]
+    assert seen["check"] is False
+
+
 def test_search_help_should_describe_json_as_aggregate_json() -> None:
     result = CliRunner().invoke(app, ["search", "--help"])
 
@@ -1044,6 +1246,30 @@ def test_safe_stdout_line_writes_utf8_when_console_encoding_rejects_unicode(monk
     _safe_stdout_line("symbol: \u25cf")
 
     assert stdout.buffer.getvalue() == "symbol: \u25cf\n".encode("utf-8")
+
+
+def test_safe_stdout_line_prefers_utf8_buffer_for_non_utf_text(monkeypatch):
+    class _ReplacingStdout:
+        encoding = "cp437"
+
+        def __init__(self) -> None:
+            self.buffer = io.BytesIO()
+            self.writes: list[str] = []
+
+        def write(self, text: str) -> int:
+            self.writes.append(text.encode(self.encoding, errors="replace").decode(self.encoding))
+            return len(text)
+
+        def flush(self) -> None:
+            return None
+
+    stdout = _ReplacingStdout()
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    _safe_stdout_line("a \u2014 b")
+
+    assert stdout.writes == []
+    assert stdout.buffer.getvalue() == "a \u2014 b\n".encode("utf-8")
 
 
 def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatch):

@@ -79,6 +79,26 @@ def test_context_pack_prefers_exact_symbol_match_over_partial_split_matches(
     assert payload["file_matches"][0]["path"] == str(core_path.resolve())
 
 
+def test_context_pack_does_not_label_path_only_symbol_scores_as_definitions(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    noisy_path = project / "src" / "safeParseJSON_helpers.py"
+    _write(
+        noisy_path,
+        "def unrelated_helper(value):\n    return value\n",
+    )
+
+    payload = repo_map.build_context_pack("safeParseJSON", project)
+
+    match = next(
+        item for item in payload["file_matches"] if item["path"] == str(noisy_path.resolve())
+    )
+    assert "path" in match["reasons"]
+    assert "definition" not in match["reasons"]
+    assert "symbol" not in match["reasons"]
+
+
 def test_context_render_limits_source_sections_to_one_per_file(tmp_path: Path) -> None:
     project = tmp_path / "project"
     module_path = project / "src" / "payments.py"

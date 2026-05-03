@@ -105,6 +105,30 @@ class TestFormatters:
         output = fmt.format(result)
         assert output.splitlines() == ["a.log:2", "b.log:1"]
 
+    def test_column_mode_outputs_one_based_column(self):
+        result = SearchResult(
+            matches=[MatchLine(line_number=7, text="xx ERROR test", file="src\\app.py")],
+            total_files=1,
+            total_matches=1,
+        )
+        config = SearchConfig(column=True, query_pattern="ERROR", with_filename=True)
+
+        output = RipgrepFormatter(config=config).format(result)
+
+        assert output == "src\\app.py:7:4:xx ERROR test"
+
+    def test_vimgrep_mode_outputs_file_line_column_text_with_path_separator(self):
+        result = SearchResult(
+            matches=[MatchLine(line_number=7, text="xx ERROR test", file="src\\app.py")],
+            total_files=1,
+            total_matches=1,
+        )
+        config = SearchConfig(vimgrep=True, path_separator="/", query_pattern="ERROR")
+
+        output = RipgrepFormatter(config=config).format(result)
+
+        assert output == "src/app.py:7:4:xx ERROR test"
+
     def test_binary_matches_emit_ripgrep_style_notice(self, tmp_path: Path):
         binary_file = tmp_path / "sample.bin"
         binary_file.write_bytes(b"some binary data\0hello\0more data")

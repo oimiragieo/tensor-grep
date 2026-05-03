@@ -10,6 +10,24 @@ from tensor_grep.core.config import SearchConfig
 if TYPE_CHECKING:
     from pathspec.gitignore import GitIgnoreSpec
 
+_GENERATED_DIR_NAMES = {
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+}
+_GENERATED_RELATIVE_DIRS = {
+    ".claude/context",
+}
+
 # Attempt to load the blazing fast Rust PyO3 gitignore scanner
 try:
     if "pytest" not in sys.modules:
@@ -40,6 +58,28 @@ class DirectoryScanner:
         patterns = gitignore.read_text(encoding="utf-8").splitlines()
         return pathspec.GitIgnoreSpec.from_lines(patterns)
 
+    def _requires_python_guardrails(self, base_path: Path) -> bool:
+        if self.config.no_ignore or self.config.no_ignore_files:
+            return False
+        return base_path.name.lower() in {".claude", *(_GENERATED_DIR_NAMES)}
+
+    def _should_descend_dir(self, base_path: Path, root: Path, directory: str) -> bool:
+        if self.config.no_ignore or self.config.no_ignore_files:
+            return True
+        normalized = directory.lower()
+        candidate = root / directory
+        try:
+            relative = candidate.relative_to(base_path).as_posix().lower()
+        except ValueError:
+            relative = directory.lower()
+        base_prefixed = f"{base_path.name.lower()}/{relative}"
+        if normalized in _GENERATED_DIR_NAMES:
+            return False
+        return (
+            relative not in _GENERATED_RELATIVE_DIRS
+            and base_prefixed not in _GENERATED_RELATIVE_DIRS
+        )
+
     def walk(self, path_str: str) -> Iterator[str]:
         base_path = Path(path_str)
 
@@ -57,6 +97,7 @@ class DirectoryScanner:
             and not self.config.glob
             and not self.config.file_type
             and not self.config.type_not
+            and not self._requires_python_guardrails(base_path)
         ):
             # Keep Python-side walking only for direct files or Python-only filters.
             scanner = RustDirectoryScanner(
@@ -84,6 +125,13 @@ class DirectoryScanner:
             # Filter directories (hidden, etc)
             if not self.config.hidden:
                 dirs[:] = [d for d in dirs if not d.startswith(".")]
+
+            root_path = Path(root)
+            dirs[:] = [
+                directory
+                for directory in dirs
+                if self._should_descend_dir(base_path, root_path, directory)
+            ]
 
             if ignore_spec is not None:
                 dirs[:] = [

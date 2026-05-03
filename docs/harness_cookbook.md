@@ -207,11 +207,13 @@ tg.exe map --json .\src
 tg.exe context --query "invoice payment" --json .\src
 tg defs --symbol create_invoice --json .\src
 tg callers --symbol create_invoice --json .\src
-tg.exe run --lang python --rewrite "lambda $$$ARGS: $EXPR" --json "def $F($$$ARGS): return $EXPR" .\src\sample.py
-tg.exe run --lang python --rewrite "lambda $$$ARGS: $EXPR" --apply --verify --checkpoint --lint-cmd "ruff check ." --test-cmd "pytest -q" --json "def $F($$$ARGS): return $EXPR" .\src\sample.py
+tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --json 'def $F($$$ARGS): return $EXPR' .\src\sample.py
+tg.exe run --lang python --rewrite 'lambda $$$ARGS: $EXPR' --apply --verify --checkpoint --lint-cmd "ruff check ." --test-cmd "pytest -q" --json 'def $F($$$ARGS): return $EXPR' .\src\sample.py
 python benchmarks/run_patch_bakeoff.py --scenarios benchmarks/patch_eval/real_patch_bakeoff_scenarios.json --predictions artifacts/patch_eval_demo/gemini_skill_ab_limit12_bakeoff.json --output artifacts/patch_eval_demo/gemini_skill_ab_limit12_bakeoff_scored.json
 python benchmarks/render_patch_scorecard.py --inputs artifacts/patch_eval_demo/gemini_skill_ab_limit12_bakeoff_scored.json --output artifacts/patch_eval_demo/gemini_skill_ab_limit12_scorecard.md
 ```
+
+PowerShell expands `$NAME`/`$$$ARGS` inside double quotes, so Windows AST patterns and rewrite templates should use single quotes.
 
 Recommended consumer behavior:
 

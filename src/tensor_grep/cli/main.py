@@ -175,7 +175,6 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "byte_offset",
     "color",
     "colors",
-    "column",
     "context_separator",
     "field_context_separator",
     "field_match_separator",
@@ -188,7 +187,6 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "max_columns_preview",
     "null",
     "only_matching",
-    "path_separator",
     "passthru",
     "pretty",
     "quiet",
@@ -196,7 +194,6 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
     "sort_by",
     "sort_by_reverse",
     "trim",
-    "vimgrep",
     "with_filename",
     "no_filename",
     "count_matches",
@@ -548,10 +545,16 @@ def _build_native_tg_search_command(
         command.append("-v")
     if config.count:
         command.append("-c")
+    if config.column:
+        command.append("--column")
     if config.context is not None:
         command.extend(["-C", str(config.context)])
     if config.max_count is not None:
         command.extend(["-m", str(config.max_count)])
+    if config.path_separator is not None:
+        command.extend(["--path-separator", config.path_separator])
+    if config.vimgrep:
+        command.append("--vimgrep")
     if config.word_regexp:
         command.append("-w")
     for current_glob in config.glob or []:
@@ -612,11 +615,18 @@ def _write_path_list(paths: list[str], *, use_nul: bool) -> None:
 
 
 def _safe_stdout_line(text: str) -> None:
+    encoding = (getattr(sys.stdout, "encoding", None) or "").lower()
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is not None and encoding and "utf" not in encoding and not text.isascii():
+        buffer.write(f"{text}\n".encode("utf-8", errors="replace"))
+        flush = getattr(buffer, "flush", None)
+        if callable(flush):
+            flush()
+        return
     try:
         print(text)
     except UnicodeEncodeError:
         payload = f"{text}\n".encode("utf-8", errors="replace")
-        buffer = getattr(sys.stdout, "buffer", None)
         if buffer is not None:
             buffer.write(payload)
             flush = getattr(buffer, "flush", None)
@@ -631,6 +641,27 @@ def _safe_stdout_line(text: str) -> None:
         flush = getattr(sys.stdout, "flush", None)
         if callable(flush):
             flush()
+
+
+def _is_invalid_regex_error(exc: Exception) -> bool:
+    if isinstance(exc, re.error):
+        return True
+    message = str(exc).lower()
+    if (
+        "regex parse error" in message
+        or "error parsing regex" in message
+        or "invalid regex" in message
+    ):
+        return True
+    return exc.__class__.__name__ == "InvalidRegexError"
+
+
+def _exit_invalid_regex(exc: Exception) -> None:
+    typer.echo(
+        f"Error: {exc}. Use --fixed-strings (-F) to search this pattern literally.",
+        err=True,
+    )
+    sys.exit(2)
 
 
 def _sum_total_bytes(paths: list[str]) -> int:
@@ -705,6 +736,29 @@ def _generate_shell_completion_script(*, generator: str, prog_name: str = "tg") 
     from typer._completion_shared import get_completion_script
 
     return str(get_completion_script(prog_name=prog_name, complete_var=complete_var, shell=shell))
+
+
+def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
+    candidates = [resolve_native_tg_binary(), resolve_ripgrep_binary()]
+    last_completed: subprocess.CompletedProcess[str] | None = None
+    for candidate in candidates:
+        if not candidate or not candidate.exists():
+            continue
+        completed = subprocess.run([str(candidate), flag], capture_output=True, text=True)
+        last_completed = completed
+        if completed.returncode == 0:
+            if completed.stdout:
+                typer.echo(completed.stdout.rstrip("\n\r"))
+            if completed.stderr:
+                typer.echo(completed.stderr.rstrip("\n\r"), err=True)
+            raise typer.Exit(0)
+    if last_completed is not None:
+        output = last_completed.stderr.strip() or last_completed.stdout.strip()
+        if output:
+            typer.echo(output, err=True)
+        raise typer.Exit(int(last_completed.returncode or 1))
+    typer.echo(unavailable_message, err=True)
+    raise typer.Exit(1)
 
 
 def _replace_lines(
@@ -2181,7 +2235,12 @@ def search_command(
         False, "--files", help="Print files that would be searched and exit."
     ),
     generate: str | None = typer.Option(
-        None, "--generate", help="Generate special output (e.g. man, complete-bash)."
+        None,
+        "--generate",
+        help=(
+            "Generate shell completion output "
+            "(complete-bash, complete-zsh, complete-fish, complete-powershell)."
+        ),
     ),
     no_config: bool = typer.Option(False, "--no-config", help="Never read configuration files."),
     pcre2_version: bool = typer.Option(
@@ -2233,20 +2292,24 @@ def search_command(
     if generate is not None:
         typer.echo(_generate_shell_completion_script(generator=generate))
         raise typer.Exit(0)
+    if pcre2_version:
+        _run_rg_compatible_info_action(
+            "--pcre2-version",
+            "PCRE2 version unavailable: no native tg or ripgrep binary found.",
+        )
+    if type_list:
+        _run_rg_compatible_info_action(
+            "--type-list",
+            "Type list unavailable: no native tg or ripgrep binary found.",
+        )
     if files:
-        if not args:
-            typer.echo("Error: Please provide at least one PATH to search.", err=True)
-            sys.exit(1)
-        paths_to_search = args
+        paths_to_search = args or ["."]
     elif regexp_patterns:
         pattern = regexp_patterns[0]
         if pattern == "":
             typer.echo("Error: PATTERN must not be empty.", err=True)
             sys.exit(2)
-        paths_to_search = args
-        if not paths_to_search:
-            typer.echo("Error: Please provide at least one PATH to search.", err=True)
-            sys.exit(1)
+        paths_to_search = args or ["."]
     else:
         if not args:
             typer.echo("Error: Please provide a PATTERN to search.", err=True)
@@ -2255,10 +2318,7 @@ def search_command(
         if pattern == "":
             typer.echo("Error: PATTERN must not be empty.", err=True)
             sys.exit(2)
-        paths_to_search = args[1:]
-        if not paths_to_search:
-            typer.echo("Error: Please provide at least one PATH to search.", err=True)
-            sys.exit(1)
+        paths_to_search = args[1:] or ["."]
 
     if not files:
         missing_paths = [
@@ -2436,7 +2496,7 @@ def search_command(
         if not stats:
             with nvtx_range("search.passthrough_rg", color="green"):
                 exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
-            sys.exit(0 if exit_code == 0 else 1)
+            sys.exit(exit_code)
 
     scanner = DirectoryScanner(config)
     candidate_files_ordered, candidate_files_set = _collect_candidate_files(
@@ -2465,7 +2525,7 @@ def search_command(
     ):
         with nvtx_range("search.passthrough_rg", color="green"):
             exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
-        sys.exit(0 if exit_code == 0 else 1)
+        sys.exit(exit_code)
     if debug:
         typer.echo(
             f"[debug] routing.backend={selected_backend_name} reason={selected_backend_reason}"
@@ -2538,7 +2598,12 @@ def search_command(
             if span is not None:
                 span.set_attribute("backend", backend.__class__.__name__)
                 span.set_attribute("path_count", len(search_targets))
-            result = rg_backend.search(search_targets, pattern, config=config)
+            try:
+                result = rg_backend.search(search_targets, pattern, config=config)
+            except Exception as exc:
+                if _is_invalid_regex_error(exc):
+                    _exit_invalid_regex(exc)
+                raise
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
@@ -2557,7 +2622,12 @@ def search_command(
                 if span is not None:
                     span.set_attribute("backend", backend.__class__.__name__)
                     span.set_attribute("path", current_file)
-                result = backend.search(current_file, pattern, config=config)
+                try:
+                    result = backend.search(current_file, pattern, config=config)
+                except Exception as exc:
+                    if _is_invalid_regex_error(exc):
+                        _exit_invalid_regex(exc)
+                    raise
                 if span is not None:
                     span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
@@ -2701,6 +2771,10 @@ def search_command(
 
     if all_results.is_empty:
         _emit_stats()
+        if json or format_type == "json":
+            from tensor_grep.cli.formatters.json_fmt import JsonFormatter
+
+            _safe_stdout_line(JsonFormatter().format(all_results))
         sys.exit(1)
 
     if quiet:

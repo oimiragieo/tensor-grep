@@ -627,10 +627,11 @@ def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(
         mcp_server,
         "build_symbol_impact",
-        lambda symbol, path, semantic_provider="native": {
+        lambda symbol, path, semantic_provider="native", max_repo_files=None: {
             "symbol": symbol,
             "path": str(path),
             "semantic_provider": semantic_provider,
+            "max_repo_files": max_repo_files,
             "definitions": [],
             "files": [],
             "tests": [],
@@ -644,6 +645,7 @@ def test_mcp_impact_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> N
     )
 
     assert payload["semantic_provider"] == "hybrid"
+    assert payload["max_repo_files"] == 512
 
 
 def test_mcp_source_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:

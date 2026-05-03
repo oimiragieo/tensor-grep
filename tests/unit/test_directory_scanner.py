@@ -68,6 +68,38 @@ class TestDirectoryScanner:
 
         assert str(ignored_file) in files
 
+    def test_should_skip_generated_claude_context_by_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+        claude_dir = tmp_path / ".claude"
+        context_dir = claude_dir / "context"
+        lib_dir = claude_dir / "lib"
+        context_dir.mkdir(parents=True)
+        lib_dir.mkdir(parents=True)
+        generated_file = context_dir / "snapshot.json"
+        source_file = lib_dir / "utils.js"
+        generated_file.write_text("safeParseJSON\n", encoding="utf-8")
+        source_file.write_text("safeParseJSON\n", encoding="utf-8")
+
+        files = list(DirectoryScanner(SearchConfig()).walk(str(claude_dir)))
+
+        assert str(source_file) in files
+        assert str(generated_file) not in files
+
+    def test_should_include_generated_claude_context_when_no_ignore_is_enabled(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr("tensor_grep.io.directory_scanner.HAS_RUST_SCANNER", False)
+
+        context_dir = tmp_path / ".claude" / "context"
+        context_dir.mkdir(parents=True)
+        generated_file = context_dir / "snapshot.json"
+        generated_file.write_text("safeParseJSON\n", encoding="utf-8")
+
+        files = list(DirectoryScanner(SearchConfig(no_ignore=True)).walk(str(tmp_path / ".claude")))
+
+        assert str(generated_file) in files
+
     def test_should_filterGlob_when_dashG_provided(self, tmp_path):
         import os
 

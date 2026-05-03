@@ -109,6 +109,28 @@ def test_passthrough_should_forward_count_flag_and_exit_code():
     assert exit_code == 0
 
 
+def test_passthrough_should_forward_editor_output_flags():
+    backend = RipgrepBackend()
+    config = SearchConfig(column=True, path_separator="/", vimgrep=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        exit_code = backend.search_passthrough(["src"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--column" in cmd
+    assert ["--path-separator", "/"] == cmd[cmd.index("--path-separator") :][:2]
+    assert "--vimgrep" in cmd
+    assert exit_code == 0
+
+
 def test_search_should_emit_runtime_routing_metadata():
     backend = RipgrepBackend()
 

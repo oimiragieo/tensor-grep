@@ -1,6 +1,13 @@
 # CHANGELOG
 
 
+## Unreleased
+
+### Bug Fixes
+
+- Harden post-v1.8.8 dogfood contracts: no-path search defaults to `.`, JSON no-match emits a valid empty envelope, invalid regex exits distinctly from no-match, rg editor-output flags are honored, direct `--type-list` / `--pcre2-version` special actions work, generated `.claude/context` scans are guarded by default, MCP symbol impact is bounded, and path-only symbol scores no longer masquerade as definitions.
+
+
 ## v1.8.8 (2026-05-03)
 
 ### Bug Fixes

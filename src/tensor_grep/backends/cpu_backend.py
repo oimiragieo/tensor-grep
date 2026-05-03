@@ -14,6 +14,10 @@ from tensor_grep.core.result import MatchLine, SearchResult
 logger = logging.getLogger(__name__)
 
 
+class InvalidRegexError(ValueError):
+    """Raised when regex syntax is invalid and fixed-string fallback was not requested."""
+
+
 class CPUBackend(ComputeBackend):
     _shared_literal_index_cache: ClassVar[
         dict[tuple[str, bool], tuple[tuple[int, int], list[str], dict[str, list[int]]]]
@@ -191,9 +195,8 @@ class CPUBackend(ComputeBackend):
                     wrapped = f"\\b{pattern}\\b"
                     return re.compile(wrapped, flags), re.compile(wrapped.encode(), flags)
                 return re.compile(pattern, flags), re.compile(pattern.encode("utf-8"), flags)
-            except re.error:
-                escaped = re.escape(pattern)
-                return re.compile(escaped, flags), re.compile(escaped.encode("utf-8"), flags)
+            except re.error as exc:
+                raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
 
     def is_available(self) -> bool:
         return True

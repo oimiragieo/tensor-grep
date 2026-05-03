@@ -221,6 +221,12 @@ class RipgrepBackend(ComputeBackend):
                     cmd.append("-n")
                 else:
                     cmd.append("--no-line-number")
+            if config.column and not json_mode:
+                cmd.append("--column")
+            if config.path_separator is not None and not json_mode:
+                cmd.extend(["--path-separator", config.path_separator])
+            if config.vimgrep and not json_mode:
+                cmd.append("--vimgrep")
             if config.color:
                 cmd.extend(["--color", config.color])
             if config.glob_case_insensitive:

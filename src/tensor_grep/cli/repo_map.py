@@ -4556,8 +4556,9 @@ def _build_context_pack_from_map(
             scored_symbol = dict(symbol)
             scored_symbol["score"] = score
             current_path = str(scored_symbol["file"])
-            _append_reason(file_reasons, current_path, "definition")
-            if _score_text_terms(str(scored_symbol["name"]), symbol_terms) > 0:
+            symbol_name_score = _score_text_terms(str(scored_symbol["name"]), symbol_terms)
+            if symbol_name_score > 0:
+                _append_reason(file_reasons, current_path, "definition")
                 _append_reason(file_reasons, current_path, "symbol")
             scored_symbols.append(scored_symbol)
         scored_symbols.sort(

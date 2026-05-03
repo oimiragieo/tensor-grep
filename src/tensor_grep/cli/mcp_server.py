@@ -40,6 +40,7 @@ _WINDOWS_VARIADIC_METAVAR_RE = re.compile(r"(?<!\$)\$\$([A-Z][A-Z0-9_]*)")
 _NATIVE_TG_REMEDIATION = (
     "Install a standalone native tg binary, put it on PATH, or set TG_NATIVE_TG_BINARY."
 )
+_DEFAULT_MCP_REPO_SCAN_LIMIT = 512
 
 _PYTHON_LOCAL_MCP_TOOLS = (
     "tg_rulesets",
@@ -1585,7 +1586,15 @@ def tg_symbol_impact(symbol: str, path: str = ".", provider: str = "native") -> 
         path: File or directory to inventory.
     """
     try:
-        return json.dumps(build_symbol_impact(symbol, path, semantic_provider=provider), indent=2)
+        return json.dumps(
+            build_symbol_impact(
+                symbol,
+                path,
+                semantic_provider=provider,
+                max_repo_files=_DEFAULT_MCP_REPO_SCAN_LIMIT,
+            ),
+            indent=2,
+        )
     except FileNotFoundError:
         payload = {
             "version": _json_output_version(),

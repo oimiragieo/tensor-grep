@@ -31,6 +31,42 @@ class RipgrepFormatter(OutputFormatter):
             return str(match.text)
         return self._binary_notice(match.file)
 
+    def _format_path(self, file_path: str) -> str:
+        if self.config.path_separator is None:
+            return file_path
+        separator = self.config.path_separator
+        return file_path.replace("\\", separator).replace("/", separator)
+
+    def _column_for_match(self, match: MatchLine) -> int:
+        if match.range is not None:
+            start = match.range.get("start")
+            if isinstance(start, dict):
+                column = start.get("column")
+                if isinstance(column, int):
+                    return column + 1
+
+        pattern = self.config.query_pattern or ""
+        if not pattern and self.config.regexp:
+            pattern = self.config.regexp[0]
+        if not pattern:
+            return 1
+        if self.config.fixed_strings:
+            index = match.text.find(pattern)
+        else:
+            try:
+                import re
+
+                flags = (
+                    re.IGNORECASE
+                    if self.config.ignore_case or (self.config.smart_case and pattern.islower())
+                    else 0
+                )
+                found = re.search(pattern, match.text, flags=flags)
+                index = -1 if found is None else found.start()
+            except re.error:
+                index = match.text.find(pattern)
+        return index + 1 if index >= 0 else 1
+
     def format(self, result: SearchResult) -> str:
         lines = []
 
@@ -55,7 +91,7 @@ class RipgrepFormatter(OutputFormatter):
                         and not self.config.no_filename
                         and result.total_files > 1
                     ):
-                        lines.append(f"{file_path}:{count}")
+                        lines.append(f"{self._format_path(str(file_path))}:{count}")
                     else:
                         lines.append(f"{count}")
             return "\n".join(lines)
@@ -67,7 +103,7 @@ class RipgrepFormatter(OutputFormatter):
             if binary_notice_matches:
                 for match in sorted(binary_notice_matches, key=lambda current: current.file):
                     message = self._binary_notice_for_match(match)
-                    file_path = match.file
+                    file_path = self._format_path(str(match.file))
                     if self.config.with_filename or (
                         self.config.file_patterns is None
                         and not self.config.no_filename
@@ -86,16 +122,29 @@ class RipgrepFormatter(OutputFormatter):
             non_binary_matches = result.matches
 
         for match in non_binary_matches:
+            if self.config.vimgrep:
+                lines.append(
+                    ":".join([
+                        self._format_path(str(match.file)),
+                        str(match.line_number),
+                        str(self._column_for_match(match)),
+                        str(match.text),
+                    ])
+                )
+                continue
+
             parts = []
             if self.config.with_filename or (
                 self.config.file_patterns is None
                 and not self.config.no_filename
                 and result.total_files > 1
             ):
-                parts.append(str(match.file))
+                parts.append(self._format_path(str(match.file)))
 
             if self.config.line_number:
                 parts.append(str(match.line_number))
+            if self.config.column:
+                parts.append(str(self._column_for_match(match)))
 
             parts.append(str(match.text))
             lines.append(":".join(parts))

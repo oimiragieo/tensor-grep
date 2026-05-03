@@ -3146,6 +3146,46 @@ def test_tg_symbol_impact_returns_related_files_and_tests(tmp_path):
     )
 
 
+def test_tg_symbol_impact_uses_bounded_repo_scan_by_default(monkeypatch, tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    seen: dict[str, object] = {}
+
+    def _fake_build_symbol_impact(
+        symbol,
+        path=".",
+        *,
+        semantic_provider="native",
+        max_repo_files=None,
+    ):
+        seen["symbol"] = symbol
+        seen["path"] = path
+        seen["semantic_provider"] = semantic_provider
+        seen["max_repo_files"] = max_repo_files
+        return {
+            "version": 1,
+            "routing_backend": "RepoMap",
+            "routing_reason": "symbol-impact",
+            "sidecar_used": False,
+            "symbol": symbol,
+            "path": str(path),
+            "files": [],
+            "tests": [],
+            "scan_limit": {
+                "max_repo_files": max_repo_files,
+                "scanned_files": 0,
+                "possibly_truncated": False,
+            },
+        }
+
+    monkeypatch.setattr(mcp_server, "build_symbol_impact", _fake_build_symbol_impact)
+
+    payload = json.loads(mcp_server.tg_symbol_impact("safeParseJSON", str(tmp_path)))
+
+    assert payload["scan_limit"]["max_repo_files"] == 512
+    assert seen["max_repo_files"] == 512
+
+
 def test_tg_symbol_impact_prefers_import_linked_typescript_and_rust_tests(tmp_path):
     from tensor_grep.cli import mcp_server
 
