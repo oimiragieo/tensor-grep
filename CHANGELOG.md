@@ -1,11 +1,17 @@
 # CHANGELOG
 
 
-## Unreleased
+## v1.8.9 (2026-05-03)
 
 ### Bug Fixes
 
-- Harden post-v1.8.8 dogfood contracts: no-path search defaults to `.`, JSON no-match emits a valid empty envelope, invalid regex exits distinctly from no-match, rg editor-output flags are honored, direct `--type-list` / `--pcre2-version` special actions work, generated `.claude/context` scans are guarded by default, MCP symbol impact is bounded, and path-only symbol scores no longer masquerade as definitions.
+- Harden agent search contracts
+  ([`f84b3b5`](https://github.com/oimiragieo/tensor-grep/commit/f84b3b5e8d1417575a8e4b7e2f7ef2c0fa584bbc))
+
+### Documentation
+
+- Record v1.8.8 release lessons
+  ([`189871d`](https://github.com/oimiragieo/tensor-grep/commit/189871d980b67fa63739eff4e389572065794092))
 
 
 ## v1.8.8 (2026-05-03)
