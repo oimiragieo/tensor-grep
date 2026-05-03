@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.8 (2026-05-03)
+
+### Bug Fixes
+
+- Apply preview formatter for CI
+  ([`d084c15`](https://github.com/oimiragieo/tensor-grep/commit/d084c15a9e34f8837b0cab54df92507a34a63bd6))
+
+- Bound blast radius caller scans
+  ([`fa9cbb0`](https://github.com/oimiragieo/tensor-grep/commit/fa9cbb05c533d045dae0d6c45244f937ceb60464))
+
+
 ## v1.8.7 (2026-05-02)
 
 ### Bug Fixes
