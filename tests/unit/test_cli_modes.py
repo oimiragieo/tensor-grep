@@ -1261,14 +1261,16 @@ def test_symbol_source_json_omits_unrelated_symbol_inventory(tmp_path):
 
     module_path = src_dir / "worker.cjs"
     module_path.write_text(
-        "\n".join([
-            "function safeParseJSON(raw) {",
-            "  return JSON.parse(raw);",
-            "}",
-            "",
-            *[f"function unrelatedSymbol{i}() {{ return {i}; }}" for i in range(50)],
-            "",
-        ]),
+        "\n".join(
+            [
+                "function safeParseJSON(raw) {",
+                "  return JSON.parse(raw);",
+                "}",
+                "",
+                *[f"function unrelatedSymbol{i}() {{ return {i}; }}" for i in range(50)],
+                "",
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -2102,6 +2104,61 @@ def test_blast_radius_json_defaults_to_bounded_agent_output(tmp_path):
     assert len(result.stdout.encode("utf-8")) < 80_000
 
 
+def test_blast_radius_caller_scan_prefilters_files_without_symbol_literal(
+    monkeypatch,
+    tmp_path,
+):
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    target_path = src_dir / "target.py"
+    target_path.write_text(
+        "def safe_parse_json(value):\n    return value\n",
+        encoding="utf-8",
+    )
+    caller_paths = []
+    for index in range(3):
+        caller_path = src_dir / f"caller_{index}.py"
+        caller_path.write_text(
+            "from src.target import safe_parse_json\n\n"
+            f"def caller_{index}(value):\n"
+            "    return safe_parse_json(value)\n",
+            encoding="utf-8",
+        )
+        caller_paths.append(caller_path.resolve())
+    for index in range(40):
+        (src_dir / f"unrelated_{index}.py").write_text(
+            f"def unrelated_{index}():\n    return {index}\n",
+            encoding="utf-8",
+        )
+
+    scanned_python_files: list[Path] = []
+    original_python_references_and_calls = repo_map._python_references_and_calls
+
+    def _tracked_python_references_and_calls(path: Path, symbol: str):
+        scanned_python_files.append(path.resolve())
+        return original_python_references_and_calls(path, symbol)
+
+    monkeypatch.setattr(
+        repo_map,
+        "_python_references_and_calls",
+        _tracked_python_references_and_calls,
+    )
+
+    payload = repo_map.build_symbol_blast_radius(
+        "safe_parse_json",
+        project,
+        max_repo_files=1000,
+        max_callers=2,
+        max_files=2,
+    )
+
+    allowed_scans = {target_path.resolve(), *caller_paths}
+    assert set(scanned_python_files) <= allowed_scans
+    assert len(payload["callers"]) <= 2
+    assert payload["output_limit"]["callers_truncated"] is True
+
+
 def test_commonjs_repo_map_extracts_exported_function_symbols(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
@@ -2207,11 +2264,13 @@ def test_repo_map_file_universe_does_not_resolve_child_files(monkeypatch, tmp_pa
 
     monkeypatch.setattr(repo_map.Path, "resolve", _guarded_resolve)
 
-    files = repo_map._repo_map_file_universe({
-        "path": str(project_root),
-        "files": [str(child_file)],
-        "tests": [],
-    })
+    files = repo_map._repo_map_file_universe(
+        {
+            "path": str(project_root),
+            "files": [str(child_file)],
+            "tests": [],
+        }
+    )
 
     assert files == [child_file]
 
@@ -2403,10 +2462,12 @@ def test_edit_plan_json_prefers_targeted_vitest_validation_commands(tmp_path):
     tests_dir.mkdir()
 
     (project / "package.json").write_text(
-        json.dumps({
-            "name": "vitest-project",
-            "devDependencies": {"vitest": "^1.0.0"},
-        }),
+        json.dumps(
+            {
+                "name": "vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+            }
+        ),
         encoding="utf-8",
     )
     module_path = src_dir / "payments.ts"
@@ -2462,11 +2523,13 @@ def test_edit_plan_json_prefers_ancestor_package_script_for_nested_ts_subdir(tmp
     tests_dir.mkdir(parents=True)
 
     (package_root / "package.json").write_text(
-        json.dumps({
-            "name": "nested-vitest-project",
-            "devDependencies": {"vitest": "^1.0.0"},
-            "scripts": {"test": "vitest run"},
-        }),
+        json.dumps(
+            {
+                "name": "nested-vitest-project",
+                "devDependencies": {"vitest": "^1.0.0"},
+                "scripts": {"test": "vitest run"},
+            }
+        ),
         encoding="utf-8",
     )
     module_path = nested_src_dir / "glob.ts"
@@ -2578,11 +2641,13 @@ def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_with
     cli_dir = project / ".claude" / "tools" / "cli"
     cli_dir.mkdir(parents=True)
     (project / "package.json").write_text(
-        json.dumps({
-            "name": "agent-studio-like",
-            "packageManager": "pnpm@10.0.0",
-            "scripts": {"test": "pnpm test"},
-        }),
+        json.dumps(
+            {
+                "name": "agent-studio-like",
+                "packageManager": "pnpm@10.0.0",
+                "scripts": {"test": "pnpm test"},
+            }
+        ),
         encoding="utf-8",
     )
     (project / "scripts").mkdir()
@@ -2755,12 +2820,14 @@ def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_p
     assert len(groups) == 1
     assert groups[0]["label"] == "primary"
     assert sorted(groups[0]["roles"]) == ["primary", "related", "related", "test"]
-    assert sorted(groups[0]["files"]) == sorted([
-        str(module_path.resolve()),
-        str(sibling_a.resolve()),
-        str(sibling_b.resolve()),
-        str(test_path.resolve()),
-    ])
+    assert sorted(groups[0]["files"]) == sorted(
+        [
+            str(module_path.resolve()),
+            str(sibling_a.resolve()),
+            str(sibling_b.resolve()),
+            str(test_path.resolve()),
+        ]
+    )
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
@@ -4383,12 +4450,14 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     )
 
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join([
-        "id: no-print",
-        "language: python",
-        "rule:",
-        "  pattern: print($A)",
-    ])
+    inline_rules = "\n".join(
+        [
+            "id: no-print",
+            "language: python",
+            "rule:",
+            "  pattern: print($A)",
+        ]
+    )
     runner = CliRunner()
 
     result = runner.invoke(
@@ -4861,12 +4930,14 @@ def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
         lang: str,
         path: str,
     ) -> tuple[str, int]:
-        seen.update({
-            "pattern": pattern,
-            "replacement": replacement,
-            "lang": lang,
-            "path": path,
-        })
+        seen.update(
+            {
+                "pattern": pattern,
+                "replacement": replacement,
+                "lang": lang,
+                "path": path,
+            }
+        )
         return '{"total_edits": 1, "edits": []}', 0
 
     monkeypatch.setattr(ast_workflows, "execute_rewrite_plan_json", _fake_execute_rewrite_plan_json)

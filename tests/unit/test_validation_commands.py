@@ -571,6 +571,43 @@ def test_build_context_render_uses_relative_python_validation_commands(tmp_path:
     ]
 
 
+def test_build_context_render_discovers_scoped_node_test_file(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    scripts_dir = project / "scripts" / "agents"
+    tests_dir = project / "tests" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    tests_dir.mkdir(parents=True)
+    _write_package_json(
+        project,
+        package_manager="pnpm@10.0.0",
+        scripts={"test": "pnpm run test:unit"},
+    )
+    source_path = scripts_dir / "run-cursor-worker.cjs"
+    source_path.write_text(
+        "function runCursorWorker() {\n  return true;\n}\nmodule.exports = { runCursorWorker };\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "run-cursor-worker.test.cjs"
+    test_path.write_text(
+        "const test = require('node:test');\n"
+        "const assert = require('node:assert/strict');\n"
+        "const { runCursorWorker } = require('../../scripts/agents/run-cursor-worker.cjs');\n"
+        "test('runCursorWorker invokes cursor', () => {\n"
+        "  assert.equal(runCursorWorker(), true);\n"
+        "});\n",
+        encoding="utf-8",
+    )
+
+    payload = repo_map.build_context_render("run cursor worker", scripts_dir)
+
+    assert payload["edit_plan_seed"]["primary_file"] == str(source_path.resolve())
+    assert payload["edit_plan_seed"]["primary_test"] == str(test_path.resolve())
+    assert payload["edit_plan_seed"]["validation_commands"][0] == (
+        "node --test tests/scripts/run-cursor-worker.test.cjs"
+    )
+    assert payload["edit_plan_seed"]["validation_commands"][-1] == "pnpm test"
+
+
 def test_build_symbol_blast_radius_render_uses_rust_validation_commands(tmp_path: Path) -> None:
     project = tmp_path / "project"
     src_dir = project / "src"
