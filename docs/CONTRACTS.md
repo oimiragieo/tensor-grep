@@ -39,6 +39,13 @@ Current validated rows:
 
 Character-for-character identity is not required for help formatting, but command presence, supported rows, accepted normalization, and the deterministic parity corpus are part of the public contract. Additional rg-style flags may be exposed in `tg search --help`, but they are not covered by the stable compatibility claim until they are added to the contract suite and benchmark runner.
 
+Agent automation contracts:
+- `tg search PATTERN` defaults to the current directory when no path is provided.
+- Invalid regex syntax exits as an error distinct from no-match and emits a diagnostic that recommends `--fixed-strings` for literal searches.
+- `tg search --json` emits a valid aggregate JSON object even when there are zero matches.
+- Broad generated roots such as `.claude` are routed through Python guardrails instead of rust-first/native passthrough so generated `.claude/context` snapshots can be pruned by default.
+- `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
+
 ## 4. Machine-readable CLI output (`--json` and `--ndjson`)
 The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --ndjson`, and the documented harness/editor-plane flows are considered public APIs.
 - Existing fields (for example `file`, `line`, `match`, `context`) will not be renamed or removed without a major version bump.

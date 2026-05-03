@@ -535,6 +535,35 @@ def test_search_type_list_should_run_special_action_without_pattern(
     assert "rust: *.rs" in result.stdout
 
 
+def test_search_type_list_should_use_builtin_fallback_without_native_or_rg(monkeypatch) -> None:
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_ripgrep_binary", lambda: None)
+
+    result = CliRunner().invoke(app, ["search", "--type-list"])
+
+    assert result.exit_code == 0
+    assert "python: *.py" in result.stdout
+    assert "rust: *.rs" in result.stdout
+
+
+def test_search_type_list_should_not_mask_backend_failure(monkeypatch, tmp_path) -> None:
+    native_binary = tmp_path / "tg.exe"
+    native_binary.write_text("binary", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_binary)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_ripgrep_binary", lambda: None)
+
+    def _fake_run(cmd, capture_output=False, text=False):
+        return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="backend failed")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    result = CliRunner().invoke(app, ["search", "--type-list"])
+
+    assert result.exit_code == 2
+    assert "backend failed" in result.stderr
+    assert "python: *.py" not in result.stdout
+
+
 def test_session_daemon_help_lists_lifecycle_commands() -> None:
     runner = CliRunner()
 
@@ -1043,6 +1072,171 @@ def test_cli_invalid_regex_reports_diagnostic_and_error_exit(monkeypatch):
     assert result.exit_code == 2
     assert "invalid regex" in result.stderr.lower()
     assert "Use --fixed-strings" in result.stderr
+
+
+def test_cli_invalid_regex_is_rejected_before_native_delegation(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    result = CliRunner().invoke(app, ["search", "(", ".", "--json"])
+
+    assert result.exit_code == 2
+    assert "invalid regex" in result.stderr.lower()
+    assert "Use --fixed-strings" in result.stderr
+    assert "cmd" not in seen
+
+
+def test_cli_invalid_regex_is_rejected_before_scanning(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["a.log"]}
+    _FAKE_BACKEND = _FakeBackend(results_by_file={})
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    class _UnexpectedScanner:
+        def __init__(self, config=None):
+            raise AssertionError("invalid regex should fail before walking broad roots")
+
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _UnexpectedScanner)
+
+    result = CliRunner().invoke(app, ["search", "(", ".", "--cpu"])
+
+    assert result.exit_code == 2
+    assert "invalid regex" in result.stderr.lower()
+
+
+def test_cli_later_invalid_regexp_is_rejected_before_native_delegation(monkeypatch):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        seen["cmd"] = list(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    result = CliRunner().invoke(app, ["search", "-e", "safe", "-e", "(", ".", "--json"])
+
+    assert result.exit_code == 2
+    assert "invalid regex" in result.stderr.lower()
+    assert "cmd" not in seen
+
+
+def test_cli_broad_claude_json_uses_python_guardrails_before_native(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".claude": [".claude/lib/utils.cjs"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            ".claude/lib/utils.cjs": SearchResult(
+                matches=[
+                    MatchLine(
+                        line_number=1,
+                        text="safeParseJSON(value)",
+                        file=".claude/lib/utils.cjs",
+                    )
+                ],
+                matched_file_paths=[".claude/lib/utils.cjs"],
+                match_counts_by_file={".claude/lib/utils.cjs": 1},
+                total_files=1,
+                total_matches=1,
+            )
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._can_delegate_to_native_tg_search",
+        lambda *args, **kwargs: True,
+    )
+
+    def _fake_run(cmd, check=False):
+        raise AssertionError("broad .claude JSON search needs Python scanner guardrails")
+
+    monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "safeParseJSON", ".claude", "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["total_matches"] == 1
+    assert payload["matches"][0]["file"] == ".claude/lib/utils.cjs"
+
+
+def test_cli_broad_claude_ripgrep_backend_adds_guard_excludes(monkeypatch):
+    seen: dict[str, object] = {}
+    global _FAKE_WALK
+    _FAKE_WALK = {".claude": [".claude/lib/utils.cjs"]}
+
+    class RipgrepBackend:
+        def is_available(self):
+            return True
+
+        def search_passthrough(self, paths, pattern, config=None):
+            raise AssertionError("broad .claude should not use rg passthrough")
+
+        def search(self, paths, pattern, config=None):
+            seen["paths"] = list(paths)
+            seen["glob"] = list(config.glob or [])
+            return SearchResult(
+                matches=[
+                    MatchLine(
+                        line_number=1,
+                        text="safeParseJSON(value)",
+                        file=".claude/lib/utils.cjs",
+                    )
+                ],
+                matched_file_paths=[".claude/lib/utils.cjs"],
+                match_counts_by_file={".claude/lib/utils.cjs": 1},
+                total_files=1,
+                total_matches=1,
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_json",
+            )
+
+    class _RipgrepPipeline:
+        def __init__(self, force_cpu=False, config=None):
+            self.backend = RipgrepBackend()
+            self.selected_backend_name = "RipgrepBackend"
+            self.selected_backend_reason = "rg_json"
+            self.selected_gpu_device_ids = []
+            self.selected_gpu_chunk_plan_mb = []
+
+        def get_backend(self):
+            return self.backend
+
+    monkeypatch.setattr("tensor_grep.backends.ripgrep_backend.RipgrepBackend", RipgrepBackend)
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _RipgrepPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "safeParseJSON", ".claude", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert seen["paths"] == [".claude"]
+    assert "!context/**" in seen["glob"]
+    assert "!**/context/**" in seen["glob"]
 
 
 def test_cli_wrapped_rg_regex_parse_error_reports_diagnostic(monkeypatch):

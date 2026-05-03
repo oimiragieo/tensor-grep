@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -27,10 +28,12 @@ _TG_ONLY_SEARCH_FLAGS = {
     "--gpu-device-ids",
     "--json",
     "--ndjson",
+    "--pcre2-version",
     "--lang",
     "--ltl",
     "--replace",
     "--stats",
+    "--type-list",
     "-l",
     "-g",
     "-r",
@@ -73,6 +76,56 @@ _SCAN_FULL_CLI_FLAG_PREFIXES = (
     "--write-baseline=",
     "--write-suppressions=",
 )
+_GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
+_SEARCH_PATTERN_FLAGS = {"-e", "--regexp"}
+_SEARCH_LITERAL_FLAGS = {"-F", "--fixed-strings"}
+_SEARCH_PCRE2_FLAGS = {"-P", "--pcre2"}
+_SEARCH_FLAGS_WITH_VALUES = {
+    "-A",
+    "-B",
+    "-C",
+    "-E",
+    "-M",
+    "-g",
+    "-j",
+    "-m",
+    "--after-context",
+    "--before-context",
+    "--color",
+    "--colors",
+    "--context",
+    "--context-separator",
+    "--dfa-size-limit",
+    "--encoding",
+    "--engine",
+    "--field-context-separator",
+    "--field-match-separator",
+    "--glob",
+    "--gpu-device-ids",
+    "--hostname-bin",
+    "--hyperlink-format",
+    "--iglob",
+    "--ignore-file",
+    "--max-columns",
+    "--max-count",
+    "--max-depth",
+    "--max-filesize",
+    "--path-separator",
+    "--pre",
+    "--pre-glob",
+    "--regex-size-limit",
+    "--replace",
+    "--sort",
+    "--sortr",
+    "--threads",
+    "--type",
+    "--type-add",
+    "--type-clear",
+    "--type-not",
+    "-r",
+    "-t",
+    "-T",
+}
 
 
 def _prefer_rust_first_search() -> bool:
@@ -175,6 +228,63 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     )
 
 
+def _search_args_include_guarded_broad_root(search_args: list[str]) -> bool:
+    for arg in search_args:
+        if not arg or arg == "-" or arg.startswith("-"):
+            continue
+        normalized = arg.replace("\\", "/").rstrip("/").lower()
+        if normalized in _GUARDED_BROAD_SEARCH_ROOTS:
+            return True
+        if any(normalized.endswith(f"/{root}") for root in _GUARDED_BROAD_SEARCH_ROOTS):
+            return True
+    return False
+
+
+def _regex_patterns_from_search_args(search_args: list[str]) -> list[str]:
+    skip_next = False
+    bare_pattern: str | None = None
+    regexp_patterns: list[str] = []
+    for index, arg in enumerate(search_args):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in _SEARCH_PATTERN_FLAGS:
+            if index + 1 < len(search_args):
+                regexp_patterns.append(search_args[index + 1])
+                skip_next = True
+            continue
+        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_FLAGS):
+            regexp_patterns.append(arg.split("=", 1)[1])
+            continue
+        if arg in _SEARCH_FLAGS_WITH_VALUES:
+            skip_next = True
+            continue
+        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
+            continue
+        if arg.startswith("-"):
+            continue
+        if bare_pattern is None:
+            bare_pattern = arg
+    if regexp_patterns:
+        return regexp_patterns
+    return [bare_pattern] if bare_pattern is not None else []
+
+
+def _search_args_include_obviously_invalid_regex(search_args: list[str]) -> bool:
+    if any(arg in _SEARCH_LITERAL_FLAGS for arg in search_args):
+        return False
+    if any(arg in _SEARCH_PCRE2_FLAGS for arg in search_args):
+        return False
+    for pattern in _regex_patterns_from_search_args(search_args):
+        if not pattern:
+            continue
+        try:
+            re.compile(pattern)
+        except re.error:
+            return True
+    return False
+
+
 def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
     if (
         not env_flag_enabled("TG_FORCE_CPU")
@@ -237,10 +347,17 @@ def main_entry() -> None:
         effective_search_args = _effective_native_tg_search_args(search_args)
         native_binary_path = resolve_native_tg_binary()
         native_binary = str(native_binary_path) if native_binary_path else None
+        guarded_broad_root = _search_args_include_guarded_broad_root(search_args)
+        invalid_regex = _search_args_include_obviously_invalid_regex(search_args)
 
-        if native_binary is not None and (
-            _can_delegate_to_native_tg_search(effective_search_args)
-            or (_prefer_rust_first_search() and not _requires_full_cli(search_args))
+        if (
+            native_binary is not None
+            and not guarded_broad_root
+            and not invalid_regex
+            and (
+                _can_delegate_to_native_tg_search(effective_search_args)
+                or (_prefer_rust_first_search() and not _requires_full_cli(search_args))
+            )
         ):
             command_args = (
                 effective_search_args
@@ -249,7 +366,7 @@ def main_entry() -> None:
             )
             raise SystemExit(_run_native_tg_search(native_binary, command_args))
 
-        if not _requires_full_cli(search_args):
+        if not guarded_broad_root and not invalid_regex and not _requires_full_cli(search_args):
             rg_binary_path = resolve_ripgrep_binary()
             binary_name = str(rg_binary_path) if rg_binary_path else None
             if binary_name is not None:

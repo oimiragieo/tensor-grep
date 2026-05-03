@@ -42,6 +42,41 @@ if TYPE_CHECKING:
 _DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
 _DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS = 25
 _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
+_GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
+_GUARDED_BROAD_ROOT_RG_GLOBS = (
+    "!context/**",
+    "!**/context/**",
+    "!node_modules/**",
+    "!**/node_modules/**",
+    "!__pycache__/**",
+    "!**/__pycache__/**",
+    "!dist/**",
+    "!**/dist/**",
+    "!build/**",
+    "!**/build/**",
+)
+_BUILTIN_TYPE_LIST = (
+    "asm: *.asm, *.s, *.S",
+    "c: *.c, *.h",
+    "cpp: *.cc, *.cpp, *.cxx, *.hpp, *.hh, *.hxx",
+    "csharp: *.cs",
+    "css: *.css",
+    "go: *.go",
+    "html: *.htm, *.html",
+    "java: *.java",
+    "javascript: *.js, *.jsx, *.mjs, *.cjs",
+    "json: *.json, *.jsonl",
+    "kotlin: *.kt, *.kts",
+    "lua: *.lua",
+    "markdown: *.md, *.markdown",
+    "php: *.php",
+    "python: *.py, *.pyi",
+    "rust: *.rs",
+    "swift: *.swift",
+    "toml: *.toml",
+    "typescript: *.ts, *.tsx",
+    "yaml: *.yml, *.yaml",
+)
 
 app = typer.Typer(
     help="""tensor-grep (tg) - Fast text, AST, indexed, and GPU-aware search CLI
@@ -657,11 +692,56 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
 
 
 def _exit_invalid_regex(exc: Exception) -> None:
+    message = str(exc)
+    if "invalid regex" not in message.lower():
+        message = f"invalid regex pattern: {message}"
     typer.echo(
-        f"Error: {exc}. Use --fixed-strings (-F) to search this pattern literally.",
+        f"Error: {message}. Use --fixed-strings (-F) to search this pattern literally.",
         err=True,
     )
     sys.exit(2)
+
+
+def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
+    if config.fixed_strings or config.pcre2:
+        return
+
+    flags = 0
+    if config.ignore_case or (config.smart_case and pattern.islower()):
+        flags |= re.IGNORECASE
+
+    candidate = pattern
+    if config.line_regexp:
+        candidate = f"^{pattern}$"
+    elif config.word_regexp:
+        candidate = rf"\b{pattern}\b"
+
+    try:
+        re.compile(candidate, flags)
+    except re.error as exc:
+        from tensor_grep.backends.cpu_backend import InvalidRegexError
+
+        raise InvalidRegexError(f"error parsing regex: {exc}") from exc
+
+
+def _search_paths_include_guarded_broad_root(paths: list[str]) -> bool:
+    for path in paths:
+        if not path or path == "-" or path.startswith("-"):
+            continue
+        normalized = path.replace("\\", "/").rstrip("/").lower()
+        if normalized in _GUARDED_BROAD_SEARCH_ROOTS:
+            return True
+        if any(normalized.endswith(f"/{root}") for root in _GUARDED_BROAD_SEARCH_ROOTS):
+            return True
+    return False
+
+
+def _config_with_guarded_broad_root_globs(config: "SearchConfig") -> "SearchConfig":
+    existing_globs = list(config.glob or [])
+    for glob in _GUARDED_BROAD_ROOT_RG_GLOBS:
+        if glob not in existing_globs:
+            existing_globs.append(glob)
+    return replace(config, glob=existing_globs)
 
 
 def _sum_total_bytes(paths: list[str]) -> int:
@@ -752,6 +832,9 @@ def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
             if completed.stderr:
                 typer.echo(completed.stderr.rstrip("\n\r"), err=True)
             raise typer.Exit(0)
+    if flag == "--type-list" and last_completed is None:
+        typer.echo("\n".join(_BUILTIN_TYPE_LIST))
+        raise typer.Exit(0)
     if last_completed is not None:
         output = last_completed.stderr.strip() or last_completed.stdout.strip()
         if output:
@@ -2458,15 +2541,29 @@ def search_command(
         query_pattern=pattern,
         gpu_device_ids=parsed_gpu_device_ids,
     )
+    if not files:
+        try:
+            patterns_to_validate = regexp_patterns if regexp_patterns else [pattern]
+            for regex_pattern in patterns_to_validate:
+                _validate_search_regex(regex_pattern, config)
+        except Exception as exc:
+            if _is_invalid_regex_error(exc):
+                _exit_invalid_regex(exc)
+            raise
+    guarded_broad_root = _search_paths_include_guarded_broad_root(paths_to_search)
 
     native_tg_binary = resolve_native_tg_binary()
-    if native_tg_binary is not None and _can_delegate_to_native_tg_search(
-        config,
-        ndjson=ndjson,
-        files_mode=files,
-        files_with_matches=files_with_matches,
-        files_without_match=files_without_match,
-        format_type=format_type,
+    if (
+        native_tg_binary is not None
+        and not guarded_broad_root
+        and _can_delegate_to_native_tg_search(
+            config,
+            ndjson=ndjson,
+            files_mode=files,
+            files_with_matches=files_with_matches,
+            files_without_match=files_without_match,
+            format_type=format_type,
+        )
     ):
         sys.exit(
             _delegate_to_native_tg_search(
@@ -2481,16 +2578,20 @@ def search_command(
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
     rg_backend = RipgrepBackend()
-    can_passthrough_rg = rg_backend.is_available() and _can_passthrough_rg(
-        config,
-        format_type=format_type,
-        json_mode=json,
-        ndjson_mode=ndjson,
-        files_mode=files,
-        files_with_matches=files_with_matches,
-        files_without_match=files_without_match,
-        only_matching=only_matching,
-        stats_mode=stats,
+    can_passthrough_rg = (
+        not guarded_broad_root
+        and rg_backend.is_available()
+        and _can_passthrough_rg(
+            config,
+            format_type=format_type,
+            json_mode=json,
+            ndjson_mode=ndjson,
+            files_mode=files,
+            files_with_matches=files_with_matches,
+            files_without_match=files_without_match,
+            only_matching=only_matching,
+            stats_mode=stats,
+        )
     )
     if can_passthrough_rg:
         if not stats:
@@ -2586,8 +2687,13 @@ def search_command(
     # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
         rg_backend = cast(RipgrepBackend, backend)
+        rg_search_config = (
+            _config_with_guarded_broad_root_globs(config) if guarded_broad_root else config
+        )
         search_targets = (
-            candidate_files_ordered
+            paths_to_search
+            if guarded_broad_root
+            else candidate_files_ordered
             if (files_with_matches or files_without_match)
             else paths_to_search
         )
@@ -2599,7 +2705,7 @@ def search_command(
                 span.set_attribute("backend", backend.__class__.__name__)
                 span.set_attribute("path_count", len(search_targets))
             try:
-                result = rg_backend.search(search_targets, pattern, config=config)
+                result = rg_backend.search(search_targets, pattern, config=rg_search_config)
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
                     _exit_invalid_regex(exc)

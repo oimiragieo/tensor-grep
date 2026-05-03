@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 
 from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.cpu_backend import InvalidRegexError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -11,6 +12,17 @@ try:
     HAVE_RUST = True
 except ImportError:
     HAVE_RUST = False
+
+
+def _is_invalid_regex_error(exc: Exception) -> bool:
+    if isinstance(exc, (re.error, InvalidRegexError)):
+        return True
+    message = str(exc).lower()
+    return (
+        "regex parse error" in message
+        or "error parsing regex" in message
+        or "invalid regex" in message
+    )
 
 
 class RustCoreBackend(ComputeBackend):
@@ -107,9 +119,8 @@ class RustCoreBackend(ComputeBackend):
         flags = re.IGNORECASE if ignore_case else 0
         try:
             return re.search(pattern_bytes, haystack, flags=flags) is not None
-        except re.error:
-            escaped = re.escape(pattern_bytes)
-            return re.search(escaped, haystack, flags=flags) is not None
+        except re.error as exc:
+            raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
@@ -253,7 +264,9 @@ class RustCoreBackend(ComputeBackend):
                 )
             except TypeError:
                 results = self.inner.search(pattern, str(file_path), ignore_case, fixed_strings)
-        except Exception:
+        except Exception as exc:
+            if _is_invalid_regex_error(exc):
+                raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
             return SearchResult(
                 matches=[],
                 total_files=0,

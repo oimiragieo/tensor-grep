@@ -141,6 +141,28 @@ def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     assert binary_result.total_matches == 1
 
 
+def test_rust_backend_invalid_regex_in_binary_notice_does_not_become_literal(
+    monkeypatch, tmp_path: Path
+):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.backends.cpu_backend import InvalidRegexError
+    from tensor_grep.core.config import SearchConfig
+
+    class FakeNativeRustBackend:
+        def search(self, pattern, path, ignore_case, fixed_strings, invert_match):
+            raise AssertionError("binary notice path should validate before native search")
+
+    monkeypatch.setattr(rb, "HAVE_RUST", True)
+    monkeypatch.setattr(rb, "NativeRustBackend", FakeNativeRustBackend)
+
+    backend = rb.RustCoreBackend()
+    binary_file = tmp_path / "compiled.pyc"
+    binary_file.write_bytes(b"\x80(\x00hidden")
+
+    with pytest.raises(InvalidRegexError):
+        backend.search(str(binary_file), "(", config=SearchConfig())
+
+
 def test_rust_backend_count_fast_path_reports_routing_metadata(monkeypatch, tmp_path: Path):
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.core.config import SearchConfig

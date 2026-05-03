@@ -3973,6 +3973,19 @@ def _score_text_terms(text: str, terms: list[str]) -> int:
     return sum(1 for term in terms if term in haystack)
 
 
+def _symbol_lookup_key(text: str) -> str:
+    return "".join(re.findall(r"[A-Za-z0-9]+", text)).lower()
+
+
+def _symbol_name_matches_query_exactly(symbol_name: str, query: str) -> bool:
+    symbol_key = _symbol_lookup_key(symbol_name)
+    if not symbol_key:
+        return False
+    if symbol_key == _symbol_lookup_key(query):
+        return True
+    return any(symbol_key == _symbol_lookup_key(token) for token in _query_terms(query))
+
+
 def _score_file_path(path: str, terms: list[str]) -> int:
     return _score_text_terms(Path(path).name, terms) + _score_text_terms(path, terms)
 
@@ -4557,7 +4570,10 @@ def _build_context_pack_from_map(
             scored_symbol["score"] = score
             current_path = str(scored_symbol["file"])
             symbol_name_score = _score_text_terms(str(scored_symbol["name"]), symbol_terms)
-            if symbol_name_score > 0:
+            if symbol_name_score > 0 and _symbol_name_matches_query_exactly(
+                str(scored_symbol["name"]),
+                query,
+            ):
                 _append_reason(file_reasons, current_path, "definition")
                 _append_reason(file_reasons, current_path, "symbol")
             scored_symbols.append(scored_symbol)
@@ -8607,16 +8623,22 @@ def build_symbol_impact_from_map(
         _profiling_collector=_profiling_collector,
     )
 
-    file_matches_by_path: dict[str, dict[str, Any]] = {
-        str(item["path"]): {
-            "path": str(item["path"]),
+    definition_file_set = set(definition_files)
+    file_matches_by_path: dict[str, dict[str, Any]] = {}
+    for item in context_payload.get("file_matches", []):
+        item_path = str(item["path"])
+        item_reasons = list(item["reasons"])
+        if item_path not in definition_file_set:
+            item_reasons = [
+                reason for reason in item_reasons if reason not in {"definition", "symbol"}
+            ]
+        file_matches_by_path[item_path] = {
+            "path": item_path,
             "score": int(item["score"]),
-            "reasons": list(item["reasons"]),
-            "provenance": list(item.get("provenance", [])),
+            "reasons": item_reasons,
+            "provenance": _provenance_from_reasons(item_reasons),
             **({"graph_score": float(item["graph_score"])} if "graph_score" in item else {}),
         }
-        for item in context_payload.get("file_matches", [])
-    }
     for current in definition_files:
         entry = file_matches_by_path.setdefault(
             str(current),

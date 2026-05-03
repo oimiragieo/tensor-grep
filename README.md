@@ -98,8 +98,9 @@ What is now contract-tested:
 - capped blast-radius no-matches can seed literal symbol files outside the initial scan cap through a bounded scan before returning a compact no-match
 - high-cap blast-radius caller scans now skip files that cannot contain the target symbol literal before running language-specific caller extraction, while preserving import/use evidence for alias/default-import/re-export callers
 - both the CPU fallback and Rust extension backend skip binary blobs unless `-a/--text` or `--binary` explicitly opts in, avoiding `.pyc`/bytecode dumps in agent JSON
-- `tg search PATTERN` defaults to the current directory, `--json` no-match emits a valid empty envelope, invalid regex exits distinctly from no-match, and editor-facing flags such as `--column`, `--vimgrep`, and `--path-separator` are forwarded or formatted consistently
-- generated `.claude/context` snapshots and common build/cache directories are skipped by default during Python fallback scans; use `--no-ignore` only when those generated files are the explicit target
+- `tg search PATTERN` defaults to the current directory, `--json` no-match emits a valid empty envelope, invalid regex exits distinctly from no-match before native delegation/scanning, and editor-facing flags such as `--column`, `--vimgrep`, and `--path-separator` are forwarded or formatted consistently
+- generated `.claude/context` snapshots and common build/cache directories are skipped by default during Python fallback scans; rust-first bootstrap also falls back to the Python guardrail path for broad `.claude` roots, and `--no-ignore` should only be used when those generated files are the explicit target
+- `tg search --type-list` has a built-in fallback when neither ripgrep nor a standalone native binary is available; `--pcre2-version` follows ripgrep and returns an error when no PCRE2-capable backend is available
 
 Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
 

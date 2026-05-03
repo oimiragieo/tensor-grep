@@ -99,6 +99,33 @@ def test_context_pack_does_not_label_path_only_symbol_scores_as_definitions(
     assert "symbol" not in match["reasons"]
 
 
+def test_symbol_impact_does_not_label_partial_symbol_matches_as_definitions(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    target_path = project / ".claude" / "lib" / "utils.cjs"
+    noisy_path = project / ".claude" / "lib" / "json-router.cjs"
+    _write(
+        target_path,
+        "function safeParseJSON(value) {\n  return JSON.parse(value);\n}\n"
+        "module.exports = { safeParseJSON };\n",
+    )
+    _write(
+        noisy_path,
+        "function parseJSONRoute(value) {\n  return value;\n}\n"
+        "module.exports = { parseJSONRoute };\n",
+    )
+
+    payload = repo_map.build_symbol_impact("safeParseJSON", project)
+    matches_by_path = {item["path"]: item for item in payload["file_matches"]}
+
+    assert matches_by_path[str(target_path.resolve())]["reasons"][:1] == ["definition"]
+    noisy_match = matches_by_path.get(str(noisy_path.resolve()))
+    if noisy_match is not None:
+        assert "definition" not in noisy_match["reasons"]
+        assert "symbol" not in noisy_match["reasons"]
+
+
 def test_context_render_limits_source_sections_to_one_per_file(tmp_path: Path) -> None:
     project = tmp_path / "project"
     module_path = project / "src" / "payments.py"
