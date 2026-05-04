@@ -56,6 +56,17 @@ def test_install_ps1_should_prepend_shim_dirs_ahead_of_stale_python_scripts():
     assert '"$env:Path;$shimDir"' not in content
 
 
+def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim():
+    content = _read_script("scripts/install.ps1")
+
+    assert '"tg.com", "tg.exe", "tg.bat", "tg.ps1"' in content
+    assert "Remove-Item -LiteralPath $staleShimPath -Force" in content
+    assert "Removed stale tg launcher shadowing managed shim" in content
+    assert content.index("Remove-Item -LiteralPath $staleShimPath -Force") < content.index(
+        "Set-Content -Path $cmdShimPath"
+    )
+
+
 def test_install_sh_should_target_native_frontdoor_instead_of_venv_console_script():
     content = _read_script("scripts/install.sh")
 

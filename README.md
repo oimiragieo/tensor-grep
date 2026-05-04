@@ -258,7 +258,7 @@ Installer defaults and channels:
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.3`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
-- Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, moves those shim directories ahead of stale Python `Scripts` launchers on User PATH, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
+- Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, removes stale same-directory `tg.exe`/`tg.bat` launchers that would shadow the shim, moves those shim directories ahead of stale Python `Scripts` launchers on User PATH, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
 
 If `tg --version` still reports an older version, check command resolution:
 ```powershell
