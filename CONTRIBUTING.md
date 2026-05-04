@@ -34,6 +34,9 @@ uv run python scripts/validate_release_assets.py
   - `docs: ...`, `test: ...`, `chore: ...`, `ci: ...`, `build: ...` => no release
 - Use **Squash and merge** for release-bearing PRs so the validated PR title becomes the commit subject on `main`.
 - Do not manually create release tags while semantic-release is active.
+- A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state.
+- Release versioning starts only after a release-bearing PR is squash-merged to `main`.
+- Release work is not complete until main CI and semantic-release complete successfully, `publish-success-gate` passes when publishing is required, tags/main are fetched, local `main` is fast-forwarded to the release commit, and PyPI/public installer availability is verified when relevant.
 
 ## Documentation and Contract Changes
 

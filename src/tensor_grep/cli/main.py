@@ -722,8 +722,7 @@ def _write_path_list(paths: list[str], *, use_nul: bool) -> None:
         sys.stdout.buffer.write(payload)
         sys.stdout.buffer.flush()
         return
-    sys.stdout.write("\n".join(paths))
-    sys.stdout.write("\n")
+    _safe_stdout_line("\n".join(paths))
 
 
 def _safe_stdout_line(text: str) -> None:
@@ -2744,6 +2743,13 @@ def search_command(
     all_results.routing_gpu_chunk_plan_mb = selected_gpu_chunk_plan_mb
     search_start = time.perf_counter()
     matched_file_paths: set[str] = set()
+    matched_file_paths_ordered: list[str] = []
+
+    def _record_matched_file(file_path: str | None) -> None:
+        if not file_path or file_path in matched_file_paths:
+            return
+        matched_file_paths.add(file_path)
+        matched_file_paths_ordered.append(file_path)
 
     def _merge_runtime_routing(result: SearchResult) -> None:
         # Runtime routing metadata is authoritative when a backend internally
@@ -2799,11 +2805,13 @@ def search_command(
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
-            matched_file_paths.update(result.matched_file_paths)
+            for matched_path in result.matched_file_paths:
+                _record_matched_file(matched_path)
             _merge_count_metadata(result)
             all_results.total_matches += result.total_matches
             all_results.total_files += result.total_files
-            matched_file_paths.update(m.file for m in result.matches)
+            for match in result.matches:
+                _record_matched_file(match.file)
             _merge_runtime_routing(result)
     else:
         for current_file in candidate_files_ordered:
@@ -2823,13 +2831,15 @@ def search_command(
                 if span is not None:
                     span.set_attribute("matches", result.total_matches)
             all_results.matches.extend(result.matches)
-            matched_file_paths.update(result.matched_file_paths)
+            for matched_path in result.matched_file_paths:
+                _record_matched_file(matched_path)
             _merge_count_metadata(result)
             all_results.total_matches += result.total_matches
             if result.total_files > 0 or result.total_matches > 0:
                 all_results.total_files += 1
-                matched_file_paths.add(current_file)
-            matched_file_paths.update(m.file for m in result.matches)
+                _record_matched_file(current_file)
+            for match in result.matches:
+                _record_matched_file(match.file)
             _merge_runtime_routing(result)
 
     if config.replace_str is not None:
@@ -2840,6 +2850,10 @@ def search_command(
         all_results.total_matches = len(all_results.matches)
         all_results.total_files = len({m.file for m in all_results.matches})
         matched_file_paths = {m.file for m in all_results.matches}
+        matched_file_paths_ordered = []
+        for match in all_results.matches:
+            if match.file not in matched_file_paths_ordered:
+                matched_file_paths_ordered.append(match.file)
 
     matched_files = set(matched_file_paths)
     all_results.matched_file_paths = sorted(matched_files)
@@ -2947,7 +2961,8 @@ def search_command(
     if files_with_matches:
         if matched_files:
             _emit_stats()
-            _write_path_list(sorted(matched_files), use_nul=null)
+            output_paths = matched_file_paths_ordered or sorted(matched_files)
+            _write_path_list(output_paths, use_nul=null)
             sys.exit(0)
         _emit_stats()
         sys.exit(1)
@@ -5483,7 +5498,7 @@ def ast_info(
         False, "--json", help="Output supported AST languages as JSON."
     ),
 ) -> None:
-    """List supported AST languages and grammars."""
+    """List supported AST language identifiers."""
     from tensor_grep.backends.ast_backend import get_supported_languages
 
     languages = get_supported_languages()

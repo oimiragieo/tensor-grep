@@ -46,11 +46,11 @@ Agent automation contracts:
 - `tg search --files-with-matches` stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.
 - Broad generated roots such as `.claude` are routed through Python guardrails instead of rust-first/native passthrough so generated `.claude/context` snapshots can be pruned by default.
 - `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
-- `tg ast-info --json` emits `{"languages": [...]}` for agent discovery without help-text scraping.
+- `tg ast-info --json` exposes AST language identifiers via `{"languages": [...]}` for agent discovery without help-text scraping.
 
 Known current limitations:
-- On Windows consoles using legacy codepages, broad plain path-list output from `tg search --files ...` can still fail when generated artifact trees contain paths or diagnostics that cannot be encoded by the active console. Scope file-list commands, prefer UTF-8-safe output, or use JSON/search commands until the path-list output path is fixed.
-- Broad generated roots can still be expensive for unattended agents. Use scoped roots and bounded options such as `--max-repo-files`, `--max-callers`, and `--max-files`.
+- Broad plain path-list output from `tg search --files ...` over generated artifact trees can still be expensive. The Python path-list output path and managed Windows launchers force UTF-8, but scope file-list commands to the smallest useful root.
+- Broad generated roots can still be expensive for unattended agents. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - `impact --symbol` is a broader planning signal and can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact checks.
 
 ## 4. Machine-readable CLI output (`--json` and `--ndjson`)

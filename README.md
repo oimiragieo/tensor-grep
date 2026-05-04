@@ -74,7 +74,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.11` release closeout: CI run `25296218480` and CodeQL run `25296218031` passed, semantic-release published GitHub release `v1.8.11`, and the PyPI publish/parity gate passed
+- `v1.8.14` release closeout: CI run `25324763737` and CodeQL run `25324762648` passed, semantic-release published GitHub release `v1.8.14`, the PyPI publish/parity gate passed, and the public Windows installer dogfood resolved fresh PowerShell/cmd PATH probes to `tensor-grep 1.8.14`
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:
@@ -89,6 +89,7 @@ What is now contract-tested:
 - `include_edit_plan_seed=False` keeps the fast lightweight path
 - `include_edit_plan_seed=True` returns full `edit_plan_seed`, `candidate_edit_targets`, and `navigation_pack` while honoring `max_repo_files`
 - broad `context-render`, `defs`, `source`, `refs`, `callers`, `impact`, and blast-radius CLI commands expose `--max-repo-files`
+- Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - no-match symbol lookups return compact `no_match` payloads instead of dumping unrelated repo inventories
 - CommonJS exported functions in `.cjs` files are discoverable by `map`, `defs`, `source`, `refs`, and context-render ranking
 - repo fallback validation prefers package-manager scripts such as `pnpm test` over guessed `npx jest` when a real `package.json` test script exists
@@ -178,13 +179,13 @@ Current CLI correctness line:
 - `tg search --replace` rewrites emitted match text in ripgrep style without mutating files
 - `tg search -o` now mirrors ripgrep single-file output formatting instead of forcing `file:line:text`
 - `tg run --json` emits structured output even without `--apply`
-- `tg search --files-with-matches` stays root-based and rg-compatible on the ripgrep path instead of expanding large Windows argv lists, and `tg ast-info --json` exposes AST grammar inventory for agents
+- `tg search --files-with-matches` stays root-based and rg-compatible on the ripgrep path instead of expanding large Windows argv lists, and `tg ast-info --json` exposes AST language identifiers for agents
 
 Important constraint:
 
 - do not treat internal GPU pipeline throughput as the same thing as end-to-end CLI crossover
 - current GPU routing decisions should follow [docs/gpu_crossover.md](docs/gpu_crossover.md), not isolated microbenchmarks
-- broad `tg search --files ...` over generated artifact trees can still hit Windows legacy-console Unicode encoding failures; scope file-list commands or use UTF-8-safe output until fixed
+- broad `tg search --files ...` over generated artifact trees can still be expensive; current Windows launchers and Python path-list output force UTF-8, but scope file-list commands to the smallest useful root
 
 ## Product Contracts
 

@@ -8,7 +8,7 @@ runner = CliRunner()
 
 
 def test_tg_ast_info():
-    """Verify that tg ast-info lists supported grammars."""
+    """Verify that tg ast-info lists supported AST language identifiers."""
     result = runner.invoke(app, ["ast-info"])
     assert result.exit_code == 0
     assert "Supported AST Languages" in result.stdout
@@ -16,7 +16,7 @@ def test_tg_ast_info():
 
 
 def test_tg_ast_info_json():
-    """Verify that tg ast-info can emit machine-readable grammar inventory."""
+    """Verify that tg ast-info can emit machine-readable language identifiers."""
     result = runner.invoke(app, ["ast-info", "--json"])
     assert result.exit_code == 0
 

@@ -5,8 +5,61 @@
 
 $ErrorActionPreference = "Stop"
 $originalPath = (Get-Location).Path
+$originalProcessPath = $env:Path
 $installChannel = if ($env:TENSOR_GREP_CHANNEL) { $env:TENSOR_GREP_CHANNEL } else { "stable" }
 $requestedVersion = $env:TENSOR_GREP_VERSION
+
+function Convert-ToMsysPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $normalizedPath = $Path -replace '\\', '/'
+    if ($normalizedPath -match '^([A-Za-z]):/(.*)$') {
+        return "/$($Matches[1].ToLowerInvariant())/$($Matches[2])"
+    }
+    return $normalizedPath
+}
+
+function Remove-StalePathLauncher {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$effectivePathParts,
+        [Parameter(Mandatory = $true)][hashtable]$managedPathSet
+    )
+
+    foreach ($pathPart in $effectivePathParts) {
+        if (!$pathPart -or !(Test-Path -LiteralPath $pathPart)) {
+            continue
+        }
+        foreach ($launcherName in @("tg.com", "tg.exe", "tg.bat", "tg.cmd", "tg.ps1", "tg")) {
+            $candidatePath = Join-Path $pathPart $launcherName
+            if (!(Test-Path -LiteralPath $candidatePath)) {
+                continue
+            }
+            $resolvedCandidate = (Resolve-Path -LiteralPath $candidatePath).Path
+            if ($managedPathSet.ContainsKey($resolvedCandidate.ToLowerInvariant())) {
+                continue
+            }
+            $candidateVersion = ""
+            try {
+                $candidateVersion = (& $candidatePath --version 2>$null | Select-Object -First 1)
+            } catch {
+                continue
+            }
+            if (!$candidateVersion.StartsWith("tensor-grep ")) {
+                continue
+            }
+            try {
+                Remove-Item -LiteralPath $candidatePath -Force
+                Write-Host "Removed unmanaged tg launcher from PATH: $candidatePath ($candidateVersion)"
+            } catch {
+                Write-Warning (
+                    "WARNING: stale tg launcher remains ahead of managed shim: " +
+                    "$candidatePath ($candidateVersion). Remove it or move the managed shim " +
+                    "directories earlier in Machine PATH."
+                )
+            }
+        }
+    }
+}
 
 Write-Host "=========================================================="
 Write-Host "           TENSOR-GREP WINDOWS INSTALLER                  "
@@ -100,8 +153,30 @@ try {
         New-Item -ItemType Directory -Path (Join-Path $installDir "bin") -Force | Out-Null
     }
     $frontdoorCmdPath = Join-Path $frontdoorDir "tg.cmd"
-    $frontdoorCmdContent = "@echo off`r`n`"$installDir\.venv\Scripts\python.exe`" -m tensor_grep %*`r`n"
+    $frontdoorPs1Path = Join-Path $frontdoorDir "tg.ps1"
+    $frontdoorBashPath = Join-Path $frontdoorDir "tg"
+    $msysInstallDir = Convert-ToMsysPath $installDir
+    $frontdoorCmdContent = (
+        "@echo off`r`n" +
+        "set PYTHONUTF8=1`r`n" +
+        "set PYTHONIOENCODING=utf-8`r`n" +
+        "`"$installDir\.venv\Scripts\python.exe`" -X utf8 -m tensor_grep %*`r`n"
+    )
+    $frontdoorPs1Content = @"
+`$env:PYTHONUTF8 = "1"
+`$env:PYTHONIOENCODING = "utf-8"
+& "$installDir\.venv\Scripts\python.exe" -X utf8 -m tensor_grep @args
+exit `$LASTEXITCODE
+"@
+    $frontdoorBashContent = @"
+#!/usr/bin/env bash
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+"$msysInstallDir/.venv/Scripts/python.exe" -X utf8 -m tensor_grep "$@"
+"@
     Set-Content -Path $frontdoorCmdPath -Value $frontdoorCmdContent -Encoding ascii
+    Set-Content -Path $frontdoorPs1Path -Value $frontdoorPs1Content -Encoding ascii
+    Set-Content -Path $frontdoorBashPath -Value $frontdoorBashContent -Encoding ascii
 
     Write-Host "      Installing managed external LSP providers..."
     try {
@@ -119,13 +194,27 @@ try {
         "$env:USERPROFILE\.local\bin",
         "$env:USERPROFILE\bin"
     )
-    $cmdShimContent = "@echo off`r`n`"$frontdoorCmdPath`" %*`r`n"
+    $cmdShimContent = (
+        "@echo off`r`n" +
+        "set PYTHONUTF8=1`r`n" +
+        "set PYTHONIOENCODING=utf-8`r`n" +
+        "`"$frontdoorCmdPath`" %*`r`n"
+    )
+    $ps1ShimContent = @"
+& "$frontdoorPs1Path" @args
+exit `$LASTEXITCODE
+"@
+    $msysFrontdoorPath = Convert-ToMsysPath $frontdoorBashPath
+    $bashShimContent = @"
+#!/usr/bin/env bash
+"$msysFrontdoorPath" "$@"
+"@
     $installedShimPaths = @()
     foreach ($shimDir in $shimDirs) {
         if (!(Test-Path $shimDir)) {
             New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
         }
-        foreach ($staleShimName in @("tg.com", "tg.exe", "tg.bat", "tg.ps1")) {
+        foreach ($staleShimName in @("tg.com", "tg.exe", "tg.bat", "tg.ps1", "tg")) {
             $staleShimPath = Join-Path $shimDir $staleShimName
             if (Test-Path -LiteralPath $staleShimPath) {
                 Remove-Item -LiteralPath $staleShimPath -Force
@@ -133,8 +222,14 @@ try {
             }
         }
         $cmdShimPath = "$shimDir\tg.cmd"
+        $ps1ShimPath = "$shimDir\tg.ps1"
+        $bashShimPath = "$shimDir\tg"
         Set-Content -Path $cmdShimPath -Value $cmdShimContent -Encoding ascii
+        Set-Content -Path $ps1ShimPath -Value $ps1ShimContent -Encoding ascii
+        Set-Content -Path $bashShimPath -Value $bashShimContent -Encoding ascii
         $installedShimPaths += $cmdShimPath
+        $installedShimPaths += $ps1ShimPath
+        $installedShimPaths += $bashShimPath
     }
 
     # Ensure user PATH resolves managed shims before stale Python Scripts entries.
@@ -155,14 +250,38 @@ try {
     $currentPathParts = @($shimDirs + ($currentPathParts | Where-Object { $shimDirs -notcontains $_ }))
     $env:Path = ($currentPathParts -join ';')
 
+    # Remove unmanaged tensor-grep launchers from effective PATH entries that User PATH cannot outrank.
+    $managedPathSet = @{}
+    foreach ($managedPath in @($frontdoorCmdPath, $frontdoorPs1Path, $frontdoorBashPath) + $installedShimPaths) {
+        if (Test-Path -LiteralPath $managedPath) {
+            $managedPathSet[((Resolve-Path -LiteralPath $managedPath).Path.ToLowerInvariant())] = $true
+        }
+    }
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $effectivePathParts = @()
+    foreach ($pathText in @($originalProcessPath, $machinePath, $userPath)) {
+        if (!$pathText) {
+            continue
+        }
+        foreach ($pathPart in ($pathText -split ';')) {
+            $trimmedPathPart = $pathPart.Trim()
+            if ($trimmedPathPart -and $effectivePathParts -notcontains $trimmedPathPart) {
+                $effectivePathParts += $trimmedPathPart
+            }
+        }
+    }
+    Remove-StalePathLauncher `
+        -effectivePathParts $effectivePathParts `
+        -managedPathSet $managedPathSet
+
     # 6. Add Alias to both PowerShell 7 and Windows PowerShell profiles.
     $docsPath = [Environment]::GetFolderPath("MyDocuments")
     $profilePaths = @(
         (Join-Path $docsPath "PowerShell\Microsoft.PowerShell_profile.ps1"),
         (Join-Path $docsPath "WindowsPowerShell\Microsoft.PowerShell_profile.ps1")
     )
-    $aliasCommand = "Set-Alias -Name tg -Value `"$frontdoorCmdPath`" -Scope Global"
-    $aliasPattern = '(?m)^\s*Set-Alias\s+-Name\s+tg\s+-Value\s+.*$'
+    $aliasCommand = "function tg { & `"$frontdoorPs1Path`" @args }"
+    $aliasPattern = '(?m)^\s*(Set-Alias\s+-Name\s+tg\s+-Value\s+.*|function\s+tg\s*\{.*\})\s*$'
     foreach ($profilePath in $profilePaths) {
         $profileDir = Split-Path -Parent $profilePath
         if (!(Test-Path $profileDir)) {
@@ -175,16 +294,18 @@ try {
         if ($profileContent -match $aliasPattern) {
             $updatedProfile = [regex]::Replace($profileContent, $aliasPattern, $aliasCommand)
             Set-Content -Path $profilePath -Value $updatedProfile
-            Write-Host "Updated existing tg alias in profile: $profilePath"
+            Write-Host "Updated existing tg function in profile: $profilePath"
         } else {
-            Add-Content -Path $profilePath -Value "`n# Tensor-Grep Alias`n$aliasCommand"
-            Write-Host "Added tg alias to profile: $profilePath"
+            Add-Content -Path $profilePath -Value "`n# Tensor-Grep Function`n$aliasCommand"
+            Write-Host "Added tg function to profile: $profilePath"
         }
     }
 
     # Ensure current session resolves tg to the newly installed front-door immediately.
-    Set-Alias -Name tg -Value $frontdoorCmdPath -Scope Global -Force
-    Write-Host "Current session alias now points to: $((Get-Command tg).Source)"
+    Remove-Item Alias:tg -ErrorAction SilentlyContinue
+    $global:TensorGrepFrontdoorPs1 = $frontdoorPs1Path
+    Set-Item -Path Function:\global:tg -Value { & $global:TensorGrepFrontdoorPs1 @args }
+    Write-Host "Current session tg command now points to: $((Get-Command tg).Source)"
     Write-Host "Installed PATH shims:"
     Write-Host "  - $frontdoorCmdPath"
     $installedShimPaths | ForEach-Object { Write-Host "  - $_" }

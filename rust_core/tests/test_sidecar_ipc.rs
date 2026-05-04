@@ -372,7 +372,7 @@ fn test_gpu_search_cuda_visible_devices_empty_reports_clear_error_without_traceb
         .env("CUDA_VISIBLE_DEVICES", "");
     configure_repo_python_env(&mut tg);
 
-    let output = run_with_timeout(tg, Duration::from_secs(5));
+    let output = run_with_timeout(tg, sidecar_test_timeout());
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);

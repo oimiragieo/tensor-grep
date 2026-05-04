@@ -4,15 +4,16 @@
 
 ## 2026-05-04 Current Handoff
 
-The current released state is `v1.8.11`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.14`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `05e6d95 chore(release): v1.8.11 [skip ci]`
-- Fix commit: `636e8ff fix: harden files-with-matches rg routing`
-- CI run `25296218480`: passed
-- CodeQL run `25296218031`: passed
-- Local `uv run tg --version`: `tensor-grep 1.8.11`
+- Release commit: `f6e2981 chore(release): v1.8.14 [skip ci]`
+- Latest fix commit: `f98a6e4 fix: correct Windows installer pinned extras`
+- CI run `25324763737`: passed
+- CodeQL run `25324762648`: passed
+- Local `uv run tg --version`: `tensor-grep 1.8.14`
+- PyPI/latest public installer dogfood: `1.8.14` verified
 
 Current product read:
 
@@ -388,6 +389,7 @@ Use the right benchmark for the changed surface. Do not claim a speedup without 
 - Do not break machine-facing contracts casually.
 - Do not let benchmark docs diverge from actual scripts.
 - Do not push from a dirty worktree when replay-worktree discipline is required.
+- Do not describe a pushed branch or open PR as complete release work. It is only ready for review/merge until the release completion contract in `AGENTS.md` and `docs/SESSION_HANDOFF.md` has passed.
 
 ---
 
