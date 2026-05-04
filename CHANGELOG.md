@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v1.8.11 (2026-05-04)
+
+### Bug Fixes
+
+- Harden files-with-matches rg routing
+  ([`636e8ff`](https://github.com/oimiragieo/tensor-grep/commit/636e8ff28f3e832c52147dd6771a22ff8a532ee8))
+
+
 ## v1.8.10 (2026-05-03)
 
 ### Bug Fixes
