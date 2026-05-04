@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.17 (2026-05-04)
+
+### Bug Fixes
+
+- Uninstall stale Python tg launcher owners
+  ([`e2ebbd2`](https://github.com/oimiragieo/tensor-grep/commit/e2ebbd2d46c7e419dd4154b7d646c18a91dcde54))
+
+Uninstall stale tensor-grep Python package owners when old Python Scripts tg.exe launchers shadow
+  managed Windows shims.
+
+
 ## v1.8.16 (2026-05-04)
 
 ### Bug Fixes
