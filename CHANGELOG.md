@@ -1,6 +1,16 @@
 # CHANGELOG
 
 
+## v1.8.16 (2026-05-04)
+
+### Bug Fixes
+
+- Skip inaccessible PATH entries in Windows installer
+  ([`6c2e59c`](https://github.com/oimiragieo/tensor-grep/commit/6c2e59ce115a686f354f458c599c0349b1b9cff6))
+
+Skip inaccessible PATH entries during Windows installer launcher cleanup.
+
+
 ## v1.8.15 (2026-05-04)
 
 ### Bug Fixes
