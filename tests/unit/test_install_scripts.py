@@ -73,6 +73,14 @@ def test_install_ps1_should_remove_unmanaged_tg_launchers_even_when_version_matc
     assert "if ($candidateVersion -eq $managedVersionLine)" not in content
 
 
+def test_install_ps1_should_uninstall_python_package_that_owns_stale_launcher():
+    content = _read_script("scripts/install.ps1")
+
+    assert "Attempting to uninstall stale tensor-grep package that owns PATH launcher" in content
+    assert "-m pip uninstall -y tensor-grep" in content
+    assert "Removed stale tensor-grep Python package from PATH owner" in content
+
+
 def test_install_ps1_should_skip_inaccessible_path_entries_when_scanning_launchers():
     content = _read_script("scripts/install.ps1")
 

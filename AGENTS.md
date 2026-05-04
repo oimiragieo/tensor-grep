@@ -16,18 +16,20 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-04, the current released state is `v1.8.14`.
+As of 2026-05-04, the current released state entering this branch is `v1.8.16`.
 
-- Release commit: `f6e2981 chore(release): v1.8.14 [skip ci]`
+- Release commit: `96509ca chore(release): v1.8.16 [skip ci]`
 - Fix commits:
+  - `6c2e59c fix: skip inaccessible PATH entries in Windows installer`
+  - `32293c0 fix: harden Windows launchers and path-list output`
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- CI run `25324763737`: passed
-- CodeQL run `25324762648`: passed
+- CI run `25340859231`: passed
+- CodeQL run `25341574114`: passed
 - Session handoff: `docs/SESSION_HANDOFF.md`
 
-The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, and `tg ast-info --json`. The active post-`v1.8.14` fix branch further hardens PATH/PATHEXT drift from stale or unmanaged Windows launchers.
+The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, and managed shim installation. The active post-`v1.8.16` fix branch further hardens stale Python package cleanup when an old `Python*\Scripts\tg.exe` still shadows managed shims.
 
 Known current weak spots:
 
@@ -35,6 +37,7 @@ Known current weak spots:
 - Broad generated roots can still be hostile to unattended agents. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - Prefer `blast-radius` over `impact --symbol` when direct symbol impact matters.
 - Windows launcher/path-list hardening should force UTF-8 for managed shims and Python path-list output; still scope broad file-list commands to avoid generated-tree volume.
+- If `cmd /c tg --version` or `pwsh -NoProfile -Command "tg --version"` resolves an old `Python*\Scripts\tg.exe`, treat it as installer evidence. The Windows installer should remove or uninstall tensor-grep-owned stale Python launchers instead of only warning about them.
 - `uv run tg doctor --json` can report a stale in-tree `rust_core/target/release/tg.exe`; rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
 
 ## Operating Rules
