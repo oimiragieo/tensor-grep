@@ -56,6 +56,23 @@ def test_install_ps1_should_prepend_shim_dirs_ahead_of_stale_python_scripts():
     assert '"$env:Path;$shimDir"' not in content
 
 
+def test_install_ps1_should_scan_earlier_path_entries_for_stale_tg_launchers():
+    content = _read_script("scripts/install.ps1")
+
+    assert "Remove-StalePathLauncher" in content
+    assert "$effectivePathParts" in content
+    assert "$managedPathSet" in content
+    assert "& $candidatePath --version" in content
+    assert "stale tg launcher remains ahead of managed shim" in content
+
+
+def test_install_ps1_should_remove_unmanaged_tg_launchers_even_when_version_matches():
+    content = _read_script("scripts/install.ps1")
+
+    assert "Removed unmanaged tg launcher from PATH" in content
+    assert "if ($candidateVersion -eq $managedVersionLine)" not in content
+
+
 def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim():
     content = _read_script("scripts/install.ps1")
 
@@ -65,6 +82,27 @@ def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim()
     assert content.index("Remove-Item -LiteralPath $staleShimPath -Force") < content.index(
         "Set-Content -Path $cmdShimPath"
     )
+
+
+def test_install_ps1_should_create_argv_safe_utf8_powershell_shims():
+    content = _read_script("scripts/install.ps1")
+
+    assert "$frontdoorPs1Path" in content
+    assert '$env:PYTHONUTF8 = "1"' in content
+    assert '$env:PYTHONIOENCODING = "utf-8"' in content
+    assert '& "$installDir\\.venv\\Scripts\\python.exe" -X utf8 -m tensor_grep @args' in content
+    assert '& "$frontdoorPs1Path" @args' in content
+    assert 'function tg { & `"$frontdoorPs1Path`" @args }' in content
+    assert 'Set-Alias -Name tg -Value `"$frontdoorCmdPath`"' not in content
+
+
+def test_install_ps1_should_create_git_bash_shims_without_pathext():
+    content = _read_script("scripts/install.ps1")
+
+    assert "$frontdoorBashPath" in content
+    assert "$msysInstallDir" in content
+    assert '"$msysInstallDir/.venv/Scripts/python.exe" -X utf8 -m tensor_grep "$@"' in content
+    assert '"$msysFrontdoorPath" "$@"' in content
 
 
 def test_install_ps1_should_place_extras_before_pinned_version_specifier():

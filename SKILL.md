@@ -7,28 +7,39 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-04, the current released version is `v1.8.11`.
+As of 2026-05-04, the current released version is `v1.8.14`.
 
 Current release facts:
 
-- Release commit: `05e6d95 chore(release): v1.8.11 [skip ci]`
-- Fix commit: `636e8ff fix: harden files-with-matches rg routing`
-- CI run `25296218480` and CodeQL run `25296218031` passed
+- Release commit: `f6e2981 chore(release): v1.8.14 [skip ci]`
+- Latest fix commit: `f98a6e4 fix: correct Windows installer pinned extras`
+- CI run `25324763737` and CodeQL run `25324762648` passed
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
 Current product read:
 
 - `rg` remains the benchmark for raw cold exact-text search.
 - `tg` is strongest as agent-native code intelligence: scoped search, JSON/NDJSON, repo maps, defs, source, refs, callers, context bundles, blast-radius, AST search, rewrite planning, GPU inventory, and MCP.
+- `tg ast-info --json` exposes AST language identifiers for agents without help-text scraping.
 - GPU support exists and local devices can be detected, but GPU routing is benchmark-governed. Do not claim GPU speedups without the matching benchmark artifact.
-- Broad generated roots need bounds. Prefer scoped paths and `--max-repo-files`, `--max-callers`, and `--max-files`.
+- Broad generated roots need bounds. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 
 Known current weak spots:
 
-- Broad `tg search --files ...` over generated artifact trees can still hit Windows legacy-console Unicode output failures.
+- Broad `tg search --files ...` over generated artifact trees can still be expensive; the managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
 - `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
 - `validation_commands` can be generic and should be treated as hints.
 - `uv run tg doctor --json` can report a stale in-tree standalone binary; rebuild `rust_core/target/release/tg.exe` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
+
+## Release Completion Contract
+
+A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state.
+
+Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
+
+A release-bearing PR is complete only after PR CI passes, the PR is squash-merged to `main`, main CI and semantic-release complete successfully, the release commit and tag exist on `origin/main`, `publish-success-gate` passes, `git fetch origin main --tags` is run, agents fast-forward local `main` to the release commit, and PyPI/public installer availability is verified.
+
+Do not report final version state before the GitHub release, PyPI/package publish status, public install/update path, and local checkout have all been verified.
 
 ## Start Here
 
@@ -49,7 +60,7 @@ tg search --json "<query>" src tests docs
 tg search --ndjson "<query>" src tests docs
 ```
 
-Avoid this on Windows until the path-list Unicode issue is fixed:
+Avoid broad generated-root file lists unless the task needs them:
 
 ```powershell
 tg search --files "AGENTS.md" . --hidden
@@ -67,7 +78,7 @@ tg search --files "AGENTS.md" . --hidden
 | NDJSON stream | `tg search --ndjson "pattern" src tests docs` |
 | Files with matches | `tg search "pattern" src --files-with-matches` |
 | AST search | `tg run --lang python 'def $NAME($$$ARGS): $$$BODY' src --json` |
-| AST grammar inventory | `tg ast-info --json` |
+| AST language identifiers | `tg ast-info --json` |
 | Source lookup | `tg source src --symbol someSymbol --json` |
 | Refs lookup | `tg refs src --symbol someSymbol --json` |
 | Blast radius | `tg blast-radius src --symbol someSymbol --json` |

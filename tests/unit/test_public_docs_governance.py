@@ -6,6 +6,10 @@ WORLD_CLASS_PLAN_PATH = Path("docs/world_class_plan.md")
 BENCHMARKS_DOC_PATH = Path("docs/benchmarks.md")
 TOOL_COMPARISON_DOC_PATH = Path("docs/tool_comparison.md")
 PAPER_DOC_PATH = Path("docs/PAPER.md")
+AGENTS_DOC_PATH = Path("AGENTS.md")
+SKILL_DOC_PATH = Path("SKILL.md")
+SESSION_HANDOFF_PATH = Path("docs/SESSION_HANDOFF.md")
+CONTINUATION_PLAN_PATH = Path("docs/CONTINUATION_PLAN.md")
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -393,3 +397,51 @@ def test_benchmark_docs_should_record_comparative_benchmark_v6_governance() -> N
     assert "structural search/rewrite baseline" in doc
     assert "policy/security scan baseline" in doc
     assert "indexed repeated-query baseline" in doc
+
+
+def test_agent_docs_should_lock_pr_merge_release_completion_contract() -> None:
+    agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
+
+    for doc in (agents, skill, handoff):
+        assert "A branch push or open PR starts PR CI only" in doc
+        assert "It is not a release, not a released version, and not complete release state" in doc
+        assert (
+            "Release versioning starts only after a release-bearing PR is squash-merged to `main`"
+            in doc
+        )
+        assert "main CI and semantic-release complete successfully" in doc
+        assert "publish-success-gate" in doc
+        assert "git fetch origin main --tags" in doc
+        assert "fast-forward local `main` to the release commit" in doc
+        assert "PyPI/public installer availability is verified" in doc
+
+
+def test_agent_docs_should_not_describe_code_intelligence_limits_as_search_flags() -> None:
+    agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    contracts = Path("docs/CONTRACTS.md").read_text(encoding="utf-8")
+    handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
+
+    for doc in (agents, skill, contracts, handoff):
+        assert "Use scoped paths, globs, file types, and `--max-depth` for `tg search`" in doc
+        assert "`--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence" in doc
+
+
+def test_ast_info_public_docs_should_describe_json_languages_payload() -> None:
+    readme = README_PATH.read_text(encoding="utf-8")
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
+
+    for doc in (readme, skill, handoff):
+        assert "`tg ast-info --json` exposes AST language identifiers" in doc
+        assert "AST grammar inventory" not in doc
+
+
+def test_continuation_plan_should_not_treat_pr_push_as_release_completion() -> None:
+    doc = CONTINUATION_PLAN_PATH.read_text(encoding="utf-8")
+
+    assert "Do not describe a pushed branch or open PR as complete release work" in doc
+    assert "only ready for review/merge" in doc
+    assert "release completion contract" in doc

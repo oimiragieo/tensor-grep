@@ -16,7 +16,12 @@ from typer.completion import get_completion_script
 from typer.testing import CliRunner
 
 from tensor_grep.cli import repo_map
-from tensor_grep.cli.main import _safe_stdout_line, _select_ast_backend_for_pattern, app
+from tensor_grep.cli.main import (
+    _safe_stdout_line,
+    _select_ast_backend_for_pattern,
+    _write_path_list,
+    app,
+)
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
@@ -1513,6 +1518,30 @@ def test_safe_stdout_line_prefers_utf8_buffer_for_non_utf_text(monkeypatch):
 
     assert stdout.writes == []
     assert stdout.buffer.getvalue() == "a \u2014 b\n".encode("utf-8")
+
+
+def test_write_path_list_prefers_utf8_buffer_for_non_utf_paths(monkeypatch):
+    class _ReplacingStdout:
+        encoding = "cp437"
+
+        def __init__(self) -> None:
+            self.buffer = io.BytesIO()
+            self.writes: list[str] = []
+
+        def write(self, text: str) -> int:
+            self.writes.append(text.encode(self.encoding, errors="replace").decode(self.encoding))
+            return len(text)
+
+        def flush(self) -> None:
+            return None
+
+    stdout = _ReplacingStdout()
+    monkeypatch.setattr(sys, "stdout", stdout)
+
+    _write_path_list(["ascii.txt", "unicode/\u25cf.py"], use_nul=False)
+
+    assert stdout.writes == []
+    assert stdout.buffer.getvalue() == "ascii.txt\nunicode/\u25cf.py\n".encode("utf-8")
 
 
 def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatch):
@@ -3307,6 +3336,32 @@ def test_files_with_matches_lists_unique_matched_files(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "a.py"
+
+
+def test_files_with_matches_preserves_discovery_order(monkeypatch):
+    global _FAKE_WALK, _FAKE_BACKEND
+    _FAKE_WALK = {".": ["b.py", "a.py"]}
+    _FAKE_BACKEND = _FakeBackend(
+        results_by_file={
+            "b.py": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR first", file="b.py")],
+                total_files=1,
+                total_matches=1,
+            ),
+            "a.py": SearchResult(
+                matches=[MatchLine(line_number=1, text="ERROR second", file="a.py")],
+                total_files=1,
+                total_matches=1,
+            ),
+        }
+    )
+    _patch_cli_dependencies(monkeypatch)
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "ERROR", ".", "--files-with-matches"])
+
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == ["b.py", "a.py"]
 
 
 def test_files_with_matches_should_respect_total_files_without_materialized_matches(monkeypatch):

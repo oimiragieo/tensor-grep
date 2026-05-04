@@ -16,22 +16,25 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-04, the current released state is `v1.8.11`.
+As of 2026-05-04, the current released state is `v1.8.14`.
 
-- Release commit: `05e6d95 chore(release): v1.8.11 [skip ci]`
-- Fix commit: `636e8ff fix: harden files-with-matches rg routing`
-- CI run `25296218480`: passed
-- CodeQL run `25296218031`: passed
+- Release commit: `f6e2981 chore(release): v1.8.14 [skip ci]`
+- Fix commits:
+  - `f98a6e4 fix: correct Windows installer pinned extras`
+  - `1a06cba fix: remove stale Windows tg launchers`
+  - `379b22f fix: harden tg resolution and rg path parity`
+- CI run `25324763737`: passed
+- CodeQL run `25324762648`: passed
 - Session handoff: `docs/SESSION_HANDOFF.md`
 
-The latest accepted release fixed the Windows `--files-with-matches` rg-backed argument-vector failure, root-based path-list output, `-0/--null` path-list/count parsing, and `tg ast-info --json`.
+The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, and `tg ast-info --json`. The active post-`v1.8.14` fix branch further hardens PATH/PATHEXT drift from stale or unmanaged Windows launchers.
 
 Known current weak spots:
 
 - `rg` remains the raw cold exact-text benchmark; `tg` should be treated as the agent-native code intelligence layer.
-- Broad generated roots can still be hostile to unattended agents. Scope paths and use `--max-repo-files`, `--max-callers`, and `--max-files`.
+- Broad generated roots can still be hostile to unattended agents. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - Prefer `blast-radius` over `impact --symbol` when direct symbol impact matters.
-- Broad `tg search --files ...` over generated artifact trees can still fail on Windows legacy-console Unicode output.
+- Windows launcher/path-list hardening should force UTF-8 for managed shims and Python path-list output; still scope broad file-list commands to avoid generated-tree volume.
 - `uv run tg doctor --json` can report a stale in-tree `rust_core/target/release/tg.exe`; rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
 
 ## Operating Rules
@@ -200,13 +203,23 @@ If the goal is to close the remaining gap to raw `rg`, the likely next step is a
 
 Do not push from a dirty worktree if `origin/main` moved and the local tree has unrelated changes.
 
+A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state. Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
+
 Preferred approach:
 
 1. use a clean replay worktree
 2. rebase/reset to current `origin/main`
 3. rerun narrow checks and relevant benchmarks
 4. push only the accepted change
-5. after semantic-release completes, `git fetch origin main --tags` and fast-forward local `main` to the release commit before reporting the final version state
+5. open a PR with the correct conventional title and wait for PR CI/CodeQL to pass
+6. if the change is release-bearing and intended to ship now, squash-merge the PR to `main`
+7. wait for main CI and semantic-release complete successfully, plus CodeQL, PyPI/package artifact validation, `publish-pypi`, and `publish-success-gate`
+8. verify the GitHub release, PyPI latest version, and any affected public installer/update path. PyPI/public installer availability is verified before final release status is reported
+9. after semantic-release completes, `git fetch origin main --tags` and fast-forward local `main` to the release commit before reporting the final version state
+
+Do not report a release-bearing fix as complete after only a branch push, open PR, or green PR checks. The final report must name the PR, merge commit, main CI run, CodeQL run, released tag/version, PyPI/package publish status, and any local/public installer dogfood result.
+
+For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass but semantic-release should skip release publishing.
 
 ## PR Title And Release Intent
 
@@ -243,5 +256,5 @@ Work like this:
 5. reject regressions
 6. push only measured wins or required correctness/CI fixes
 
-Do not run broad `tg search --files` over generated artifact trees on Windows until the path-list Unicode issue is fixed.
+Do not use code-intelligence budget flags as `tg search` options; scope `tg search` with paths, globs, file types, and depth.
 

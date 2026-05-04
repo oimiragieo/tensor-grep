@@ -31,6 +31,9 @@ Release behavior:
 - `fix:` / `perf:` => patch
 - `feat!:` / `fix!:` => major
 - `docs:` / `test:` / `ci:` / `chore:` / `build:` => no package release
+- A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state.
+- Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
+- Release completion requires main CI and semantic-release complete successfully, `publish-success-gate` passing when publish is required, `git fetch origin main --tags`, local `main` fast-forwarded to the release commit, and PyPI/public installer availability verified when the install/update path changed.
 
 Benchmark behavior:
 
