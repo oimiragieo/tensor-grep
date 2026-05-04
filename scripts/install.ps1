@@ -19,6 +19,49 @@ function Convert-ToMsysPath {
     return $normalizedPath
 }
 
+function Remove-StalePythonPackageLauncher {
+    param(
+        [Parameter(Mandatory = $true)][string]$candidatePath,
+        [Parameter(Mandatory = $true)][string]$candidateVersion
+    )
+
+    $candidateDir = Split-Path -Parent $candidatePath
+    if ((Split-Path -Leaf $candidateDir) -ne "Scripts") {
+        return $false
+    }
+
+    $pythonExe = Join-Path (Split-Path -Parent $candidateDir) "python.exe"
+    try {
+        if (!(Test-Path -LiteralPath $pythonExe -ErrorAction Stop)) {
+            return $false
+        }
+        $packageInfo = & $pythonExe -m pip show tensor-grep 2>$null
+    } catch {
+        return $false
+    }
+    if (!$packageInfo) {
+        return $false
+    }
+
+    Write-Host (
+        "Attempting to uninstall stale tensor-grep package that owns PATH launcher: " +
+        "$candidatePath ($candidateVersion)"
+    )
+    try {
+        & $pythonExe -m pip uninstall -y tensor-grep | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            return $false
+        }
+        if (Test-Path -LiteralPath $candidatePath -ErrorAction Stop) {
+            Remove-Item -LiteralPath $candidatePath -Force -ErrorAction Stop
+        }
+        Write-Host "Removed stale tensor-grep Python package from PATH owner: $pythonExe"
+        return $true
+    } catch {
+        return $false
+    }
+}
+
 function Remove-StalePathLauncher {
     param(
         [Parameter(Mandatory = $true)][string[]]$effectivePathParts,
@@ -68,9 +111,14 @@ function Remove-StalePathLauncher {
                 continue
             }
             try {
-                Remove-Item -LiteralPath $candidatePath -Force
+                Remove-Item -LiteralPath $candidatePath -Force -ErrorAction Stop
                 Write-Host "Removed unmanaged tg launcher from PATH: $candidatePath ($candidateVersion)"
             } catch {
+                if (Remove-StalePythonPackageLauncher `
+                        -candidatePath $candidatePath `
+                        -candidateVersion $candidateVersion) {
+                    continue
+                }
                 Write-Warning (
                     "WARNING: stale tg launcher remains ahead of managed shim: " +
                     "$candidatePath ($candidateVersion). Remove it or move the managed shim " +

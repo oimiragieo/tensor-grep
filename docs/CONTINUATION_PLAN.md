@@ -4,16 +4,16 @@
 
 ## 2026-05-04 Current Handoff
 
-The current released state is `v1.8.14`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state entering this branch is `v1.8.16`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `f6e2981 chore(release): v1.8.14 [skip ci]`
-- Latest fix commit: `f98a6e4 fix: correct Windows installer pinned extras`
-- CI run `25324763737`: passed
-- CodeQL run `25324762648`: passed
-- Local `uv run tg --version`: `tensor-grep 1.8.14`
-- PyPI/latest public installer dogfood: `1.8.14` verified
+- Release commit: `96509ca chore(release): v1.8.16 [skip ci]`
+- Latest fix commit: `6c2e59c fix: skip inaccessible PATH entries in Windows installer`
+- CI run `25340859231`: passed
+- CodeQL run `25341574114`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.16`
+- PyPI pinned public installer dogfood: `1.8.16` installed; active branch fixes the remaining stale editable Python launcher cleanup gap.
 
 Current product read:
 

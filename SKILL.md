@@ -7,13 +7,13 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-04, the current released version is `v1.8.14`.
+As of 2026-05-04, the current released version entering this branch is `v1.8.16`.
 
 Current release facts:
 
-- Release commit: `f6e2981 chore(release): v1.8.14 [skip ci]`
-- Latest fix commit: `f98a6e4 fix: correct Windows installer pinned extras`
-- CI run `25324763737` and CodeQL run `25324762648` passed
+- Release commit: `96509ca chore(release): v1.8.16 [skip ci]`
+- Latest fix commit: `6c2e59c fix: skip inaccessible PATH entries in Windows installer`
+- CI run `25340859231` and CodeQL run `25341574114` passed
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
 Current product read:
@@ -27,6 +27,7 @@ Current product read:
 Known current weak spots:
 
 - Broad `tg search --files ...` over generated artifact trees can still be expensive; the managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
+- Windows command resolution must be checked across profiled PowerShell, `pwsh -NoProfile`, and `cmd`. Old tensor-grep-owned `Python*\Scripts\tg.exe` launchers can shadow managed shims unless the installer removes or uninstalls them.
 - `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
 - `validation_commands` can be generic and should be treated as hints.
 - `uv run tg doctor --json` can report a stale in-tree standalone binary; rebuild `rust_core/target/release/tg.exe` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
