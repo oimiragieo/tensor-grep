@@ -15,7 +15,7 @@ The install scripts create an isolated environment, print `tg --version` at the 
 
 They also run `tg lsp-setup --json` after creating the front-door `tg` command. That attempts the safe default managed provider setup under `~/.tensor-grep/providers` for pinned Node-backed providers and warns without failing the core install if optional provider setup is unavailable. If you install through `pip`, `uv`, or a package-manager channel and need provider-backed planning, run `tg lsp-setup` manually. Use `tg lsp-setup --include-toolchain-providers` only when you want tensor-grep to copy or install Rust, Go, and C# provider binaries through local toolchains.
 
-On Windows, the install script removes stale same-directory `tg.exe`/`tg.bat` launchers from the managed shim directories, then puts those directories ahead of stale Python `Scripts` launchers on User PATH. If a profile-free shell still reports an older `tg`, run `where.exe tg` and `tg doctor --json` to see which launcher is winning.
+On Windows, the install script removes stale same-directory `tg.exe`/`tg.bat` launchers from the managed shim directories, then puts those directories ahead of stale Python `Scripts` launchers on User PATH. If an old tensor-grep-owned `Python*\Scripts\tg.exe` still shadows the managed shim, the installer attempts to uninstall the stale Python package owner. If a profile-free shell still reports an older `tg`, run `where.exe tg`, `Get-Command tg -All`, and `tg doctor --json` to see which launcher is winning.
 
 **Windows (PowerShell):**
 ```powershell
