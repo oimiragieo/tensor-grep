@@ -7,13 +7,14 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-04, the current released version entering this branch is `v1.8.16`.
+As of 2026-05-04, the current released version is `v1.8.17`.
 
 Current release facts:
 
-- Release commit: `96509ca chore(release): v1.8.16 [skip ci]`
-- Latest fix commit: `6c2e59c fix: skip inaccessible PATH entries in Windows installer`
-- CI run `25340859231` and CodeQL run `25341574114` passed
+- Release commit: `c4e8498 chore(release): v1.8.17 [skip ci]`
+- Latest fix commit: `e2ebbd2 fix: uninstall stale Python tg launcher owners`
+- PR #37 `fix: uninstall stale Python tg launcher owners` merged, released, and publicly dogfooded
+- CI run `25344850358` passed through `publish-success-gate`; CodeQL run `25344849431` passed
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
 Current product read:
@@ -27,7 +28,7 @@ Current product read:
 Known current weak spots:
 
 - Broad `tg search --files ...` over generated artifact trees can still be expensive; the managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
-- Windows command resolution must be checked across profiled PowerShell, `pwsh -NoProfile`, and `cmd`. Old tensor-grep-owned `Python*\Scripts\tg.exe` launchers can shadow managed shims unless the installer removes or uninstalls them.
+- Windows command resolution must be checked across profiled PowerShell, `pwsh -NoProfile`, and `cmd`. Old tensor-grep-owned `Python*\Scripts\tg.exe` launchers should now be removed or uninstalled by the Windows installer; any recurrence is release-regression evidence.
 - `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
 - `validation_commands` can be generic and should be treated as hints.
 - `uv run tg doctor --json` can report a stale in-tree standalone binary; rebuild `rust_core/target/release/tg.exe` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
@@ -48,8 +49,12 @@ Confirm command resolution and version before trusting behavior:
 
 ```powershell
 Get-Command tg -ErrorAction SilentlyContinue | Format-List Source,CommandType,Version
+Get-Command tg -All -ErrorAction SilentlyContinue | Format-Table -AutoSize CommandType,Source,Version
 Get-Alias tg -ErrorAction SilentlyContinue | Format-List Definition,ResolvedCommandName
 tg --version
+cmd /c tg --version
+pwsh -NoProfile -Command "tg --version"
+where.exe tg
 uv run tg doctor --json
 ```
 

@@ -4,30 +4,29 @@
 
 ## 2026-05-04 Current Handoff
 
-The current released state entering this branch is `v1.8.16`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.17`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `96509ca chore(release): v1.8.16 [skip ci]`
-- Latest fix commit: `6c2e59c fix: skip inaccessible PATH entries in Windows installer`
-- CI run `25340859231`: passed
-- CodeQL run `25341574114`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.16`
-- PyPI pinned public installer dogfood: `1.8.16` installed; active branch fixes the remaining stale editable Python launcher cleanup gap.
+- Release commit: `c4e8498 chore(release): v1.8.17 [skip ci]`
+- Latest fix commit: `e2ebbd2 fix: uninstall stale Python tg launcher owners`
+- CI run `25344850358`: passed through `publish-success-gate`
+- CodeQL run `25344849431`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.17`
+- PyPI pinned public installer dogfood: `1.8.17` installed and verified across profiled PowerShell, `cmd`, and `pwsh -NoProfile`.
 
 Current product read:
 
 - `tg` is production-usable for scoped agent search, source lookup, refs, context bundles, and bounded blast-radius.
 - `rg` remains the benchmark for raw cold exact-text search.
 - GPU exists and devices are detected locally, but GPU routing remains benchmark-governed.
-- Broad generated roots and path-list output still need guardrails before unattended agent use.
+- Broad generated roots still need guardrails before unattended agent use.
 
 Current next work:
 
-1. Fix Windows Unicode path-list output for broad `tg search --files`.
-2. Add progress, partial output, or stronger guardrails for broad generated-root scans.
-3. Improve stale native-binary diagnostics in `tg doctor --json`.
-4. Continue dogfooding and preserve exact failing commands as product evidence.
+1. Add progress, partial output, or stronger guardrails for broad generated-root scans.
+2. Improve stale native-binary diagnostics in `tg doctor --json`.
+3. Continue dogfooding and preserve exact failing commands as product evidence.
 
 ## Status
 
