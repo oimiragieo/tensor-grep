@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.8.12 (2026-05-04)
+
+### Bug Fixes
+
+- Harden tg resolution and rg path parity
+  ([`379b22f`](https://github.com/oimiragieo/tensor-grep/commit/379b22f6c88b40d7ad63cb305447ef1209133a13))
+
+Preserve raw rg implicit-root path formatting for no-path files-with-matches, expose PATH tg
+  launcher diagnostics in doctor, and move Windows installer shims ahead of stale Python Scripts
+  launchers.
+
+
 ## v1.8.11 (2026-05-04)
 
 ### Bug Fixes
