@@ -23,6 +23,7 @@ Use these documents as the current product contract instead of relying on scatte
 - [docs/installation.md](docs/installation.md) for the supported install paths and operational install notes
 - [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md) for the current enterprise release and rollback runbook
 - [docs/CI_PIPELINE.md](docs/CI_PIPELINE.md) for the current CI, release, audit, and dependency-maintenance automation
+- [docs/SESSION_HANDOFF.md](docs/SESSION_HANDOFF.md) for the latest release state, known weak spots, and next-session guidance
 
 The project is benchmark-governed. Public claims should follow the canonical docs above, not historical README snapshots.
 
@@ -73,7 +74,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.8` release closeout: CI run `25268784228` and CodeQL run `25268784130` passed, semantic-release published GitHub release `v1.8.8`, and PyPI reports `tensor-grep` latest as `1.8.8`
+- `v1.8.11` release closeout: CI run `25296218480` and CodeQL run `25296218031` passed, semantic-release published GitHub release `v1.8.11`, and the PyPI publish/parity gate passed
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:
@@ -183,6 +184,7 @@ Important constraint:
 
 - do not treat internal GPU pipeline throughput as the same thing as end-to-end CLI crossover
 - current GPU routing decisions should follow [docs/gpu_crossover.md](docs/gpu_crossover.md), not isolated microbenchmarks
+- broad `tg search --files ...` over generated artifact trees can still hit Windows legacy-console Unicode encoding failures; scope file-list commands or use UTF-8-safe output until fixed
 
 ## Product Contracts
 
@@ -256,12 +258,13 @@ Installer defaults and channels:
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.3`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
-- Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
+- Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, moves those shim directories ahead of stale Python `Scripts` launchers on User PATH, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
 
 If `tg --version` still reports an older version, check command resolution:
 ```powershell
 Get-Command tg
 where.exe tg
+tg doctor --json
 ```
 
 Examples:

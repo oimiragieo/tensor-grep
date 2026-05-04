@@ -44,3 +44,7 @@ def test_routing_policy_doc_covers_current_routing_tree() -> None:
     assert "handle_ast_run" in doc
     assert "final fallback" in doc.lower()
     assert "JSON and NDJSON output do **not** bypass a warm compatible index anymore." in doc
+    assert (
+        "Plain `--cpu` / `--force-cpu` may still use `RipgrepBackend` for "
+        "rg-compatible text output parity."
+    ) in doc

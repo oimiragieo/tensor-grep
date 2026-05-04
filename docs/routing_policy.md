@@ -22,7 +22,7 @@ route_search(config, calibration_data, index_state, gpu_available) -> RoutingDec
 
 | Backend | Reason string(s) | What it means in practice |
 | --- | --- | --- |
-| `NativeCpuBackend` | `force_cpu`, `json_output`, `cpu-auto-size-threshold`, `gpu-auto-fallback-cpu`, `rg_unavailable` | Native Rust text search is used for explicit `--cpu`, structured JSON/NDJSON output, GPU fallback, and when `rg` is unavailable. |
+| `NativeCpuBackend` | `force_cpu`, `json_output`, `cpu-auto-size-threshold`, `gpu-auto-fallback-cpu`, `rg_unavailable` | Native Rust text search is used for structured explicit `--cpu`, JSON/NDJSON output, GPU fallback, and when `rg` is unavailable. |
 | `NativeGpuBackend` | `gpu-device-ids-explicit-native`, `gpu-auto-size-threshold` | Native Rust CUDA search. Explicit `--gpu-device-ids` always targets this route first; calibrated auto-routing can also choose it. |
 | `TrigramIndex` | `index-accelerated` | Explicit `--index` and warm compatible `.tg_index` auto-routing both land here. |
 | `AstBackend` | `ast-native` | Native Rust AST search/rewrite path for `tg run`. |
@@ -35,7 +35,7 @@ The router's priority order is now explicit and shared:
 
 1. `--index` -> `TrigramIndex`
 2. `--gpu-device-ids` -> `NativeGpuBackend`
-3. `--force-cpu` / `--cpu` -> `NativeCpuBackend`
+3. `--force-cpu` / `--cpu` with structured output or no usable `rg` -> `NativeCpuBackend`
 4. AST command -> `AstBackend`
 5. Warm non-stale compatible `.tg_index` -> `TrigramIndex`
 6. Corpus `>` calibrated threshold **and** GPU available **and** calibration positive -> `NativeGpuBackend`
@@ -48,6 +48,7 @@ The router's priority order is now explicit and shared:
 - `--index` is the highest priority override.
 - `--gpu-device-ids` overrides warm-index and size-based routing.
 - `--force-cpu` overrides auto GPU routing, but not an explicit `--gpu-device-ids` request.
+- Plain `--cpu` / `--force-cpu` may still use `RipgrepBackend` for rg-compatible text output parity.
 - Warm-index auto-routing only applies when the cache exists, is not stale, and the query is index-compatible (`pattern >= 3 bytes`, no `-v`, no `-C`, no `--max-count`, no `-w`, no `-g`).
 - JSON and NDJSON output do **not** bypass a warm compatible index anymore.
 - Auto GPU routing is conservative: no fresh positive calibration means stay on the CPU-side cold path.

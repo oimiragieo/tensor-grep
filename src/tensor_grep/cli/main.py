@@ -311,6 +311,61 @@ def _doctor_rust_binary_version_matches(
     return bool(re.search(rf"\b{re.escape(expected_version)}\b", rust_binary_version))
 
 
+def _doctor_tg_candidate_version(candidate: Path) -> str | None:
+    try:
+        res = subprocess.run(
+            [str(candidate), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+    if res.returncode != 0:
+        return None
+    for line in res.stdout.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _doctor_path_tg_candidates() -> list[dict[str, str | None]]:
+    if sys.platform.startswith("win"):
+        raw_exts = os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
+        extensions = [ext.lower() for ext in raw_exts.split(os.pathsep) if ext]
+        if not extensions:
+            extensions = [".com", ".exe", ".bat", ".cmd"]
+        names = [f"tg{ext}" for ext in extensions]
+        names.append("tg")
+    else:
+        names = ["tg"]
+
+    candidates: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        directory = Path(entry)
+        for name in names:
+            candidate = directory / name
+            if not candidate.is_file():
+                continue
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                resolved = candidate
+            key = str(resolved).lower() if sys.platform.startswith("win") else str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append({
+                "path": str(resolved),
+                "version": _doctor_tg_candidate_version(resolved),
+            })
+    return candidates
+
+
 def _doctor_gpu_status() -> dict[str, Any]:
     status: dict[str, Any] = {"available": False, "devices": [], "error": None}
     try:
@@ -410,6 +465,10 @@ def _build_doctor_payload(
     installed_version = _doctor_installed_version()
     rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
     rust_core_extension_available = _doctor_rust_core_extension_available()
+    path_tg_candidates = _doctor_path_tg_candidates()
+    path_tg_first_version = (
+        str(path_tg_candidates[0].get("version")) if path_tg_candidates else None
+    )
     payload: dict[str, Any] = {
         "version": installed_version,
         "platform": sys.platform,
@@ -436,6 +495,12 @@ def _build_doctor_payload(
         "rust_binary_version_matches": _doctor_rust_binary_version_matches(
             installed_version,
             rust_binary_version,
+        ),
+        "path_tg_candidates": path_tg_candidates,
+        "path_tg_first_version": path_tg_first_version,
+        "path_tg_first_version_matches": _doctor_rust_binary_version_matches(
+            installed_version,
+            path_tg_first_version,
         ),
         "gpu": _doctor_gpu_status(),
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
@@ -473,6 +538,18 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         lines.append(
             f"rust_binary_version_warning: expected {payload.get('rust_binary_expected_version')}"
         )
+    path_tg_candidates = cast(list[dict[str, str | None]], payload.get("path_tg_candidates", []))
+    if path_tg_candidates:
+        lines.append("path_tg_candidates:")
+        for candidate in path_tg_candidates:
+            lines.append(
+                f"  {candidate.get('path')} version={candidate.get('version') or 'unknown'}"
+            )
+        if payload.get("path_tg_first_version_matches") is False:
+            lines.append(
+                f"path_tg_warning: first PATH tg reports {payload.get('path_tg_first_version')} "
+                f"expected {payload.get('version')}"
+            )
 
     gpu_payload = cast(dict[str, Any], payload.get("gpu", {}))
     lines.append(f"gpu: available={gpu_payload.get('available', False)}")
@@ -2301,7 +2378,11 @@ def search_command(
     files_without_match: bool = typer.Option(
         False, "--files-without-match", help="Print paths containing zero matches."
     ),
-    json: bool = typer.Option(False, "--json", help="Print results as one aggregate JSON object."),
+    json: bool = typer.Option(
+        False,
+        "--json",
+        help="Print results as one aggregate JSON object. Use --ndjson for streaming output.",
+    ),
     ndjson: bool = typer.Option(False, "--ndjson", help="Print results in newline-delimited JSON."),
     # LOGGING OPTIONS
     debug: bool = typer.Option(False, "--debug", help="Show debug messages."),
@@ -2387,12 +2468,14 @@ def search_command(
         )
     if files:
         paths_to_search = args or ["."]
+        paths_defaulted = not args
     elif regexp_patterns:
         pattern = regexp_patterns[0]
         if pattern == "":
             typer.echo("Error: PATTERN must not be empty.", err=True)
             sys.exit(2)
         paths_to_search = args or ["."]
+        paths_defaulted = not args
     else:
         if not args:
             typer.echo("Error: Please provide a PATTERN to search.", err=True)
@@ -2402,6 +2485,7 @@ def search_command(
             typer.echo("Error: PATTERN must not be empty.", err=True)
             sys.exit(2)
         paths_to_search = args[1:] or ["."]
+        paths_defaulted = not args[1:]
 
     if not files:
         missing_paths = [
@@ -2595,8 +2679,9 @@ def search_command(
     )
     if can_passthrough_rg:
         if not stats:
+            passthrough_paths = [] if paths_defaulted else paths_to_search
             with nvtx_range("search.passthrough_rg", color="green"):
-                exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
+                exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
             sys.exit(exit_code)
 
     scanner = DirectoryScanner(config)
@@ -2624,8 +2709,9 @@ def search_command(
             selected_gpu_chunk_plan_mb=selected_gpu_chunk_plan_mb,
         )
     ):
+        passthrough_paths = [] if paths_defaulted else paths_to_search
         with nvtx_range("search.passthrough_rg", color="green"):
-            exit_code = rg_backend.search_passthrough(paths_to_search, pattern, config=config)
+            exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
         sys.exit(exit_code)
     if debug:
         typer.echo(
