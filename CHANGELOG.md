@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.15 (2026-05-04)
+
+### Bug Fixes
+
+- Harden Windows launchers and path-list output
+  ([`32293c0`](https://github.com/oimiragieo/tensor-grep/commit/32293c0ae449726525122894d79bc85085b64e75))
+
+Harden Windows installer shims, UTF-8 path-list output, files-with-matches ordering, and agent
+  docs/skill contracts.
+
+
 ## v1.8.14 (2026-05-04)
 
 ### Bug Fixes
