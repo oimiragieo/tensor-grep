@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.8.13 (2026-05-04)
+
+### Bug Fixes
+
+- Remove stale Windows tg launchers
+  ([`1a06cba`](https://github.com/oimiragieo/tensor-grep/commit/1a06cba4c02c2828c0dfa87f65ed3763bb09454f))
+
+Remove stale same-directory tg.exe/tg.bat/tg.com/tg.ps1 launchers from managed Windows shim
+  directories before writing tg.cmd, so PATHEXT cannot choose an old executable over the managed
+  shim.
+
+
 ## v1.8.12 (2026-05-04)
 
 ### Bug Fixes
