@@ -74,15 +74,19 @@ try {
         & $uvPath pip install torch torchvision torchaudio $indexArg $indexUrl --python "$installDir\.venv\Scripts\python.exe"
         $pkgRequirement = if ($installChannel -eq "main") {
             "tensor-grep[gpu-win,nlp,ast] @ $pkgSpec"
+        } elseif ($requestedVersion) {
+            "tensor-grep[gpu-win,nlp,ast]==$requestedVersion"
         } else {
-            "$pkgSpec[gpu-win,nlp,ast]"
+            "tensor-grep[gpu-win,nlp,ast]"
         }
         & $uvPath pip install $pkgRequirement --python "$installDir\.venv\Scripts\python.exe"
     } else {
         $pkgRequirement = if ($installChannel -eq "main") {
             "tensor-grep[ast,nlp] @ $pkgSpec"
+        } elseif ($requestedVersion) {
+            "tensor-grep[ast,nlp]==$requestedVersion"
         } else {
-            "$pkgSpec[ast,nlp]"
+            "tensor-grep[ast,nlp]"
         }
         & $uvPath pip install $pkgRequirement --python "$installDir\.venv\Scripts\python.exe"
     }

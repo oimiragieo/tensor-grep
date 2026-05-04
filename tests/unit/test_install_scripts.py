@@ -67,6 +67,15 @@ def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim()
     )
 
 
+def test_install_ps1_should_place_extras_before_pinned_version_specifier():
+    content = _read_script("scripts/install.ps1")
+
+    assert '"tensor-grep[gpu-win,nlp,ast]==$requestedVersion"' in content
+    assert '"tensor-grep[ast,nlp]==$requestedVersion"' in content
+    assert '"$pkgSpec[gpu-win,nlp,ast]"' not in content
+    assert '"$pkgSpec[ast,nlp]"' not in content
+
+
 def test_install_sh_should_target_native_frontdoor_instead_of_venv_console_script():
     content = _read_script("scripts/install.sh")
 
