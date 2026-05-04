@@ -45,6 +45,10 @@ class RipgrepBackend(ComputeBackend):
     ) -> SearchResult:
         if config and (config.count or config.count_matches):
             return self._search_counts(file_path=file_path, pattern=pattern, config=config)
+        if config and config.files_with_matches:
+            return self._search_files_with_matches(
+                file_path=file_path, pattern=pattern, config=config
+            )
 
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=True)
         try:
@@ -105,6 +109,36 @@ class RipgrepBackend(ComputeBackend):
         except Exception as e:
             raise RuntimeError(f"Ripgrep backend failed: {e}") from e
 
+    def _search_files_with_matches(
+        self, file_path: str | list[str], pattern: str, config: SearchConfig
+    ) -> SearchResult:
+        cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=False)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, encoding="utf-8"
+            )
+            if result.returncode > 1:
+                stderr = result.stderr.strip()
+                raise RuntimeError(
+                    f"rg failed with exit code {result.returncode}: {stderr or 'no stderr output'}"
+                )
+
+            path_parts = result.stdout.split("\0") if config.null else result.stdout.splitlines()
+            matched_file_paths = [path for path in path_parts if path]
+            return SearchResult(
+                matches=[],
+                matched_file_paths=matched_file_paths,
+                match_counts_by_file=dict.fromkeys(matched_file_paths, 1),
+                total_files=len(matched_file_paths),
+                total_matches=len(matched_file_paths),
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_files_with_matches",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Ripgrep backend failed: {e}") from e
+
     def _search_counts(
         self, file_path: str | list[str], pattern: str, config: SearchConfig
     ) -> SearchResult:
@@ -136,7 +170,9 @@ class RipgrepBackend(ComputeBackend):
             )
             for line in lines:
                 matched_path: str | None = None
-                if multi_file and ":" in line:
+                if config.null and "\0" in line:
+                    matched_path, count_text = line.rsplit("\0", 1)
+                elif multi_file and ":" in line:
                     matched_path, count_text = line.rsplit(":", 1)
                 else:
                     count_text = line
@@ -227,6 +263,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.extend(["--path-separator", config.path_separator])
             if config.vimgrep and not json_mode:
                 cmd.append("--vimgrep")
+            if config.null and not json_mode:
+                cmd.append("-0")
             if config.color:
                 cmd.extend(["--color", config.color])
             if config.glob_case_insensitive:
@@ -252,6 +290,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-c")
             if config.count_matches:
                 cmd.append("--count-matches")
+            if config.files_with_matches and not (config.count or config.count_matches):
+                cmd.append("--files-with-matches")
             if config.debug:
                 cmd.append("--debug")
             if config.trace:

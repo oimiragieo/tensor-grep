@@ -177,6 +177,7 @@ Current CLI correctness line:
 - `tg search --replace` rewrites emitted match text in ripgrep style without mutating files
 - `tg search -o` now mirrors ripgrep single-file output formatting instead of forcing `file:line:text`
 - `tg run --json` emits structured output even without `--apply`
+- `tg search --files-with-matches` stays root-based and rg-compatible on the ripgrep path instead of expanding large Windows argv lists, and `tg ast-info --json` exposes AST grammar inventory for agents
 
 Important constraint:
 

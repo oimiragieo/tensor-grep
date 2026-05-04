@@ -317,6 +317,10 @@ _LAST_PIPELINE_CONFIG = None
 def _patch_cli_dependencies(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakePipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
 
 
 class _FakeRipgrepPipeline:
@@ -3308,6 +3312,90 @@ def test_files_with_matches_should_use_count_only_ripgrep_file_paths(monkeypatch
     assert result.stdout.strip() == "a.py"
 
 
+def test_files_with_matches_ripgrep_backend_searches_roots_not_expanded_candidates(
+    monkeypatch,
+):
+    seen: dict[str, object] = {}
+    global _FAKE_WALK
+    _FAKE_WALK = {".": [f"src/file_{index}.py" for index in range(5000)]}
+
+    class RipgrepBackend:
+        def search(self, file_path, pattern, config=None) -> SearchResult:
+            seen["paths"] = list(file_path)
+            seen["pattern"] = pattern
+            seen["fixed_strings"] = config.fixed_strings
+            seen["null"] = config.null
+            return SearchResult(
+                matches=[],
+                matched_file_paths=["src/file_1.py"],
+                total_files=1,
+                total_matches=1,
+                routing_backend="RipgrepBackend",
+                routing_reason="rg_files_with_matches",
+            )
+
+    class _RipgrepPipeline:
+        def __init__(self, force_cpu=False, config=None):
+            self.backend = RipgrepBackend()
+            self.selected_backend_name = "RipgrepBackend"
+            self.selected_backend_reason = "rg_files_with_matches"
+            self.selected_gpu_device_ids = []
+            self.selected_gpu_chunk_plan_mb = []
+
+        def get_backend(self):
+            return self.backend
+
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _RipgrepPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeScanner)
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["search", "--fixed-strings", "ERROR", ".", "--files-with-matches", "-0"]
+    )
+
+    assert result.exit_code == 0
+    assert seen["paths"] == ["."]
+    assert seen["pattern"] == "ERROR"
+    assert seen["fixed_strings"] is True
+    assert seen["null"] is True
+    assert result.stdout == "src/file_1.py\x00"
+
+
+def test_cli_uses_ripgrep_passthrough_for_files_with_matches(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        calls["paths"] = list(paths)
+        calls["pattern"] = pattern
+        calls["files_with_matches"] = config.files_with_matches
+        calls["fixed_strings"] = config.fixed_strings
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "--fixed-strings", "ERROR", ".", "--files-with-matches"])
+
+    assert result.exit_code == 0
+    assert calls == {
+        "paths": ["."],
+        "pattern": "ERROR",
+        "files_with_matches": True,
+        "fixed_strings": True,
+    }
+
+
 def test_files_without_match_lists_unmatched_files(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.py", "b.py"]}
@@ -3431,6 +3519,23 @@ def test_files_with_matches_null_outputs_nul_separator(tmp_path: Path):
     assert result.returncode == 0
     assert result.stdout.endswith(b"\x00")
     assert b"\r\n" not in result.stdout
+
+
+def test_files_with_matches_text_outputs_single_platform_newline(tmp_path: Path):
+    target = tmp_path / "sample.txt"
+    target.write_text("hello\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tensor_grep.cli.main", "search", "hello", str(target), "-l"],
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.rstrip(b"\r\n") == os.fsencode(str(target))
+    assert result.stdout.endswith(b"\n")
+    assert not result.stdout.endswith(b"\r\r\n")
+    assert result.stdout.count(b"\n") == 1
 
 
 def test_only_matching_outputs_token_not_whole_line(monkeypatch):

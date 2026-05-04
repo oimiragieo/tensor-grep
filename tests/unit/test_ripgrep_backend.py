@@ -235,3 +235,107 @@ def test_search_should_parse_plain_count_matches_output_without_json():
     assert result.match_counts_by_file == {"a.log": 4}
     assert result.routing_backend == "RipgrepBackend"
     assert result.routing_reason == "rg_count_matches"
+
+
+def test_search_should_parse_nul_count_output_without_json():
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True, null=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = "C:\\repo\\a.log\x004\nC:\\repo\\b.log\x000\n"
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search(["C:\\repo\\a.log", "C:\\repo\\b.log"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "-0" in cmd
+    assert "-c" in cmd
+    assert result.matched_file_paths == ["C:\\repo\\a.log"]
+    assert result.match_counts_by_file == {"C:\\repo\\a.log": 4}
+    assert result.total_files == 1
+    assert result.total_matches == 4
+
+
+def test_search_should_parse_files_with_matches_without_json():
+    backend = RipgrepBackend()
+    config = SearchConfig(files_with_matches=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = "a.log\nb.log\n"
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search(["a.log", "b.log"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "--json" not in cmd
+    assert "--files-with-matches" in cmd
+    assert result.matches == []
+    assert result.matched_file_paths == ["a.log", "b.log"]
+    assert result.total_files == 2
+    assert result.total_matches == 2
+    assert result.routing_backend == "RipgrepBackend"
+    assert result.routing_reason == "rg_files_with_matches"
+
+
+def test_search_should_parse_nul_files_with_matches_without_json():
+    backend = RipgrepBackend()
+    config = SearchConfig(files_with_matches=True, null=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = "a.log\0b.log\0"
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search(["a.log", "b.log"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "-0" in cmd
+    assert "--files-with-matches" in cmd
+    assert result.matched_file_paths == ["a.log", "b.log"]
+    assert result.match_counts_by_file == {"a.log": 1, "b.log": 1}
+
+
+def test_search_should_parse_files_with_matches_from_count_without_rg_list_flag():
+    backend = RipgrepBackend()
+    config = SearchConfig(count=True, files_with_matches=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stderr = ""
+    mock_result.stdout = "a.log:4\nb.log:0\n"
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        result = backend.search(["a.log", "b.log"], "ERROR", config=config)
+
+    cmd = run.call_args[0][0]
+    assert "-c" in cmd
+    assert "--files-with-matches" not in cmd
+    assert result.matched_file_paths == ["a.log"]
+    assert result.match_counts_by_file == {"a.log": 4}
+    assert result.total_files == 1
+    assert result.total_matches == 4

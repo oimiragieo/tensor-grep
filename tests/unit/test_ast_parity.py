@@ -1,3 +1,5 @@
+import json
+
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
@@ -11,6 +13,16 @@ def test_tg_ast_info():
     assert result.exit_code == 0
     assert "Supported AST Languages" in result.stdout
     assert "python" in result.stdout.lower()
+
+
+def test_tg_ast_info_json():
+    """Verify that tg ast-info can emit machine-readable grammar inventory."""
+    result = runner.invoke(app, ["ast-info", "--json"])
+    assert result.exit_code == 0
+
+    payload = json.loads(result.stdout)
+    assert payload["languages"]
+    assert "python" in payload["languages"]
 
 
 def test_ast_interactive_apply(tmp_path, monkeypatch):

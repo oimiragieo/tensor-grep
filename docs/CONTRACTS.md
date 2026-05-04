@@ -43,8 +43,10 @@ Agent automation contracts:
 - `tg search PATTERN` defaults to the current directory when no path is provided.
 - Invalid regex syntax exits as an error distinct from no-match and emits a diagnostic that recommends `--fixed-strings` for literal searches.
 - `tg search --json` emits a valid aggregate JSON object even when there are zero matches.
+- `tg search --files-with-matches` stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.
 - Broad generated roots such as `.claude` are routed through Python guardrails instead of rust-first/native passthrough so generated `.claude/context` snapshots can be pruned by default.
 - `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
+- `tg ast-info --json` emits `{"languages": [...]}` for agent discovery without help-text scraping.
 
 ## 4. Machine-readable CLI output (`--json` and `--ndjson`)
 The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --ndjson`, and the documented harness/editor-plane flows are considered public APIs.

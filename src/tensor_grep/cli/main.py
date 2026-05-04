@@ -646,7 +646,7 @@ def _write_path_list(paths: list[str], *, use_nul: bool) -> None:
         sys.stdout.buffer.flush()
         return
     sys.stdout.write("\n".join(paths))
-    sys.stdout.write(os.linesep)
+    sys.stdout.write("\n")
 
 
 def _safe_stdout_line(text: str) -> None:
@@ -778,9 +778,9 @@ def _can_passthrough_rg(
         and not json_mode
         and not ndjson_mode
         and not files_mode
-        and not files_with_matches
         and not files_without_match
         and not only_matching
+        and not (files_with_matches and (config.count or config.count_matches))
     )
 
 
@@ -2692,9 +2692,9 @@ def search_command(
         )
         search_targets = (
             paths_to_search
-            if guarded_broad_root
+            if (guarded_broad_root or files_with_matches)
             else candidate_files_ordered
-            if (files_with_matches or files_without_match)
+            if files_without_match
             else paths_to_search
         )
         span_ctx = (
@@ -5392,12 +5392,21 @@ def update() -> None:
 
 
 @app.command(name="ast-info")
-def ast_info() -> None:
+def ast_info(
+    json_output: bool = typer.Option(
+        False, "--json", help="Output supported AST languages as JSON."
+    ),
+) -> None:
     """List supported AST languages and grammars."""
     from tensor_grep.backends.ast_backend import get_supported_languages
 
+    languages = get_supported_languages()
+    if json_output:
+        typer.echo(json.dumps({"languages": languages}))
+        return
+
     typer.echo("Supported AST Languages:")
-    for lang in get_supported_languages():
+    for lang in languages:
         typer.echo(f"- {lang}")
 
 
