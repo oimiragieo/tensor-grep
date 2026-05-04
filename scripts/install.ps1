@@ -121,6 +121,13 @@ try {
         if (!(Test-Path $shimDir)) {
             New-Item -ItemType Directory -Path $shimDir -Force | Out-Null
         }
+        foreach ($staleShimName in @("tg.com", "tg.exe", "tg.bat", "tg.ps1")) {
+            $staleShimPath = Join-Path $shimDir $staleShimName
+            if (Test-Path -LiteralPath $staleShimPath) {
+                Remove-Item -LiteralPath $staleShimPath -Force
+                Write-Host "Removed stale tg launcher shadowing managed shim: $staleShimPath"
+            }
+        }
         $cmdShimPath = "$shimDir\tg.cmd"
         Set-Content -Path $cmdShimPath -Value $cmdShimContent -Encoding ascii
         $installedShimPaths += $cmdShimPath
