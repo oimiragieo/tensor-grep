@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.14 (2026-05-04)
+
+### Bug Fixes
+
+- Correct Windows installer pinned extras
+  ([`f98a6e4`](https://github.com/oimiragieo/tensor-grep/commit/f98a6e4406810c8bc5a1a4d5122e3ef783487721))
+
+Fix Windows install.ps1 pinned extras requirements so TENSOR_GREP_VERSION installs use valid package
+  specs.
+
+
 ## v1.8.13 (2026-05-04)
 
 ### Bug Fixes
