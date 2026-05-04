@@ -2,6 +2,32 @@
 
 ## For: Next agent picking up after the native CPU/GPU/index/rewrite milestones
 
+## 2026-05-04 Current Handoff
+
+The current released state is `v1.8.11`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+
+Current release facts:
+
+- Release commit: `05e6d95 chore(release): v1.8.11 [skip ci]`
+- Fix commit: `636e8ff fix: harden files-with-matches rg routing`
+- CI run `25296218480`: passed
+- CodeQL run `25296218031`: passed
+- Local `uv run tg --version`: `tensor-grep 1.8.11`
+
+Current product read:
+
+- `tg` is production-usable for scoped agent search, source lookup, refs, context bundles, and bounded blast-radius.
+- `rg` remains the benchmark for raw cold exact-text search.
+- GPU exists and devices are detected locally, but GPU routing remains benchmark-governed.
+- Broad generated roots and path-list output still need guardrails before unattended agent use.
+
+Current next work:
+
+1. Fix Windows Unicode path-list output for broad `tg search --files`.
+2. Add progress, partial output, or stronger guardrails for broad generated-root scans.
+3. Improve stale native-binary diagnostics in `tg doctor --json`.
+4. Continue dogfooding and preserve exact failing commands as product evidence.
+
 ## Status
 
 This document replaces the older continuation plan that assumed:
@@ -338,6 +364,7 @@ Required validation before push for code changes:
 
 ```powershell
 uv run ruff check .
+uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
 uv run pytest -q
 ```

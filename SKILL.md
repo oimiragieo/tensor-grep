@@ -1,160 +1,143 @@
 ---
 name: tensor-grep
-description: Use when searching text in files, codebases, logs, or documents at scale. Use when finding files by pattern, searching massive logs that are too big for CPU regex, extracting specific content from many files, when you need semantic/AST structural code queries, or when you need NLP classification of threats in server logs. Triggers on "search for", "find occurrences", "look for pattern", "search in files", "classify logs", or "structural code search".
+description: Use when searching code, logs, or repositories with tensor-grep; validating rg or AST parity; using tg MCP tools; checking GPU/search routing; or producing agent-friendly context, source, refs, or blast-radius output.
 ---
 
-# tensor-grep (tg) - GPU-Accelerated Search & AI Parser
+# tensor-grep (tg)
 
-## Overview
+## Current State
 
-`tensor-grep` (tg) is a line-oriented search tool that scales regex operations across multi-GPU VRAM arrays via NVIDIA RAPIDS cuDF, providing **3x-10x faster** throughput than standard ripgrep on massive datasets. In addition to lightning-fast text search, it provides AST-based structural code searching and cyBERT NLP log classification.
+As of 2026-05-04, the current released version is `v1.8.11`.
 
-Because of its hybrid routing architecture, `tensor-grep` acts as a superset orchestrator. For small queries or single files, it automatically wraps the ultra-fast C/Rust binaries (`ripgrep` and `ast-grep`) locally. For exact literal counts, it drops into a native Arrow/Rust zero-copy engine. For massive data or semantic operations, it routes to PyTorch and `cuDF`.
+Current release facts:
 
-## Core MCP Capabilities Exposed to AI
+- Release commit: `05e6d95 chore(release): v1.8.11 [skip ci]`
+- Fix commit: `636e8ff fix: harden files-with-matches rg routing`
+- CI run `25296218480` and CodeQL run `25296218031` passed
+- Latest handoff: `docs/SESSION_HANDOFF.md`
 
-When using `tensor-grep` via the Model Context Protocol, you have access to three primary tools:
+Current product read:
 
-1. **`tg_search`**: The primary regex and text extraction tool. Supports case-insensitivity, fixed string matching, word boundaries, context lines (`-C`), file globs (`-g`), file types (`-t`), and match counting (`-c`).
-2. **`tg_ast_search`**: The structural code search tool. Feed it AST patterns like `if ($A) { return $B; }` to locate complex logical bounds across massive monorepos instantly using GNN VRAM tensors.
-3. **`tg_classify_logs`**: The cybersecurity and semantic log tool. Pass unstructured server logs through the CyBERT model to identify hidden anomalies, malicious payloads, and severity levels.
+- `rg` remains the benchmark for raw cold exact-text search.
+- `tg` is strongest as agent-native code intelligence: scoped search, JSON/NDJSON, repo maps, defs, source, refs, callers, context bundles, blast-radius, AST search, rewrite planning, GPU inventory, and MCP.
+- GPU support exists and local devices can be detected, but GPU routing is benchmark-governed. Do not claim GPU speedups without the matching benchmark artifact.
+- Broad generated roots need bounds. Prefer scoped paths and `--max-repo-files`, `--max-callers`, and `--max-files`.
 
-## When to Use
+Known current weak spots:
 
-**Use tensor-grep when:**
-- Searching for text patterns across a massive codebase or multi-GB server logs
-- Finding all occurrences of a function, variable, or structural pattern ignoring whitespace (`tg run --ast`)
-- Classifying system logs for cybersecurity threats via AI without strict regex rules (`tg classify`)
-- Looking for specific content in many files at once with full `ripgrep` drop-in flag compatibility
-- Extracting matching lines for analysis rapidly 
+- Broad `tg search --files ...` over generated artifact trees can still hit Windows legacy-console Unicode output failures.
+- `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
+- `validation_commands` can be generic and should be treated as hints.
+- `uv run tg doctor --json` can report a stale in-tree standalone binary; rebuild `rust_core/target/release/tg.exe` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
 
-**Don't use when:**
-- You need the full file content (use Read tool)
-- Simple glob pattern matching for filenames only (use Glob tool)
-- You need structured data extraction from relational DBs (consider jq, awk)
+## Start Here
 
-## Quick Reference
+Confirm command resolution and version before trusting behavior:
+
+```powershell
+Get-Command tg -ErrorAction SilentlyContinue | Format-List Source,CommandType,Version
+Get-Alias tg -ErrorAction SilentlyContinue | Format-List Definition,ResolvedCommandName
+tg --version
+uv run tg doctor --json
+```
+
+Use scoped `tg` discovery first:
+
+```powershell
+tg search --fixed-strings "<query>" src tests docs README.md
+tg search --json "<query>" src tests docs
+tg search --ndjson "<query>" src tests docs
+```
+
+Avoid this on Windows until the path-list Unicode issue is fixed:
+
+```powershell
+tg search --files "AGENTS.md" . --hidden
+```
+
+## Core CLI Workflows
 
 | Task | Command |
-|------|---------|
-| Basic GPU regex search | `tg "pattern" [path]` |
-| Case insensitive | `tg -i "pattern"` |
-| Smart case (auto) | `tg -S "pattern"` |
-| Whole word only | `tg -w "word"` |
-| Fixed string (no regex) | `tg -F "literal.string"` |
-| Show context lines | `tg -C 3 "pattern"` (3 before & after) |
-| AST Structural Search | `tg run --ast --lang python "def $_($A): return $B"` |
-| NLP Threat Classification | `tg classify /var/logs/nginx.log` |
-| Force CPU backend | `tg --cpu "pattern"` |
+| --- | --- |
+| Basic search | `tg "pattern" [path]` |
+| Explicit search | `tg search "pattern" src tests docs` |
+| Fixed string | `tg -F "literal.string" src` |
+| Context lines | `tg -C 3 "pattern" src` |
+| JSON aggregate | `tg search --json "pattern" src` |
+| NDJSON stream | `tg search --ndjson "pattern" src tests docs` |
+| Files with matches | `tg search "pattern" src --files-with-matches` |
+| AST search | `tg run --lang python 'def $NAME($$$ARGS): $$$BODY' src --json` |
+| AST grammar inventory | `tg ast-info --json` |
+| Source lookup | `tg source src --symbol someSymbol --json` |
+| Refs lookup | `tg refs src --symbol someSymbol --json` |
+| Blast radius | `tg blast-radius src --symbol someSymbol --json` |
+| Context bundle | `tg context-render src --query "how routing works" --render-profile llm --json` |
+| Device inventory | `tg devices --json` |
+| MCP server | `tg mcp` |
 
-## File Filtering
+PowerShell expands `$NAME` and `$$$ARGS` inside double quotes. Use single quotes for AST metavariable patterns.
 
-### By File Type
+## MCP Surface
 
-`tensor-grep` inherits all ripgrep built-in file type definitions. Use `-t` to include, `-T` to exclude:
+Start the server with:
 
-```bash
-# Search only Python files
-tg -t py "def main"
-
-# Search only JavaScript and TypeScript
-tg -t js -t ts "import"
-
-# Exclude test files
-tg -T test "function"
-
-# List all known types
-tg --type-list
+```powershell
+tg mcp
 ```
 
-**Common types:** `py`, `js`, `ts`, `rust`, `go`, `java`, `c`, `cpp`, `rb`, `php`, `html`, `css`, `json`, `yaml`, `md`, `txt`, `sh`
+Useful MCP tools include:
 
-### By Glob Pattern
+- `tg_mcp_capabilities`
+- `tg_search`
+- `tg_ast_search`
+- `tg_classify_logs`
+- `tg_devices`
+- `tg_index_search`
+- `tg_rewrite_plan`
+- `tg_rewrite_apply`
+- `tg_rewrite_diff`
 
-```bash
-# Only .tsx files
-tg -g "*.tsx" "useState"
+Call `tg_mcp_capabilities` first in PyPI wheels, sandboxes, and agent hosts so the client knows whether a standalone native `tg` binary is available.
 
-# Exclude node_modules (in addition to gitignore)
-tg -g "!node_modules/**" "pattern"
+## Validation
 
-# Only files in src directory
-tg -g "src/**" "pattern"
+For code changes, follow `AGENTS.md` and run:
+
+```powershell
+uv run ruff check .
+uv run ruff format --check --preview .
+uv run mypy src/tensor_grep
+uv run pytest -q
 ```
 
-## Directory Control
+For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
-```bash
-# Limit depth
-tg --max-depth 2 "pattern"
-
-# Search hidden files (dotfiles)
-tg --hidden "pattern"
-
-# Ignore all ignore files (.gitignore, etc.)
-tg --no-ignore "pattern"
+```powershell
+python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.json
+python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks.json
+python benchmarks/run_hot_query_benchmarks.py --output artifacts/bench_hot_query_benchmarks.json
+python benchmarks/run_ast_benchmarks.py --output artifacts/bench_run_ast_benchmarks.json
+python benchmarks/run_ast_workflow_benchmarks.py --output artifacts/bench_run_ast_workflow_benchmarks.json
+python benchmarks/run_gpu_benchmarks.py --output artifacts/bench_run_gpu_benchmarks.json
 ```
 
-## Context Options
+GPU benchmark `SKIP` is valid infrastructure state when dependencies such as Torch, cuDF, CUDA, or Triton are unavailable. Do not convert a skip into a speed claim.
 
-```bash
-# Lines after match
-tg -A 5 "pattern"
+## Common Mistakes
 
-# Lines before match
-tg -B 5 "pattern"
-
-# Lines before and after
-tg -C 5 "pattern"
-```
-
-## Output Formats
-
-```bash
-# Just filenames with matches
-tg -l "pattern"
-
-# Count matches per file
-tg -c "pattern"
-
-# Only the matched text (not full line)
-tg -o "pattern"
-
-# JSON output (for parsing/integrations)
-tg --json "pattern"
-```
-
-## Specialized AI/GPU Features
-
-### AST / Structural Searching
-Avoid brittle regex formatting dependencies by parsing the actual source trees:
-```bash
-tg run --ast --lang python "if ($A) { return $B; }" ./src
-```
-
-### cyBERT NLP Classification
-Pass unstructured, messy logs to the HuggingFace transformer engine. It will identify if the lines contain base64 payloads, SQL injections, or anomalies, assigning confidence scores:
-```bash
-tg classify /var/log/syslog --format json
-```
-
-## Combining with Other Tools
-
-```bash
-# Search and count by file
-tg -c "pattern" | sort -t: -k2 -rn
-
-# Search and open in editor
-tg -l "pattern" | xargs code
-
-# Extract unique matches
-tg -o "\b[A-Z]{2,}\b" | sort -u
-```
+| Mistake | Correction |
+| --- | --- |
+| Claiming `tg` is always faster than `rg` | Keep `rg` as the cold exact-text benchmark; position `tg` as agent-native code intelligence. |
+| Searching with `rg` by habit inside this repo | Use `tg search` first, then `rg` for parity or fallback. |
+| Running broad generated-root scans | Scope the path and use output/scan limits. |
+| Trusting stale native diagnostics | Check `uv run tg doctor --json`; rebuild or pin `TG_NATIVE_TG_BINARY` if versions diverge. |
+| Claiming GPU wins from device detection | Run the GPU benchmark and record the accepted artifact. |
+| Updating docs from memory | Update docs only from repo evidence, CI evidence, or benchmark artifacts. |
 
 ## Exit Codes
 
 | Code | Meaning |
-|------|---------|
-| 0 | Matches found |
+| --- | --- |
+| 0 | Matches found or command succeeded |
 | 1 | No matches found |
 | 2 | Error occurred |

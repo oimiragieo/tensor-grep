@@ -126,29 +126,23 @@ try {
         $installedShimPaths += $cmdShimPath
     }
 
-    # Ensure user PATH includes shim directories for new terminals.
+    # Ensure user PATH resolves managed shims before stale Python Scripts entries.
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $userPathParts = @()
     if ($userPath) {
         $userPathParts = $userPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
     }
+    $userPathParts = @($shimDirs + ($userPathParts | Where-Object { $shimDirs -notcontains $_ }))
+    $userPath = ($userPathParts -join ';')
     foreach ($shimDir in $shimDirs) {
-        if ($userPathParts -notcontains $shimDir) {
-            $userPath = if ($userPath) { "$userPath;$shimDir" } else { $shimDir }
-            $userPathParts += $shimDir
-            Write-Host "Added $shimDir to user PATH."
-        }
+        Write-Host "Ensured $shimDir is ahead of stale tg launchers on user PATH."
     }
     [Environment]::SetEnvironmentVariable("Path", $userPath, "User")
 
-    # Ensure current process PATH includes shim directories immediately.
+    # Ensure current process PATH resolves managed shims immediately.
     $currentPathParts = $env:Path -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-    foreach ($shimDir in $shimDirs) {
-        if ($currentPathParts -notcontains $shimDir) {
-            $env:Path = "$env:Path;$shimDir"
-            $currentPathParts += $shimDir
-        }
-    }
+    $currentPathParts = @($shimDirs + ($currentPathParts | Where-Object { $shimDirs -notcontains $_ }))
+    $env:Path = ($currentPathParts -join ';')
 
     # 6. Add Alias to both PowerShell 7 and Windows PowerShell profiles.
     $docsPath = [Environment]::GetFolderPath("MyDocuments")

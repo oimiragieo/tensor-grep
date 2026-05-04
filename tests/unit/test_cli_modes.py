@@ -702,6 +702,50 @@ def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path
     assert payload["rust_binary_expected_version"] == "1.8.1"
 
 
+def test_doctor_json_reports_path_tg_candidates(monkeypatch, tmp_path: Path) -> None:
+    stale_tg = tmp_path / "Python314" / "Scripts" / "tg.exe"
+    current_tg = tmp_path / "bin" / "tg.cmd"
+    stale_tg.parent.mkdir(parents=True)
+    current_tg.parent.mkdir(parents=True)
+    stale_tg.write_text("stale\n", encoding="utf-8")
+    current_tg.write_text("current\n", encoding="utf-8")
+
+    monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.11")
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_rust_core_extension_available",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_session_daemon_status",
+        lambda path: {"running": False},
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_lsp_provider_statuses",
+        lambda path: [],
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_path_tg_candidates",
+        lambda: [
+            {"path": str(stale_tg), "version": "tensor-grep 1.8.0"},
+            {"path": str(current_tg), "version": "tensor-grep 1.8.11"},
+        ],
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["doctor", str(tmp_path), "--json", "--no-lsp"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["path_tg_candidates"] == [
+        {"path": str(stale_tg), "version": "tensor-grep 1.8.0"},
+        {"path": str(current_tg), "version": "tensor-grep 1.8.11"},
+    ]
+    assert payload["path_tg_first_version_matches"] is False
+    assert payload["path_tg_first_version"] == "tensor-grep 1.8.0"
+
+
 def test_lsp_setup_runs_managed_provider_installer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1422,6 +1466,7 @@ def test_search_help_should_describe_json_as_aggregate_json() -> None:
     help_text = _strip_ansi(result.stdout)
     assert "--json" in help_text
     assert "aggregate JSON object." in help_text
+    assert "streaming" in help_text
     assert "Print results in JSON Lines format." not in help_text
 
 
@@ -3390,6 +3435,37 @@ def test_cli_uses_ripgrep_passthrough_for_files_with_matches(monkeypatch):
     assert result.exit_code == 0
     assert calls == {
         "paths": ["."],
+        "pattern": "ERROR",
+        "files_with_matches": True,
+        "fixed_strings": True,
+    }
+
+
+def test_cli_uses_implicit_rg_root_for_no_path_files_with_matches(monkeypatch):
+    calls: dict[str, object] = {}
+
+    def _fake_passthrough(self, paths, pattern, config=None):
+        calls["paths"] = list(paths)
+        calls["pattern"] = pattern
+        calls["files_with_matches"] = config.files_with_matches
+        calls["fixed_strings"] = config.fixed_strings
+        return 0
+
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.is_available",
+        lambda self: True,
+    )
+    monkeypatch.setattr(
+        "tensor_grep.backends.ripgrep_backend.RipgrepBackend.search_passthrough",
+        _fake_passthrough,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["search", "--fixed-strings", "ERROR", "--files-with-matches"])
+
+    assert result.exit_code == 0
+    assert calls == {
+        "paths": [],
         "pattern": "ERROR",
         "files_with_matches": True,
         "fixed_strings": True,

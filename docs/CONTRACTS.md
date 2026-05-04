@@ -48,6 +48,11 @@ Agent automation contracts:
 - `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
 - `tg ast-info --json` emits `{"languages": [...]}` for agent discovery without help-text scraping.
 
+Known current limitations:
+- On Windows consoles using legacy codepages, broad plain path-list output from `tg search --files ...` can still fail when generated artifact trees contain paths or diagnostics that cannot be encoded by the active console. Scope file-list commands, prefer UTF-8-safe output, or use JSON/search commands until the path-list output path is fixed.
+- Broad generated roots can still be expensive for unattended agents. Use scoped roots and bounded options such as `--max-repo-files`, `--max-callers`, and `--max-files`.
+- `impact --symbol` is a broader planning signal and can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact checks.
+
 ## 4. Machine-readable CLI output (`--json` and `--ndjson`)
 The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --ndjson`, and the documented harness/editor-plane flows are considered public APIs.
 - Existing fields (for example `file`, `line`, `match`, `context`) will not be renamed or removed without a major version bump.

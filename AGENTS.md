@@ -14,6 +14,26 @@ This file explains how agents should work in `tensor-grep`.
 
 The repo should be treated as a benchmark-governed, contract-heavy codebase. Do not optimize by guesswork.
 
+## Current Handoff
+
+As of 2026-05-04, the current released state is `v1.8.11`.
+
+- Release commit: `05e6d95 chore(release): v1.8.11 [skip ci]`
+- Fix commit: `636e8ff fix: harden files-with-matches rg routing`
+- CI run `25296218480`: passed
+- CodeQL run `25296218031`: passed
+- Session handoff: `docs/SESSION_HANDOFF.md`
+
+The latest accepted release fixed the Windows `--files-with-matches` rg-backed argument-vector failure, root-based path-list output, `-0/--null` path-list/count parsing, and `tg ast-info --json`.
+
+Known current weak spots:
+
+- `rg` remains the raw cold exact-text benchmark; `tg` should be treated as the agent-native code intelligence layer.
+- Broad generated roots can still be hostile to unattended agents. Scope paths and use `--max-repo-files`, `--max-callers`, and `--max-files`.
+- Prefer `blast-radius` over `impact --symbol` when direct symbol impact matters.
+- Broad `tg search --files ...` over generated artifact trees can still fail on Windows legacy-console Unicode output.
+- `uv run tg doctor --json` can report a stale in-tree `rust_core/target/release/tg.exe`; rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
+
 ## Operating Rules
 
 1. Start with a failing test when behavior changes.
@@ -222,4 +242,6 @@ Work like this:
 4. benchmark
 5. reject regressions
 6. push only measured wins or required correctness/CI fixes
+
+Do not run broad `tg search --files` over generated artifact trees on Windows until the path-list Unicode issue is fixed.
 
