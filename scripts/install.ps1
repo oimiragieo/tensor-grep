@@ -26,15 +26,35 @@ function Remove-StalePathLauncher {
     )
 
     foreach ($pathPart in $effectivePathParts) {
-        if (!$pathPart -or !(Test-Path -LiteralPath $pathPart)) {
+        if (!$pathPart) {
+            continue
+        }
+        $pathPartExists = $false
+        try {
+            $pathPartExists = Test-Path -LiteralPath $pathPart -ErrorAction Stop
+        } catch {
+            Write-Verbose "Skipping inaccessible PATH entry while checking tg launchers: $pathPart"
+            continue
+        }
+        if (!$pathPartExists) {
             continue
         }
         foreach ($launcherName in @("tg.com", "tg.exe", "tg.bat", "tg.cmd", "tg.ps1", "tg")) {
             $candidatePath = Join-Path $pathPart $launcherName
-            if (!(Test-Path -LiteralPath $candidatePath)) {
+            $candidateExists = $false
+            try {
+                $candidateExists = Test-Path -LiteralPath $candidatePath -ErrorAction Stop
+            } catch {
                 continue
             }
-            $resolvedCandidate = (Resolve-Path -LiteralPath $candidatePath).Path
+            if (!$candidateExists) {
+                continue
+            }
+            try {
+                $resolvedCandidate = (Resolve-Path -LiteralPath $candidatePath -ErrorAction Stop).Path
+            } catch {
+                continue
+            }
             if ($managedPathSet.ContainsKey($resolvedCandidate.ToLowerInvariant())) {
                 continue
             }

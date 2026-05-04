@@ -73,6 +73,15 @@ def test_install_ps1_should_remove_unmanaged_tg_launchers_even_when_version_matc
     assert "if ($candidateVersion -eq $managedVersionLine)" not in content
 
 
+def test_install_ps1_should_skip_inaccessible_path_entries_when_scanning_launchers():
+    content = _read_script("scripts/install.ps1")
+
+    assert "Test-Path -LiteralPath $pathPart -ErrorAction Stop" in content
+    assert "Test-Path -LiteralPath $candidatePath -ErrorAction Stop" in content
+    assert "Resolve-Path -LiteralPath $candidatePath -ErrorAction Stop" in content
+    assert "Skipping inaccessible PATH entry while checking tg launchers" in content
+
+
 def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim():
     content = _read_script("scripts/install.ps1")
 
