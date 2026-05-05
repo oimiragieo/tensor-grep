@@ -19,6 +19,16 @@ function Convert-ToMsysPath {
     return $normalizedPath
 }
 
+function Convert-ToWslPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $normalizedPath = $Path -replace '\\', '/'
+    if ($normalizedPath -match '^([A-Za-z]):/(.*)$') {
+        return "/mnt/$($Matches[1].ToLowerInvariant())/$($Matches[2])"
+    }
+    return $normalizedPath
+}
+
 function Remove-StalePythonPackageLauncher {
     param(
         [Parameter(Mandatory = $true)][string]$candidatePath,
@@ -224,11 +234,24 @@ try {
     $frontdoorPs1Path = Join-Path $frontdoorDir "tg.ps1"
     $frontdoorBashPath = Join-Path $frontdoorDir "tg"
     $msysInstallDir = Convert-ToMsysPath $installDir
+    $frontdoorArgBridgePath = Join-Path $frontdoorDir "tg-cmd-bridge.py"
+    $wslInstallDir = Convert-ToWslPath $installDir
+    $msysFrontdoorPath = Convert-ToMsysPath $frontdoorBashPath
+    $wslFrontdoorPath = Convert-ToWslPath $frontdoorBashPath
     $frontdoorCmdContent = (
         "@echo off`r`n" +
+        "setlocal`r`n" +
         "set PYTHONUTF8=1`r`n" +
         "set PYTHONIOENCODING=utf-8`r`n" +
-        "`"$installDir\.venv\Scripts\python.exe`" -X utf8 -m tensor_grep %*`r`n"
+        "set /a TG_CMD_SHIM_ARGC=0`r`n" +
+        ":tg_arg_loop`r`n" +
+        'if "%~1"=="" goto tg_arg_done' + "`r`n" +
+        "set /a TG_CMD_SHIM_ARGC+=1`r`n" +
+        'set "TG_CMD_SHIM_ARG_%TG_CMD_SHIM_ARGC%=%~1"' + "`r`n" +
+        "shift`r`n" +
+        "goto tg_arg_loop`r`n" +
+        ":tg_arg_done`r`n" +
+        "`"$installDir\.venv\Scripts\python.exe`" -X utf8 `"$frontdoorArgBridgePath`"`r`n"
     )
     $frontdoorPs1Content = @"
 `$env:PYTHONUTF8 = "1"
@@ -236,13 +259,39 @@ try {
 & "$installDir\.venv\Scripts\python.exe" -X utf8 -m tensor_grep @args
 exit `$LASTEXITCODE
 "@
+    $cmdArgvBridgeContent = @'
+import os
+import runpy
+import sys
+
+try:
+    argc = int(os.environ.get("TG_CMD_SHIM_ARGC", "0") or "0")
+except ValueError:
+    argc = 0
+
+argv = [
+    os.environ.get(f"TG_CMD_SHIM_ARG_{index}", "")
+    for index in range(1, argc + 1)
+]
+
+os.environ["PYTHONUTF8"] = "1"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+sys.argv = ["tensor-grep"] + argv
+runpy.run_module("tensor_grep", run_name="__main__")
+'@
     $frontdoorBashContent = @"
 #!/usr/bin/env bash
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"
+else
+    TG_PYTHON="$msysInstallDir/.venv/Scripts/python.exe"
+fi
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
-"$msysInstallDir/.venv/Scripts/python.exe" -X utf8 -m tensor_grep "$@"
+exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
 "@
     Set-Content -Path $frontdoorCmdPath -Value $frontdoorCmdContent -Encoding ascii
+    Set-Content -Path $frontdoorArgBridgePath -Value $cmdArgvBridgeContent -Encoding ascii
     Set-Content -Path $frontdoorPs1Path -Value $frontdoorPs1Content -Encoding ascii
     Set-Content -Path $frontdoorBashPath -Value $frontdoorBashContent -Encoding ascii
 
@@ -264,18 +313,31 @@ export PYTHONIOENCODING=utf-8
     )
     $cmdShimContent = (
         "@echo off`r`n" +
+        "setlocal`r`n" +
         "set PYTHONUTF8=1`r`n" +
         "set PYTHONIOENCODING=utf-8`r`n" +
-        "`"$frontdoorCmdPath`" %*`r`n"
+        "set /a TG_CMD_SHIM_ARGC=0`r`n" +
+        ":tg_arg_loop`r`n" +
+        'if "%~1"=="" goto tg_arg_done' + "`r`n" +
+        "set /a TG_CMD_SHIM_ARGC+=1`r`n" +
+        'set "TG_CMD_SHIM_ARG_%TG_CMD_SHIM_ARGC%=%~1"' + "`r`n" +
+        "shift`r`n" +
+        "goto tg_arg_loop`r`n" +
+        ":tg_arg_done`r`n" +
+        "`"$installDir\.venv\Scripts\python.exe`" -X utf8 `"$frontdoorArgBridgePath`"`r`n"
     )
     $ps1ShimContent = @"
 & "$frontdoorPs1Path" @args
 exit `$LASTEXITCODE
 "@
-    $msysFrontdoorPath = Convert-ToMsysPath $frontdoorBashPath
     $bashShimContent = @"
 #!/usr/bin/env bash
-"$msysFrontdoorPath" "$@"
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    TG_FRONTDOOR="$wslFrontdoorPath"
+else
+    TG_FRONTDOOR="$msysFrontdoorPath"
+fi
+exec "`$TG_FRONTDOOR" "`$@"
 "@
     $installedShimPaths = @()
     foreach ($shimDir in $shimDirs) {
