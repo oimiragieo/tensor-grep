@@ -2,18 +2,19 @@
 
 ## For: Next agent picking up after the native CPU/GPU/index/rewrite milestones
 
-## 2026-05-04 Current Handoff
+## 2026-05-05 Current Handoff
 
-The current released state is `v1.8.17`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.19`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `c4e8498 chore(release): v1.8.17 [skip ci]`
-- Latest fix commit: `e2ebbd2 fix: uninstall stale Python tg launcher owners`
-- CI run `25344850358`: passed through `publish-success-gate`
-- CodeQL run `25344849431`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.17`
-- PyPI pinned public installer dogfood: `1.8.17` installed and verified across profiled PowerShell, `cmd`, and `pwsh -NoProfile`.
+- Release commit: `92c66ef chore(release): v1.8.19 [skip ci]`
+- Latest fix commit: `a5fa279 fix: write WSL bash shims with LF newlines`
+- Main CI run `25355804591`: passed through `publish-success-gate`
+- Main CodeQL run `25355804637`: passed
+- Release-commit CodeQL run `25356194065`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.19`
+- PyPI pinned public installer dogfood: `1.8.19` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL.
 
 Current product read:
 
@@ -21,6 +22,7 @@ Current product read:
 - `rg` remains the benchmark for raw cold exact-text search.
 - GPU exists and devices are detected locally, but GPU routing remains benchmark-governed.
 - Broad generated roots still need guardrails before unattended agent use.
+- Windows/WSL installer shims are materially cleaner, but direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv.
 
 Current next work:
 

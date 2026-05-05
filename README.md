@@ -74,7 +74,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.14` release closeout: CI run `25324763737` and CodeQL run `25324762648` passed, semantic-release published GitHub release `v1.8.14`, the PyPI publish/parity gate passed, and the public Windows installer dogfood resolved fresh PowerShell/cmd PATH probes to `tensor-grep 1.8.14`
+- `v1.8.19` release closeout: main CI run `25355804591`, main CodeQL run `25355804637`, and release-commit CodeQL run `25356194065` passed; semantic-release published GitHub release `v1.8.19`; the PyPI publish/parity gate passed; and the public installer dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.19`
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:
@@ -259,7 +259,7 @@ Installer defaults and channels:
 - Set `TENSOR_GREP_VERSION` to pin a specific stable version (example: `TENSOR_GREP_VERSION=1.1.3`).
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
-- Windows installer now installs `tg.cmd` shims in `~/.local/bin` and `~/bin`, removes stale same-directory `tg.exe`/`tg.bat` launchers that would shadow the shim, moves those shim directories ahead of stale Python `Scripts` launchers on User PATH, updates both PowerShell 7 and Windows PowerShell profiles, and replaces stale aliases.
+- Windows installer now installs managed PowerShell, `cmd.exe`, Git Bash, and WSL shims in `~/.local/bin` and `~/bin`, removes stale same-directory `tg.exe`/`tg.bat` launchers that would shadow the shim, moves those shim directories ahead of stale Python `Scripts` launchers on User PATH, updates both PowerShell 7 and Windows PowerShell profiles, replaces stale aliases, forces UTF-8 mode, and writes bash shims with LF newlines for WSL.
 
 If `tg --version` still reports an older version, check command resolution:
 ```powershell
