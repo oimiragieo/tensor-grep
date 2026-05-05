@@ -1,6 +1,17 @@
 # CHANGELOG
 
 
+## v1.8.19 (2026-05-05)
+
+### Bug Fixes
+
+- Write WSL bash shims with LF newlines
+  ([`a5fa279`](https://github.com/oimiragieo/tensor-grep/commit/a5fa2799124a1e70d665e519deb15d6d6c10d088))
+
+Fix generated Windows installer bash shims so WSL receives LF-only scripts and no carriage returns
+  in shebangs or final argv forwarding.
+
+
 ## v1.8.18 (2026-05-05)
 
 ### Bug Fixes
