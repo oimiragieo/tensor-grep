@@ -113,13 +113,38 @@ def test_install_ps1_should_create_argv_safe_utf8_powershell_shims():
     assert 'Set-Alias -Name tg -Value `"$frontdoorCmdPath`"' not in content
 
 
+def test_install_ps1_should_create_cmd_shims_without_child_command_percent_star_expansion():
+    content = _read_script("scripts/install.ps1")
+
+    assert "$cmdArgvBridgeContent" in content
+    assert "TG_CMD_SHIM_ARGC" in content
+    assert "TG_CMD_SHIM_ARG_%TG_CMD_SHIM_ARGC%=%~1" in content
+    assert 'runpy.run_module("tensor_grep", run_name="__main__")' in content
+    assert "%*" not in content
+    assert " -m tensor_grep %*" not in content
+    assert '`"$frontdoorCmdPath`" %*' not in content
+
+
 def test_install_ps1_should_create_git_bash_shims_without_pathext():
     content = _read_script("scripts/install.ps1")
 
     assert "$frontdoorBashPath" in content
     assert "$msysInstallDir" in content
-    assert '"$msysInstallDir/.venv/Scripts/python.exe" -X utf8 -m tensor_grep "$@"' in content
-    assert '"$msysFrontdoorPath" "$@"' in content
+    assert 'TG_PYTHON="$msysInstallDir/.venv/Scripts/python.exe"' in content
+    assert 'exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"' in content
+    assert 'TG_FRONTDOOR="$msysFrontdoorPath"' in content
+    assert 'exec "`$TG_FRONTDOOR" "`$@"' in content
+
+
+def test_install_ps1_should_create_wsl_aware_bash_shims():
+    content = _read_script("scripts/install.ps1")
+
+    assert "function Convert-ToWslPath" in content
+    assert "$wslInstallDir = Convert-ToWslPath $installDir" in content
+    assert "$wslFrontdoorPath = Convert-ToWslPath $frontdoorBashPath" in content
+    assert "grep -qi microsoft /proc/version" in content
+    assert 'TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"' in content
+    assert 'TG_FRONTDOOR="$wslFrontdoorPath"' in content
 
 
 def test_install_ps1_should_place_extras_before_pinned_version_specifier():
