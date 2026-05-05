@@ -147,6 +147,33 @@ def _read_project_version_fallback() -> str:
     return "0.0.0"
 
 
+def _cli_package_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("tensor-grep")
+    except Exception:
+        return _read_project_version_fallback()
+
+
+def _version_detail_lines() -> tuple[str, ...]:
+    return (
+        "",
+        "features:+gpu-cudf,+gpu-torch,+rust-core",
+        "simd(compile):+SSE2,-SSSE3,-AVX2",
+        "simd(runtime):+SSE2,+SSSE3,+AVX2",
+        "",
+        "Arrow Zero-Copy IPC is available",
+    )
+
+
+def _print_version(*, verbose: bool = False) -> None:
+    print(f"tensor-grep {_cli_package_version()}")
+    if verbose:
+        for line in _version_detail_lines():
+            print(line)
+
+
 @lru_cache(maxsize=1)
 def _json_output_version() -> int:
     try:
@@ -250,12 +277,7 @@ _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = (
 
 
 def _doctor_installed_version() -> str:
-    try:
-        from importlib.metadata import version
-
-        return version("tensor-grep")
-    except Exception:
-        return _read_project_version_fallback()
+    return _cli_package_version()
 
 
 def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
@@ -309,6 +331,76 @@ def _doctor_rust_binary_version_matches(
     if rust_binary_version is None:
         return None
     return bool(re.search(rf"\b{re.escape(expected_version)}\b", rust_binary_version))
+
+
+def _doctor_native_tg_binary_kind(native_tg_binary: Path | None) -> str:
+    if native_tg_binary is None:
+        return "missing"
+
+    repo_root = Path(__file__).resolve().parents[3]
+    try:
+        relative = native_tg_binary.resolve().relative_to(repo_root.resolve())
+    except (OSError, ValueError):
+        return "standalone-executable"
+
+    parts = tuple(part.lower() for part in relative.parts)
+    if len(parts) >= 4 and parts[:2] == ("rust_core", "target"):
+        if parts[2] == "debug":
+            return "in-tree-debug"
+        if parts[2] == "release":
+            return "in-tree-release"
+        return "in-tree-target"
+    return "standalone-executable"
+
+
+def _doctor_rust_binary_version_status(
+    *,
+    native_tg_binary_kind: str,
+    rust_binary_version: str | None,
+    rust_binary_version_matches: bool | None,
+) -> str:
+    if rust_binary_version is None:
+        return "missing"
+    if rust_binary_version_matches is True:
+        return "matches"
+    if native_tg_binary_kind.startswith("in-tree-"):
+        return "stale"
+    return "mismatch"
+
+
+def _doctor_rust_binary_remediation(
+    *,
+    rust_binary_version_status: str,
+    native_tg_binary_kind: str,
+) -> str | None:
+    if rust_binary_version_status == "stale" and native_tg_binary_kind.startswith("in-tree-"):
+        return (
+            "Rebuild the in-tree native tg binary, for example "
+            "`C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml "
+            "--release`, or set TG_NATIVE_TG_BINARY to the intended release binary."
+        )
+    if rust_binary_version_status == "mismatch":
+        return "Set TG_NATIVE_TG_BINARY to the intended release binary or refresh the tg install."
+    return None
+
+
+def _doctor_rust_binary_warning(
+    *,
+    expected_version: str,
+    rust_binary_version: str | None,
+    rust_binary_version_status: str,
+) -> str | None:
+    if rust_binary_version_status == "stale":
+        return (
+            "in-tree native tg binary is stale: "
+            f"expected {expected_version}, found {rust_binary_version or 'unknown'}"
+        )
+    if rust_binary_version_status == "mismatch":
+        return (
+            "native tg binary version mismatch: "
+            f"expected {expected_version}, found {rust_binary_version or 'unknown'}"
+        )
+    return None
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
@@ -464,6 +556,16 @@ def _build_doctor_payload(
     ]
     installed_version = _doctor_installed_version()
     rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
+    native_tg_binary_kind = _doctor_native_tg_binary_kind(native_tg_binary)
+    rust_binary_version_matches = _doctor_rust_binary_version_matches(
+        installed_version,
+        rust_binary_version,
+    )
+    rust_binary_version_status = _doctor_rust_binary_version_status(
+        native_tg_binary_kind=native_tg_binary_kind,
+        rust_binary_version=rust_binary_version,
+        rust_binary_version_matches=rust_binary_version_matches,
+    )
     rust_core_extension_available = _doctor_rust_core_extension_available()
     path_tg_candidates = _doctor_path_tg_candidates()
     path_tg_first_version = (
@@ -479,9 +581,7 @@ def _build_doctor_payload(
         "config": str(resolved_config),
         "native_tg_binary": str(native_tg_binary) if native_tg_binary is not None else None,
         "native_tg_binary_exists": native_tg_binary is not None,
-        "native_tg_binary_kind": (
-            "standalone-executable" if native_tg_binary is not None else "missing"
-        ),
+        "native_tg_binary_kind": native_tg_binary_kind,
         "rust_core_extension_available": rust_core_extension_available,
         "search_acceleration_backend": (
             "standalone-native-tg"
@@ -492,9 +592,16 @@ def _build_doctor_payload(
         ),
         "rust_binary_version": rust_binary_version,
         "rust_binary_expected_version": installed_version,
-        "rust_binary_version_matches": _doctor_rust_binary_version_matches(
-            installed_version,
-            rust_binary_version,
+        "rust_binary_version_matches": rust_binary_version_matches,
+        "rust_binary_version_status": rust_binary_version_status,
+        "rust_binary_version_warning": _doctor_rust_binary_warning(
+            expected_version=installed_version,
+            rust_binary_version=rust_binary_version,
+            rust_binary_version_status=rust_binary_version_status,
+        ),
+        "rust_binary_remediation": _doctor_rust_binary_remediation(
+            rust_binary_version_status=rust_binary_version_status,
+            native_tg_binary_kind=native_tg_binary_kind,
         ),
         "path_tg_candidates": path_tg_candidates,
         "path_tg_first_version": path_tg_first_version,
@@ -529,15 +636,16 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
     ]
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
+    lines.append(f"native_tg_binary_kind: {payload.get('native_tg_binary_kind', 'unknown')}")
     lines.append(
         f"search_acceleration_backend: {payload.get('search_acceleration_backend', 'unknown')}"
     )
     if rust_version := payload.get("rust_binary_version"):
         lines.append(f"rust_binary_version:\n  {rust_version.replace(chr(10), chr(10) + '  ')}")
-    if payload.get("rust_binary_version_matches") is False:
-        lines.append(
-            f"rust_binary_version_warning: expected {payload.get('rust_binary_expected_version')}"
-        )
+    if rust_binary_warning := payload.get("rust_binary_version_warning"):
+        lines.append(f"rust_binary_version_warning: {rust_binary_warning}")
+    if rust_binary_remediation := payload.get("rust_binary_remediation"):
+        lines.append(f"rust_binary_remediation: {rust_binary_remediation}")
     path_tg_candidates = cast(list[dict[str, str | None]], payload.get("path_tg_candidates", []))
     if path_tg_candidates:
         lines.append("path_tg_candidates:")
@@ -5582,13 +5690,6 @@ def main_entry() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V", "--pcre2-version"):
         first_arg = sys.argv[1]
 
-        try:
-            from importlib.metadata import version
-
-            pkg_version = version("tensor-grep")
-        except Exception:
-            pkg_version = _read_project_version_fallback()
-
         if first_arg == "--pcre2-version":
             candidates = [resolve_native_tg_binary(), resolve_ripgrep_binary()]
             last_completed: subprocess.CompletedProcess[str] | None = None
@@ -5613,13 +5714,7 @@ def main_entry() -> None:
             )
             sys.exit(1)
 
-        print(f"tensor-grep {pkg_version}")
-        print()
-        print("features:+gpu-cudf,+gpu-torch,+rust-core")
-        print("simd(compile):+SSE2,-SSSE3,-AVX2")
-        print("simd(runtime):+SSE2,+SSSE3,+AVX2")
-        print()
-        print("Arrow Zero-Copy IPC is available")
+        _print_version(verbose=any(arg in {"--verbose", "-v"} for arg in sys.argv[2:]))
         sys.exit(0)
 
     from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
@@ -5627,7 +5722,7 @@ def main_entry() -> None:
     known_commands = _KNOWN_COMMANDS
 
     if len(sys.argv) == 1:
-        app(args=["--help"], windows_expand_args=False)
+        app(args=["--help"], prog_name="tg", windows_expand_args=False)
         return
 
     if len(sys.argv) > 1:
@@ -5639,7 +5734,7 @@ def main_entry() -> None:
         ):
             sys.argv.insert(1, "search")
 
-    app(windows_expand_args=False)
+    app(prog_name="tg", windows_expand_args=False)
 
 
 if __name__ == "__main__":

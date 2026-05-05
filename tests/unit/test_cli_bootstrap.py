@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.metadata as importlib_metadata
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -691,4 +693,43 @@ def test_main_entry_should_print_version_without_loading_full_cli(monkeypatch, c
         bootstrap.main_entry()
 
     assert excinfo.value.code == 0
-    assert "tensor-grep 9.9.9" in capsys.readouterr().out
+    assert capsys.readouterr().out == "tensor-grep 9.9.9\n"
+
+
+def test_main_entry_should_keep_verbose_version_details_without_loading_full_cli(
+    monkeypatch,
+    capsys,
+):
+    def _raise_version(_dist_name: str) -> str:
+        raise RuntimeError("metadata unavailable")
+
+    monkeypatch.setattr(sys, "argv", ["tg", "--version", "--verbose"])
+    monkeypatch.setattr(importlib_metadata, "version", _raise_version)
+    monkeypatch.setattr(bootstrap, "_read_project_version_fallback", lambda: "9.9.9")
+    monkeypatch.setattr(bootstrap, "_run_full_cli", lambda: pytest.fail("full cli should not run"))
+
+    with pytest.raises(SystemExit) as excinfo:
+        bootstrap.main_entry()
+
+    output = capsys.readouterr().out
+    assert excinfo.value.code == 0
+    assert output.startswith("tensor-grep 9.9.9\n\n")
+    assert "features:+gpu-cudf,+gpu-torch,+rust-core" in output
+    assert "Arrow Zero-Copy IPC is available" in output
+
+
+def test_python_module_help_should_use_public_tg_program_name() -> None:
+    env = dict(os.environ)
+    env["TYPER_USE_RICH"] = "0"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "tensor_grep", "--help"],
+        capture_output=True,
+        env=env,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "Usage: tg " in result.stdout
+    assert "python -m tensor_grep" not in result.stdout
