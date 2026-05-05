@@ -97,7 +97,7 @@ def test_install_ps1_should_remove_stale_same_dir_tg_launchers_before_cmd_shim()
     assert "Remove-Item -LiteralPath $staleShimPath -Force" in content
     assert "Removed stale tg launcher shadowing managed shim" in content
     assert content.index("Remove-Item -LiteralPath $staleShimPath -Force") < content.index(
-        "Set-Content -Path $cmdShimPath"
+        "Write-AsciiFile -Path $cmdShimPath"
     )
 
 
@@ -145,6 +145,20 @@ def test_install_ps1_should_create_wsl_aware_bash_shims():
     assert "grep -qi microsoft /proc/version" in content
     assert 'TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"' in content
     assert 'TG_FRONTDOOR="$wslFrontdoorPath"' in content
+
+
+def test_install_ps1_should_write_bash_shims_without_windows_newline_append():
+    content = _read_script("scripts/install.ps1")
+
+    assert "function Write-AsciiFile" in content
+    assert "function Write-BashFile" in content
+    assert "[System.IO.File]::WriteAllText" in content
+    assert "WSL bash treats CR in shebangs" in content
+    assert '$lfValue = ($Value -replace "`r`n", "`n") -replace "`r", "`n"' in content
+    assert "Set-Content -Path $frontdoorBashPath" not in content
+    assert "Set-Content -Path $bashShimPath" not in content
+    assert "Write-BashFile -Path $frontdoorBashPath -Value $frontdoorBashContent" in content
+    assert "Write-BashFile -Path $bashShimPath -Value $bashShimContent" in content
 
 
 def test_install_ps1_should_place_extras_before_pinned_version_specifier():
