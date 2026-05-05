@@ -16,10 +16,11 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-05, the current released state is `v1.8.19`.
+As of 2026-05-05, the current released state is `v1.8.20`.
 
-- Release commit: `92c66ef chore(release): v1.8.19 [skip ci]`
+- Release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
 - Recent fix commits:
+  - `10cac14 fix: polish CLI version help and doctor diagnostics`
   - `a5fa279 fix: write WSL bash shims with LF newlines`
   - `98fa9ab fix: harden Windows and WSL installer shims`
   - `e2ebbd2 fix: uninstall stale Python tg launcher owners`
@@ -28,15 +29,15 @@ As of 2026-05-05, the current released state is `v1.8.19`.
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25355804591`: passed through `publish-success-gate`
-- Main CodeQL run `25355804637`: passed
-- Release-commit CodeQL run `25356194065`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.19` resolves from PyPI
-- Public installer dogfood: pinned `1.8.19` verified profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, LF-only bash shim generation, and WSL regex alternation search
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.19>
+- Main CI run `25379489045`: passed through `publish-success-gate`
+- Main CodeQL run `25379488260`: passed
+- Release-commit CodeQL run `25380155733`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.20` resolves from PyPI
+- Public installer dogfood: pinned `1.8.20` verified profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, regex alternation in normal shell entrypoints, one-line `tg --version`, `tg --version --verbose`, `Usage: tg` help, and public `tg doctor --json` PATH-version parity
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.20>
 - Session handoff: `docs/SESSION_HANDOFF.md`
 
-The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, and LF-only generated bash shims.
+The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, and explicit `doctor` diagnostics for stale in-tree native binaries.
 
 Known current weak spots:
 
@@ -46,7 +47,7 @@ Known current weak spots:
 - Windows launcher/path-list hardening should force UTF-8 for managed shims and Python path-list output; still scope broad file-list commands to avoid generated-tree volume.
 - If `cmd /c tg --version` or `pwsh -NoProfile -Command "tg --version"` resolves an old `Python*\Scripts\tg.exe`, treat it as installer regression evidence. The Windows installer should remove or uninstall tensor-grep-owned stale Python launchers instead of only warning about them.
 - Normal PowerShell should invoke `tg` or `tg.ps1`. Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; quote the argument for `cmd.exe` or use the PowerShell shim.
-- `uv run tg doctor --json` can report a stale in-tree `rust_core/target/release/tg.exe`; rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
+- `uv run tg doctor --json` can report a stale in-tree native binary such as `rust_core/target/debug/tg.exe`. Current diagnostics label it as `in-tree-debug` or `in-tree-release` and include remediation; rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native behavior.
 
 ## Operating Rules
 

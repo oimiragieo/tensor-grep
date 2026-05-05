@@ -7,15 +7,15 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-05, the current released version is `v1.8.19`.
+As of 2026-05-05, the current released version is `v1.8.20`.
 
 Current release facts:
 
-- Release commit: `92c66ef chore(release): v1.8.19 [skip ci]`
-- Latest fix commit: `a5fa279 fix: write WSL bash shims with LF newlines`
-- PR #40 `fix: write WSL bash shims with LF newlines` merged, released, and publicly dogfooded
-- Main CI run `25355804591` passed through `publish-success-gate`; CodeQL runs `25355804637` and `25356194065` passed
-- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.19`
+- Release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
+- Latest fix commit: `10cac14 fix: polish CLI version help and doctor diagnostics`
+- PR #42 `fix: polish CLI version help and doctor diagnostics` merged, released, and publicly dogfooded
+- Main CI run `25379489045` passed through `publish-success-gate`; CodeQL runs `25379488260` and `25380155733` passed
+- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.20`
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
 Current product read:
@@ -32,9 +32,11 @@ Known current weak spots:
 - Windows command resolution must be checked across profiled PowerShell, `pwsh -NoProfile`, and `cmd`. Old tensor-grep-owned `Python*\Scripts\tg.exe` launchers should now be removed or uninstalled by the Windows installer; any recurrence is release-regression evidence.
 - WSL and Git Bash no-extension shims are part of the Windows installer contract. Verify WSL with `wsl bash -lc 'tg --version'` after shim changes.
 - In PowerShell, invoke `tg` or `tg.ps1` for regex metacharacters. Direct `tg.cmd` invocation with unescaped `|` is parsed by `cmd.exe` before the batch file receives argv.
+- `tg --version` is one-line by default for scripts; use `tg --version --verbose` for feature/SIMD/Arrow details.
+- Installed help should show `Usage: tg`, not `Usage: python -m tensor_grep`.
 - `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
 - `validation_commands` can be generic and should be treated as hints.
-- `uv run tg doctor --json` can report a stale in-tree standalone binary; rebuild `rust_core/target/release/tg.exe` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
+- `uv run tg doctor --json` can report a stale in-tree standalone binary; current output should label it as `in-tree-debug` or `in-tree-release`, set `rust_binary_version_status = stale`, and include rebuild/pinning remediation before agents trust standalone-native behavior.
 
 ## Release Completion Contract
 

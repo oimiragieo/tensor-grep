@@ -42,6 +42,37 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "`--sort path`" in contracts
 
 
+def test_handoff_docs_should_record_current_v1820_release_state() -> None:
+    docs = {
+        "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
+        "README.md": README_PATH.read_text(encoding="utf-8"),
+        "SKILL.md": SKILL_DOC_PATH.read_text(encoding="utf-8"),
+        "docs/SESSION_HANDOFF.md": SESSION_HANDOFF_PATH.read_text(encoding="utf-8"),
+        "docs/CONTINUATION_PLAN.md": CONTINUATION_PLAN_PATH.read_text(encoding="utf-8"),
+    }
+
+    for content in docs.values():
+        assert "v1.8.20" in content
+
+    for content in (
+        docs["AGENTS.md"],
+        docs["SKILL.md"],
+        docs["docs/SESSION_HANDOFF.md"],
+        docs["docs/CONTINUATION_PLAN.md"],
+    ):
+        assert "4f7b59c chore(release): v1.8.20 [skip ci]" in content
+        assert "10cac14 fix: polish CLI version help and doctor diagnostics" in content
+
+    handoff = docs["docs/SESSION_HANDOFF.md"]
+    assert "25379489045" in handoff
+    assert "25379488260" in handoff
+    assert "25380155733" in handoff
+    assert "tensor-grep==1.8.20" in handoff
+    assert "tg --version --verbose" in handoff
+    assert "Usage: tg" in handoff
+    assert "rust_binary_version_status = stale" in handoff
+
+
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
     doc = ROUTING_DOC_PATH.read_text(encoding="utf-8")
 

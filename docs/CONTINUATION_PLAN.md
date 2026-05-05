@@ -4,17 +4,17 @@
 
 ## 2026-05-05 Current Handoff
 
-The current released state is `v1.8.19`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.20`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `92c66ef chore(release): v1.8.19 [skip ci]`
-- Latest fix commit: `a5fa279 fix: write WSL bash shims with LF newlines`
-- Main CI run `25355804591`: passed through `publish-success-gate`
-- Main CodeQL run `25355804637`: passed
-- Release-commit CodeQL run `25356194065`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.19`
-- PyPI pinned public installer dogfood: `1.8.19` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL.
+- Release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
+- Latest fix commit: `10cac14 fix: polish CLI version help and doctor diagnostics`
+- Main CI run `25379489045`: passed through `publish-success-gate`
+- Main CodeQL run `25379488260`: passed
+- Release-commit CodeQL run `25380155733`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.20`
+- PyPI pinned public installer dogfood: `1.8.20` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, normal regex alternation, one-line version output, public help, and doctor PATH-version parity.
 
 Current product read:
 
@@ -22,12 +22,12 @@ Current product read:
 - `rg` remains the benchmark for raw cold exact-text search.
 - GPU exists and devices are detected locally, but GPU routing remains benchmark-governed.
 - Broad generated roots still need guardrails before unattended agent use.
-- Windows/WSL installer shims are materially cleaner, but direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv.
+- Windows/WSL installer shims are materially cleaner. Direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv; use normal PowerShell `tg` / `tg.ps1` for regex metacharacters.
 
 Current next work:
 
 1. Add progress, partial output, or stronger guardrails for broad generated-root scans.
-2. Improve stale native-binary diagnostics in `tg doctor --json`.
+2. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
 3. Continue dogfooding and preserve exact failing commands as product evidence.
 
 ## Status
