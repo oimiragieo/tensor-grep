@@ -74,7 +74,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.19` release closeout: main CI run `25355804591`, main CodeQL run `25355804637`, and release-commit CodeQL run `25356194065` passed; semantic-release published GitHub release `v1.8.19`; the PyPI publish/parity gate passed; and the public installer dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.19`
+- `v1.8.20` release closeout: main CI run `25379489045`, main CodeQL run `25379488260`, and release-commit CodeQL run `25380155733` passed; semantic-release published GitHub release `v1.8.20`; the PyPI publish/parity gate passed; and the public installer dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.20` while preserving regex alternation in normal shell entrypoints
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:

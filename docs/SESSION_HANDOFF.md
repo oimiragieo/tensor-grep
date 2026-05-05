@@ -4,17 +4,18 @@ Last updated: 2026-05-05
 
 ## Current Release State
 
-- Latest released version: `v1.8.19`
-- Latest release commit: `92c66ef chore(release): v1.8.19 [skip ci]`
-- Latest fix commit: `a5fa279 fix: write WSL bash shims with LF newlines`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.19>
-- Main CI run `25355804591`: passed through `publish-success-gate`
-- Main CodeQL run `25355804637`: passed
-- Release-commit CodeQL run `25356194065`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.19`
-- PyPI latest and pinned install: `tensor-grep==1.8.19` resolves from PyPI
-- Public Windows installer `TENSOR_GREP_VERSION=1.8.19`: installed `tensor-grep==1.8.19`, refreshed managed shims, and left profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolving `1.8.19`.
-- Public WSL shim dogfood: `/mnt/c/Users/oimir/bin/tg` has an LF-only shebang, `wsl bash -lc 'tg --version'` prints `tensor-grep 1.8.19`, and WSL `tg search "class|def" ...` works from `/mnt/c/dev/projects/tensor-grep`.
+- Latest released version: `v1.8.20`
+- Latest release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
+- Latest fix commit: `10cac14 fix: polish CLI version help and doctor diagnostics`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.20>
+- Main CI run `25379489045`: passed through `publish-success-gate`
+- Main CodeQL run `25379488260`: passed
+- Release-commit CodeQL run `25380155733`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.20`
+- PyPI latest and pinned install: `tensor-grep==1.8.20` resolves from PyPI
+- Public Windows installer `TENSOR_GREP_VERSION=1.8.20`: installed `tensor-grep==1.8.20`, refreshed managed shims, and left profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolving `1.8.20`.
+- Public shell dogfood: normal PowerShell, `cmd.exe`, Git Bash, and WSL regex alternation worked; `tg --version` prints one line by default, `tg --version --verbose` prints feature details, and help starts with `Usage: tg`.
+- Public doctor dogfood: from outside the repo, `tg doctor --json` reported `version = 1.8.20`, `rust_core_extension_available = true`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
 
 ## Release Completion Contract
 
@@ -28,7 +29,7 @@ Do not report final version state before the GitHub release, PyPI/package publis
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 
-## What v1.8.12-v1.8.19 Fixed
+## What v1.8.12-v1.8.20 Fixed
 
 - Windows `--files-with-matches` no longer expands huge candidate file lists into the ripgrep subprocess argv, avoiding `WinError 206`.
 - No-path `--files-with-matches` now preserves raw rg-style paths such as `AGENTS.md` instead of emitting `.\AGENTS.md`.
@@ -40,6 +41,9 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - The `.cmd` shim now enters a Python bridge instead of directly expanding raw `%*` into a child command, preserving quoted regex metacharacters for normal `cmd.exe` use.
 - No-extension bash shims are WSL-aware: WSL gets `/mnt/c/...` paths and Git Bash gets `/c/...` paths.
 - Generated bash shims are written with LF newlines so WSL does not see `/usr/bin/env: 'bash\r'` or pass a trailing CR through `"$@"`.
+- `tg --version` now prints one line by default for script-friendly version checks, while `tg --version --verbose` preserves feature/SIMD/Arrow details for humans.
+- Installed CLI help now uses the public program name (`Usage: tg ...`) instead of the Python module path.
+- `tg doctor --json` labels stale in-tree native binaries as `in-tree-debug` or `in-tree-release`, reports `rust_binary_version_status`, and includes remediation instead of leaving contributors to infer stale native state from a raw mismatch.
 - Windows installers now uninstall the tensor-grep Python package that owns a stale `Python*\Scripts\tg.exe` when direct stale-launcher removal cannot clear a PATH shadow.
 - Python path-list output uses the UTF-8-safe stdout path and preserves discovery order for `--files-with-matches` fallback output.
 - PATH-entry scans skip inaccessible machine PATH directories instead of aborting installation after package install.
@@ -53,23 +57,27 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 
 - PR #39 `fix: harden Windows and WSL installer shims`: merged and released as `v1.8.18`
 - PR #40 `fix: write WSL bash shims with LF newlines`: merged and released as `v1.8.19`
+- PR #42 `fix: polish CLI version help and doctor diagnostics`: merged and released as `v1.8.20`
 - `uv run pytest tests/unit/test_install_scripts.py -q`: `18 passed` on the LF-shim fix branch
+- `uv run pytest tests/unit/test_cli_bootstrap.py tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py -q`: `287 passed` on the CLI polish branch
 - PowerShell parser checks for `scripts/install.ps1` under both `pwsh` and Windows PowerShell: passed
 - `git diff --check`: passed
 - `uv run ruff check .`: passed
 - `uv run ruff format --check --preview .`: passed
 - `uv run mypy src/tensor_grep`: passed
-- `uv run pytest -q`: `1840 passed, 16 skipped`
-- Main CI run `25355804591`: passed through `publish-pypi`, `validate-pypi-artifacts`, and `publish-success-gate`
-- Main CodeQL run `25355804637`: passed
-- Release-commit CodeQL run `25356194065`: passed
-- PyPI reports `tensor-grep 1.8.19` as latest and pinned `tensor-grep==1.8.19` resolves from PyPI.
-- Public `v1.8.19` installer dogfood passed profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL version resolution, WSL LF-only shim inspection, PowerShell alternation through the normal `tg` shim, `cmd.exe` double-quoted alternation, and WSL alternation search.
+- `uv run pytest -q`: `1845 passed, 16 skipped`
+- Main CI run `25379489045`: passed through `publish-pypi`, `validate-pypi-artifacts`, and `publish-success-gate`
+- Main CodeQL run `25379488260`: passed
+- Release-commit CodeQL run `25380155733`: passed
+- PyPI reports `tensor-grep 1.8.20` as latest and pinned `tensor-grep==1.8.20` resolves from PyPI.
+- Public `v1.8.20` installer dogfood passed profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL version resolution, PowerShell alternation through the normal `tg` shim, `cmd.exe` double-quoted alternation, Git Bash alternation, WSL alternation search, script-friendly one-line version output, verbose version details, public `Usage: tg` help, and public doctor PATH-version parity.
 
 ## What Works Well Now
 
 - Scoped text search, JSON, NDJSON, multi-root search, globs, `--column`, `--vimgrep`, `--path-separator`, `--type-list`, and invalid-regex diagnostics are stable enough for agent workflows.
-- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.19` install on this host.
+- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.20` install on this host.
+- `tg --version` is script-friendly by default; use `tg --version --verbose` for feature/SIMD/Arrow diagnostics.
+- Public help starts with `Usage: tg`, including `python -m tensor_grep --help` and installed command help paths.
 - `defs`, `source`, `refs`, `callers`, `context-render`, and `blast-radius` are useful for scoped repo navigation and planning.
 - Symbol outputs are compact on hits and no-matches; CommonJS symbol extraction and reference dedupe are materially improved.
 - Bounded blast-radius defaults and output-limit metadata make scoped impact checks safer for agent loops.
@@ -82,7 +90,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Broad generated roots can still be agent-hostile. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - `impact --symbol` is still less trustworthy than `blast-radius` for direct symbol impact.
 - `validation_commands` can still be generic. Treat targeted commands as hints, not proof of full coverage.
-- Local `uv run tg doctor --json` can find a stale in-tree standalone binary at `rust_core/target/release/tg.exe`. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native diagnostics.
+- Local `uv run tg doctor --json` can find a stale in-tree standalone binary at `rust_core/target/debug/tg.exe` or `rust_core/target/release/tg.exe`. Current doctor output labels this as `in-tree-debug` or `in-tree-release`, reports `rust_binary_version_status = stale`, and emits a rebuild/pinning remediation. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native behavior.
 - Broad `tg search --files ...` over generated artifact trees can still be expensive. The managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
 - Root-scale `--files-with-matches`, `--count`, and `--force-cpu` can still differ from raw `rg` in output ordering even when the file set and counts match. Do not claim golden stdout order parity unless a test proves it for that mode.
 - Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; use normal PowerShell `tg` / `tg.ps1` or quote the metacharacter argument for `cmd.exe`.
@@ -92,9 +100,8 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 
 1. Add progress, partial output, or stronger guardrails for broad generated-root scans.
 2. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct impact.
-3. Improve `doctor` diagnostics when the in-tree standalone native binary is stale.
-4. Decide whether root-scale search modes promise semantic parity or golden stdout order parity against `rg`, then test and document that contract.
-5. Keep dogfooding `tg` first and record exact failing commands, exit codes, and outputs as product evidence.
+3. Decide whether root-scale search modes should stay semantic-parity-only or provide golden stdout order parity against `rg`, then test and document that contract.
+4. Keep dogfooding `tg` first and record exact failing commands, exit codes, and outputs as product evidence.
 
 ## Safe Next-Session Commands
 
@@ -104,7 +111,7 @@ git log -3 --oneline
 uv run tg --version
 uv run tg doctor --json
 python -m pip index versions tensor-grep --index-url https://pypi.org/simple --no-cache-dir
-gh release view v1.8.19 --json tagName,publishedAt,url
+gh release view v1.8.20 --json tagName,publishedAt,url
 tg --version
 cmd /c tg --version
 pwsh -NoProfile -Command "tg --version"
