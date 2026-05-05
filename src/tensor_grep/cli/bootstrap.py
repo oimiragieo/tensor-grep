@@ -154,12 +154,13 @@ def _print_version() -> None:
         pkg_version = _read_project_version_fallback()
 
     print(f"tensor-grep {pkg_version}")
-    print()
-    print("features:+gpu-cudf,+gpu-torch,+rust-core")
-    print("simd(compile):+SSE2,-SSSE3,-AVX2")
-    print("simd(runtime):+SSE2,+SSSE3,+AVX2")
-    print()
-    print("Arrow Zero-Copy IPC is available")
+    if any(arg in {"--verbose", "-v"} for arg in sys.argv[2:]):
+        print()
+        print("features:+gpu-cudf,+gpu-torch,+rust-core")
+        print("simd(compile):+SSE2,-SSSE3,-AVX2")
+        print("simd(runtime):+SSE2,+SSSE3,+AVX2")
+        print()
+        print("Arrow Zero-Copy IPC is available")
 
 
 def _normalize_search_invocation(argv: list[str]) -> list[str] | None:

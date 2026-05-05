@@ -10,6 +10,7 @@ AGENTS_DOC_PATH = Path("AGENTS.md")
 SKILL_DOC_PATH = Path("SKILL.md")
 SESSION_HANDOFF_PATH = Path("docs/SESSION_HANDOFF.md")
 CONTINUATION_PLAN_PATH = Path("docs/CONTINUATION_PLAN.md")
+CONTRACTS_DOC_PATH = Path("docs/CONTRACTS.md")
 
 
 def test_readme_should_point_to_canonical_public_docs() -> None:
@@ -31,6 +32,14 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     assert "tg run --rewrite" in readme
     assert "--apply" in readme
     assert "atomic temp-file rename contract" in readme
+
+
+def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
+    contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
+
+    assert "Direct `.cmd` invocation from PowerShell" in contracts
+    assert "semantic result parity" in contracts
+    assert "`--sort path`" in contracts
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
