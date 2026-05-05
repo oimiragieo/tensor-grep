@@ -29,6 +29,26 @@ function Convert-ToWslPath {
     return $normalizedPath
 }
 
+function Write-AsciiFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    [System.IO.File]::WriteAllText($Path, $Value, [System.Text.Encoding]::ASCII)
+}
+
+function Write-BashFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Value
+    )
+
+    # WSL bash treats CR in shebangs or final "$@" lines as syntax or argv bytes.
+    $lfValue = ($Value -replace "`r`n", "`n") -replace "`r", "`n"
+    Write-AsciiFile -Path $Path -Value $lfValue
+}
+
 function Remove-StalePythonPackageLauncher {
     param(
         [Parameter(Mandatory = $true)][string]$candidatePath,
@@ -290,10 +310,10 @@ export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
 exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
 "@
-    Set-Content -Path $frontdoorCmdPath -Value $frontdoorCmdContent -Encoding ascii
-    Set-Content -Path $frontdoorArgBridgePath -Value $cmdArgvBridgeContent -Encoding ascii
-    Set-Content -Path $frontdoorPs1Path -Value $frontdoorPs1Content -Encoding ascii
-    Set-Content -Path $frontdoorBashPath -Value $frontdoorBashContent -Encoding ascii
+    Write-AsciiFile -Path $frontdoorCmdPath -Value $frontdoorCmdContent
+    Write-AsciiFile -Path $frontdoorArgBridgePath -Value $cmdArgvBridgeContent
+    Write-AsciiFile -Path $frontdoorPs1Path -Value $frontdoorPs1Content
+    Write-BashFile -Path $frontdoorBashPath -Value $frontdoorBashContent
 
     Write-Host "      Installing managed external LSP providers..."
     try {
@@ -354,9 +374,9 @@ exec "`$TG_FRONTDOOR" "`$@"
         $cmdShimPath = "$shimDir\tg.cmd"
         $ps1ShimPath = "$shimDir\tg.ps1"
         $bashShimPath = "$shimDir\tg"
-        Set-Content -Path $cmdShimPath -Value $cmdShimContent -Encoding ascii
-        Set-Content -Path $ps1ShimPath -Value $ps1ShimContent -Encoding ascii
-        Set-Content -Path $bashShimPath -Value $bashShimContent -Encoding ascii
+        Write-AsciiFile -Path $cmdShimPath -Value $cmdShimContent
+        Write-AsciiFile -Path $ps1ShimPath -Value $ps1ShimContent
+        Write-BashFile -Path $bashShimPath -Value $bashShimContent
         $installedShimPaths += $cmdShimPath
         $installedShimPaths += $ps1ShimPath
         $installedShimPaths += $bashShimPath
