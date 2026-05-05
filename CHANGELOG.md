@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.8.20 (2026-05-05)
+
+### Bug Fixes
+
+- Polish CLI version help and doctor diagnostics
+  ([`10cac14`](https://github.com/oimiragieo/tensor-grep/commit/10cac14f447c49889a045392047772a942cf8a56))
+
+### Documentation
+
+- Update v1.8.19 handoff and skill
+  ([`46b6ca5`](https://github.com/oimiragieo/tensor-grep/commit/46b6ca57d77455eacd07a5e644622d1571bb85d5))
+
+Refresh v1.8.19 release handoff, docs process guidance, repo tensor-grep skill, and public
+  installer/WSL dogfood evidence.
+
+
 ## v1.8.19 (2026-05-05)
 
 ### Bug Fixes
