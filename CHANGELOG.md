@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.8.18 (2026-05-05)
+
+### Bug Fixes
+
+- Harden Windows and WSL installer shims
+  ([`98fa9ab`](https://github.com/oimiragieo/tensor-grep/commit/98fa9ab98c49bbff19ae04804c4c94ed8b9c587d))
+
+Squash merge PR #39.
+
+### Documentation
+
+- Update v1.8.17 handoff and skill
+  ([`7b7926d`](https://github.com/oimiragieo/tensor-grep/commit/7b7926d50fbf7843ba51e4ddbcafb9d1ff1a40d3))
+
+Update repo handoff docs and tensor-grep skill guidance for the completed v1.8.17 release and
+  installer dogfood evidence.
+
+
 ## v1.8.17 (2026-05-04)
 
 ### Bug Fixes
