@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.8.21 (2026-05-06)
+
+### Bug Fixes
+
+- Ignore stale native binaries in dev resolution
+  ([`1bf2c76`](https://github.com/oimiragieo/tensor-grep/commit/1bf2c7697a3180b64f26ab9636b81ee8844faeb3))
+
+### Documentation
+
+- Update v1.8.20 handoff and skill
+  ([`ae41f47`](https://github.com/oimiragieo/tensor-grep/commit/ae41f4702049fb8eddbd256ac2e05b85fb0895c5))
+
+Update v1.8.20 handoff docs, repo skill, README release proof, continuation plan, paper note, and
+  docs governance coverage.
+
+
 ## v1.8.20 (2026-05-05)
 
 ### Bug Fixes
