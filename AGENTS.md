@@ -16,10 +16,11 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-05, the current released state is `v1.8.20`.
+As of 2026-05-06, the current released state is `v1.8.21`.
 
-- Release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
+- Release commit: `4e83e6d chore(release): v1.8.21 [skip ci]`
 - Recent fix commits:
+  - `1bf2c76 fix: ignore stale native binaries in dev resolution`
   - `10cac14 fix: polish CLI version help and doctor diagnostics`
   - `a5fa279 fix: write WSL bash shims with LF newlines`
   - `98fa9ab fix: harden Windows and WSL installer shims`
@@ -29,12 +30,13 @@ As of 2026-05-05, the current released state is `v1.8.20`.
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25379489045`: passed through `publish-success-gate`
-- Main CodeQL run `25379488260`: passed
-- Release-commit CodeQL run `25380155733`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.20` resolves from PyPI
-- Public installer dogfood: pinned `1.8.20` verified profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, regex alternation in normal shell entrypoints, one-line `tg --version`, `tg --version --verbose`, `Usage: tg` help, and public `tg doctor --json` PATH-version parity
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.20>
+- Main CI run `25414052583`: passed through `publish-success-gate`
+- Main CodeQL run `25414051923`: passed
+- Release-commit CodeQL run `25414407901`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.21` resolves from PyPI
+- Public installer dogfood: pinned `1.8.21` verified profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, regex alternation in normal shell entrypoints, one-line `tg --version`, `tg --version --verbose`, `Usage: tg` help, and public `tg doctor --json` PATH-version parity
+- Repo dev dogfood: `uv run tg doctor --json --no-lsp` reported stale in-tree standalone binaries as `stale-skipped`, left `native_tg_binary` unset, and kept `search_acceleration_backend = rust-core-extension`; repo JSON search routed through `RipgrepBackend` instead of a stale standalone native binary.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.21>
 - Session handoff: `docs/SESSION_HANDOFF.md`
 
 The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, and public `--format rg` help text for exact ripgrep-style output.

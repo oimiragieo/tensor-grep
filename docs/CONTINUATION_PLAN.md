@@ -2,19 +2,19 @@
 
 ## For: Next agent picking up after the native CPU/GPU/index/rewrite milestones
 
-## 2026-05-05 Current Handoff
+## 2026-05-06 Current Handoff
 
-The current released state is `v1.8.20`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.21`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
-- Latest fix commit: `10cac14 fix: polish CLI version help and doctor diagnostics`
-- Main CI run `25379489045`: passed through `publish-success-gate`
-- Main CodeQL run `25379488260`: passed
-- Release-commit CodeQL run `25380155733`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.20`
-- PyPI pinned public installer dogfood: `1.8.20` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, normal regex alternation, one-line version output, public help, and doctor PATH-version parity.
+- Release commit: `4e83e6d chore(release): v1.8.21 [skip ci]`
+- Latest fix commit: `1bf2c76 fix: ignore stale native binaries in dev resolution`
+- Main CI run `25414052583`: passed through `publish-success-gate`
+- Main CodeQL run `25414051923`: passed
+- Release-commit CodeQL run `25414407901`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.21`
+- PyPI pinned public installer dogfood: `1.8.21` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, normal regex alternation, one-line version output, public help, doctor PATH-version parity, and repo-dev stale-native skipping.
 
 Current product read:
 

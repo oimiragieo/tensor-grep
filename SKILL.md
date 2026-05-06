@@ -7,15 +7,16 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-05, the current released version is `v1.8.20`.
+As of 2026-05-06, the current released version is `v1.8.21`.
 
 Current release facts:
 
-- Release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
-- Latest fix commit: `10cac14 fix: polish CLI version help and doctor diagnostics`
-- PR #42 `fix: polish CLI version help and doctor diagnostics` merged, released, and publicly dogfooded
-- Main CI run `25379489045` passed through `publish-success-gate`; CodeQL runs `25379488260` and `25380155733` passed
-- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.20`
+- Release commit: `4e83e6d chore(release): v1.8.21 [skip ci]`
+- Latest fix commit: `1bf2c76 fix: ignore stale native binaries in dev resolution`
+- PR #44 `fix: ignore stale native binaries in dev resolution` merged, released, and publicly dogfooded
+- Main CI run `25414052583` passed through `publish-success-gate`; CodeQL runs `25414051923` and `25414407901` passed
+- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.21`
+- Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
 Current product read:
