@@ -76,6 +76,52 @@ def test_resolve_native_tg_binary_ignores_legacy_benchmark_binary(monkeypatch, t
     assert resolve_native_tg_binary() is None
 
 
+def test_resolve_native_tg_binary_ignores_stale_in_tree_binary_without_explicit_override(
+    monkeypatch, tmp_path
+):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    stale_binary = repo_root / "rust_core" / "target" / "debug" / binary_name
+    stale_binary.parent.mkdir(parents=True, exist_ok=True)
+    stale_binary.write_text("stale\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
+    monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.8.21", raising=False)
+    monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.8.14", raising=False)
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() is None
+
+
+def test_resolve_native_tg_binary_uses_matching_in_tree_binary(monkeypatch, tmp_path):
+    repo_root = tmp_path / "repo"
+    runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"
+    runtime_file.parent.mkdir(parents=True, exist_ok=True)
+    runtime_file.write_text("# stub\n", encoding="utf-8")
+
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    native_binary = repo_root / "rust_core" / "target" / "release" / binary_name
+    native_binary.parent.mkdir(parents=True, exist_ok=True)
+    native_binary.write_text("current\n", encoding="utf-8")
+
+    monkeypatch.setattr(runtime_paths, "__file__", str(runtime_file))
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_MCP_TG_BINARY", raising=False)
+    monkeypatch.setattr(runtime_paths.shutil, "which", lambda _: None)
+    monkeypatch.setattr(runtime_paths, "_expected_tg_version", lambda: "1.8.21", raising=False)
+    monkeypatch.setattr(runtime_paths, "_native_tg_version", lambda _: "tg 1.8.21", raising=False)
+    resolve_native_tg_binary.cache_clear()
+
+    assert resolve_native_tg_binary() == native_binary.resolve()
+
+
 def test_resolve_native_tg_binary_ignores_current_python_launcher(monkeypatch, tmp_path):
     repo_root = tmp_path / "repo"
     runtime_file = repo_root / "src" / "tensor_grep" / "cli" / "runtime_paths.py"

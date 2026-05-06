@@ -1,5 +1,7 @@
 import os
+import re
 import shutil
+import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -43,9 +45,77 @@ def _looks_like_python_scripts_launcher(candidate: Path) -> bool:
     return False
 
 
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _read_project_version_fallback() -> str:
+    try:
+        pyproject_path = _repo_root() / "pyproject.toml"
+        for line in pyproject_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("version = "):
+                return stripped.split('"', 2)[1]
+    except Exception:
+        pass
+    return "0.0.0"
+
+
+def _expected_tg_version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("tensor-grep")
+    except Exception:
+        return _read_project_version_fallback()
+
+
+def _native_tg_version(candidate: Path) -> str | None:
+    try:
+        result = subprocess.run(
+            [str(candidate), "--version"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
+
+
+def _native_tg_version_matches(expected_version: str, version_text: str | None) -> bool:
+    if version_text is None:
+        return False
+    return bool(re.search(rf"\b{re.escape(expected_version)}\b", version_text))
+
+
+def _in_tree_native_tg_candidates(*, repo_root: Path, binary_name: str) -> list[Path]:
+    candidates = [
+        repo_root / "rust_core" / "target" / "release" / binary_name,
+        repo_root / "rust_core" / "target" / "debug" / binary_name,
+    ]
+    existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
+    return sorted(existing, key=lambda candidate: candidate.stat().st_mtime_ns, reverse=True)
+
+
+def iter_in_tree_native_tg_binaries() -> list[Path]:
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
+    return _in_tree_native_tg_candidates(repo_root=_repo_root(), binary_name=binary_name)
+
+
+def _native_candidate_matches_current_package(candidate: Path, *, expected_version: str) -> bool:
+    return _native_tg_version_matches(expected_version, _native_tg_version(candidate))
+
+
 @lru_cache(maxsize=1)
 def resolve_native_tg_binary() -> Path | None:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _repo_root()
     binary_name = "tg.exe" if sys.platform.startswith("win") else "tg"
 
     if env_flag_enabled("TG_DISABLE_NATIVE_TG"):
@@ -59,28 +129,32 @@ def resolve_native_tg_binary() -> Path | None:
             return p.resolve()
         raise FileNotFoundError(f"Configured binary {p} not found.")
 
-    candidates = []
+    expected_version = _expected_tg_version()
 
-    # Priority 2: In-tree build
-    candidates.extend([
-        repo_root / "rust_core" / "target" / "release" / binary_name,
-        repo_root / "rust_core" / "target" / "debug" / binary_name,
-    ])
-
-    existing = [candidate.resolve() for candidate in candidates if candidate.is_file()]
-    if existing:
-        return max(existing, key=lambda candidate: candidate.stat().st_mtime_ns)
+    # Priority 2: compatible in-tree build. Stale in-tree binaries are ignored
+    # unless pinned explicitly with TG_NATIVE_TG_BINARY/TG_MCP_TG_BINARY.
+    for candidate in _in_tree_native_tg_candidates(repo_root=repo_root, binary_name=binary_name):
+        if _native_candidate_matches_current_package(candidate, expected_version=expected_version):
+            return candidate
 
     # Priority 3: PATH installations
     if which_tg := shutil.which(binary_name):
         resolved = Path(which_tg).resolve()
-        if not _looks_like_python_scripts_launcher(resolved):
+        if not _looks_like_python_scripts_launcher(
+            resolved
+        ) and _native_candidate_matches_current_package(
+            resolved, expected_version=expected_version
+        ):
             return resolved
     if which_tensor_grep := shutil.which(
         "tensor-grep" + (".exe" if sys.platform.startswith("win") else "")
     ):
         resolved = Path(which_tensor_grep).resolve()
-        if not _looks_like_python_scripts_launcher(resolved):
+        if not _looks_like_python_scripts_launcher(
+            resolved
+        ) and _native_candidate_matches_current_package(
+            resolved, expected_version=expected_version
+        ):
             return resolved
 
     return None
@@ -97,7 +171,7 @@ def resolve_ripgrep_binary() -> Path | None:
             return p.resolve()
 
     # Priority 2: In-tree bundled binary
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _repo_root()
     if sys.platform.startswith("win"):
         dev_path = repo_root / "benchmarks" / "ripgrep-14.1.0-x86_64-pc-windows-msvc" / "rg.exe"
     elif sys.platform.startswith("darwin"):

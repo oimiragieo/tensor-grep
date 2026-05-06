@@ -103,6 +103,8 @@ What is now contract-tested:
 - `tg search PATTERN` defaults to the current directory, `--json` no-match emits a valid empty envelope, invalid regex exits distinctly from no-match before native delegation/scanning, and editor-facing flags such as `--column`, `--vimgrep`, and `--path-separator` are forwarded or formatted consistently
 - generated `.claude/context` snapshots and common build/cache directories are skipped by default during Python fallback scans; rust-first bootstrap also falls back to the Python guardrail path for broad `.claude` roots, and `--no-ignore` should only be used when those generated files are the explicit target
 - `tg search --type-list` has a built-in fallback when neither ripgrep nor a standalone native binary is available; `--pcre2-version` follows ripgrep and returns an error when no PCRE2-capable backend is available
+- stale in-tree standalone binaries under `rust_core/target/*/tg(.exe)` are ignored for implicit native delegation unless `TG_NATIVE_TG_BINARY` pins one explicitly; `tg doctor --json` reports skipped stale candidates for contributor safety
+- `tg search --format rg` is the public exact ripgrep-style text formatter; use `--sort path --format rg` when automation needs deterministic rg-shaped stdout
 
 Use this when you need a fast planner-to-executor handoff on broad roots before paying for deeper planning.
 
@@ -133,6 +135,7 @@ Current read:
 - `rg` remains the cold generic text-search baseline
 - the 2026-04-29 `v1.6.5` cold-path rerun preserved parity on all 10 rows, but `benchmarks/check_regression.py --baseline auto` failed because the `rg` comparator drifted and the case-insensitive `tg` row was 8.93% slower than the frozen Windows baseline
 - cold-path attribution now confirms benchmark claims should use the explicit repo native binary; shell-discovered `tg` can be stale and is treated as environment-drift evidence
+- dev-path native resolution now ignores stale implicit in-tree binaries; use `TG_NATIVE_TG_BINARY` only when intentionally pinning a standalone binary for benchmark-controlled runs
 - `tg search` is effectively tied with `rg` on the 200MB row in the latest host-local comparison, while `rg` still wins the standard-corpus row
 - host-local peer rows currently include `rg` and `git grep --no-index`; `ag`, `ack`, `ugrep`, and `grep` are omitted on this host because they are not installed
 - native AST search, AST rewrite, repeated-query acceleration, and GPU are separate benchmark surfaces and should not be conflated with cold plain-text search

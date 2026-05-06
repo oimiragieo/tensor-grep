@@ -707,7 +707,7 @@ def test_doctor_json_reports_native_version_mismatch(monkeypatch, tmp_path: Path
     assert payload["rust_binary_expected_version"] == "1.8.1"
 
 
-def test_doctor_json_labels_stale_in_tree_native_binary(
+def test_doctor_json_reports_stale_in_tree_native_binary_as_skipped(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -715,7 +715,19 @@ def test_doctor_json_labels_stale_in_tree_native_binary(
     native_binary = repo_root / "rust_core" / "target" / "debug" / "tg.exe"
 
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "1.8.19")
-    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_binary)
+    monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._doctor_skipped_native_tg_binaries",
+        lambda _expected_version, _selected_binary: [
+            {
+                "path": str(native_binary),
+                "kind": "in-tree-debug",
+                "version": "tg 1.8.14",
+                "version_status": "stale",
+            }
+        ],
+        raising=False,
+    )
     monkeypatch.setattr(
         "tensor_grep.cli.main._doctor_rust_binary_version",
         lambda _binary: "tg 1.8.14",
@@ -730,10 +742,19 @@ def test_doctor_json_labels_stale_in_tree_native_binary(
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["native_tg_binary_kind"] == "in-tree-debug"
-    assert payload["rust_binary_version_matches"] is False
-    assert payload["rust_binary_version_status"] == "stale"
-    assert "in-tree native tg binary is stale" in payload["rust_binary_version_warning"]
+    assert payload["native_tg_binary"] is None
+    assert payload["native_tg_binary_kind"] == "missing"
+    assert payload["search_acceleration_backend"] in {"rust-core-extension", "python"}
+    assert payload["rust_binary_version_status"] == "stale-skipped"
+    assert payload["skipped_native_tg_binaries"] == [
+        {
+            "path": str(native_binary),
+            "kind": "in-tree-debug",
+            "version": "tg 1.8.14",
+            "version_status": "stale",
+        }
+    ]
+    assert "ignored stale in-tree native tg binary" in payload["rust_binary_version_warning"]
     assert "TG_NATIVE_TG_BINARY" in payload["rust_binary_remediation"]
 
 
@@ -1503,6 +1524,18 @@ def test_search_help_should_describe_json_as_aggregate_json() -> None:
     assert "aggregate JSON object." in help_text
     assert "streaming" in help_text
     assert "Print results in JSON Lines format." not in help_text
+
+
+def test_search_help_should_describe_rg_format_as_public_exact_output() -> None:
+    result = CliRunner().invoke(app, ["search", "--help"])
+
+    assert result.exit_code == 0
+    help_text = _strip_ansi(result.stdout)
+    normalized_help = re.sub(r"\s+", " ", re.sub(r"[│┌┐└┘─]+", " ", help_text))
+    assert "--format" in help_text
+    assert "Output format: rg, json, table, or csv." in normalized_help
+    assert "Use rg for exact ripgrep-style text output." in normalized_help
+    assert "Internal formatter" not in help_text
 
 
 def test_safe_stdout_line_writes_utf8_when_console_encoding_rejects_unicode(monkeypatch):
