@@ -44,7 +44,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "stale-skipped" in contracts
 
 
-def test_handoff_docs_should_record_current_v1820_release_state() -> None:
+def test_handoff_docs_should_record_current_v1821_release_state() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -54,7 +54,7 @@ def test_handoff_docs_should_record_current_v1820_release_state() -> None:
     }
 
     for content in docs.values():
-        assert "v1.8.20" in content
+        assert "v1.8.21" in content
 
     for content in (
         docs["AGENTS.md"],
@@ -62,19 +62,20 @@ def test_handoff_docs_should_record_current_v1820_release_state() -> None:
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "4f7b59c chore(release): v1.8.20 [skip ci]" in content
-        assert "10cac14 fix: polish CLI version help and doctor diagnostics" in content
+        assert "4e83e6d chore(release): v1.8.21 [skip ci]" in content
+        assert "1bf2c76 fix: ignore stale native binaries in dev resolution" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25379489045" in handoff
-    assert "25379488260" in handoff
-    assert "25380155733" in handoff
-    assert "tensor-grep==1.8.20" in handoff
+    assert "25414052583" in handoff
+    assert "25414051923" in handoff
+    assert "25414407901" in handoff
+    assert "tensor-grep==1.8.21" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
     assert "rust_binary_version_status = stale-skipped" in handoff
     assert "skipped_native_tg_binaries" in handoff
     assert "--format rg" in handoff
+    assert "RipgrepBackend" in handoff
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

@@ -74,7 +74,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.20` release closeout: main CI run `25379489045`, main CodeQL run `25379488260`, and release-commit CodeQL run `25380155733` passed; semantic-release published GitHub release `v1.8.20`; the PyPI publish/parity gate passed; and the public installer dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.20` while preserving regex alternation in normal shell entrypoints
+- `v1.8.21` release closeout: main CI run `25414052583`, main CodeQL run `25414051923`, and release-commit CodeQL run `25414407901` passed; semantic-release published GitHub release `v1.8.21`; the PyPI publish/parity gate passed; the public installer dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.21` while preserving regex alternation in normal shell entrypoints; and repo-dev doctor/search dogfood confirmed stale in-tree standalone binaries are skipped unless explicitly pinned
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:

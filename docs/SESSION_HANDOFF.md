@@ -1,21 +1,22 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
 
 ## Current Release State
 
-- Latest released version: `v1.8.20`
-- Latest release commit: `4f7b59c chore(release): v1.8.20 [skip ci]`
-- Latest fix commit: `10cac14 fix: polish CLI version help and doctor diagnostics`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.20>
-- Main CI run `25379489045`: passed through `publish-success-gate`
-- Main CodeQL run `25379488260`: passed
-- Release-commit CodeQL run `25380155733`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.20`
-- PyPI latest and pinned install: `tensor-grep==1.8.20` resolves from PyPI
-- Public Windows installer `TENSOR_GREP_VERSION=1.8.20`: installed `tensor-grep==1.8.20`, refreshed managed shims, and left profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolving `1.8.20`.
+- Latest released version: `v1.8.21`
+- Latest release commit: `4e83e6d chore(release): v1.8.21 [skip ci]`
+- Latest fix commit: `1bf2c76 fix: ignore stale native binaries in dev resolution`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.21>
+- Main CI run `25414052583`: passed through `publish-success-gate`
+- Main CodeQL run `25414051923`: passed
+- Release-commit CodeQL run `25414407901`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.21`
+- PyPI latest and pinned install: `tensor-grep==1.8.21` resolves from PyPI
+- Public Windows installer `TENSOR_GREP_VERSION=1.8.21`: installed `tensor-grep==1.8.21`, refreshed managed shims, and left profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolving `1.8.21`.
 - Public shell dogfood: normal PowerShell, `cmd.exe`, Git Bash, and WSL regex alternation worked; `tg --version` prints one line by default, `tg --version --verbose` prints feature details, and help starts with `Usage: tg`.
-- Public doctor dogfood: from outside the repo, `tg doctor --json` reported `version = 1.8.20`, `rust_core_extension_available = true`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
+- Public doctor dogfood: from outside the repo, `tg doctor --json` reported `version = 1.8.21`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
+- Repo-dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.21`, `native_tg_binary = null`, `rust_binary_version_status = stale-skipped`, `skipped_native_tg_binaries = 2`, and `search_acceleration_backend = rust-core-extension`; `uv run tg search --json 'class|def' src/tensor_grep/core/result.py` routed through `RipgrepBackend`.
 
 ## Release Completion Contract
 
@@ -29,7 +30,7 @@ Do not report final version state before the GitHub release, PyPI/package publis
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 
-## What v1.8.12-v1.8.20 Fixed
+## What v1.8.12-v1.8.21 Fixed
 
 - Windows `--files-with-matches` no longer expands huge candidate file lists into the ripgrep subprocess argv, avoiding `WinError 206`.
 - No-path `--files-with-matches` now preserves raw rg-style paths such as `AGENTS.md` instead of emitting `.\AGENTS.md`.
@@ -44,6 +45,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - `tg --version` now prints one line by default for script-friendly version checks, while `tg --version --verbose` preserves feature/SIMD/Arrow details for humans.
 - Installed CLI help now uses the public program name (`Usage: tg ...`) instead of the Python module path.
 - `tg doctor --json` labels stale in-tree native binaries and includes remediation instead of leaving contributors to infer stale native state from a raw mismatch; current dev-path safety should skip stale implicit binaries unless `TG_NATIVE_TG_BINARY` pins one explicitly.
+- Implicit native resolution now refuses stale in-tree standalone binaries for dev searches unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one; `--format rg` is documented as the public exact ripgrep-style text-output mode.
 - Windows installers now uninstall the tensor-grep Python package that owns a stale `Python*\Scripts\tg.exe` when direct stale-launcher removal cannot clear a PATH shadow.
 - Python path-list output uses the UTF-8-safe stdout path and preserves discovery order for `--files-with-matches` fallback output.
 - PATH-entry scans skip inaccessible machine PATH directories instead of aborting installation after package install.
@@ -58,6 +60,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - PR #39 `fix: harden Windows and WSL installer shims`: merged and released as `v1.8.18`
 - PR #40 `fix: write WSL bash shims with LF newlines`: merged and released as `v1.8.19`
 - PR #42 `fix: polish CLI version help and doctor diagnostics`: merged and released as `v1.8.20`
+- PR #44 `fix: ignore stale native binaries in dev resolution`: merged and released as `v1.8.21`
 - `uv run pytest tests/unit/test_install_scripts.py -q`: `18 passed` on the LF-shim fix branch
 - `uv run pytest tests/unit/test_cli_bootstrap.py tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py -q`: `287 passed` on the CLI polish branch
 - PowerShell parser checks for `scripts/install.ps1` under both `pwsh` and Windows PowerShell: passed
@@ -66,16 +69,17 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - `uv run ruff format --check --preview .`: passed
 - `uv run mypy src/tensor_grep`: passed
 - `uv run pytest -q`: `1845 passed, 16 skipped`
-- Main CI run `25379489045`: passed through `publish-pypi`, `validate-pypi-artifacts`, and `publish-success-gate`
-- Main CodeQL run `25379488260`: passed
-- Release-commit CodeQL run `25380155733`: passed
-- PyPI reports `tensor-grep 1.8.20` as latest and pinned `tensor-grep==1.8.20` resolves from PyPI.
-- Public `v1.8.20` installer dogfood passed profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL version resolution, PowerShell alternation through the normal `tg` shim, `cmd.exe` double-quoted alternation, Git Bash alternation, WSL alternation search, script-friendly one-line version output, verbose version details, public `Usage: tg` help, and public doctor PATH-version parity.
+- `uv run pytest -q`: `1815 passed, 50 skipped` on the `v1.8.21` fix branch
+- Main CI run `25414052583`: passed through `publish-pypi`, `validate-pypi-artifacts`, and `publish-success-gate`
+- Main CodeQL run `25414051923`: passed
+- Release-commit CodeQL run `25414407901`: passed
+- PyPI reports `tensor-grep 1.8.21` as latest and pinned `tensor-grep==1.8.21` resolves from PyPI.
+- Public `v1.8.21` installer dogfood passed profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL version resolution, PowerShell alternation through the normal `tg` shim, `cmd.exe` double-quoted alternation, Git Bash alternation, WSL alternation search, script-friendly one-line version output, verbose version details, public `Usage: tg` help, and public doctor PATH-version parity.
 
 ## What Works Well Now
 
 - Scoped text search, JSON, NDJSON, multi-root search, globs, `--column`, `--vimgrep`, `--path-separator`, `--type-list`, and invalid-regex diagnostics are stable enough for agent workflows.
-- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.20` install on this host.
+- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.21` install on this host.
 - `tg --version` is script-friendly by default; use `tg --version --verbose` for feature/SIMD/Arrow diagnostics.
 - Public help starts with `Usage: tg`, including `python -m tensor_grep --help` and installed command help paths.
 - `defs`, `source`, `refs`, `callers`, `context-render`, and `blast-radius` are useful for scoped repo navigation and planning.
@@ -111,7 +115,7 @@ git log -3 --oneline
 uv run tg --version
 uv run tg doctor --json
 python -m pip index versions tensor-grep --index-url https://pypi.org/simple --no-cache-dir
-gh release view v1.8.20 --json tagName,publishedAt,url
+gh release view v1.8.21 --json tagName,publishedAt,url
 tg --version
 cmd /c tg --version
 pwsh -NoProfile -Command "tg --version"
