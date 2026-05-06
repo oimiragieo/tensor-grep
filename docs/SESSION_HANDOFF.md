@@ -43,7 +43,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Generated bash shims are written with LF newlines so WSL does not see `/usr/bin/env: 'bash\r'` or pass a trailing CR through `"$@"`.
 - `tg --version` now prints one line by default for script-friendly version checks, while `tg --version --verbose` preserves feature/SIMD/Arrow details for humans.
 - Installed CLI help now uses the public program name (`Usage: tg ...`) instead of the Python module path.
-- `tg doctor --json` labels stale in-tree native binaries as `in-tree-debug` or `in-tree-release`, reports `rust_binary_version_status`, and includes remediation instead of leaving contributors to infer stale native state from a raw mismatch.
+- `tg doctor --json` labels stale in-tree native binaries and includes remediation instead of leaving contributors to infer stale native state from a raw mismatch; current dev-path safety should skip stale implicit binaries unless `TG_NATIVE_TG_BINARY` pins one explicitly.
 - Windows installers now uninstall the tensor-grep Python package that owns a stale `Python*\Scripts\tg.exe` when direct stale-launcher removal cannot clear a PATH shadow.
 - Python path-list output uses the UTF-8-safe stdout path and preserves discovery order for `--files-with-matches` fallback output.
 - PATH-entry scans skip inaccessible machine PATH directories instead of aborting installation after package install.
@@ -90,9 +90,9 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Broad generated roots can still be agent-hostile. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - `impact --symbol` is still less trustworthy than `blast-radius` for direct symbol impact.
 - `validation_commands` can still be generic. Treat targeted commands as hints, not proof of full coverage.
-- Local `uv run tg doctor --json` can find a stale in-tree standalone binary at `rust_core/target/debug/tg.exe` or `rust_core/target/release/tg.exe`. Current doctor output labels this as `in-tree-debug` or `in-tree-release`, reports `rust_binary_version_status = stale`, and emits a rebuild/pinning remediation. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` before trusting standalone-native behavior.
+- Local `uv run tg doctor --json` can find stale in-tree standalone binaries at `rust_core/target/debug/tg.exe` or `rust_core/target/release/tg.exe`. Current dev-path safety should ignore them for implicit native delegation, report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
 - Broad `tg search --files ...` over generated artifact trees can still be expensive. The managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
-- Root-scale `--files-with-matches`, `--count`, and `--force-cpu` can still differ from raw `rg` in output ordering even when the file set and counts match. Do not claim golden stdout order parity unless a test proves it for that mode.
+- Root-scale `--files-with-matches`, `--count`, and `--force-cpu` can still differ from raw `rg` in output ordering even when the file set and counts match. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting before claiming golden stdout parity.
 - Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; use normal PowerShell `tg` / `tg.ps1` or quote the metacharacter argument for `cmd.exe`.
 - Always verify command resolution with `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, `where.exe tg`, `Get-Command tg -All`, and WSL `wsl bash -lc 'command -v tg; tg --version'` after installer changes. A stale `Python*\Scripts\tg.exe` returning an older tensor-grep version is a release blocker.
 
@@ -100,7 +100,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 
 1. Add progress, partial output, or stronger guardrails for broad generated-root scans.
 2. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct impact.
-3. Decide whether root-scale search modes should stay semantic-parity-only or provide golden stdout order parity against `rg`, then test and document that contract.
+3. Keep root-scale search modes semantic-parity-first unless a specific mode is tested for golden stdout order. Use `--sort path --format rg` as the documented exact-output lane for automation.
 4. Keep dogfooding `tg` first and record exact failing commands, exit codes, and outputs as product evidence.
 
 ## Safe Next-Session Commands

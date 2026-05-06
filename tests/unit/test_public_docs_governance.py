@@ -40,6 +40,8 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "Direct `.cmd` invocation from PowerShell" in contracts
     assert "semantic result parity" in contracts
     assert "`--sort path`" in contracts
+    assert "`--format rg`" in contracts
+    assert "stale-skipped" in contracts
 
 
 def test_handoff_docs_should_record_current_v1820_release_state() -> None:
@@ -70,7 +72,9 @@ def test_handoff_docs_should_record_current_v1820_release_state() -> None:
     assert "tensor-grep==1.8.20" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
-    assert "rust_binary_version_status = stale" in handoff
+    assert "rust_binary_version_status = stale-skipped" in handoff
+    assert "skipped_native_tg_binaries" in handoff
+    assert "--format rg" in handoff
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

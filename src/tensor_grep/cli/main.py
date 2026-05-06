@@ -27,7 +27,10 @@ from tensor_grep.cli.lsp_provider_setup import (
     supported_lsp_languages,
 )
 from tensor_grep.cli.runtime_paths import (
+    _native_tg_version,
+    _native_tg_version_matches,
     env_flag_enabled,
+    iter_in_tree_native_tg_binaries,
     resolve_native_tg_binary,
     resolve_ripgrep_binary,
 )
@@ -330,7 +333,7 @@ def _doctor_rust_binary_version_matches(
 ) -> bool | None:
     if rust_binary_version is None:
         return None
-    return bool(re.search(rf"\b{re.escape(expected_version)}\b", rust_binary_version))
+    return _native_tg_version_matches(expected_version, rust_binary_version)
 
 
 def _doctor_native_tg_binary_kind(native_tg_binary: Path | None) -> str:
@@ -368,16 +371,48 @@ def _doctor_rust_binary_version_status(
     return "mismatch"
 
 
+def _doctor_skipped_native_tg_binaries(
+    expected_version: str,
+    selected_binary: Path | None,
+) -> list[dict[str, str | None]]:
+    skipped: list[dict[str, str | None]] = []
+    try:
+        selected_resolved = selected_binary.resolve() if selected_binary is not None else None
+    except OSError:
+        selected_resolved = selected_binary
+
+    for candidate in iter_in_tree_native_tg_binaries():
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if selected_resolved is not None and resolved == selected_resolved:
+            continue
+        version = _native_tg_version(resolved)
+        version_matches = _native_tg_version_matches(expected_version, version)
+        if version_matches:
+            continue
+        skipped.append({
+            "path": str(resolved),
+            "kind": _doctor_native_tg_binary_kind(resolved),
+            "version": version,
+            "version_status": "stale" if version is not None else "unknown",
+        })
+    return skipped
+
+
 def _doctor_rust_binary_remediation(
     *,
     rust_binary_version_status: str,
     native_tg_binary_kind: str,
 ) -> str | None:
-    if rust_binary_version_status == "stale" and native_tg_binary_kind.startswith("in-tree-"):
+    if (
+        rust_binary_version_status == "stale" and native_tg_binary_kind.startswith("in-tree-")
+    ) or rust_binary_version_status == "stale-skipped":
         return (
             "Rebuild the in-tree native tg binary, for example "
             "`C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml "
-            "--release`, or set TG_NATIVE_TG_BINARY to the intended release binary."
+            "--release`, or set TG_NATIVE_TG_BINARY to opt in to a specific native binary."
         )
     if rust_binary_version_status == "mismatch":
         return "Set TG_NATIVE_TG_BINARY to the intended release binary or refresh the tg install."
@@ -389,7 +424,18 @@ def _doctor_rust_binary_warning(
     expected_version: str,
     rust_binary_version: str | None,
     rust_binary_version_status: str,
+    skipped_native_tg_binaries: list[dict[str, str | None]] | None = None,
 ) -> str | None:
+    if rust_binary_version_status == "stale-skipped":
+        skipped = skipped_native_tg_binaries or []
+        if skipped:
+            first = skipped[0]
+            return (
+                "ignored stale in-tree native tg binary: "
+                f"expected {expected_version}, found {first.get('version') or 'unknown'} "
+                f"at {first.get('path')}"
+            )
+        return f"ignored stale in-tree native tg binary: expected {expected_version}"
     if rust_binary_version_status == "stale":
         return (
             "in-tree native tg binary is stale: "
@@ -566,6 +612,14 @@ def _build_doctor_payload(
         rust_binary_version=rust_binary_version,
         rust_binary_version_matches=rust_binary_version_matches,
     )
+    skipped_native_tg_binaries = _doctor_skipped_native_tg_binaries(
+        installed_version,
+        native_tg_binary,
+    )
+    if native_tg_binary is None and any(
+        candidate.get("version_status") == "stale" for candidate in skipped_native_tg_binaries
+    ):
+        rust_binary_version_status = "stale-skipped"
     rust_core_extension_available = _doctor_rust_core_extension_available()
     path_tg_candidates = _doctor_path_tg_candidates()
     path_tg_first_version = (
@@ -598,11 +652,13 @@ def _build_doctor_payload(
             expected_version=installed_version,
             rust_binary_version=rust_binary_version,
             rust_binary_version_status=rust_binary_version_status,
+            skipped_native_tg_binaries=skipped_native_tg_binaries,
         ),
         "rust_binary_remediation": _doctor_rust_binary_remediation(
             rust_binary_version_status=rust_binary_version_status,
             native_tg_binary_kind=native_tg_binary_kind,
         ),
+        "skipped_native_tg_binaries": skipped_native_tg_binaries,
         "path_tg_candidates": path_tg_candidates,
         "path_tg_first_version": path_tg_first_version,
         "path_tg_first_version_matches": _doctor_rust_binary_version_matches(
@@ -646,6 +702,20 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         lines.append(f"rust_binary_version_warning: {rust_binary_warning}")
     if rust_binary_remediation := payload.get("rust_binary_remediation"):
         lines.append(f"rust_binary_remediation: {rust_binary_remediation}")
+    skipped_native_tg_binaries = cast(
+        list[dict[str, str | None]],
+        payload.get("skipped_native_tg_binaries", []),
+    )
+    if skipped_native_tg_binaries:
+        lines.append("skipped_native_tg_binaries:")
+        for candidate in skipped_native_tg_binaries:
+            lines.append(
+                "  "
+                f"{candidate.get('path')} "
+                f"kind={candidate.get('kind') or 'unknown'} "
+                f"version={candidate.get('version') or 'unknown'} "
+                f"status={candidate.get('version_status') or 'unknown'}"
+            )
     path_tg_candidates = cast(list[dict[str, str | None]], payload.get("path_tg_candidates", []))
     if path_tg_candidates:
         lines.append("path_tg_candidates:")
@@ -2528,7 +2598,9 @@ def search_command(
         help="Force CPU fallback (tensor-grep specific).",
     ),
     format_type: str = typer.Option(
-        "rg", "--format", help="Internal formatter: json, table, csv, rg"
+        "rg",
+        "--format",
+        help="Output format: rg, json, table, or csv. Use rg for exact ripgrep-style text output.",
     ),
     ast: bool = typer.Option(
         False,

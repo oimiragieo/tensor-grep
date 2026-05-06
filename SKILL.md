@@ -36,7 +36,8 @@ Known current weak spots:
 - Installed help should show `Usage: tg`, not `Usage: python -m tensor_grep`.
 - `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
 - `validation_commands` can be generic and should be treated as hints.
-- `uv run tg doctor --json` can report a stale in-tree standalone binary; current output should label it as `in-tree-debug` or `in-tree-release`, set `rust_binary_version_status = stale`, and include rebuild/pinning remediation before agents trust standalone-native behavior.
+- Implicit native resolution should ignore stale in-tree standalone binaries. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep searches on the Rust extension or Python path unless `TG_NATIVE_TG_BINARY` explicitly pins a standalone binary.
+- Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting.
 
 ## Release Completion Contract
 
@@ -152,7 +153,7 @@ GPU benchmark `SKIP` is valid infrastructure state when dependencies such as Tor
 | Claiming `tg` is always faster than `rg` | Keep `rg` as the cold exact-text benchmark; position `tg` as agent-native code intelligence. |
 | Searching with `rg` by habit inside this repo | Use `tg search` first, then `rg` for parity or fallback. |
 | Running broad generated-root scans | Scope the path and use output/scan limits. |
-| Trusting stale native diagnostics | Check `uv run tg doctor --json`; rebuild or pin `TG_NATIVE_TG_BINARY` if versions diverge. |
+| Trusting stale native diagnostics | Check `uv run tg doctor --json`; stale in-tree binaries should be `stale-skipped`, not selected implicitly. Rebuild or pin `TG_NATIVE_TG_BINARY` to opt in. |
 | Claiming GPU wins from device detection | Run the GPU benchmark and record the accepted artifact. |
 | Updating docs from memory | Update docs only from repo evidence, CI evidence, or benchmark artifacts. |
 

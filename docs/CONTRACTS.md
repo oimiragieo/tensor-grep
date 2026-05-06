@@ -44,6 +44,7 @@ Agent automation contracts:
 - Invalid regex syntax exits as an error distinct from no-match and emits a diagnostic that recommends `--fixed-strings` for literal searches.
 - `tg search --json` emits a valid aggregate JSON object even when there are zero matches.
 - `tg search --files-with-matches` stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.
+- `tg search` with `--format rg` is a public exact ripgrep-style text formatter for automation that needs rg-shaped stdout. Pair it with `--sort path` when deterministic path ordering matters across backends.
 - Default output ordering for root-scale `--files-with-matches`, `--count`, and `--force-cpu` is a semantic result parity contract, not a golden stdout ordering contract. Use `--sort path` when automation needs deterministic path ordering across backends.
 - Broad generated roots such as `.claude` are routed through Python guardrails instead of rust-first/native passthrough so generated `.claude/context` snapshots can be pruned by default.
 - `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
@@ -66,6 +67,7 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
 - Existing top-level sections remain additive-only within a major version.
 - Individual diagnostic fields may grow as new probes are added.
 - Consumers should treat missing optional fields as a valid state and ignore unknown fields.
+- Implicit native-binary resolution must not select stale in-tree `rust_core/target/*/tg(.exe)` binaries. Stale in-tree candidates should be reported under `skipped_native_tg_binaries` with `rust_binary_version_status = stale-skipped`; `TG_NATIVE_TG_BINARY` is the explicit opt-in for using a specific standalone binary anyway.
 
 ## 6. Python Library API
 Classes and functions exposed in `tensor_grep.api` are stable within a major version. Internal modules (prefixed with `_` or deep inside `tensor_grep.core`, `tensor_grep.cli`, or backend-specific packages) are subject to change without notice.

@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli.rg_contract import PUBLIC_SEARCH_HELP_FLAGS
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
 
 PUBLIC_TOP_LEVEL_COMMANDS = {
     "search",
@@ -52,14 +53,11 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
 
 
 def _get_native_binary() -> str | None:
-    exe_name = "tg.exe" if sys.platform == "win32" else "tg"
-    debug_path = Path(f"rust_core/target/debug/{exe_name}")
-    release_path = Path(f"rust_core/target/release/{exe_name}")
-    if release_path.exists():
-        return str(release_path.resolve())
-    if debug_path.exists():
-        return str(debug_path.resolve())
-    return None
+    try:
+        native_binary = resolve_native_tg_binary()
+    except FileNotFoundError:
+        return None
+    return str(native_binary) if native_binary is not None else None
 
 
 def _resolve_cargo_exe() -> Path | None:
