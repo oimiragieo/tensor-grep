@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import os
 import re
@@ -903,6 +904,30 @@ def _write_path_list(paths: list[str], *, use_nul: bool) -> None:
     _safe_stdout_line("\n".join(paths))
 
 
+def _path_output_sort_key(path: str) -> str:
+    return path.replace("\\", "/").lower()
+
+
+def _ordered_path_output(paths: list[str], config: "SearchConfig") -> list[str]:
+    if config.sort_by == "path":
+        return sorted(paths, key=_path_output_sort_key)
+    if config.sort_by_reverse == "path":
+        return sorted(paths, key=_path_output_sort_key, reverse=True)
+    return paths
+
+
+def _looks_like_binary_path(path: str) -> bool:
+    try:
+        with Path(path).open("rb") as handle:
+            return b"\0" in handle.read(8192)
+    except OSError:
+        return False
+
+
+def _path_has_hidden_component(path: str) -> bool:
+    return any(part.startswith(".") and part not in {".", ".."} for part in Path(path).parts)
+
+
 def _safe_stdout_line(text: str) -> None:
     encoding = (getattr(sys.stdout, "encoding", None) or "").lower()
     buffer = getattr(sys.stdout, "buffer", None)
@@ -1027,12 +1052,10 @@ def _can_passthrough_rg(
         and not config.ltl
         and not config.pcre2
         and not config.force_cpu
-        and config.replace_str is None
         and format_type == "rg"
         and not json_mode
         and not ndjson_mode
         and not files_mode
-        and not files_without_match
         and not only_matching
         and not (files_with_matches and (config.count or config.count_matches))
     )
@@ -2814,11 +2837,15 @@ def search_command(
                 _exit_invalid_regex(exc)
             raise
     guarded_broad_root = _search_paths_include_guarded_broad_root(paths_to_search)
+    explicit_hidden_search_root = not config.hidden and any(
+        _path_has_hidden_component(path) for path in paths_to_search
+    )
 
     native_tg_binary = resolve_native_tg_binary()
     if (
         native_tg_binary is not None
         and not guarded_broad_root
+        and not explicit_hidden_search_root
         and _can_delegate_to_native_tg_search(
             config,
             ndjson=ndjson,
@@ -2843,6 +2870,7 @@ def search_command(
     rg_backend = RipgrepBackend()
     can_passthrough_rg = (
         not guarded_broad_root
+        and not explicit_hidden_search_root
         and rg_backend.is_available()
         and _can_passthrough_rg(
             config,
@@ -2959,9 +2987,17 @@ def search_command(
     # RipgrepBackend optimization: passing all paths natively
     if backend.__class__.__name__ == "RipgrepBackend":
         rg_backend = cast(RipgrepBackend, backend)
-        rg_search_config = (
-            _config_with_guarded_broad_root_globs(config) if guarded_broad_root else config
-        )
+        if guarded_broad_root:
+            rg_search_config = _config_with_guarded_broad_root_globs(config)
+        else:
+            rg_search_config = config
+        if explicit_hidden_search_root:
+            rg_search_config = dataclasses.replace(rg_search_config, hidden=True)
+        if files_without_match:
+            rg_search_config = dataclasses.replace(
+                rg_search_config,
+                files_without_match=False,
+            )
         search_targets = (
             paths_to_search
             if (guarded_broad_root or files_with_matches)
@@ -3141,14 +3177,22 @@ def search_command(
     if files_with_matches:
         if matched_files:
             _emit_stats()
-            output_paths = matched_file_paths_ordered or sorted(matched_files)
+            output_paths = _ordered_path_output(
+                matched_file_paths_ordered or sorted(matched_files),
+                config,
+            )
             _write_path_list(output_paths, use_nul=null)
             sys.exit(0)
         _emit_stats()
         sys.exit(1)
 
     if files_without_match:
-        unmatched = sorted(candidate_files_set - matched_files)
+        unmatched_candidates = candidate_files_set - matched_files
+        if not (config.text or config.binary):
+            unmatched_candidates = {
+                path for path in unmatched_candidates if not _looks_like_binary_path(path)
+            }
+        unmatched = _ordered_path_output(sorted(unmatched_candidates), config)
         if unmatched:
             _emit_stats()
             _write_path_list(unmatched, use_nul=null)

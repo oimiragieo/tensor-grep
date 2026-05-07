@@ -23,7 +23,7 @@ def test_context_pack_matches_camel_case_query_against_snake_case_symbol(
     assert payload["file_matches"][0]["path"] == str(module_path.resolve())
 
 
-def test_context_pack_skips_source_fallback_when_parser_backed_matches_exist(
+def test_context_pack_uses_bounded_source_evidence_with_parser_backed_matches(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -34,14 +34,20 @@ def test_context_pack_skips_source_fallback_when_parser_backed_matches_exist(
         "def create_invoice(total, tax):\n    subtotal = total + tax\n    return subtotal\n",
     )
 
-    def fail_if_called(path: str, terms: list[str]) -> int:
-        raise AssertionError(f"unexpected source fallback for {path}: {terms}")
+    calls: list[str] = []
+    original = repo_map._score_file_source_terms
 
-    monkeypatch.setattr(repo_map, "_score_file_source_terms", fail_if_called)
+    def track_source_score(path: str, terms: list[str]) -> int:
+        calls.append(path)
+        return original(path, terms)
+
+    monkeypatch.setattr(repo_map, "_score_file_source_terms", track_source_score)
 
     payload = repo_map.build_context_pack("createInvoice", project)
 
+    assert calls == [str(module_path.resolve())]
     assert payload["file_matches"][0]["path"] == str(module_path.resolve())
+    assert {"definition", "symbol", "source"} <= set(payload["file_matches"][0]["reasons"])
 
 
 def test_context_pack_surfaces_source_terms_for_definition_file(tmp_path: Path) -> None:

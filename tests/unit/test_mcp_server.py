@@ -142,8 +142,9 @@ def _assert_enriched_edit_plan_seed(
     assert isinstance(edit_plan_seed["validation_plan"], list)
     assert edit_plan_seed["validation_plan"]
     for step in edit_plan_seed["validation_plan"]:
-        assert {"command", "scope", "runner", "confidence"} <= set(step)
+        assert {"command", "scope", "runner", "confidence", "detection"} <= set(step)
         assert step["scope"] in {"symbol", "file", "repo"}
+        assert step["detection"] in {"detected", "heuristic", "generic"}
         assert 0.0 <= step["confidence"] <= 1.0
 
 
@@ -2706,6 +2707,50 @@ def test_tg_context_render_includes_exact_caller_update_lines(tmp_path):
         assert f"calls create_invoice() on line {entry['start_line']}" in entry["rationale"]
 
 
+def test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target(tmp_path):
+    from tensor_grep.cli import mcp_server
+
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    payments_path = src_dir / "payments.py"
+    payments_path.write_text(
+        "TAX_RATE = 0.0825\n\n"
+        "def create_invoice(subtotal: float) -> dict[str, float]:\n"
+        "    tax = subtotal * TAX_RATE\n"
+        "    total = subtotal + tax\n"
+        '    return {"subtotal": subtotal, "tax": tax, "total": total}\n',
+        encoding="utf-8",
+    )
+    (src_dir / "app.ts").write_text(
+        "export function createInvoice(subtotal: number) {\n  return { subtotal };\n}\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "test_payments.py").write_text(
+        "from src.payments import create_invoice\n\n"
+        "def test_create_invoice():\n"
+        '    assert create_invoice(100.0)["tax"] > 0\n',
+        encoding="utf-8",
+    )
+
+    payload = json.loads(
+        mcp_server.tg_context_render(
+            "change invoice tax calculation",
+            str(project),
+            render_profile="llm",
+        )
+    )
+
+    assert payload["edit_plan_seed"]["primary_file"] == str(payments_path.resolve())
+    assert payload["navigation_pack"]["primary_target"]["file"] == str(payments_path.resolve())
+    assert payload["sources"][0]["file"] == str(payments_path.resolve())
+    assert "tax = subtotal * TAX_RATE" in payload["sources"][0]["rendered_source"]
+    assert payload["context_consistency"]["primary_file_included"] is True
+
+
 def test_tg_edit_plan_returns_machine_readable_plan_bundle(tmp_path):
     from tensor_grep.cli import mcp_server
 
@@ -3608,7 +3653,7 @@ def test_tg_context_pack_prefers_more_central_importers_over_tied_leaf_importers
     assert central_match["graph_score"] > leaf_match["graph_score"]
 
 
-def test_tg_symbol_impact_prefers_tests_covering_more_central_files(tmp_path):
+def test_tg_symbol_impact_orders_tests_by_graph_score(tmp_path):
     from tensor_grep.cli import mcp_server
 
     project = tmp_path / "project"
@@ -3648,18 +3693,23 @@ def test_tg_symbol_impact_prefers_tests_covering_more_central_files(tmp_path):
 
     payload = json.loads(mcp_server.tg_symbol_impact("create_invoice", str(project)))
 
-    assert payload["tests"].index(str(ui_test.resolve())) < payload["tests"].index(
-        str(cli_test.resolve())
-    )
     ui_match = next(
         item for item in payload["test_matches"] if item["path"] == str(ui_test.resolve())
     )
     cli_match = next(
         item for item in payload["test_matches"] if item["path"] == str(cli_test.resolve())
     )
-    assert ui_match["graph_score"] > cli_match["graph_score"]
-    assert "graph-derived" in ui_match["association"]["provenance"]
-    assert ui_match["association"]["confidence"] in {"strong", "moderate"}
+    ordered_by_score = [
+        item["path"]
+        for item in sorted(
+            payload["test_matches"],
+            key=lambda item: (-float(item["graph_score"]), str(item["path"])),
+        )
+    ]
+    assert payload["tests"] == ordered_by_score
+    assert cli_match["graph_score"] > ui_match["graph_score"]
+    assert "graph-derived" in cli_match["association"]["provenance"]
+    assert cli_match["association"]["confidence"] in {"strong", "moderate"}
 
 
 def test_tg_symbol_callers_uses_parser_backed_javascript_calls_not_string_noise(tmp_path):

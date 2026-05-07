@@ -427,7 +427,7 @@ def test_rust_target_resolution_patterns(
         ("python", [], ["uv run pytest -q"]),
         ("rust", [], ["cargo test"]),
         ("jest-unknown", ["notes/validation.txt"], ["npx jest"]),
-        ("default-unknown", ["notes/validation.txt"], ["uv run pytest -q"]),
+        ("default-unknown", ["notes/validation.txt"], []),
     ],
 )
 def test_repo_wide_fallback_detection(

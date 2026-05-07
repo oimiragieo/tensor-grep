@@ -304,6 +304,7 @@
         "scope": "symbol",
         "runner": "pytest",
         "confidence": 0.95,
+        "detection": "detected",
         "target": "tests/test_payments.py"
       },
       {
@@ -311,13 +312,15 @@
         "scope": "file",
         "runner": "pytest",
         "confidence": 0.82,
+        "detection": "detected",
         "target": "tests/test_payments.py"
       },
       {
         "command": "uv run pytest -q",
         "scope": "repo",
         "runner": "pytest",
-        "confidence": 0.55
+        "confidence": 0.55,
+        "detection": "detected"
       }
     ],
     "reasons": [
@@ -509,6 +512,15 @@
       "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py"
     ],
     "rollback_risk": 0.0
+  },
+  "context_consistency": {
+    "primary_file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+    "navigation_primary_file": "C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py",
+    "primary_file_included": true,
+    "render_matches_primary_target": true,
+    "rendered_context_includes_primary": true,
+    "confidence_downgraded": false,
+    "omitted_primary_reason": null
   },
   "rendered_context": "Query: invoice payment\n\nFile: C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\context_pack\\src\\payments.py\nSummary:\n- class PaymentService @ line 1\n- function create_invoice @ line 4\n\nSource:\n```text\nclass PaymentService:\n    pass\n```\n\nSource:\n```text\ndef create_invoice(total, tax):\n    return total + tax\n```\n\nTests:\n- C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py\n\nFile: C:\\dev\\projects\\tensor-grep\\artifacts\\harness_api_doc_inputs_regen\\context_pack\\tests\\test_payments.py\nSummary:\n- function test_create_invoice @ line 3\n\nSource:\n```text\ndef test_create_invoice():\n    assert create_invoice(1, 2) == 3\n```",
   "sections": [

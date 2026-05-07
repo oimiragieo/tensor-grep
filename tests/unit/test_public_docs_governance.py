@@ -39,8 +39,15 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
 
     assert "Direct `.cmd` invocation from PowerShell" in contracts
     assert "semantic result parity" in contracts
+    assert "validated compatibility set" in contracts
     assert "`--sort path`" in contracts
     assert "`--format rg`" in contracts
+    assert "`--files-without-match`" in contracts
+    assert "`--replace`" in contracts
+    assert "exit-code behavior" in contracts
+    assert "context_consistency" in contracts
+    assert "JavaScript package-manager commands require `package.json` evidence" in contracts
+    assert "omit commands entirely when no runner evidence exists" in contracts
     assert "stale-skipped" in contracts
 
 
@@ -75,6 +82,8 @@ def test_handoff_docs_should_record_current_v1821_release_state() -> None:
     assert "rust_binary_version_status = stale-skipped" in handoff
     assert "skipped_native_tg_binaries" in handoff
     assert "--format rg" in handoff
+    assert "context_consistency" in handoff
+    assert "no runner evidence exists" in handoff
     assert "RipgrepBackend" in handoff
 
 
@@ -184,6 +193,9 @@ def test_tool_comparison_doc_should_publish_workload_specific_comparator_story()
     assert "rg --no-ignore ERROR artifacts/bench_data" in doc
     assert "tg search --cpu --no-ignore ERROR artifacts/bench_data" in doc
     assert "CLI contract parity" in doc
+    assert "validated compatibility set" in doc
+    assert "--files-without-match --sort path" in doc
+    assert "binary exclusion by default" in doc
 
 
 def test_future_roadmap_should_define_new_program_and_first_batch() -> None:
@@ -472,6 +484,23 @@ def test_agent_docs_should_not_describe_code_intelligence_limits_as_search_flags
     for doc in (agents, skill, contracts, handoff):
         assert "Use scoped paths, globs, file types, and `--max-depth` for `tg search`" in doc
         assert "`--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence" in doc
+
+
+def test_agent_docs_should_lock_agent_context_and_validation_contracts() -> None:
+    agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
+    handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
+
+    for doc in (agents, readme, skill, contracts, handoff):
+        assert "context_consistency" in doc
+        assert "executable" in doc
+        assert "validation_plan[].detection" in doc
+
+    for doc in (agents, skill, contracts, handoff):
+        assert "`package.json` evidence" in doc
+        assert "no runner evidence exists" in doc
 
 
 def test_ast_info_public_docs_should_describe_json_languages_payload() -> None:
