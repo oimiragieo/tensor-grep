@@ -38,6 +38,8 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
 
     assert "Direct `.cmd` invocation from PowerShell" in contracts
+    assert "--allow-broad-generated-scan" in contracts
+    assert "broad generated-root scan" in contracts
     assert "semantic result parity" in contracts
     assert "validated compatibility set" in contracts
     assert "`--sort path`" in contracts
@@ -86,6 +88,7 @@ def test_handoff_docs_should_record_current_v1822_release_state_and_fast_gate() 
     assert "context_consistency" in handoff
     assert "no runner evidence exists" in handoff
     assert "agent-readiness dogfood gate" in handoff
+    assert "--allow-broad-generated-scan" in handoff
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

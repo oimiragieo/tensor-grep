@@ -100,19 +100,19 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 
 - `rg` remains the raw cold exact-text benchmark. `tg` should win on agent-native code intelligence, not by pretending every grep workload is faster.
 - `ast-grep` remains the structural-search feature/performance baseline until the AST compatibility roadmap is closed with tests and benchmark evidence.
-- Broad generated roots can still be agent-hostile. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
+- Broad generated roots remain agent-hostile when callers opt into them. Unbounded `tg search --files --hidden` scans and no-ignore/unrestricted fallback scans through generated/cache/dependency directories are refused unless the request is bounded with `--glob`, `--type`, or `--max-depth`, or explicitly opts in with `--allow-broad-generated-scan`. Use scoped paths, globs, file types, and `--max-depth` for `tg search` before reaching for opt-in. `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - `impact --symbol` is still less trustworthy than `blast-radius` for direct symbol impact.
 - `validation_commands` can still be heuristic when stack evidence is partial. Treat targeted commands as hints, not proof of full coverage; require `validation_plan[].detection`, do not trust npm/package-manager hints without `package.json` evidence, and omit commands entirely when no runner evidence exists.
 - Local `uv run tg doctor --json` can find stale in-tree standalone binaries at `rust_core/target/debug/tg.exe` or `rust_core/target/release/tg.exe`. Current dev-path safety should ignore them for implicit native delegation, report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
-- Broad `tg search --files ...` over generated artifact trees can still be expensive. The managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
+- Explicitly opted-in broad `tg search --files ...` over generated artifact trees can still be expensive. The managed Windows launchers and Python path-list output should force UTF-8, but scope file-list commands to the smallest useful root.
 - Root-scale unsorted `--files-with-matches`, `--count`, and `--force-cpu` can still differ from raw `rg` in output ordering even when the file set and counts match. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting before claiming golden stdout parity; sorted files-with-matches, files-without-match, and replacement output are now regression-covered parity edges on the active branch.
 - Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; use normal PowerShell `tg` / `tg.ps1` or quote the metacharacter argument for `cmd.exe`.
 - Always verify command resolution with `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, `where.exe tg`, `Get-Command tg -All`, and WSL `wsl bash -lc 'command -v tg; tg --version'` after installer changes. A stale `Python*\Scripts\tg.exe` returning an older tensor-grep version is a release blocker.
 
 ## Next Highest-Value Work
 
-1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) fast and representative; it should cover context trust, rg sorted edges, AST smoke, MCP smoke, shell version probes, and docs claim checks.
-2. Add progress, partial output, or stronger guardrails for broad generated-root scans.
+1. Keep the agent-readiness dogfood gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) fast and representative; it should cover context trust, rg sorted edges, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
+2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct impact.
 4. Track public shim performance, AST parity roadmap gaps, GPU benchmark/no-match cleanup, and `classify` provider/cache UX as blockers for a future "world-class" claim, not as blockers for this correctness PR.
 5. Keep dogfooding `tg` first and record exact failing commands, exit codes, and outputs as product evidence.
@@ -137,8 +137,10 @@ uv run tg search --fixed-strings "safeParseJSON" src tests docs -C 2
 uv run pytest tests/unit/test_ripgrep_backend.py tests/unit/test_cli_modes.py tests/unit/test_ast_parity.py -q
 ```
 
-Avoid broad generated-root file-list probes unless the task needs them:
+Avoid broad generated-root file-list probes unless the task needs them. Bound the request or opt in explicitly:
 
 ```powershell
-tg search --files "AGENTS.md" . --hidden
+tg search --files . --hidden --glob "*.py"
+tg search --files . --hidden --max-depth 3
+tg search --files . --hidden --no-ignore --allow-broad-generated-scan
 ```

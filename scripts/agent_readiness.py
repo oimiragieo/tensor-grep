@@ -184,6 +184,7 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         "python scripts/agent_readiness.py",
         "context_consistency",
         "validated compatibility set",
+        "broad generated-root scan",
         "rg` remains",
         "ast-grep",
     ]
@@ -285,6 +286,20 @@ def build_check_plan(
             command=["uv", "run", "pytest", "tests/e2e/test_rg_parity_edges.py", "-q"],
             description="Verify deterministic rg parity edge cases.",
             timeout_s=180,
+        ),
+        Check(
+            name="broad-generated-scan-guard",
+            command=[
+                "uv",
+                "run",
+                "pytest",
+                "tests/unit/test_cli_modes.py",
+                "-q",
+                "-k",
+                "broad_generated_root_scan",
+            ],
+            description="Verify broad generated-root file-list scans require bounds or opt-in.",
+            timeout_s=120,
         ),
         Check(
             name="ast-info-json",

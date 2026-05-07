@@ -66,6 +66,7 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
 This checks the current `v1.8.22` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
 ## Bounded Heavy-Root AI Handoff
 
@@ -365,6 +366,16 @@ $ tg search foobar . --files-without-match
 ```
 
 Add `--no-ignore` when you want ignored files and directories included in the candidate set for this mode.
+
+For broad file-list discovery, prefer a scoped path or a bound:
+
+```bash
+$ tg search --files src --hidden
+$ tg search --files . --hidden --glob "*.py"
+$ tg search --files . --hidden --max-depth 3
+```
+
+Unbounded generated/cache/dependency roots combined with hidden, no-ignore, or unrestricted scanning are refused by default. Pass `--allow-broad-generated-scan` only when the large generated-tree walk is intentional.
 
 Search only Python and Javascript files:
 
