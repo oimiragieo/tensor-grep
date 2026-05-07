@@ -51,7 +51,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "stale-skipped" in contracts
 
 
-def test_handoff_docs_should_record_current_v1821_release_state() -> None:
+def test_handoff_docs_should_record_current_v1822_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -61,7 +61,8 @@ def test_handoff_docs_should_record_current_v1821_release_state() -> None:
     }
 
     for content in docs.values():
-        assert "v1.8.21" in content
+        assert "v1.8.22" in content
+        assert "python scripts/agent_readiness.py" in content
 
     for content in (
         docs["AGENTS.md"],
@@ -69,14 +70,14 @@ def test_handoff_docs_should_record_current_v1821_release_state() -> None:
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "4e83e6d chore(release): v1.8.21 [skip ci]" in content
-        assert "1bf2c76 fix: ignore stale native binaries in dev resolution" in content
+        assert "5a0d6d9 chore(release): v1.8.22 [skip ci]" in content
+        assert "8a061ee fix: improve agent context trust and rg parity" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25414052583" in handoff
-    assert "25414051923" in handoff
-    assert "25414407901" in handoff
-    assert "tensor-grep==1.8.21" in handoff
+    assert "25469910767" in handoff
+    assert "25469910279" in handoff
+    assert "25470327515" in handoff
+    assert "tensor-grep==1.8.22" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
     assert "rust_binary_version_status = stale-skipped" in handoff
@@ -84,7 +85,7 @@ def test_handoff_docs_should_record_current_v1821_release_state() -> None:
     assert "--format rg" in handoff
     assert "context_consistency" in handoff
     assert "no runner evidence exists" in handoff
-    assert "RipgrepBackend" in handoff
+    assert "agent-readiness dogfood gate" in handoff
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

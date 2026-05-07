@@ -7,21 +7,22 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-06, the current released version is `v1.8.21`.
+As of 2026-05-07, the current released version is `v1.8.22`.
 
 Current release facts:
 
-- Release commit: `4e83e6d chore(release): v1.8.21 [skip ci]`
-- Latest fix commit: `1bf2c76 fix: ignore stale native binaries in dev resolution`
-- PR #44 `fix: ignore stale native binaries in dev resolution` merged, released, and publicly dogfooded
-- Main CI run `25414052583` passed through `publish-success-gate`; CodeQL runs `25414051923` and `25414407901` passed
-- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.21`
+- Release commit: `5a0d6d9 chore(release): v1.8.22 [skip ci]`
+- Latest fix commit: `8a061ee fix: improve agent context trust and rg parity`
+- PR #46 `fix: improve agent context trust and rg parity` merged, released, and publicly dogfooded
+- Main CI run `25469910767` passed through `publish-success-gate`; CodeQL runs `25469910279` and `25470327515` passed
+- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.22`
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
 Current product read:
 
 - `rg` remains the benchmark for raw cold exact-text search.
+- `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a validated useful slice, not full ast-grep equivalence.
 - `tg` is strongest as agent-native code intelligence: scoped search, JSON/NDJSON, repo maps, defs, source, refs, callers, context bundles, blast-radius, AST search, rewrite planning, GPU inventory, and MCP.
 - `context-render` / MCP context output must keep `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, and follow-up reads consistent. Check `context_consistency` when debugging agent handoff quality.
 - Default JSON/LLM context rendering must include executable body lines for selected functions. Compactness may strip comments, docstrings when optimized, blank lines, type-only imports, and boilerplate, but it is not a summary-only profile.
@@ -136,6 +137,14 @@ uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
 uv run pytest -q
 ```
+
+For fast agent-readiness dogfood before push, run:
+
+```powershell
+python scripts/agent_readiness.py --output artifacts/agent_readiness.json
+```
+
+This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.22` positioning. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

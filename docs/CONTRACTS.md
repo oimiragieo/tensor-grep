@@ -51,6 +51,7 @@ Agent automation contracts:
 - `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
 - `tg ast-info --json` exposes AST language identifiers via `{"languages": [...]}` for agent discovery without help-text scraping.
 - On Windows, PowerShell automation should invoke `tg` or `tg.ps1` for regex metacharacters. Direct `.cmd` invocation from PowerShell is not a safe argv-preserving contract for unescaped metacharacters such as `|` because `cmd.exe` parses the line before the batch wrapper receives arguments; `tg.cmd` is for `cmd.exe`.
+- The fast agent-readiness dogfood gate is `python scripts/agent_readiness.py --output artifacts/agent_readiness.json`. For the current `v1.8.22` line it checks public shell version probes, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the public positioning that `rg` remains the cold exact-text baseline while `ast-grep` remains the structural-search feature/performance baseline.
 
 Context and edit-planning contracts:
 - `context-render` and MCP context output must not let `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, rendered source sections, and follow-up reads contradict each other.
