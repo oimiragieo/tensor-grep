@@ -373,6 +373,7 @@
         "scope": "symbol",
         "runner": "pytest",
         "confidence": 0.95,
+        "detection": "detected",
         "target": "test_rewrite_api.py"
       },
       {
@@ -380,13 +381,15 @@
         "scope": "file",
         "runner": "pytest",
         "confidence": 0.82,
+        "detection": "detected",
         "target": "test_rewrite_api.py"
       },
       {
         "command": "uv run pytest -q",
         "scope": "repo",
         "runner": "pytest",
-        "confidence": 0.55
+        "confidence": 0.55,
+        "detection": "detected"
       }
     ],
     "reasons": [

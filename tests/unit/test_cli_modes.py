@@ -193,10 +193,11 @@ def _assert_enriched_edit_plan_seed(
     assert isinstance(edit_plan_seed["validation_plan"], list)
     assert edit_plan_seed["validation_plan"]
     for step in edit_plan_seed["validation_plan"]:
-        assert {"command", "scope", "runner", "confidence"} <= set(step)
+        assert {"command", "scope", "runner", "confidence", "detection"} <= set(step)
         assert isinstance(step["command"], str)
         assert step["scope"] in {"symbol", "file", "repo"}
         assert isinstance(step["runner"], str)
+        assert step["detection"] in {"detected", "heuristic", "generic"}
         assert 0.0 <= step["confidence"] <= 1.0
 
 
@@ -2297,7 +2298,7 @@ def test_build_context_render_can_skip_edit_plan_seed_for_bounded_roots(monkeypa
     assert payload["edit_plan_seed"] == {}
     assert payload["edit_plan_seed_skipped"] is True
     assert payload["navigation_pack"]["primary_target"]["file"] == str(module_path.resolve())
-    assert payload["navigation_pack"]["validation_commands"] == ["npm test"]
+    assert payload["navigation_pack"]["validation_commands"] == []
     assert seen["called"] is False
 
 
@@ -3119,7 +3120,7 @@ def test_edit_plan_json_prefers_ancestor_package_script_for_nested_ts_subdir(tmp
     assert payload["edit_plan_seed"]["validation_commands"][0] == "npm test"
 
 
-def test_edit_plan_json_uses_js_fallback_for_manifest_free_tsx_subdir(tmp_path):
+def test_edit_plan_json_omits_js_fallback_for_manifest_free_tsx_subdir(tmp_path):
     runner = CliRunner()
     project = tmp_path / "project"
     src_dir = project / "src" / "components" / "permissions"
@@ -3143,7 +3144,8 @@ def test_edit_plan_json_uses_js_fallback_for_manifest_free_tsx_subdir(tmp_path):
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["edit_plan_seed"]["validation_commands"][0] == "npm test"
+    assert payload["edit_plan_seed"]["validation_commands"] == []
+    assert payload["edit_plan_seed"]["validation_plan"] == []
 
 
 def test_edit_plan_json_does_not_escape_manifest_free_repo_boundary(tmp_path):
@@ -3185,7 +3187,8 @@ def test_edit_plan_json_does_not_escape_manifest_free_repo_boundary(tmp_path):
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["edit_plan_seed"]["validation_commands"][0] == "npm test"
+    assert payload["edit_plan_seed"]["validation_commands"] == []
+    assert payload["edit_plan_seed"]["validation_plan"] == []
 
 
 def test_edit_plan_json_prefers_js_repo_fallback_over_pytest_for_mixed_repo_without_tests(tmp_path):
@@ -3646,6 +3649,7 @@ def test_files_without_match_respects_scanned_candidates_for_hidden_relative_roo
 
 
 def test_files_without_match_skips_gitignored_directories(tmp_path: Path):
+    subprocess.run(["git", "init"], cwd=tmp_path, check=False, capture_output=True, text=True)
     (tmp_path / ".gitignore").write_text("build/\n", encoding="utf-8")
     (tmp_path / "src").mkdir()
     (tmp_path / "build").mkdir()
@@ -3826,7 +3830,7 @@ def test_cli_disables_ripgrep_passthrough_for_ltl_mode(monkeypatch):
     assert called["passthrough"] is False
 
 
-def test_cli_disables_ripgrep_passthrough_for_replace_mode(monkeypatch):
+def test_cli_uses_ripgrep_passthrough_for_replace_mode(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.log"]}
     _FAKE_BACKEND = _FakeBackend(
@@ -3858,10 +3862,10 @@ def test_cli_disables_ripgrep_passthrough_for_replace_mode(monkeypatch):
     result = runner.invoke(app, ["search", "ERROR", ".", "--replace", "REPLACED"])
 
     assert result.exit_code == 0
-    assert called["passthrough"] is False
+    assert called["passthrough"] is True
 
 
-def test_cli_disables_ripgrep_passthrough_for_short_replace_mode(monkeypatch):
+def test_cli_uses_ripgrep_passthrough_for_short_replace_mode(monkeypatch):
     global _FAKE_WALK, _FAKE_BACKEND
     _FAKE_WALK = {".": ["a.log"]}
     _FAKE_BACKEND = _FakeBackend(
@@ -3893,7 +3897,7 @@ def test_cli_disables_ripgrep_passthrough_for_short_replace_mode(monkeypatch):
     result = runner.invoke(app, ["search", "ERROR", ".", "-r", "REPLACED"])
 
     assert result.exit_code == 0
-    assert called["passthrough"] is False
+    assert called["passthrough"] is True
 
 
 def test_cli_replaces_rg_capture_groups_in_output(monkeypatch):

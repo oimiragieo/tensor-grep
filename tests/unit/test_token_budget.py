@@ -383,10 +383,17 @@ def test_omitted_sections_report_metadata_for_char_truncation(tmp_path: Path) ->
 
     assert payload["truncated"] is True
     assert payload["omitted_sections"]
+    truncation_sections = [
+        section for section in payload["omitted_sections"] if section.get("kind") != "primary"
+    ]
+    primary_sections = [
+        section for section in payload["omitted_sections"] if section.get("kind") == "primary"
+    ]
     assert all(
         {"file", "symbol", "score", "token_estimate"} <= set(section)
-        for section in payload["omitted_sections"]
+        for section in truncation_sections
     )
+    assert all({"file", "reason"} <= set(section) for section in primary_sections)
 
 
 def test_build_context_render_includes_max_tokens_and_model(tmp_path: Path) -> None:

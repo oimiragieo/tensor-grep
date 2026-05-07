@@ -143,6 +143,7 @@ def test_harness_api_doc_covers_all_required_json_shapes() -> None:
     assert "tg_symbol_blast_radius_plan" in doc
     assert "tg_symbol_blast_radius_render" in doc
     assert "navigation_pack" in doc
+    assert "context_consistency" in doc
     assert "tg_session_blast_radius" in doc
     assert "tg_session_blast_radius_render" in doc
     assert "tg_session_open" in doc
@@ -332,6 +333,8 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert isinstance(payload["edit_plan_seed"]["edit_ordering"], list)
                 assert isinstance(payload["edit_plan_seed"]["validation_plan"], list)
                 assert payload["edit_plan_seed"]["validation_plan"]
+                for step in payload["edit_plan_seed"]["validation_plan"]:
+                    assert step["detection"] in {"detected", "heuristic", "generic"}
                 assert isinstance(payload["candidate_edit_targets"]["spans"], list)
                 assert payload["candidate_edit_targets"]["spans"]
                 assert 0.0 <= payload["edit_plan_seed"]["rollback_risk"] <= 1.0
@@ -339,6 +342,11 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                 assert isinstance(payload["navigation_pack"]["follow_up_reads"], list)
                 assert payload["navigation_pack"]["follow_up_reads"]
                 assert "#L" in payload["navigation_pack"]["primary_target"]["mention_ref"]
+                for step in payload["edit_plan_seed"]["validation_plan"]:
+                    assert step["detection"] in {"detected", "heuristic", "generic"}
+            if file_name == "context_render.json":
+                assert payload["context_consistency"]["primary_file_included"] is True
+                assert payload["context_consistency"]["render_matches_primary_target"] is True
 
         for key in required_keys:
             assert key in payload

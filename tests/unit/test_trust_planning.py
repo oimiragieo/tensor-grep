@@ -36,6 +36,52 @@ def _write_planning_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     return project, module_path, service_path, test_path
 
 
+def _write_invoice_tax_fixture(tmp_path: Path) -> dict[str, Path]:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    tests_dir = project / "tests"
+    src_dir.mkdir(parents=True)
+    tests_dir.mkdir()
+
+    payments_path = src_dir / "payments.py"
+    payments_path.write_text(
+        "TAX_RATE = 0.0825\n\n"
+        "def create_invoice(subtotal: float) -> dict[str, float]:\n"
+        "    tax = subtotal * TAX_RATE\n"
+        "    total = subtotal + tax\n"
+        '    return {"subtotal": subtotal, "tax": tax, "total": total}\n',
+        encoding="utf-8",
+    )
+    service_path = src_dir / "service.py"
+    service_path.write_text(
+        "from src.payments import create_invoice\n\n"
+        "def invoice_service(subtotal: float) -> dict[str, float]:\n"
+        "    return create_invoice(subtotal)\n",
+        encoding="utf-8",
+    )
+    app_path = src_dir / "app.ts"
+    app_path.write_text(
+        "export function createInvoice(subtotal: number) {\n  return { subtotal };\n}\n",
+        encoding="utf-8",
+    )
+    test_path = tests_dir / "test_payments.py"
+    test_path.write_text(
+        "from src.payments import TAX_RATE, create_invoice\n\n"
+        "def test_create_invoice_applies_tax_rate():\n"
+        "    invoice = create_invoice(100.0)\n"
+        '    assert invoice["tax"] == 100.0 * TAX_RATE\n'
+        '    assert invoice["total"] == invoice["subtotal"] + invoice["tax"]\n',
+        encoding="utf-8",
+    )
+    return {
+        "project": project,
+        "payments": payments_path,
+        "service": service_path,
+        "app": app_path,
+        "test": test_path,
+    }
+
+
 def _planning_trust_view(payload: dict[str, object]) -> dict[str, object]:
     edit_plan_seed = payload["edit_plan_seed"]
     candidate_edit_targets = payload["candidate_edit_targets"]
@@ -63,8 +109,12 @@ def test_build_planning_surfaces_include_graph_and_dependency_trust(tmp_path: Pa
 
     assert blast_radius_payload["graph_trust_summary"]["edge_kind"] == "reverse-import"
     for payload in (render_payload, edit_plan_payload):
-        assert payload["graph_trust_summary"] == blast_radius_payload["graph_trust_summary"]
+        assert (
+            payload["graph_trust_summary"]["edge_kind"]
+            == blast_radius_payload["graph_trust_summary"]["edge_kind"]
+        )
         assert payload["graph_trust_summary"]["confidence"] == "strong"
+        assert payload["graph_trust_summary"]["evidence_counts"]["parser_backed"] >= 1
         assert payload["candidate_edit_targets"]["ranking_quality"] == payload["ranking_quality"]
         assert payload["candidate_edit_targets"]["coverage_summary"] == payload["coverage_summary"]
         assert payload["edit_plan_seed"]["primary_file"] == str(module_path.resolve())
@@ -133,3 +183,141 @@ def test_cli_json_planning_surfaces_include_trust_metadata(tmp_path: Path) -> No
 
     assert _planning_trust_view(render_payload) == _planning_trust_view(expected_render)
     assert _planning_trust_view(edit_plan_payload) == _planning_trust_view(expected_edit_plan)
+
+
+def test_context_render_natural_invoice_tax_query_selects_payment_logic(
+    tmp_path: Path,
+) -> None:
+    paths = _write_invoice_tax_fixture(tmp_path)
+
+    payload = repo_map.build_context_render(
+        "change invoice tax calculation",
+        paths["project"],
+        render_profile="llm",
+    )
+
+    assert payload["files"][0] == str(paths["payments"].resolve())
+    assert payload["edit_plan_seed"]["primary_file"] == str(paths["payments"].resolve())
+    assert payload["navigation_pack"]["primary_target"]["file"] == str(paths["payments"].resolve())
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "create_invoice"
+    assert payload["sources"][0]["file"] == str(paths["payments"].resolve())
+    assert "src/app.ts" not in payload["edit_plan_seed"]["primary_file"].replace("\\", "/")
+
+
+def test_context_render_bridges_natural_query_to_snake_case_symbol(
+    tmp_path: Path,
+) -> None:
+    paths = _write_invoice_tax_fixture(tmp_path)
+
+    payload = repo_map.build_context_render("create invoice tax", paths["project"])
+
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "create_invoice"
+    assert payload["edit_plan_seed"]["primary_file"] == str(paths["payments"].resolve())
+
+
+def test_exact_camel_case_symbol_query_dominates_natural_language_scores(
+    tmp_path: Path,
+) -> None:
+    paths = _write_invoice_tax_fixture(tmp_path)
+
+    payload = repo_map.build_context_render("createInvoice", paths["project"])
+
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "createInvoice"
+    assert payload["edit_plan_seed"]["primary_file"] == str(paths["app"].resolve())
+
+
+def test_llm_render_keeps_executable_body_lines_for_selected_function(
+    tmp_path: Path,
+) -> None:
+    paths = _write_invoice_tax_fixture(tmp_path)
+
+    payload = repo_map.build_context_render(
+        "invoice tax calculation",
+        paths["project"],
+        render_profile="llm",
+    )
+    source = next(item for item in payload["sources"] if item["name"] == "create_invoice")
+
+    assert "def create_invoice" in source["rendered_source"]
+    assert "tax = subtotal * TAX_RATE" in source["rendered_source"]
+    assert "total = subtotal + tax" in source["rendered_source"]
+    assert 'return {"subtotal": subtotal' in source["rendered_source"]
+    assert "tax = subtotal * TAX_RATE" in payload["rendered_context"]
+
+
+def test_context_render_consistency_metadata_links_seed_render_and_navigation(
+    tmp_path: Path,
+) -> None:
+    paths = _write_invoice_tax_fixture(tmp_path)
+
+    payload = repo_map.build_context_render(
+        "invoice tax calculation",
+        paths["project"],
+        max_files=1,
+        max_sources=1,
+    )
+
+    primary_file = payload["edit_plan_seed"]["primary_file"]
+    source_files = {source["file"] for source in payload["sources"]}
+    follow_up_files = {read["file"] for read in payload["navigation_pack"]["follow_up_reads"]}
+
+    assert primary_file in set(payload["files"]) | source_files | follow_up_files
+    assert primary_file == payload["navigation_pack"]["primary_target"]["file"]
+    assert primary_file in payload["rendered_context"]
+    assert payload["context_consistency"]["primary_file_included"] is True
+    assert payload["context_consistency"]["render_matches_primary_target"] is True
+    assert payload["context_consistency"]["confidence_downgraded"] is False
+
+
+def test_validation_plan_does_not_suggest_npm_without_package_json(
+    tmp_path: Path,
+) -> None:
+    paths = _write_invoice_tax_fixture(tmp_path)
+
+    payload = repo_map.build_context_render("create invoice tax", paths["project"])
+    validation_plan = payload["edit_plan_seed"]["validation_plan"]
+    commands = [step["command"] for step in validation_plan]
+
+    assert all("npm test" not in command for command in commands)
+    assert all("npx " not in command for command in commands)
+    assert any(command.startswith("uv run pytest") for command in commands)
+    assert {step["detection"] for step in validation_plan} <= {
+        "detected",
+        "heuristic",
+        "generic",
+    }
+    assert validation_plan[0]["detection"] == "detected"
+
+
+def test_repo_map_excludes_generated_hidden_binary_and_log_noise_by_default(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    hidden_dir = project / ".hidden"
+    git_dir = project / ".git"
+    node_modules = project / "node_modules" / "pkg"
+    cache_dir = project / ".pytest_cache"
+    src_dir.mkdir(parents=True)
+    hidden_dir.mkdir()
+    git_dir.mkdir()
+    node_modules.mkdir(parents=True)
+    cache_dir.mkdir()
+
+    source_path = src_dir / "payments.py"
+    source_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    (hidden_dir / "notes.txt").write_text("create invoice hidden note\n", encoding="utf-8")
+    (git_dir / "index").write_bytes(b"binary\0index")
+    (node_modules / "dep.js").write_text("export const dep = 1;\n", encoding="utf-8")
+    (cache_dir / "lastfailed").write_text("{}\n", encoding="utf-8")
+    (project / "run.log").write_text("create invoice noisy log\n", encoding="utf-8")
+    (project / "blob.bin").write_bytes(b"create invoice\0binary")
+
+    payload = repo_map.build_context_render("create invoice", project)
+    files = {Path(path).resolve() for path in payload["files"]}
+
+    assert source_path.resolve() in files
+    assert (hidden_dir / "notes.txt").resolve() not in files
+    assert (node_modules / "dep.js").resolve() not in files
+    assert (project / "run.log").resolve() not in files
+    assert (project / "blob.bin").resolve() not in files

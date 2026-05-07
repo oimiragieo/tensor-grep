@@ -23,6 +23,8 @@ Current product read:
 
 - `rg` remains the benchmark for raw cold exact-text search.
 - `tg` is strongest as agent-native code intelligence: scoped search, JSON/NDJSON, repo maps, defs, source, refs, callers, context bundles, blast-radius, AST search, rewrite planning, GPU inventory, and MCP.
+- `context-render` / MCP context output must keep `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, and follow-up reads consistent. Check `context_consistency` when debugging agent handoff quality.
+- Default JSON/LLM context rendering must include executable body lines for selected functions. Compactness may strip comments, docstrings when optimized, blank lines, type-only imports, and boilerplate, but it is not a summary-only profile.
 - `tg ast-info --json` exposes AST language identifiers for agents without help-text scraping.
 - GPU support exists and local devices can be detected, but GPU routing is benchmark-governed. Do not claim GPU speedups without the matching benchmark artifact.
 - Broad generated roots need bounds. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
@@ -36,9 +38,10 @@ Known current weak spots:
 - `tg --version` is one-line by default for scripts; use `tg --version --verbose` for feature/SIMD/Arrow details.
 - Installed help should show `Usage: tg`, not `Usage: python -m tensor_grep`.
 - `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
-- `validation_commands` can be generic and should be treated as hints.
+- `validation_commands` can be heuristic and should be treated as hints.
+- `validation_plan[]` rows should include `detection` (`detected`, `heuristic`, or `generic`). JavaScript package-manager commands require `package.json` evidence; Python commands require tests, project markers, or Python layout evidence; when no runner evidence exists, emit no command rather than a fake `npm test` or `uv run pytest`.
 - Implicit native resolution should ignore stale in-tree standalone binaries. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep searches on the Rust extension or Python path unless `TG_NATIVE_TG_BINARY` explicitly pins a standalone binary.
-- Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting.
+- Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are regression-covered rg parity edges.
 
 ## Release Completion Contract
 
@@ -151,10 +154,11 @@ GPU benchmark `SKIP` is valid infrastructure state when dependencies such as Tor
 
 | Mistake | Correction |
 | --- | --- |
-| Claiming `tg` is always faster than `rg` | Keep `rg` as the cold exact-text benchmark; position `tg` as agent-native code intelligence. |
+| Claiming `tg` is always faster than `rg` | Keep `rg` as the cold exact-text benchmark; position `tg` as agent-native code intelligence with a validated compatibility set. |
 | Searching with `rg` by habit inside this repo | Use `tg search` first, then `rg` for parity or fallback. |
 | Running broad generated-root scans | Scope the path and use output/scan limits. |
 | Trusting stale native diagnostics | Check `uv run tg doctor --json`; stale in-tree binaries should be `stale-skipped`, not selected implicitly. Rebuild or pin `TG_NATIVE_TG_BINARY` to opt in. |
+| Trusting invented validation commands | Check `validation_plan[].detection`; package-manager commands require `package.json`, Python commands require Python/test/project evidence, and absent evidence should mean no command. |
 | Claiming GPU wins from device detection | Run the GPU benchmark and record the accepted artifact. |
 | Updating docs from memory | Update docs only from repo evidence, CI evidence, or benchmark artifacts. |
 

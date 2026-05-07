@@ -252,6 +252,12 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-o")
             if config.text:
                 cmd.append("-a")
+            if config.binary and not config.text:
+                cmd.append("--binary")
+            if config.hidden:
+                cmd.append("--hidden")
+            if config.follow:
+                cmd.append("--follow")
             if config.line_number is not None and not json_mode:
                 if config.line_number:
                     cmd.append("-n")
@@ -275,6 +281,12 @@ class RipgrepBackend(ComputeBackend):
             if config.iglob:
                 for glob in config.iglob:
                     cmd.extend(["--iglob", glob])
+            if config.file_type:
+                for file_type in config.file_type:
+                    cmd.extend(["-t", file_type])
+            if config.type_not:
+                for file_type in config.type_not:
+                    cmd.extend(["-T", file_type])
 
             if config.context is not None:
                 cmd.extend(["-C", str(config.context)])
@@ -292,6 +304,14 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--count-matches")
             if config.files_with_matches and not (config.count or config.count_matches):
                 cmd.append("--files-with-matches")
+            if config.files_without_match:
+                cmd.append("--files-without-match")
+            if config.replace_str is not None and not json_mode:
+                cmd.extend(["--replace", config.replace_str])
+            if config.sort_by != "none" and not json_mode:
+                cmd.extend(["--sort", config.sort_by])
+            if config.sort_by_reverse != "none" and not json_mode:
+                cmd.extend(["--sortr", config.sort_by_reverse])
             if config.debug:
                 cmd.append("--debug")
             if config.trace:

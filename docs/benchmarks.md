@@ -71,7 +71,9 @@ Accepted implementation boundary:
 
 - camelCase queries can now recover snake_case definitions through symbol-aware lexical expansion
 - exact snake_case symbol queries stay anchored to exact definitions instead of over-ranking partial split matches such as `build_invoice`
-- source-term scanning is now a bounded fallback when parser/path evidence is weak, not the default hot path
+- source-body evidence participates in bounded ranking for top parser/path candidates so natural queries such as `change invoice tax calculation` recover the defining payment logic instead of nearby service/test graph noise
+- exact symbol queries still dominate natural-language heuristics, including camelCase over snake_case when the exact camelCase symbol is requested
+- default LLM rendering preserves executable body lines for selected functions; compactness is a token-budget guard, not a summary-only contract
 
 Editor-plane guardrails were rerun on the same host before accepting the line:
 

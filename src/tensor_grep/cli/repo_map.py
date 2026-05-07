@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import tempfile
 import threading
 import time
 import tomllib
@@ -100,6 +101,8 @@ class _ValidationRunnerInfo(NamedTuple):
     has_python: bool
     has_rust: bool
     has_javascript: bool
+    python_detection: str
+    has_package_json: bool
     js_runners: tuple[str, ...]
     ts_runners: tuple[str, ...]
     js_script_command: str | None
@@ -415,6 +418,45 @@ def _safe_resolve(path: Path) -> Path:
         return path
 
 
+def _looks_like_binary_file(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(8192)
+    except OSError:
+        return False
+    return b"\0" in data
+
+
+def _is_hidden_non_code_file(path: Path, root: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        relative = path
+    hidden_parts = [
+        part
+        for part in relative.parts[:-1]
+        if part.startswith(".") and part.lower() not in {".github"}
+    ]
+    if not hidden_parts and path.name.startswith("."):
+        hidden_parts.append(path.name)
+    if not hidden_parts:
+        return False
+    return path.suffix.lower() not in _CODE_CONTEXT_SUFFIXES
+
+
+def _is_repo_context_file(path: Path, root: Path) -> bool:
+    suffix = path.suffix.lower()
+    if suffix not in _CONTEXT_FILE_SUFFIXES:
+        return False
+    if suffix in _NON_CODE_HIDDEN_SUFFIXES:
+        return False
+    if _is_hidden_non_code_file(path, root):
+        return False
+    if _looks_like_binary_file(path):
+        return False
+    return True
+
+
 def _path_is_relative_to(path: Path, parent: Path) -> bool:
     try:
         path.resolve().relative_to(parent.resolve())
@@ -665,6 +707,18 @@ _FALLBACK_SOURCE_SUFFIXES = {
     ".txt",
     ".yaml",
     ".yml",
+}
+_CODE_CONTEXT_SUFFIXES = _SOURCE_FIRST_SUFFIXES | _JS_TS_SUFFIXES | _RUST_SUFFIXES | {".py"}
+_CONTEXT_FILE_SUFFIXES = _CODE_CONTEXT_SUFFIXES | _FALLBACK_SOURCE_SUFFIXES
+_NON_CODE_HIDDEN_SUFFIXES = {
+    ".bak",
+    ".bin",
+    ".cache",
+    ".db",
+    ".log",
+    ".pid",
+    ".sqlite",
+    ".tmp",
 }
 
 
@@ -3832,15 +3886,18 @@ def build_repo_map(
                 if str(normalized_extra_file) not in seen_files:
                     all_files.append(normalized_extra_file)
                     seen_files.add(str(normalized_extra_file))
-        tests = [str(current) for current in all_files if _is_test_file(current)]
+        context_files = [
+            current for current in all_files if _is_repo_context_file(current, context_root)
+        ]
+        tests = [str(current) for current in context_files if _is_test_file(current)]
         non_test_source_files = [
-            str(current) for current in all_files if not _is_test_file(current)
+            str(current) for current in context_files if not _is_test_file(current)
         ]
         source_files = non_test_source_files or tests
 
         imports: list[dict[str, Any]] = []
         symbols: list[dict[str, Any]] = []
-        for current in all_files:
+        for current in context_files:
             if _profiling_collector is None:
                 current_imports, current_symbols = _imports_and_symbols_for_path(current)
             else:
@@ -3900,7 +3957,11 @@ def build_repo_map_incremental(
         dict(symbol) for symbol in previous_map.get("symbols", [])
     ])
 
-    all_files = _iter_repo_files(root)
+    all_files = [
+        current
+        for current in _iter_repo_files(root)
+        if _is_repo_context_file(current, context_root)
+    ]
     current_files_by_path = {str(current): current for current in all_files}
     parsed_imports_by_file: dict[str, list[str]] = {}
     parsed_symbols_by_file: dict[str, list[dict[str, Any]]] = {}
@@ -3951,7 +4012,13 @@ def build_repo_map_json(path: str | Path = ".") -> str:
 
 
 def _query_terms(query: str) -> list[str]:
-    return [token.lower() for token in re.findall(r"[A-Za-z0-9_]+", query) if token]
+    terms: list[str] = []
+    for raw_token in re.findall(r"[A-Za-z0-9_]+", query):
+        normalized = raw_token.lower()
+        for candidate in [normalized, *split_terms(raw_token)]:
+            if candidate and candidate not in terms:
+                terms.append(candidate)
+    return terms
 
 
 def _symbol_query_terms(query: str) -> list[str]:
@@ -4569,11 +4636,14 @@ def _build_context_pack_from_map(
             scored_symbol = dict(symbol)
             scored_symbol["score"] = score
             current_path = str(scored_symbol["file"])
+            if _is_test_file(Path(current_path)):
+                continue
             symbol_name_score = _score_text_terms(str(scored_symbol["name"]), symbol_terms)
             if symbol_name_score > 0 and _symbol_name_matches_query_exactly(
                 str(scored_symbol["name"]),
                 query,
             ):
+                scored_symbol["exact_query_match"] = True
                 _append_reason(file_reasons, current_path, "definition")
                 _append_reason(file_reasons, current_path, "symbol")
             scored_symbols.append(scored_symbol)
@@ -4587,10 +4657,15 @@ def _build_context_pack_from_map(
         )
         for symbol in scored_symbols:
             current = str(symbol["file"])
-            file_scores[current] = file_scores.get(current, 0) + int(symbol["score"]) * 2
+            exact_symbol_bonus = 12 if bool(symbol.get("exact_query_match")) else 0
+            file_scores[current] = (
+                file_scores.get(current, 0) + int(symbol["score"]) * 3 + exact_symbol_bonus
+            )
 
         scored_imports: list[dict[str, Any]] = []
         for entry in payload["imports"]:
+            if _is_test_file(Path(str(entry["file"]))):
+                continue
             score = _score_import_entry(entry, terms)
             if score <= 0:
                 continue
@@ -4607,22 +4682,28 @@ def _build_context_pack_from_map(
             _append_reason(file_reasons, current, "import")
 
         source_candidates: list[str] = []
-        if not scored_symbols and not scored_imports:
-            source_candidates = [
-                current
-                for current, score in sorted(
-                    file_scores.items(),
-                    key=lambda item: (-int(item[1]), str(item[0])),
-                )
-                if score > 0
-            ][:_SOURCE_FALLBACK_SCAN_LIMIT]
-            if not source_candidates:
-                source_candidates = [str(current) for current in payload["files"]]
+        for symbol in scored_symbols:
+            current = str(symbol["file"])
+            if current not in source_candidates:
+                source_candidates.append(current)
+        for entry in scored_imports:
+            current = str(entry["file"])
+            if current not in source_candidates:
+                source_candidates.append(current)
+        for current, score in sorted(
+            file_scores.items(),
+            key=lambda item: (-int(item[1]), str(item[0])),
+        ):
+            if score > 0 and current not in source_candidates:
+                source_candidates.append(current)
+        if not source_candidates:
+            source_candidates = [str(current) for current in payload["files"]]
+        source_candidates = source_candidates[:_SOURCE_FALLBACK_SCAN_LIMIT]
         for current_path in source_candidates:
             source_score = _score_file_source_terms(current_path, terms)
             if source_score <= 0:
                 continue
-            file_scores[current_path] = file_scores.get(current_path, 0) + source_score * 2
+            file_scores[current_path] = file_scores.get(current_path, 0) + source_score * 8
             _append_reason(file_reasons, current_path, "source")
 
         dependency_seed_files: list[str] = []
@@ -5132,29 +5213,11 @@ def _python_ast_omitted_relative_lines(
             and isinstance(first_value.value, str)
         )
 
-        if profile == "llm":
-            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                # Skeletonize: Keep signature, maybe keep docstring, omit rest of body
-                start_omit = first.lineno
-                if is_docstring:
-                    if strip_docstrings:
-                        first_end = getattr(first, "end_lineno", first.lineno)
-                        docstring_lines.update(range(first.lineno, first_end + 1))
-                        start_omit = first_end + 1
-                    else:
-                        start_omit = getattr(first, "end_lineno", first.lineno) + 1
-
-                parent_end = getattr(parent, "end_lineno", parent.lineno)
-                if parent_end >= start_omit:
-                    boilerplate_lines.update(range(start_omit, parent_end + 1))
-                return  # Don't recurse into omitted body
-
-        # Compact profile stripping
-        if is_docstring:
+        if is_docstring and (profile == "compact" or strip_docstrings):
             end_lineno = getattr(first, "end_lineno", first.lineno)
             docstring_lines.update(range(first.lineno, end_lineno + 1))
 
-        if profile == "compact":
+        if profile in {"compact", "llm"}:
             # Strip 'pass' if it's the only node or only node after docstring
             if len(nodes) == 1 or (len(nodes) == 2 and is_docstring):
                 last = nodes[-1]
@@ -5408,7 +5471,10 @@ def _validation_repo_root(repo_root: str | Path) -> Path:
     )
     boundary_candidate: Path | None = None
     current = root
+    temp_root = Path(tempfile.gettempdir()).resolve()
     while True:
+        if current == temp_root and root != temp_root:
+            break
         if any((current / marker).exists() for marker in markers):
             return current
         if any((current / marker).exists() for marker in boundary_markers):
@@ -5509,10 +5575,34 @@ def _ts_jest_configured(
 
 def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
     if not root.exists():
-        return _ValidationRunnerInfo(False, False, False, (), (), None, None, None)
+        return _ValidationRunnerInfo(
+            False, False, False, "generic", False, (), (), None, None, None
+        )
 
     all_files = _iter_repo_files(root, max_files=_VALIDATION_RUNNER_SCAN_LIMIT)
     has_python = any(current.suffix == ".py" for current in all_files)
+    has_python_tests = any(
+        current.suffix == ".py" and _is_test_file(current) for current in all_files
+    )
+    has_python_project_marker = (
+        any(
+            (root / marker).is_file()
+            for marker in (
+                "pyproject.toml",
+                "pytest.ini",
+                "setup.py",
+                "setup.cfg",
+                "tox.ini",
+            )
+        )
+        or (root / "tests").is_dir()
+    )
+    if has_python_project_marker or has_python_tests:
+        python_detection = "detected"
+    elif has_python:
+        python_detection = "heuristic"
+    else:
+        python_detection = "generic"
     has_rust = (root / "Cargo.toml").is_file() or any(
         current.suffix in _RUST_SUFFIXES for current in all_files
     )
@@ -5521,6 +5611,7 @@ def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
     package_json: dict[str, Any] = {}
     package_text = ""
     package_json_path = root / "package.json"
+    has_package_json = package_json_path.is_file()
     if package_json_path.is_file():
         try:
             package_text = package_json_path.read_text(encoding="utf-8")
@@ -5545,16 +5636,24 @@ def _detect_validation_runners_from_root(root: Path) -> _ValidationRunnerInfo:
         ts_runners.append("mocha")
     js_fallback_command = (
         _javascript_repo_fallback_command(_infer_js_package_manager(root, package_json))
-        if has_javascript
+        if has_javascript and has_package_json
         else None
     )
-    js_test_script = _package_test_script(package_json) if has_javascript else None
-    js_script_command = _package_test_script_command(root, package_json) if has_javascript else None
+    js_test_script = (
+        _package_test_script(package_json) if has_javascript and has_package_json else None
+    )
+    js_script_command = (
+        _package_test_script_command(root, package_json)
+        if has_javascript and has_package_json
+        else None
+    )
 
     return _ValidationRunnerInfo(
         has_python=has_python,
         has_rust=has_rust,
         has_javascript=has_javascript,
+        python_detection=python_detection,
+        has_package_json=has_package_json,
         js_runners=js_runners,
         ts_runners=tuple(ts_runners),
         js_script_command=js_script_command,
@@ -5976,13 +6075,13 @@ def _validation_plan_for_tests(
             if local_has_python and not local_has_javascript and not local_has_rust
             else _detect_validation_runners(str(root))
         )
-    has_detected_javascript = bool(
-        detected.has_javascript
-        or detected.js_runners
+    has_javascript_validation = bool(
+        detected.js_runners
         or detected.ts_runners
         or detected.js_script_command
         or detected.js_fallback_command
     )
+    has_python_validation = detected.python_detection in {"detected", "heuristic"}
     primary_symbol_name = (
         str(primary_symbol.get("name"))
         if isinstance(primary_symbol, dict) and primary_symbol.get("name")
@@ -6005,6 +6104,7 @@ def _validation_plan_for_tests(
         runner: str,
         target: str | None = None,
         confidence: float,
+        detection: str,
     ) -> None:
         if command in seen:
             return
@@ -6014,6 +6114,7 @@ def _validation_plan_for_tests(
             "scope": scope,
             "runner": runner,
             "confidence": round(min(1.0, max(0.0, confidence)), 3),
+            "detection": detection,
         }
         if target:
             step["target"] = target
@@ -6043,6 +6144,7 @@ def _validation_plan_for_tests(
                         runner="pytest",
                         target=relative_path,
                         confidence=0.95,
+                        detection="detected",
                     )
             add_step(
                 f"uv run pytest {relative_path} -q",
@@ -6050,6 +6152,7 @@ def _validation_plan_for_tests(
                 runner="pytest",
                 target=relative_path,
                 confidence=0.82,
+                detection="detected",
             )
             continue
 
@@ -6071,6 +6174,7 @@ def _validation_plan_for_tests(
                         runner=runner,
                         target=relative_path,
                         confidence=0.9,
+                        detection="detected",
                     )
                 add_step(
                     _javascript_runner_file_command(runner, relative_path),
@@ -6078,6 +6182,7 @@ def _validation_plan_for_tests(
                     runner=runner,
                     target=relative_path,
                     confidence=0.78,
+                    detection="detected",
                 )
             continue
 
@@ -6103,6 +6208,7 @@ def _validation_plan_for_tests(
                     runner="node:test",
                     target=relative_path,
                     confidence=0.84,
+                    detection="detected",
                 )
             for runner in detected.js_runners:
                 remember_runner(runner)
@@ -6113,6 +6219,7 @@ def _validation_plan_for_tests(
                         runner=runner,
                         target=relative_path,
                         confidence=0.9,
+                        detection="detected",
                     )
                 add_step(
                     _javascript_runner_file_command(runner, relative_path),
@@ -6120,6 +6227,7 @@ def _validation_plan_for_tests(
                     runner=runner,
                     target=relative_path,
                     confidence=0.78,
+                    detection="detected",
                 )
             continue
 
@@ -6144,6 +6252,7 @@ def _validation_plan_for_tests(
                         runner="cargo",
                         target=relative_path,
                         confidence=0.88,
+                        detection="detected",
                     )
             if file_level_command:
                 add_step(
@@ -6152,14 +6261,15 @@ def _validation_plan_for_tests(
                     runner="cargo",
                     target=relative_path,
                     confidence=0.8,
+                    detection="detected",
                 )
             continue
 
     if not tests:
-        if has_detected_javascript:
+        if has_javascript_validation:
             include_python_fallback = include_python_fallback
         else:
-            include_python_fallback = include_python_fallback or detected.has_python
+            include_python_fallback = include_python_fallback or has_python_validation
         include_rust_fallback = include_rust_fallback or detected.has_rust
         for runner in (*detected.js_runners, *detected.ts_runners):
             remember_runner(runner)
@@ -6169,21 +6279,28 @@ def _validation_plan_for_tests(
         and not include_rust_fallback
         and not requested_javascript_runners
     ):
-        include_python_fallback = not has_detected_javascript and (
-            detected.has_python or not detected.has_rust
+        include_python_fallback = not has_javascript_validation and (
+            has_python_validation and not detected.has_rust
         )
         include_rust_fallback = detected.has_rust
         for runner in (*detected.js_runners, *detected.ts_runners):
             remember_runner(runner)
 
     if include_python_fallback:
-        add_step("uv run pytest -q", scope="repo", runner="pytest", confidence=0.55)
+        add_step(
+            "uv run pytest -q",
+            scope="repo",
+            runner="pytest",
+            confidence=0.55,
+            detection=detected.python_detection,
+        )
     if detected.js_script_command and (requested_javascript_runners or detected.has_javascript):
         add_step(
             detected.js_script_command,
             scope="repo",
             runner="javascript",
             confidence=0.65,
+            detection="detected",
         )
     else:
         for runner in requested_javascript_runners:
@@ -6192,6 +6309,7 @@ def _validation_plan_for_tests(
                 scope="repo",
                 runner=runner,
                 confidence=0.5,
+                detection="heuristic",
             )
         if (
             detected.has_javascript
@@ -6203,9 +6321,16 @@ def _validation_plan_for_tests(
                 scope="repo",
                 runner="javascript",
                 confidence=0.45,
+                detection="heuristic",
             )
     if include_rust_fallback:
-        add_step("cargo test", scope="repo", runner="cargo", confidence=0.55)
+        add_step(
+            "cargo test",
+            scope="repo",
+            runner="cargo",
+            confidence=0.55,
+            detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
+        )
 
     return plan
 
@@ -7028,9 +7153,16 @@ def _build_edit_plan_seed(
     max_depth: int = _DEFAULT_EDIT_PLAN_MAX_DEPTH,
     blast_radius_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    primary_symbol = next(iter(ranked_symbols), None)
     primary_file = next(iter(payload.get("files", [])), None)
-    if primary_symbol is not None:
+    primary_symbol = next(
+        (
+            current
+            for current in ranked_symbols
+            if primary_file is not None and str(current.get("file")) == str(primary_file)
+        ),
+        next(iter(ranked_symbols), None),
+    )
+    if primary_symbol is not None and primary_file is None:
         preferred_files = _preferred_definition_files(repo_map, str(primary_symbol.get("name", "")))
         if preferred_files:
             primary_file = preferred_files[0]
@@ -7223,7 +7355,17 @@ def _attach_edit_plan_metadata(
             return [primary_file, *ordered][:limit]
 
         ranked_symbols = _sorted_ranked_symbols(list(payload.get("symbols", [])))
-        edit_anchor_symbol = _preferred_edit_anchor_symbol(None, ranked_symbols)
+        primary_payload_file = next(iter(payload.get("files", [])), None)
+        payload_file_symbol = next(
+            (
+                current
+                for current in ranked_symbols
+                if primary_payload_file is not None
+                and str(current.get("file")) == str(primary_payload_file)
+            ),
+            None,
+        )
+        edit_anchor_symbol = _preferred_edit_anchor_symbol(payload_file_symbol, ranked_symbols)
         resolved_blast_radius_payload = blast_radius_payload
         if edit_anchor_symbol is not None and resolved_blast_radius_payload is None:
             edit_symbol_name = str(edit_anchor_symbol.get("name", ""))
@@ -7800,6 +7942,92 @@ def _compact_context_render_payload(
     return compact
 
 
+def _downgrade_ranking_quality(value: str) -> str:
+    if value == "strong":
+        return "moderate"
+    if value == "moderate":
+        return "weak"
+    return "weak"
+
+
+def _apply_context_consistency_invariants(payload: dict[str, Any]) -> dict[str, Any]:
+    edit_plan_seed = payload.get("edit_plan_seed")
+    navigation_pack = payload.get("navigation_pack")
+    primary_file = (
+        str(edit_plan_seed.get("primary_file", "")) if isinstance(edit_plan_seed, dict) else ""
+    )
+    primary_target = (
+        dict(navigation_pack.get("primary_target", {})) if isinstance(navigation_pack, dict) else {}
+    )
+    navigation_primary_file = str(primary_target.get("file", "") or "")
+    files = {str(current) for current in payload.get("files", []) if str(current)}
+    source_files = {
+        str(source.get("file", ""))
+        for source in _list_of_dicts(payload.get("sources"))
+        if str(source.get("file", ""))
+    }
+    follow_up_files = set()
+    if isinstance(navigation_pack, dict):
+        follow_up_files = {
+            str(read.get("file", ""))
+            for read in _list_of_dicts(navigation_pack.get("follow_up_reads"))
+            if str(read.get("file", ""))
+        }
+    rendered_files = {
+        str(section.get("path", ""))
+        for section in _list_of_dicts(payload.get("sections"))
+        if str(section.get("kind", "")) in {"summary", "source"} and str(section.get("path", ""))
+    }
+
+    included = bool(primary_file and primary_file in (files | source_files | follow_up_files))
+    render_matches_primary_target = bool(
+        not primary_file or not navigation_primary_file or primary_file == navigation_primary_file
+    )
+    rendered_includes_primary = bool(not primary_file or primary_file in rendered_files)
+    omitted_reason = None
+    if primary_file and not included:
+        omitted_reason = "primary file was outside the selected file/source/read budgets"
+    elif primary_file and not rendered_includes_primary:
+        omitted_reason = (
+            "primary file metadata was selected but omitted from rendered_context budget"
+        )
+
+    confidence_downgraded = False
+    if primary_file and (not render_matches_primary_target or not rendered_includes_primary):
+        ranking_quality = str(payload.get("ranking_quality", "weak"))
+        downgraded_quality = _downgrade_ranking_quality(ranking_quality)
+        if downgraded_quality != ranking_quality:
+            payload["ranking_quality"] = downgraded_quality
+            confidence_downgraded = True
+        if isinstance(edit_plan_seed, dict):
+            confidence = dict(edit_plan_seed.get("confidence", {}))
+            for key, value in list(confidence.items()):
+                try:
+                    confidence[key] = round(float(value) * 0.75, 3)
+                except (TypeError, ValueError):
+                    continue
+            edit_plan_seed["confidence"] = confidence
+
+    payload["context_consistency"] = {
+        "primary_file": primary_file or None,
+        "navigation_primary_file": navigation_primary_file or None,
+        "primary_file_included": included,
+        "render_matches_primary_target": render_matches_primary_target,
+        "rendered_context_includes_primary": rendered_includes_primary,
+        "confidence_downgraded": confidence_downgraded,
+        "omitted_primary_reason": omitted_reason,
+    }
+    if omitted_reason:
+        omitted_sections = _list_of_dicts(payload.get("omitted_sections"))
+        omitted_sections.append({
+            "kind": "primary",
+            "file": primary_file,
+            "reason": omitted_reason,
+        })
+        payload["omitted_sections"] = omitted_sections
+    return payload
+
+
 def build_context_render_from_map(
     repo_map: dict[str, Any],
     query: str,
@@ -7830,7 +8058,13 @@ def build_context_render_from_map(
     sources: list[dict[str, Any]] = []
     seen_symbols: set[tuple[str, str]] = set()
     seen_source_files: set[str] = set()
+    symbols_by_file: dict[str, list[dict[str, Any]]] = {}
     for symbol in context_payload.get("symbols", []):
+        symbols_by_file.setdefault(str(symbol["file"]), []).append(dict(symbol))
+    ordered_symbols: list[dict[str, Any]] = []
+    for current_file in context_payload.get("files", [])[:max_files]:
+        ordered_symbols.extend(symbols_by_file.get(str(current_file), []))
+    for symbol in ordered_symbols:
         current_file = str(symbol["file"])
         if current_file not in top_files:
             continue
@@ -7946,6 +8180,7 @@ def build_context_render_from_map(
     payload["truncated"] = truncated
     payload["token_estimate"] = token_estimate
     payload["omitted_sections"] = omitted_sections
+    payload = _apply_context_consistency_invariants(payload)
     payload = _compact_context_render_payload(
         payload,
         render_profile=normalized_profile,

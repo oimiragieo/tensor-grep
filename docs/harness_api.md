@@ -407,6 +407,8 @@ Use this shape when an agent wants a prompt-ready bundle instead of only the raw
 
 For CLI use, `tg.exe context-render --json` defaults to the `llm` render profile. That profile uses compact JSON wire formatting and intentionally omits duplicated top-level inventories such as `symbols`, `imports`, `related_paths`, `file_matches`, `file_summaries`, `test_matches`, `coverage`, and `candidate_edit_targets`; agents should read `rendered_context`, `sources`, `edit_plan_seed`, `navigation_pack`, and top-level `validation_commands` first. Use `--render-profile full` when a full pretty-printed inventory is required.
 
+The `llm` profile is compact, not summary-only. Selected source blocks include executable body lines by default; compacting can strip comments, docstrings when optimization is requested, blank lines, type-only imports, and boilerplate, but it must not remove the behavior from a selected function.
+
 | Field | Type | Notes |
 | --- | --- | --- |
 | `version` | `integer` | Contract version. |
@@ -439,6 +441,7 @@ For CLI use, `tg.exe context-render --json` defaults to the `llm` render profile
 | `candidate_edit_targets` | `object` | Highest-value files, symbols, tests, and ranked span anchors carried forward for downstream edit planning. Omitted by the CLI `llm` JSON profile. |
 | `edit_plan_seed` | `object` | Default primary file/symbol/span, related spans, dependent files, edit ordering, structured validation plan, normalized confidence scores, and likely validation command seeds for downstream autonomous edit loops. |
 | `navigation_pack` | `object` | Compact AI-facing navigation bundle mirroring Edit Plan JSON so planner/executor loops can reuse one shape. |
+| `context_consistency` | `object` | Reports whether `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, follow-up reads, and rendered sections agree. Includes an omitted-primary reason and confidence-downgrade flag when budgets hide the primary target. |
 | `validation_commands` | `array<string>` | Top-level copy of the best validation commands from `navigation_pack` or `edit_plan_seed` for quick agent access. |
 | `rendered_context` | `string` | Deterministic text bundle ready for edit-planning prompts. |
 
@@ -458,6 +461,8 @@ For CLI use, `tg.exe context-render --json` defaults to the `llm` render profile
 - `edit_ordering`
 - `rollback_risk`
 
+Each `validation_plan[]` row includes `detection` with one of `detected`, `heuristic`, or `generic`. JavaScript package-manager commands are emitted only when package metadata exists. Python commands require tests, project markers, or Python layout evidence; when no runner evidence exists, the plan is empty instead of inventing a test command.
+
 Each `sources[]` object may also include compact-render metadata when `optimize_context` is enabled:
 
 - `render_profile`
@@ -466,7 +471,7 @@ Each `sources[]` object may also include compact-render metadata when `optimize_
 - `line_map[]`
 - `render_diagnostics`
 
-For Python source blocks, compact and `llm` profiles also strip:
+For Python source blocks, compact and optimized `llm` profiles can strip:
 
 - leading docstrings
 - pure `pass` boilerplate in otherwise empty class/function bodies

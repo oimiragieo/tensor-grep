@@ -32,13 +32,15 @@ The `v1.4.5` contract work adds a deterministic parity corpus plus a contract-dr
 
 - parity suite: `tests/e2e/test_rg_parity_matrix.py`
 - benchmark artifact: `artifacts/bench_run_rg_parity_benchmarks.json`
-- current semantic result: all 22 validated rows match pinned `rg` on the deterministic corpus
+- current semantic result: all 23 validated rows match pinned `rg` on the deterministic corpus
+- current deterministic edge coverage: `--files-with-matches --sort path`, `--files-without-match --sort path`, `--replace --sort path`, ignored directories after `git init`, Windows path normalization, binary exclusion by default, and match/no-match/parse-error/binary-skip exit codes
 - current timing result on this Windows host: every benchmarked validated row is slower than pinned `rg`
 
 This is the intended read:
 
 - `rg` remains the cold text-search baseline
-- `tg` now has a narrower but explicit, measured compatibility claim for the common search rows it validates
+- `tg` now has a narrower but explicit, measured validated compatibility set for the common search rows it validates
+- deterministic stdout equality is supported for the validated rows and sorted edge cases; raw unsorted root ordering is still semantic parity
 - `ast-grep` remains the structural comparator for `run`, `scan`, `test`, and `new`, not the cold text-search comparator
 
 ## Host-Local Command Snapshot
