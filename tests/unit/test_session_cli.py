@@ -363,6 +363,104 @@ def test_session_context_can_auto_refresh_stale_session(tmp_path: Path) -> None:
     assert any(symbol["name"] == "settle_invoice" for symbol in payload["symbols"])
 
 
+def test_session_context_does_not_go_stale_from_non_context_files(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    (project / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    (project / "debug.log").write_text("create invoice noise\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "context",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "create invoice",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["files"][0] == str(module_path.resolve())
+
+
+def test_session_refresh_on_stale_recovers_after_context_file_change(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "payments.py"
+    module_path.write_text("def create_invoice():\n    return 1\n", encoding="utf-8")
+    (project / ".gitignore").write_text("*.log\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+    module_path.write_text(
+        "def create_invoice():\n    return 1\n\ndef issue_refund():\n    return create_invoice()\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "context",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "issue refund",
+            "--refresh-on-stale",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["session_id"] == opened["session_id"]
+    assert any(symbol["name"] == "issue_refund" for symbol in payload["symbols"])
+
+
+def test_session_context_render_omits_validation_commands_without_runner_evidence(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    module_path = src_dir / "sample.py"
+    module_path.write_text("def add(x):\n    return x + 1\n", encoding="utf-8")
+
+    runner = CliRunner()
+    opened = json.loads(runner.invoke(app, ["session", "open", str(project), "--json"]).stdout)
+
+    result = runner.invoke(
+        app,
+        [
+            "session",
+            "context-render",
+            opened["session_id"],
+            str(project),
+            "--query",
+            "add",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["files"] == [str(module_path.resolve())]
+    assert payload["edit_plan_seed"]["validation_commands"] == []
+    assert payload["edit_plan_seed"]["validation_plan"] == []
+    assert payload["navigation_pack"]["validation_commands"] == []
+
+
 def test_session_serve_reports_cache_stats(tmp_path: Path) -> None:
     from tensor_grep.cli import session_store
 

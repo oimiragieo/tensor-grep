@@ -102,7 +102,6 @@ _MCP_TOOL_CAPABILITIES: dict[str, dict[str, object]] = {
             "native_required_options": (
                 [
                     "verify",
-                    "checkpoint",
                     "audit_manifest",
                     "audit_signing_key",
                     "lint_cmd",
@@ -668,15 +667,16 @@ def execute_rewrite_apply_json(
             )
 
     native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    checkpoint_payload: dict[str, Any] | None = None
     if native_tg is None:
-        if verify or checkpoint or audit_manifest or audit_signing_key or lint_cmd or test_cmd:
+        if verify or audit_manifest or audit_signing_key or lint_cmd or test_cmd:
             return (
                 _native_unavailable_error(
                     tool="tg_rewrite_apply",
                     payload=_rewrite_envelope(),
                     message=(
                         "tg_rewrite_apply requires a standalone native tg binary for "
-                        "verify, checkpoint, audit, lint, or test rewrite apply options."
+                        "verify, audit, lint, or test rewrite apply options."
                     ),
                 ),
                 1,
@@ -693,6 +693,13 @@ def execute_rewrite_apply_json(
                 ),
                 1,
             )
+        if checkpoint:
+            try:
+                from tensor_grep.cli.checkpoint_store import create_checkpoint
+
+                checkpoint_payload = create_checkpoint(path).__dict__
+            except Exception as exc:
+                return _rewrite_error(f"Failed to create checkpoint: {exc}", code="checkpoint"), 1
         rewrite_json = _execute_embedded_rewrite_json(
             pattern=pattern,
             replacement=replacement,
@@ -716,6 +723,9 @@ def execute_rewrite_apply_json(
         )
         rewrite_json = _execute_rewrite_json_command(command)
     rewrite_payload = json.loads(rewrite_json)
+    if checkpoint_payload is not None:
+        rewrite_payload["checkpoint"] = checkpoint_payload
+        rewrite_json = json.dumps(rewrite_payload, indent=2)
     if rewrite_payload.get("error"):
         return rewrite_json, 1
     if loaded_policy is None:

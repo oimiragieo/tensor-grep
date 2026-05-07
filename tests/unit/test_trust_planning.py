@@ -226,6 +226,51 @@ def test_exact_camel_case_symbol_query_dominates_natural_language_scores(
     assert payload["edit_plan_seed"]["primary_file"] == str(paths["app"].resolve())
 
 
+def test_exact_symbol_query_does_not_mark_snake_case_bridge_as_literal() -> None:
+    assert repo_map._symbol_name_matches_query_exactly("createInvoice", "createInvoice")
+    assert repo_map._symbol_name_matches_query_exactly("create_invoice", "create_invoice")
+    assert not repo_map._symbol_name_matches_query_exactly("create_invoice", "createInvoice")
+
+
+def test_cli_context_render_exact_symbol_query_prefers_literal_symbol(
+    tmp_path: Path,
+) -> None:
+    runner = CliRunner()
+    project = tmp_path / "project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+
+    payments_path = src_dir / "aaa_payments.py"
+    payments_path.write_text(
+        "TAX_RATE = 0.0825\n\n"
+        "def create_invoice(subtotal: float) -> dict[str, float]:\n"
+        "    tax = subtotal * TAX_RATE\n"
+        "    total = subtotal + tax\n"
+        "    return {'subtotal': subtotal, 'tax': tax, 'total': total}\n\n"
+        "def create_invoice_receipt(subtotal: float) -> str:\n"
+        "    invoice = create_invoice(subtotal)\n"
+        "    return f\"invoice total {invoice['total']}\"\n",
+        encoding="utf-8",
+    )
+    app_path = src_dir / "zzz_app.ts"
+    app_path.write_text(
+        "export function createInvoice(subtotal: number) {\n  return { subtotal };\n}\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        ["context-render", "--query", "createInvoice", "--json", str(project)],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["files"][0] == str(app_path.resolve())
+    assert payload["edit_plan_seed"]["primary_symbol"]["name"] == "createInvoice"
+    assert payload["edit_plan_seed"]["primary_file"] == str(app_path.resolve())
+    assert str(payments_path.resolve()) != payload["edit_plan_seed"]["primary_file"]
+
+
 def test_llm_render_keeps_executable_body_lines_for_selected_function(
     tmp_path: Path,
 ) -> None:

@@ -131,6 +131,29 @@ def test_passthrough_should_forward_editor_output_flags():
     assert exit_code == 0
 
 
+def test_passthrough_should_forward_multiline_flags():
+    backend = RipgrepBackend()
+    config = SearchConfig(multiline=True, multiline_dotall=True)
+
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+
+    with (
+        patch.object(backend, "_get_binary_name", return_value="rg"),
+        patch(
+            "tensor_grep.backends.ripgrep_backend.subprocess.run", return_value=mock_result
+        ) as run,
+    ):
+        exit_code = backend.search_passthrough(
+            ["src"], r"create_invoice[\s\S]*return", config=config
+        )
+
+    cmd = run.call_args[0][0]
+    assert "--multiline" in cmd
+    assert "--multiline-dotall" in cmd
+    assert exit_code == 0
+
+
 def test_search_should_emit_runtime_routing_metadata():
     backend = RipgrepBackend()
 

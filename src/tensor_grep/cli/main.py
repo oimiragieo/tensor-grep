@@ -1129,7 +1129,6 @@ def _can_passthrough_rg(
     return bool(
         not config.ast
         and not config.ltl
-        and not config.pcre2
         and not config.force_cpu
         and format_type == "rg"
         and not json_mode
@@ -1500,7 +1499,7 @@ def _load_inline_rule_specs(
                 pattern = _extract_rule_pattern(item)
                 if not pattern:
                     continue
-                specs.append({
+                spec = {
                     "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
                     "pattern": pattern,
                     "language": str(
@@ -1509,17 +1508,27 @@ def _load_inline_rule_specs(
                         or default_language
                         or "python"
                     ),
-                })
+                }
+                for metadata_key in ("severity", "message"):
+                    if item.get(metadata_key) is not None:
+                        spec[metadata_key] = str(item[metadata_key])
+                    elif payload.get(metadata_key) is not None:
+                        spec[metadata_key] = str(payload[metadata_key])
+                specs.append(spec)
             continue
 
         pattern = _extract_rule_pattern(payload)
         if not pattern:
             continue
-        specs.append({
+        spec = {
             "id": str(payload.get("id") or f"inline-rule-{document_index}"),
             "pattern": pattern,
             "language": str(payload.get("language") or default_language or "python"),
-        })
+        }
+        for metadata_key in ("severity", "message"):
+            if payload.get(metadata_key) is not None:
+                spec[metadata_key] = str(payload[metadata_key])
+        specs.append(spec)
 
     return specs
 

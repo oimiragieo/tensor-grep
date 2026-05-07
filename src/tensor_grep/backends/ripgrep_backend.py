@@ -246,6 +246,10 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-x")
             if config.fixed_strings:
                 cmd.append("-F")
+            if config.multiline:
+                cmd.append("--multiline")
+            if config.multiline_dotall:
+                cmd.append("--multiline-dotall")
             if config.no_ignore:
                 cmd.append("--no-ignore")
             if config.only_matching:

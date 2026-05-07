@@ -23,6 +23,14 @@ def _write_edge_corpus(root: Path) -> None:
     (root / "b.txt").write_text("needle beta\n", encoding="utf-8")
     (root / "a.txt").write_text("needle alpha\n", encoding="utf-8")
     (root / "c.txt").write_text("plain text\n", encoding="utf-8")
+    (root / "pcre-z.txt").write_text("needle pcre\n", encoding="utf-8")
+    (root / "multi.py").write_text(
+        "# needle multiline fixture\n"
+        "def create_invoice(subtotal):\n"
+        "    tax = subtotal * 0.1\n"
+        "    return subtotal + tax\n",
+        encoding="utf-8",
+    )
     ignored_dir = root / "ignored"
     ignored_dir.mkdir()
     (ignored_dir / "z.txt").write_text("needle ignored\n", encoding="utf-8")
@@ -146,6 +154,36 @@ def test_rg_sorted_output_edges_match(
     _assert_same_rg_behavior(
         rg_args=rg_args,
         tg_args=tg_args,
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+    )
+
+
+@pytest.mark.characterization
+def test_rg_pcre2_sorted_output_matches(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_behavior(
+        rg_args=["--pcre2", "--sort", "path", r"need(le|ful)", "."],
+        tg_args=["--pcre2", "--sort", "path", r"need(le|ful)", "."],
+        root=root,
+        env=env,
+        rg_binary=rg_binary,
+    )
+
+
+@pytest.mark.characterization
+def test_rg_multiline_output_matches(
+    edge_corpus: tuple[Path, Path, dict[str, str]],
+) -> None:
+    root, rg_binary, env = edge_corpus
+
+    _assert_same_rg_behavior(
+        rg_args=["--multiline", r"create_invoice[\s\S]*return", "."],
+        tg_args=["--multiline", r"create_invoice[\s\S]*return", "."],
         root=root,
         env=env,
         rg_binary=rg_binary,

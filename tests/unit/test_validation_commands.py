@@ -424,7 +424,8 @@ def test_rust_target_resolution_patterns(
 @pytest.mark.parametrize(
     ("setup_kind", "tests", "expected"),
     [
-        ("python", [], ["uv run pytest -q"]),
+        ("python-source-only", [], []),
+        ("python-project-marker", [], ["uv run pytest -q"]),
         ("rust", [], ["cargo test"]),
         ("jest-unknown", ["notes/validation.txt"], ["npx jest"]),
         ("default-unknown", ["notes/validation.txt"], []),
@@ -438,12 +439,17 @@ def test_repo_wide_fallback_detection(
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    if setup_kind == "python":
+    if setup_kind in {"python-source-only", "python-project-marker"}:
         src_dir = project / "src"
         src_dir.mkdir()
         (src_dir / "payments.py").write_text(
             "def create_invoice():\n    return 1\n", encoding="utf-8"
         )
+        if setup_kind == "python-project-marker":
+            (project / "pyproject.toml").write_text(
+                '[project]\nname = "sample"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
     elif setup_kind == "rust":
         (project / "Cargo.toml").write_text(
             '[package]\nname = "sample"\nversion = "0.1.0"\n',

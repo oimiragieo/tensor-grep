@@ -255,8 +255,8 @@ Recommended consumer behavior:
 1. call `tg_mcp_capabilities` before picking rewrite/index tools in PyPI or sandboxed installs
 2. preserve machine-readable envelopes from each tool instead of scraping prose
 3. treat `native-required` tools as unavailable unless `native_tg.available = true`
-4. inspect `native_required_options` before calling `tg_rewrite_apply`; `verify`, `checkpoint`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd` require standalone native `tg`
-5. use simple `tg_rewrite_plan` / `tg_rewrite_apply` as the embedded-safe fallback when native `tg` is unavailable
+4. inspect `native_required_options` before calling `tg_rewrite_apply`; `verify`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd` require standalone native `tg`
+5. use simple `tg_rewrite_plan` / `tg_rewrite_apply`, including checkpointed apply, as the embedded-safe fallback when native `tg` is unavailable
 6. treat `tg_edit_plan` as the plan contract and `tg_rewrite_apply` as the patch-attempt plus validation contract
 7. use `tg_audit_manifest_verify` when the workflow needs trust or replay validation
 8. if final outcome needs benchmark-style scoring, hand the produced patch artifact to `run_patch_bakeoff.py`

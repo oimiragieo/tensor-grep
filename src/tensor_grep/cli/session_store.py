@@ -11,6 +11,7 @@ from typing import Any, TextIO, cast
 from uuid import uuid4
 
 from tensor_grep.cli.repo_map import (
+    _is_repo_context_file,
     _iter_repo_files,
     build_context_edit_plan_from_map,
     build_context_pack_from_map,
@@ -241,7 +242,12 @@ def _stale_changeset(payload: dict[str, Any]) -> dict[str, list[str]] | None:
     snapshot_by_path = {
         str(Path(str(entry["path"])).expanduser().resolve()): entry for entry in snapshot
     }
-    current_files = _iter_repo_files(root)
+    context_root = root if root.is_dir() else root.parent
+    current_files = [
+        current
+        for current in _iter_repo_files(root)
+        if _is_repo_context_file(current, context_root)
+    ]
     current_paths = {str(current): current for current in current_files}
 
     added = sorted(path for path in current_paths if path not in snapshot_by_path)
