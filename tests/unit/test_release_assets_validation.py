@@ -690,7 +690,7 @@ def test_should_require_uv_security_floor_constraints_for_audited_transitive_dep
     joined_errors = "\n".join(errors)
     assert "cryptography>=46.0.7" in joined_errors
     assert "pygments>=2.20.0" in joined_errors
-    assert "python-multipart>=0.0.26" in joined_errors
+    assert "python-multipart>=0.0.27" in joined_errors
     assert "python-dotenv>=1.2.2" in joined_errors
     assert "aiohttp>=3.13.4" in joined_errors
 
@@ -713,7 +713,7 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     constraint-dependencies = [
       "cryptography>=46.0.7",
       "pygments>=2.20.0",
-      "python-multipart>=0.0.26",
+      "python-multipart>=0.0.27",
       "python-dotenv>=1.2.2",
       "requests>=2.33.0",
       "aiohttp>=3.13.4",
