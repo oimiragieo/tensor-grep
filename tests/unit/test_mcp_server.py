@@ -140,7 +140,6 @@ def _assert_enriched_edit_plan_seed(
     assert isinstance(edit_plan_seed["plan_trust_summary"], str)
     assert edit_plan_seed["plan_trust_summary"]
     assert isinstance(edit_plan_seed["validation_plan"], list)
-    assert edit_plan_seed["validation_plan"]
     for step in edit_plan_seed["validation_plan"]:
         assert {"command", "scope", "runner", "confidence", "detection"} <= set(step)
         assert step["scope"] in {"symbol", "file", "repo"}
@@ -929,7 +928,6 @@ def test_tg_mcp_capabilities_is_registered_and_reports_no_native_runtime(monkeyp
     assert tools["tg_rewrite_apply"]["mode"] == "embedded-safe"
     assert tools["tg_rewrite_apply"]["native_required_options"] == [
         "verify",
-        "checkpoint",
         "audit_manifest",
         "audit_signing_key",
         "lint_cmd",
@@ -1127,6 +1125,32 @@ def test_execute_rewrite_apply_json_should_use_embedded_rust_when_native_binary_
     assert exit_code == 0
     assert payload["plan"]["total_edits"] == 1
     assert payload["plan"]["edits"][0]["replacement_text"] == "lambda x, y: x + y"
+    assert source.read_text(encoding="utf-8") == "lambda x, y: x + y\n"
+
+
+def test_execute_rewrite_apply_json_embedded_checkpoint_when_native_binary_missing(
+    monkeypatch, tmp_path: Path
+):
+    from tensor_grep.cli import mcp_server
+
+    source = tmp_path / "sample.py"
+    source.write_text("def add(x, y): return x + y\n", encoding="utf-8")
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", lambda: None)
+
+    payload_json, exit_code = mcp_server.execute_rewrite_apply_json(
+        pattern="def $F($$$ARGS): return $EXPR",
+        replacement="lambda $$$ARGS: $EXPR",
+        lang="python",
+        path=str(source),
+        checkpoint=True,
+    )
+
+    payload = json.loads(payload_json)
+    assert exit_code == 0
+    assert payload["plan"]["total_edits"] == 1
+    assert payload["checkpoint"]["checkpoint_id"].startswith("ckpt-")
+    assert payload["checkpoint"]["file_count"] >= 1
     assert source.read_text(encoding="utf-8") == "lambda x, y: x + y\n"
 
 
@@ -1871,7 +1895,7 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path):
     assert rendered["graph_trust_summary"]["edge_kind"] == "reverse-import"
     assert rendered["candidate_edit_targets"]["ranking_quality"] == rendered["ranking_quality"]
     assert rendered["candidate_edit_targets"]["coverage_summary"] == rendered["coverage_summary"]
-    assert rendered["edit_plan_seed"]["validation_commands"] == ["uv run pytest -q"]
+    assert rendered["edit_plan_seed"]["validation_commands"] == []
     _assert_enriched_edit_plan_seed(
         rendered["edit_plan_seed"],
         primary_file=sample_path,

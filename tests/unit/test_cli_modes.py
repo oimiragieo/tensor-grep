@@ -3659,6 +3659,24 @@ def test_cli_uses_ripgrep_passthrough_for_files_with_matches(monkeypatch):
     }
 
 
+def test_cli_pcre2_rg_format_is_passthrough_eligible() -> None:
+    from tensor_grep.cli.main import _can_passthrough_rg
+
+    config = SearchConfig(pcre2=True, sort_by="path")
+
+    assert _can_passthrough_rg(
+        config,
+        format_type="rg",
+        json_mode=False,
+        ndjson_mode=False,
+        files_mode=False,
+        files_with_matches=False,
+        files_without_match=False,
+        only_matching=False,
+        stats_mode=False,
+    )
+
+
 def test_cli_uses_implicit_rg_root_for_no_path_files_with_matches(monkeypatch):
     calls: dict[str, object] = {}
 
@@ -5276,6 +5294,68 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     assert "Scan completed. rules=1 matched_rules=1 total_matches=1" in result.output
 
 
+def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: Path) -> None:
+    class AstGrepWrapperBackend:
+        def search_many(self, file_paths: list[str], pattern: str, config=None) -> SearchResult:
+            _ = config
+            matches: list[MatchLine] = []
+            matched_file_paths: list[str] = []
+
+            for file_path in file_paths:
+                candidate = Path(file_path)
+                expanded_paths = (
+                    sorted(str(path) for path in candidate.rglob("*") if path.is_file())
+                    if candidate.is_dir()
+                    else [file_path]
+                )
+                for expanded_path in expanded_paths:
+                    content = Path(expanded_path).read_text(encoding="utf-8")
+                    if pattern == "print($A)" and "print(" in content:
+                        matched_file_paths.append(expanded_path)
+                        matches.append(
+                            MatchLine(line_number=1, text="print('hello')", file=expanded_path)
+                        )
+
+            return SearchResult(
+                matches=matches,
+                matched_file_paths=matched_file_paths,
+                total_files=len(matched_file_paths),
+                total_matches=len(matches),
+                routing_backend="AstGrepWrapperBackend",
+                routing_reason="ast_grep_json",
+                routing_distributed=False,
+                routing_worker_count=1,
+            )
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
+    )
+
+    (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "severity: warning",
+        "message: Avoid print in library code.",
+        "rule:",
+        "  pattern: print($A)",
+    ])
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["scan", "--inline-rules", inline_rules, "--path", str(tmp_path), "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    finding = payload["findings"][0]
+    assert finding["rule_id"] == "no-print"
+    assert finding["severity"] == "warning"
+    assert finding["message"] == "Avoid print in library code."
+
+
 def test_scan_builtin_ruleset_can_compare_and_write_baseline(monkeypatch):
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -5483,8 +5563,35 @@ def test_scan_executes_secrets_ruleset(monkeypatch):
     assert "Scanning project using built-in ruleset secrets-basic (python)" in result.output
     assert "[scan] rule=python-hardcoded-password lang=python matches=1 files=1" in result.output
     assert "[scan] rule=python-hardcoded-api-key lang=python matches=0 files=0" in result.output
+    assert (
+        "[scan] rule=python-hardcoded-api-key-uppercase lang=python matches=0 files=0"
+        in result.output
+    )
     assert "[scan] rule=python-hardcoded-token lang=python matches=0 files=0" in result.output
-    assert "Scan completed. rules=3 matched_rules=1 total_matches=1" in result.output
+    assert "Scan completed. rules=4 matched_rules=1 total_matches=1" in result.output
+
+
+def test_scan_executes_secrets_ruleset_uppercase_api_key(monkeypatch):
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
+    monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        from pathlib import Path
+
+        Path("a.py").write_text('API_KEY = "$SECRET"\n', encoding="utf-8")
+        Path("b.py").write_text("ok\n", encoding="utf-8")
+
+        result = runner.invoke(
+            app,
+            ["scan", "--ruleset", "secrets-basic", "--language", "python", "--path", "."],
+        )
+
+    assert result.exit_code == 0
+    assert (
+        "[scan] rule=python-hardcoded-api-key-uppercase lang=python matches=1 files=1"
+        in result.output
+    )
 
 
 def test_scan_executes_secrets_ruleset_api_key_pattern(monkeypatch):

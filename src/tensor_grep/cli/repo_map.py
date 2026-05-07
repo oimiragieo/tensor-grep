@@ -4045,12 +4045,20 @@ def _symbol_lookup_key(text: str) -> str:
 
 
 def _symbol_name_matches_query_exactly(symbol_name: str, query: str) -> bool:
+    return any(symbol_name == token for token in re.findall(r"[A-Za-z0-9_]+", query))
+
+
+def _symbol_name_matches_query_bridge(symbol_name: str, query: str) -> bool:
     symbol_key = _symbol_lookup_key(symbol_name)
     if not symbol_key:
         return False
     if symbol_key == _symbol_lookup_key(query):
-        return True
-    return any(symbol_key == _symbol_lookup_key(token) for token in _query_terms(query))
+        return not _symbol_name_matches_query_exactly(symbol_name, query)
+    return any(
+        symbol_key == _symbol_lookup_key(token)
+        for token in _query_terms(query)
+        if symbol_name != token
+    )
 
 
 def _score_file_path(path: str, terms: list[str]) -> int:
@@ -4639,11 +4647,14 @@ def _build_context_pack_from_map(
             if _is_test_file(Path(current_path)):
                 continue
             symbol_name_score = _score_text_terms(str(scored_symbol["name"]), symbol_terms)
-            if symbol_name_score > 0 and _symbol_name_matches_query_exactly(
-                str(scored_symbol["name"]),
-                query,
-            ):
-                scored_symbol["exact_query_match"] = True
+            symbol_name = str(scored_symbol["name"])
+            exact_query_match = _symbol_name_matches_query_exactly(symbol_name, query)
+            bridge_query_match = _symbol_name_matches_query_bridge(symbol_name, query)
+            if symbol_name_score > 0 and (exact_query_match or bridge_query_match):
+                if exact_query_match:
+                    scored_symbol["exact_query_match"] = True
+                elif bridge_query_match:
+                    scored_symbol["bridge_query_match"] = True
                 _append_reason(file_reasons, current_path, "definition")
                 _append_reason(file_reasons, current_path, "symbol")
             scored_symbols.append(scored_symbol)
@@ -4657,9 +4668,13 @@ def _build_context_pack_from_map(
         )
         for symbol in scored_symbols:
             current = str(symbol["file"])
-            exact_symbol_bonus = 12 if bool(symbol.get("exact_query_match")) else 0
+            exact_symbol_bonus = 36 if bool(symbol.get("exact_query_match")) else 0
+            bridge_symbol_bonus = 8 if bool(symbol.get("bridge_query_match")) else 0
             file_scores[current] = (
-                file_scores.get(current, 0) + int(symbol["score"]) * 3 + exact_symbol_bonus
+                file_scores.get(current, 0)
+                + int(symbol["score"]) * 3
+                + exact_symbol_bonus
+                + bridge_symbol_bonus
             )
 
         scored_imports: list[dict[str, Any]] = []
@@ -6081,7 +6096,7 @@ def _validation_plan_for_tests(
         or detected.js_script_command
         or detected.js_fallback_command
     )
-    has_python_validation = detected.python_detection in {"detected", "heuristic"}
+    has_python_validation = detected.python_detection == "detected"
     primary_symbol_name = (
         str(primary_symbol.get("name"))
         if isinstance(primary_symbol, dict) and primary_symbol.get("name")

@@ -1341,7 +1341,7 @@ Capability modes:
 | `tools[].mode` | `string` | One of `python-local`, `embedded-safe`, or `native-required`. |
 | `tools[].native_required` | `boolean` | True for tools that cannot run without standalone native `tg`. |
 | `tools[].embedded_fallback` | `boolean` | True for tools with simple embedded rewrite fallback. |
-| `tools[].native_required_options` | `array<string>` | Options that make an otherwise embedded-safe tool require standalone native `tg`; for `tg_rewrite_apply`, this includes `verify`, `checkpoint`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd`. |
+| `tools[].native_required_options` | `array<string>` | Options that make an otherwise embedded-safe tool require standalone native `tg`; for `tg_rewrite_apply`, this includes `verify`, `audit_manifest`, `audit_signing_key`, `lint_cmd`, and `test_cmd`. Checkpointed apply can use the embedded fallback. |
 | `tools[].notes` | `string` | Human-readable routing note. |
 
 Native-unavailable error responses use `error.code = "unavailable"`, `routing_reason = "native-tg-unavailable"`, include the `tool` name, and include `error.remediation` with `TG_NATIVE_TG_BINARY` guidance.

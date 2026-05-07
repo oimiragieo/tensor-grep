@@ -351,6 +351,13 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
                     "message": "Avoid hardcoding API key literals in source files.",
                 },
                 {
+                    "id": "python-hardcoded-api-key-uppercase",
+                    "pattern": 'API_KEY = "$SECRET"',
+                    "language": "python",
+                    "severity": "medium",
+                    "message": "Avoid hardcoding API key literals in source files.",
+                },
+                {
                     "id": "python-hardcoded-token",
                     "pattern": 'token = "$SECRET"',
                     "language": "python",
