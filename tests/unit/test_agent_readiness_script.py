@@ -33,6 +33,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert "repo-doctor" in names
     assert "context-render-trust" in names
     assert "rg-parity-edges" in names
+    assert "broad-generated-scan-guard" in names
     assert "ast-info-json" in names
     assert "ast-run-smoke" in names
     assert "mcp-context-render-smoke" in names
@@ -41,6 +42,11 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     rg_check = next(check for check in checks if check.name == "rg-parity-edges")
     assert rg_check.timeout_s <= 180
     assert rg_check.command[:4] == ["uv", "run", "pytest", "tests/e2e/test_rg_parity_edges.py"]
+
+    broad_scan_check = next(check for check in checks if check.name == "broad-generated-scan-guard")
+    assert broad_scan_check.timeout_s <= 120
+    assert broad_scan_check.command[:4] == ["uv", "run", "pytest", "tests/unit/test_cli_modes.py"]
+    assert "broad_generated_root_scan" in broad_scan_check.command
 
     mcp_check = next(check for check in checks if check.name == "mcp-context-render-smoke")
     assert "test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target" in (

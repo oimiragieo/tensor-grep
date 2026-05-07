@@ -47,6 +47,23 @@ _DEFAULT_AGENT_REPO_SCAN_LIMIT = 512
 _DEFAULT_BLAST_RADIUS_JSON_MAX_CALLERS = 25
 _DEFAULT_BLAST_RADIUS_JSON_MAX_FILES = 25
 _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
+_BROAD_GENERATED_SCAN_DIR_NAMES = {
+    "__pycache__",
+    ".claude",
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".venv",
+    "artifacts",
+    "build",
+    "coverage",
+    "dist",
+    "node_modules",
+    "target",
+    "venv",
+}
 _GUARDED_BROAD_ROOT_RG_GLOBS = (
     "!context/**",
     "!**/context/**",
@@ -1021,6 +1038,68 @@ def _config_with_guarded_broad_root_globs(config: "SearchConfig") -> "SearchConf
         if glob not in existing_globs:
             existing_globs.append(glob)
     return replace(config, glob=existing_globs)
+
+
+def _generated_scan_dir_names(paths: list[str]) -> list[str]:
+    found: set[str] = set()
+    generated_names = {name.lower() for name in _BROAD_GENERATED_SCAN_DIR_NAMES}
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if path.is_dir() and path.name.lower() in generated_names:
+                found.add(path.name)
+            if not path.is_dir():
+                continue
+            for child in path.iterdir():
+                if child.is_dir() and child.name.lower() in generated_names:
+                    found.add(child.name)
+        except OSError:
+            continue
+    return sorted(found, key=lambda item: item.lower())
+
+
+def _has_generated_scan_bound(config: "SearchConfig") -> bool:
+    return bool(
+        config.max_depth is not None
+        or config.glob
+        or config.iglob
+        or config.file_type
+        or config.type_not
+    )
+
+
+def _should_refuse_unbounded_generated_scan(
+    paths: list[str],
+    config: "SearchConfig",
+    *,
+    allow_broad_generated_scan: bool,
+    files_mode: bool,
+) -> tuple[bool, list[str]]:
+    if allow_broad_generated_scan or _has_generated_scan_bound(config):
+        return False, []
+    if not (
+        (files_mode and config.hidden)
+        or config.no_ignore
+        or config.no_ignore_files
+        or config.no_ignore_vcs
+        or config.unrestricted > 0
+    ):
+        return False, []
+    generated_dirs = _generated_scan_dir_names(paths)
+    return bool(generated_dirs), generated_dirs
+
+
+def _format_broad_generated_scan_error(generated_dirs: list[str]) -> str:
+    visible_dirs = ", ".join(generated_dirs[:8])
+    if len(generated_dirs) > 8:
+        visible_dirs = f"{visible_dirs}, ..."
+    return (
+        "Error: broad generated-root scan refused: path contains generated, cache, "
+        f"or dependency directories ({visible_dirs}). Scope the path, add --glob, --type, "
+        "or --max-depth, or pass --allow-broad-generated-scan to opt in."
+    )
 
 
 def _sum_total_bytes(paths: list[str]) -> int:
@@ -2645,6 +2724,14 @@ def search_command(
         "--gpu-device-ids",
         help="Comma-separated GPU IDs to pin this search request to (e.g. 0,1).",
     ),
+    allow_broad_generated_scan: bool = typer.Option(
+        False,
+        "--allow-broad-generated-scan",
+        help=(
+            "Permit unbounded file-list/search scans through generated, cache, or dependency "
+            "directories. Prefer scoped paths, --glob, --type, or --max-depth for agent runs."
+        ),
+    ),
 ) -> None:
     """
     Search files for a regex pattern, with GPU acceleration when applicable.
@@ -2840,6 +2927,15 @@ def search_command(
     explicit_hidden_search_root = not config.hidden and any(
         _path_has_hidden_component(path) for path in paths_to_search
     )
+    refuse_generated_scan, generated_scan_dirs = _should_refuse_unbounded_generated_scan(
+        paths_to_search,
+        config,
+        allow_broad_generated_scan=allow_broad_generated_scan,
+        files_mode=files,
+    )
+    if refuse_generated_scan:
+        typer.echo(_format_broad_generated_scan_error(generated_scan_dirs), err=True)
+        raise typer.Exit(2)
 
     native_tg_binary = resolve_native_tg_binary()
     if (

@@ -48,10 +48,11 @@ Agent automation contracts:
 - `--sort path` is the deterministic contract for `--files-with-matches`, `--files-without-match`, `--replace`, and path-list automation. The parity suite also checks match, no-match, parse-error, and binary-skip exit-code behavior.
 - Default output ordering for root-scale `--files-with-matches`, `--count`, and `--force-cpu` is a semantic result parity contract, not a golden stdout ordering contract. Use `--sort path` when automation needs deterministic path ordering across backends.
 - Broad generated roots such as `.claude` are routed through Python guardrails instead of rust-first/native passthrough so generated `.claude/context` snapshots can be pruned by default.
+- Unbounded broad generated-root scan requests are refused with exit code `2` when hidden file-list scans or no-ignore/unrestricted fallback search paths contain generated, cache, or dependency directories. Scope the path, add `--glob`, `--type`, or `--max-depth`, or pass `--allow-broad-generated-scan` to make the large generated-tree walk explicit.
 - `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
 - `tg ast-info --json` exposes AST language identifiers via `{"languages": [...]}` for agent discovery without help-text scraping.
 - On Windows, PowerShell automation should invoke `tg` or `tg.ps1` for regex metacharacters. Direct `.cmd` invocation from PowerShell is not a safe argv-preserving contract for unescaped metacharacters such as `|` because `cmd.exe` parses the line before the batch wrapper receives arguments; `tg.cmd` is for `cmd.exe`.
-- The fast agent-readiness dogfood gate is `python scripts/agent_readiness.py --output artifacts/agent_readiness.json`. For the current `v1.8.22` line it checks public shell version probes, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the public positioning that `rg` remains the cold exact-text baseline while `ast-grep` remains the structural-search feature/performance baseline.
+- The fast agent-readiness dogfood gate is `python scripts/agent_readiness.py --output artifacts/agent_readiness.json`. For the current `v1.8.22` line it checks public shell version probes, repo doctor sanity, `context_consistency`, deterministic rg parity edges, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the public positioning that `rg` remains the cold exact-text baseline while `ast-grep` remains the structural-search feature/performance baseline.
 
 Context and edit-planning contracts:
 - `context-render` and MCP context output must not let `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, rendered source sections, and follow-up reads contradict each other.
@@ -61,8 +62,8 @@ Context and edit-planning contracts:
 - Repo-map and context-ranking defaults exclude generated/cache/dependency directories, binary files, logs, and hidden non-code files from normal code context.
 
 Known current limitations:
-- Broad plain path-list output from `tg search --files ...` over generated artifact trees can still be expensive. The Python path-list output path and managed Windows launchers force UTF-8, but scope file-list commands to the smallest useful root.
-- Broad generated roots can still be expensive for unattended agents. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
+- Explicitly opted-in broad generated-root walks can still be expensive. The Python path-list output path and managed Windows launchers force UTF-8, but scope file-list commands to the smallest useful root whenever possible.
+- Broad generated roots remain agent-hostile when callers opt in to them. Use scoped paths, globs, file types, and `--max-depth` for `tg search` before reaching for opt-in; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 - `impact --symbol` is a broader planning signal and can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact checks.
 
 ## 4. Machine-readable CLI output (`--json` and `--ndjson`)

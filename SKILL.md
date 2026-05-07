@@ -28,7 +28,7 @@ Current product read:
 - Default JSON/LLM context rendering must include executable body lines for selected functions. Compactness may strip comments, docstrings when optimized, blank lines, type-only imports, and boilerplate, but it is not a summary-only profile.
 - `tg ast-info --json` exposes AST language identifiers for agents without help-text scraping.
 - GPU support exists and local devices can be detected, but GPU routing is benchmark-governed. Do not claim GPU speedups without the matching benchmark artifact.
-- Broad generated roots need bounds. Use scoped paths, globs, file types, and `--max-depth` for `tg search`; `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
+- Broad generated roots need bounds. Unbounded `tg search --files --hidden` scans and no-ignore/unrestricted fallback scans through generated/cache/dependency directories are refused unless bounded with `--glob`, `--type`, or `--max-depth`, or explicitly opted in with `--allow-broad-generated-scan`. Use scoped paths, globs, file types, and `--max-depth` for `tg search` before reaching for opt-in. `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
 
 Known current weak spots:
 
@@ -82,6 +82,16 @@ Avoid broad generated-root file lists unless the task needs them:
 ```powershell
 tg search --files "AGENTS.md" . --hidden
 ```
+
+Use one of these instead for agent-safe file discovery:
+
+```powershell
+tg search --files src --hidden
+tg search --files . --hidden --glob "*.py"
+tg search --files . --hidden --max-depth 3
+```
+
+Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tree walk is intentional.
 
 ## Core CLI Workflows
 
@@ -144,7 +154,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.22` positioning. It does not replace the full validation gate.
+This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.22` positioning. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
@@ -165,7 +175,7 @@ GPU benchmark `SKIP` is valid infrastructure state when dependencies such as Tor
 | --- | --- |
 | Claiming `tg` is always faster than `rg` | Keep `rg` as the cold exact-text benchmark; position `tg` as agent-native code intelligence with a validated compatibility set. |
 | Searching with `rg` by habit inside this repo | Use `tg search` first, then `rg` for parity or fallback. |
-| Running broad generated-root scans | Scope the path and use output/scan limits. |
+| Running broad generated-root scans | Scope the path, use `--glob` / `--type` / `--max-depth`, or opt in with `--allow-broad-generated-scan` only when the generated-tree walk is intentional. |
 | Trusting stale native diagnostics | Check `uv run tg doctor --json`; stale in-tree binaries should be `stale-skipped`, not selected implicitly. Rebuild or pin `TG_NATIVE_TG_BINARY` to opt in. |
 | Trusting invented validation commands | Check `validation_plan[].detection`; package-manager commands require `package.json`, Python commands require Python/test/project evidence, and absent evidence should mean no command. |
 | Claiming GPU wins from device detection | Run the GPU benchmark and record the accepted artifact. |

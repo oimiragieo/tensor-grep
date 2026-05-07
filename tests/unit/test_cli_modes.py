@@ -19,6 +19,7 @@ from tensor_grep.cli import repo_map
 from tensor_grep.cli.main import (
     _safe_stdout_line,
     _select_ast_backend_for_pattern,
+    _should_refuse_unbounded_generated_scan,
     _write_path_list,
     app,
 )
@@ -372,6 +373,102 @@ def test_files_mode_lists_candidates_without_pattern(monkeypatch):
 
     assert result.exit_code == 0
     assert result.stdout.strip().splitlines() == ["a.py", "b.py"]
+
+
+def test_files_mode_refuses_unbounded_broad_generated_root_scan(tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "--files", str(tmp_path), "--hidden"])
+
+    assert result.exit_code == 2
+    assert "broad generated-root scan refused" in result.output
+    assert "node_modules" in result.output
+    assert "--glob" in result.output
+    assert "--max-depth" in result.output
+    assert "--allow-broad-generated-scan" in result.output
+
+
+def test_files_mode_allows_bounded_broad_generated_root_scan(monkeypatch, tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakePipeline)
+
+    result = CliRunner().invoke(
+        app,
+        ["search", "--files", str(tmp_path), "--hidden", "--glob", "*.py"],
+    )
+
+    assert result.exit_code == 0
+    assert "src" in result.stdout
+    assert "app.py" in result.stdout
+    assert "node_modules" not in result.stdout
+
+
+def test_files_mode_allows_explicit_broad_generated_root_scan(monkeypatch, tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "pkg.js").write_text("console.log('dep')\n", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakePipeline)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "search",
+            "--files",
+            str(tmp_path),
+            "--hidden",
+            "--no-ignore",
+            "--allow-broad-generated-scan",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "src" in result.stdout
+    assert "app.py" in result.stdout
+    assert "node_modules" in result.stdout
+    assert "pkg.js" in result.stdout
+
+
+def test_plain_hidden_search_does_not_trigger_broad_generated_root_guard(
+    tmp_path: Path,
+):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+
+    refused, generated_dirs = _should_refuse_unbounded_generated_scan(
+        [str(tmp_path)],
+        SearchConfig(hidden=True),
+        allow_broad_generated_scan=False,
+        files_mode=False,
+    )
+
+    assert refused is False
+    assert generated_dirs == []
+
+
+def test_no_ignore_search_triggers_broad_generated_root_guard(
+    tmp_path: Path,
+):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+
+    refused, generated_dirs = _should_refuse_unbounded_generated_scan(
+        [str(tmp_path)],
+        SearchConfig(no_ignore=True),
+        allow_broad_generated_scan=False,
+        files_mode=False,
+    )
+
+    assert refused is True
+    assert generated_dirs == ["node_modules"]
 
 
 def test_glob_case_insensitive_matches_case_folded_paths(
