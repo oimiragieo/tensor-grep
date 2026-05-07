@@ -1,6 +1,28 @@
 # CHANGELOG
 
 
+## v1.8.23 (2026-05-07)
+
+### Bug Fixes
+
+- Add generated-root scan guardrails
+  ([`19e515d`](https://github.com/oimiragieo/tensor-grep/commit/19e515d435fb0f3f0dc473e89111cd8b2681fff8))
+
+Refuse unbounded broad generated/cache/dependency scans unless bounded or explicitly opted in. Add
+  agent-readiness coverage and update public contracts/docs.
+
+### Testing
+
+- Add fast agent readiness gate
+  ([`69c30b7`](https://github.com/oimiragieo/tensor-grep/commit/69c30b7af6b3f15241a090d2a09adc32cca5ab31))
+
+Add a fast agent-readiness dogfood gate and update v1.8.22 handoff/process docs and skill
+  guidance.\n\nLocal validation:\n- uv run pytest tests/unit/test_agent_readiness_script.py
+  tests/unit/test_public_docs_governance.py -q\n- python scripts/agent_readiness.py --output
+  artifacts/agent_readiness.json\n- uv run ruff check .\n- uv run ruff format --check --preview .\n-
+  uv run mypy src/tensor_grep\n- uv run pytest -q\n- git diff --check\n\nPR CI passed before merge.
+
+
 ## v1.8.22 (2026-05-07)
 
 ### Bug Fixes
