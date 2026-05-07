@@ -1,14 +1,21 @@
 # CHANGELOG
 
-## Unreleased
+
+## v1.8.22 (2026-05-07)
 
 ### Bug Fixes
 
-- Improve agent context trust and rg parity:
-  - rank natural context queries with bounded source-body evidence so invoice/tax edits select the defining code instead of service/test graph noise
-  - keep executable body lines in default LLM context renders and expose `context_consistency`
-  - label validation commands as detected, heuristic, or generic and avoid npm hints without `package.json`
-  - tighten deterministic rg parity for sorted path lists, replacements, binary defaults, ignored dirs, Windows path separators, and exit codes
+- Improve agent context trust and rg parity
+  ([`8a061ee`](https://github.com/oimiragieo/tensor-grep/commit/8a061eea4dd17e14c265ddc8c0778e4599c9a5a9))
+
+Squash merge PR #46. Includes context-render/edit-plan consistency invariants, rg parity edge
+  regressions, docs/contract updates, and the python-multipart security floor bump required by
+  Security Audit.
+
+### Documentation
+
+- Update v1.8.21 handoff and skill
+  ([`a89acd6`](https://github.com/oimiragieo/tensor-grep/commit/a89acd6d2aa578723a93ceecf51af7ae27f5f1b9))
 
 
 ## v1.8.21 (2026-05-06)
@@ -480,7 +487,7 @@ Add MCP runtime capability discovery, structured native-unavailable errors, and 
 - Achieve 100% AST parity with ast-grep and harmonize CLI commands
   ([`ba52dd3`](https://github.com/oimiragieo/tensor-grep/commit/ba52dd36a04a361d573117491511eaf49d5194a2))
 
-- Extend the validated ripgrep compatibility set with PCRE2 bridge and operational limits
+- Achieve 100% operational parity with ripgrep via PCRE2 bridge and operational limits
   ([`2464bbf`](https://github.com/oimiragieo/tensor-grep/commit/2464bbfa29d432fc8b91c6817ff7d05e7d36de39))
 
 - Stabilize AST parity and CLI harmonization; update docs and release manifests
@@ -2877,11 +2884,10 @@ Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.g
 - Update README with performance mission results
   ([`ada8cde`](https://github.com/oimiragieo/tensor-grep/commit/ada8cde2d0c96c9c6c80082ac153c41fa36b71ed))
 
-- Native CPU engine: accepted large-file rows beat rg by 2-4x - Native GPU engine: 64.2x at 100MB via
-  cudarc + NVRTC. Current positioning is narrower: rg remains the cold exact-text baseline; this
-  historical line records accepted large-file rows, not blanket rg replacement. Multi-GPU: 49.5%
-  improvement with dual GPU - New CLI: --cpu, --gpu-device-ids, -e multi-pattern, tg calibrate -
-  Smart routing with measured crossover calibration - 572 Python tests, 200+ Rust tests
+- Native CPU engine: 2-4x faster than rg on large files - Native GPU engine: 64.2x at 100MB via
+  cudarc + NVRTC - Multi-GPU: 49.5% improvement with dual GPU - New CLI: --cpu, --gpu-device-ids, -e
+  multi-pattern, tg calibrate - Smart routing with measured crossover calibration - 572 Python
+  tests, 200+ Rust tests
 
 Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
 
