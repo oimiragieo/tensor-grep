@@ -53,7 +53,7 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "stale-skipped" in contracts
 
 
-def test_handoff_docs_should_record_current_v1822_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v1823_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -63,7 +63,7 @@ def test_handoff_docs_should_record_current_v1822_release_state_and_fast_gate() 
     }
 
     for content in docs.values():
-        assert "v1.8.22" in content
+        assert "v1.8.23" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -72,14 +72,14 @@ def test_handoff_docs_should_record_current_v1822_release_state_and_fast_gate() 
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "5a0d6d9 chore(release): v1.8.22 [skip ci]" in content
-        assert "8a061ee fix: improve agent context trust and rg parity" in content
+        assert "90bf942 chore(release): v1.8.23 [skip ci]" in content
+        assert "19e515d fix: add generated-root scan guardrails" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25469910767" in handoff
-    assert "25469910279" in handoff
-    assert "25470327515" in handoff
-    assert "tensor-grep==1.8.22" in handoff
+    assert "25495769957" in handoff
+    assert "25495768899" in handoff
+    assert "25496404791" in handoff
+    assert "tensor-grep==1.8.23" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
     assert "rust_binary_version_status = stale-skipped" in handoff
