@@ -65,7 +65,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.8.22` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.8.23` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
 ## Bounded Heavy-Root AI Handoff
@@ -85,7 +85,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.22` release closeout: main CI run `25469910767`, main CodeQL run `25469910279`, and release-commit CodeQL run `25470327515` passed; semantic-release published GitHub release `v1.8.22`; the PyPI publish/parity gate passed; the public installer/update dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.22` while preserving regex alternation in normal shell entrypoints; and repo-dev doctor/search dogfood confirmed stale in-tree standalone binaries are skipped unless explicitly pinned
+- `v1.8.23` release closeout: main CI run `25495769957`, main CodeQL run `25495768899`, and release-commit CodeQL run `25496404791` passed; semantic-release published GitHub release `v1.8.23`; the PyPI publish/parity gate passed; the public installer/update dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.23`; public generated-root guard dogfood refused unbounded `tg search --files . --hidden` with exit code `2`; and repo-dev doctor/search dogfood confirmed stale in-tree standalone binaries are skipped unless explicitly pinned
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:

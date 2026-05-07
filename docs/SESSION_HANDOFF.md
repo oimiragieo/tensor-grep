@@ -4,19 +4,20 @@ Last updated: 2026-05-07
 
 ## Current Release State
 
-- Latest released version: `v1.8.22`
-- Latest release commit: `5a0d6d9 chore(release): v1.8.22 [skip ci]`
-- Latest fix commit: `8a061ee fix: improve agent context trust and rg parity`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.22>
-- Main CI run `25469910767`: passed through `publish-pypi`, artifact validation, and `publish-success-gate`
-- Main CodeQL run `25469910279`: passed
-- Release-commit CodeQL run `25470327515`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.22`
-- PyPI latest and pinned install: `tensor-grep==1.8.22` resolves from PyPI
-- Public update dogfood: `tg update` upgraded the managed install from `1.8.21` to `1.8.22`; profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolved `tensor-grep 1.8.22`.
+- Latest released version: `v1.8.23`
+- Latest release commit: `90bf942 chore(release): v1.8.23 [skip ci]`
+- Latest fix commit: `19e515d fix: add generated-root scan guardrails`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.23>
+- Main CI run `25495769957`: passed through `publish-pypi`, artifact validation, and `publish-success-gate`
+- Main CodeQL run `25495768899`: passed
+- Release-commit CodeQL run `25496404791`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.23`
+- PyPI latest and pinned install: `tensor-grep==1.8.23` resolves from PyPI
+- Public update dogfood: `tg update` upgraded the managed install from `1.8.22` to `1.8.23`; profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolved `tensor-grep 1.8.23`.
 - Public shell dogfood: normal PowerShell, `cmd.exe`, Git Bash, and WSL regex alternation worked; `tg --version` prints one line by default, `tg --version --verbose` prints feature details, and help starts with `Usage: tg`.
-- Public doctor dogfood: from outside the repo, `tg doctor --json` reported `version = 1.8.22`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
-- Repo-dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.22`, `native_tg_binary = null`, `rust_binary_version_status = stale-skipped`, `skipped_native_tg_binaries = 2`, and `search_acceleration_backend = rust-core-extension`.
+- Public doctor dogfood: from outside the repo, `tg doctor --json` reported `version = 1.8.23`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
+- Public generated-root guard dogfood: `tg search --files . --hidden` refused generated/cache/dependency roots with exit code `2`; normal scoped hidden search still succeeded.
+- Repo-dev dogfood: `uv run tg doctor --json` reported `version = 1.8.23`, `native_tg_binary = null`, `rust_binary_version_status = stale-skipped`, `skipped_native_tg_binaries = 2`, and `search_acceleration_backend = rust-core-extension`.
 
 ## Release Completion Contract
 
@@ -30,7 +31,7 @@ Do not report final version state before the GitHub release, PyPI/package publis
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 
-## What v1.8.12-v1.8.22 Fixed
+## What v1.8.12-v1.8.23 Fixed
 
 - Windows `--files-with-matches` no longer expands huge candidate file lists into the ripgrep subprocess argv, avoiding `WinError 206`.
 - No-path `--files-with-matches` now preserves raw rg-style paths such as `AGENTS.md` instead of emitting `.\AGENTS.md`.
@@ -50,6 +51,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - Default JSON/LLM context rendering preserves executable function body lines instead of reducing selected functions to signature-only output.
 - Validation plans report `validation_plan[].detection`, avoid npm/package-manager commands without `package.json` evidence, avoid Python test commands without Python/test/project evidence, and omit commands entirely when no runner evidence exists.
 - The validated compatibility set now covers deterministic `--files-with-matches --sort path`, `--files-without-match --sort path`, `--replace --sort path`, path separators on Windows, git ignored directories, binary exclusion by default, and match/no-match/parse-error/binary-skip exit-code behavior.
+- Unbounded broad generated-root scans now refuse hidden file-list requests and no-ignore/unrestricted fallback scans through generated/cache/dependency directories unless callers bound the scan with `--glob`, `--type`, or `--max-depth`, or explicitly opt in with `--allow-broad-generated-scan`.
 - Windows installers now uninstall the tensor-grep Python package that owns a stale `Python*\Scripts\tg.exe` when direct stale-launcher removal cannot clear a PATH shadow.
 - Python path-list output uses the UTF-8-safe stdout path and preserves discovery order for `--files-with-matches` fallback output.
 - PATH-entry scans skip inaccessible machine PATH directories instead of aborting installation after package install.
@@ -66,6 +68,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - PR #42 `fix: polish CLI version help and doctor diagnostics`: merged and released as `v1.8.20`
 - PR #44 `fix: ignore stale native binaries in dev resolution`: merged and released as `v1.8.21`
 - PR #46 `fix: improve agent context trust and rg parity`: merged and released as `v1.8.22`
+- PR #54 `fix: add generated-root scan guardrails`: merged and released as `v1.8.23`
 - `uv run pytest tests/unit/test_install_scripts.py -q`: `18 passed` on the LF-shim fix branch
 - `uv run pytest tests/unit/test_cli_bootstrap.py tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py -q`: `287 passed` on the CLI polish branch
 - PowerShell parser checks for `scripts/install.ps1` under both `pwsh` and Windows PowerShell: passed
@@ -75,23 +78,26 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - `uv run mypy src/tensor_grep`: passed
 - `uv run pytest -q`: `1845 passed, 16 skipped`
 - `uv run pytest -q`: `1867 passed, 16 skipped` on the `v1.8.22` fix branch
+- `uv run pytest -q`: `1878 passed, 16 skipped` on the `v1.8.23` generated-root guard branch
+- `python scripts/agent_readiness.py --output artifacts/agent_readiness.json`: passed, including `broad-generated-scan-guard`
 - `python benchmarks/run_benchmarks.py --output artifacts/bench_run_benchmarks.json`: parity passed on all 10 rows; `check_regression.py --allow-env-mismatch` reported no tg benchmark regressions on the Python-version-mismatched host.
-- Main CI run `25469910767`: passed through `publish-pypi`, `validate-pypi-artifacts`, and `publish-success-gate`
-- Main CodeQL run `25469910279`: passed
-- Release-commit CodeQL run `25470327515`: passed
-- PyPI reports `tensor-grep 1.8.22` as latest and pinned `tensor-grep==1.8.22` resolves from PyPI.
-- Public `v1.8.22` update dogfood passed profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL version resolution, PowerShell alternation through the normal `tg` shim, `cmd.exe` double-quoted alternation, Git Bash alternation, WSL alternation search, script-friendly one-line version output, public `Usage: tg` help, and public doctor PATH-version parity.
+- Main CI run `25495769957`: passed through `publish-pypi`, `validate-pypi-artifacts`, and `publish-success-gate`
+- Main CodeQL run `25495768899`: passed
+- Release-commit CodeQL run `25496404791`: passed
+- PyPI reports `tensor-grep 1.8.23` as latest and pinned `tensor-grep==1.8.23` resolves from PyPI.
+- Public `v1.8.23` update dogfood passed profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL version resolution, public generated-root guard refusal, script-friendly one-line version output, public `Usage: tg` help, and public doctor PATH-version parity.
 
 ## What Works Well Now
 
 - Scoped text search, JSON, NDJSON, multi-root search, globs, `--column`, `--vimgrep`, `--path-separator`, `--type-list`, and invalid-regex diagnostics are stable enough for agent workflows.
-- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.22` install on this host.
+- Normal PowerShell `tg`, `cmd /c tg`, `pwsh -NoProfile -Command "tg ..."`, Git Bash `tg`, and WSL `tg` resolve the public `1.8.23` install on this host.
 - `tg --version` is script-friendly by default; use `tg --version --verbose` for feature/SIMD/Arrow diagnostics.
 - Public help starts with `Usage: tg`, including `python -m tensor_grep --help` and installed command help paths.
 - `defs`, `source`, `refs`, `callers`, `context-render`, and `blast-radius` are useful for scoped repo navigation and planning.
 - Released context work tightens `context-render` / MCP trust: source-body evidence ranks natural queries, default LLM rendering preserves executable body lines, `context_consistency` reports seed/render/navigation agreement, and validation commands carry detection provenance.
 - Symbol outputs are compact on hits and no-matches; CommonJS symbol extraction and reference dedupe are materially improved.
 - Bounded blast-radius defaults and output-limit metadata make scoped impact checks safer for agent loops.
+- Unbounded broad generated-root searches refuse by default before walking generated/cache/dependency roots; use `--allow-broad-generated-scan` only when that large walk is intentional.
 - MCP entrypoint is present via `tg mcp --help`; MCP tool behavior is covered by the repo tests.
 - GPU devices are detected locally; GPU routing remains benchmark-governed and should not be marketed as automatic crossover.
 - `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a useful validated slice, not full ast-grep equivalence.
@@ -125,7 +131,7 @@ git log -3 --oneline
 uv run tg --version
 uv run tg doctor --json
 python -m pip index versions tensor-grep --index-url https://pypi.org/simple --no-cache-dir
-gh release view v1.8.22 --json tagName,publishedAt,url
+gh release view v1.8.23 --json tagName,publishedAt,url
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg --version
 cmd /c tg --version

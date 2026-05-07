@@ -7,15 +7,15 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-07, the current released version is `v1.8.22`.
+As of 2026-05-07, the current released version is `v1.8.23`.
 
 Current release facts:
 
-- Release commit: `5a0d6d9 chore(release): v1.8.22 [skip ci]`
-- Latest fix commit: `8a061ee fix: improve agent context trust and rg parity`
-- PR #46 `fix: improve agent context trust and rg parity` merged, released, and publicly dogfooded
-- Main CI run `25469910767` passed through `publish-success-gate`; CodeQL runs `25469910279` and `25470327515` passed
-- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.22`
+- Release commit: `90bf942 chore(release): v1.8.23 [skip ci]`
+- Latest fix commit: `19e515d fix: add generated-root scan guardrails`
+- PR #54 `fix: add generated-root scan guardrails` merged, released, and publicly dogfooded
+- Main CI run `25495769957` passed through `publish-success-gate`; CodeQL runs `25495768899` and `25496404791` passed
+- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.23`
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
@@ -154,7 +154,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.22` positioning. It does not replace the full validation gate.
+This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.23` positioning. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 
