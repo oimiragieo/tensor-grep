@@ -57,6 +57,16 @@ Current accepted full-suite artifact:
 
 - [`artifacts/pytest_full_report.json`](artifacts/pytest_full_report.json)
 
+## Fast Agent Readiness Gate
+
+Before pushing agent-facing changes, run the fast dogfood gate:
+
+```powershell
+python scripts/agent_readiness.py --output artifacts/agent_readiness.json
+```
+
+This checks the current `v1.8.22` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+
 ## Bounded Heavy-Root AI Handoff
 
 For large internal-library roots, `tensor-grep` supports a bounded context-render path that keeps the AI handoff compact and actionable without letting symbol navigation escape the capped repo-map universe.
@@ -74,7 +84,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.21` release closeout: main CI run `25414052583`, main CodeQL run `25414051923`, and release-commit CodeQL run `25414407901` passed; semantic-release published GitHub release `v1.8.21`; the PyPI publish/parity gate passed; the public installer dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.21` while preserving regex alternation in normal shell entrypoints; and repo-dev doctor/search dogfood confirmed stale in-tree standalone binaries are skipped unless explicitly pinned
+- `v1.8.22` release closeout: main CI run `25469910767`, main CodeQL run `25469910279`, and release-commit CodeQL run `25470327515` passed; semantic-release published GitHub release `v1.8.22`; the PyPI publish/parity gate passed; the public installer/update dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.22` while preserving regex alternation in normal shell entrypoints; and repo-dev doctor/search dogfood confirmed stale in-tree standalone binaries are skipped unless explicitly pinned
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:

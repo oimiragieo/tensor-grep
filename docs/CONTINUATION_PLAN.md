@@ -2,24 +2,25 @@
 
 ## For: Next agent picking up after the native CPU/GPU/index/rewrite milestones
 
-## 2026-05-06 Current Handoff
+## 2026-05-07 Current Handoff
 
-The current released state is `v1.8.21`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.22`. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `4e83e6d chore(release): v1.8.21 [skip ci]`
-- Latest fix commit: `1bf2c76 fix: ignore stale native binaries in dev resolution`
-- Main CI run `25414052583`: passed through `publish-success-gate`
-- Main CodeQL run `25414051923`: passed
-- Release-commit CodeQL run `25414407901`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.21`
-- PyPI pinned public installer dogfood: `1.8.21` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, normal regex alternation, one-line version output, public help, doctor PATH-version parity, and repo-dev stale-native skipping.
+- Release commit: `5a0d6d9 chore(release): v1.8.22 [skip ci]`
+- Latest fix commit: `8a061ee fix: improve agent context trust and rg parity`
+- Main CI run `25469910767`: passed through `publish-success-gate`
+- Main CodeQL run `25469910279`: passed
+- Release-commit CodeQL run `25470327515`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.22`
+- PyPI pinned public installer dogfood: `1.8.22` installed and verified across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, normal regex alternation, one-line version output, public help, doctor PATH-version parity, and repo-dev stale-native skipping.
 
 Current product read:
 
 - `tg` is production-usable for scoped agent search, source lookup, refs, context bundles, and bounded blast-radius.
 - `rg` remains the benchmark for raw cold exact-text search.
+- `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a useful validated slice, not full ast-grep equivalence.
 - GPU exists and devices are detected locally, but GPU routing remains benchmark-governed.
 - Active follow-up work is improving agent context trust and deterministic rg parity, not changing the speed story: context rendering should keep edit seed, navigation target, selected sources, and MCP output consistent; default LLM rendering should preserve executable body lines; validation plans should only emit commands with runner evidence; and the rg claim should stay a validated compatibility set.
 - Broad generated roots still need guardrails before unattended agent use.
@@ -29,7 +30,7 @@ Current product read:
 
 Current next work:
 
-1. Add a 3-5 minute agent-readiness gate covering context-render trust, sorted rg edge parity, AST smoke, MCP smoke, and docs claim checks.
+1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) covering context-render trust, `context_consistency`, sorted rg edge parity, AST smoke, MCP smoke, shell version probes, and docs claim checks.
 2. Add progress, partial output, or stronger guardrails for broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
 4. Track public shim performance, AST parity roadmap, GPU readiness, and classify provider/cache UX as blockers for a future "100% ready" claim.

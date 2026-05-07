@@ -16,10 +16,11 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-06, the current released state is `v1.8.21`.
+As of 2026-05-07, the current released state is `v1.8.22`.
 
-- Release commit: `4e83e6d chore(release): v1.8.21 [skip ci]`
+- Release commit: `5a0d6d9 chore(release): v1.8.22 [skip ci]`
 - Recent fix commits:
+  - `8a061ee fix: improve agent context trust and rg parity`
   - `1bf2c76 fix: ignore stale native binaries in dev resolution`
   - `10cac14 fix: polish CLI version help and doctor diagnostics`
   - `a5fa279 fix: write WSL bash shims with LF newlines`
@@ -30,20 +31,21 @@ As of 2026-05-06, the current released state is `v1.8.21`.
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25414052583`: passed through `publish-success-gate`
-- Main CodeQL run `25414051923`: passed
-- Release-commit CodeQL run `25414407901`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.21` resolves from PyPI
-- Public installer dogfood: pinned `1.8.21` verified profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, WSL, regex alternation in normal shell entrypoints, one-line `tg --version`, `tg --version --verbose`, `Usage: tg` help, and public `tg doctor --json` PATH-version parity
-- Repo dev dogfood: `uv run tg doctor --json --no-lsp` reported stale in-tree standalone binaries as `stale-skipped`, left `native_tg_binary` unset, and kept `search_acceleration_backend = rust-core-extension`; repo JSON search routed through `RipgrepBackend` instead of a stale standalone native binary.
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.21>
+- Main CI run `25469910767`: passed through `publish-pypi` and `publish-success-gate`
+- Main CodeQL run `25469910279`: passed
+- Release-commit CodeQL run `25470327515`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.22` resolves from PyPI
+- Public installer dogfood: `tg update` upgraded the managed install from `1.8.21` to `1.8.22`; profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolved `tensor-grep 1.8.22`, with normal regex alternation still working.
+- Repo dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.22`, skipped stale in-tree standalone binaries as `stale-skipped`, left `native_tg_binary` unset, and kept `search_acceleration_backend = rust-core-extension`.
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.22>
 - Session handoff: `docs/SESSION_HANDOFF.md`
 
-The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, and public `--format rg` help text for exact ripgrep-style output.
+The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, and sorted rg parity edges for files-with-matches, files-without-match, and replacement output.
 
 Known current weak spots:
 
 - `rg` remains the raw cold exact-text benchmark; `tg` should be treated as the agent-native code intelligence layer.
+- `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a useful validated AST slice, not a blanket ast-grep replacement.
 - `context-render` and MCP context output are agent trust surfaces. `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, follow-up reads, and `rendered_context` must agree or `context_consistency` must report the omission and confidence downgrade.
 - Default JSON/LLM context rendering must include executable behavior for selected functions. Compact rendering can strip low-value text, but it must not reduce selected code to signatures unless a future summary-only profile explicitly asks for that.
 - Validation commands are hints with provenance. Require `validation_plan[].detection`, do not suggest npm/package-manager commands without `package.json` evidence, do not suggest Python test commands without Python/test/project evidence, and omit commands entirely when no runner evidence exists.
@@ -86,6 +88,14 @@ uv run pytest tests/unit/test_cpu_backend.py -q
 uv run pytest tests/unit/test_cli_bootstrap.py -q
 uv run pytest tests/unit/test_release_assets_validation.py -q
 ```
+
+For fast pre-push dogfood on agent-critical surfaces, run the agent-readiness dogfood gate:
+
+```powershell
+python scripts/agent_readiness.py --output artifacts/agent_readiness.json
+```
+
+This 3-5 minute gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, AST smoke, MCP context-render smoke, and docs claim hygiene. It complements, not replaces, the full local validation gate.
 
 ## Benchmark Rules
 
