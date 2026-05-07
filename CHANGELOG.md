@@ -1,6 +1,22 @@
 # CHANGELOG
 
 
+## v1.8.24 (2026-05-07)
+
+### Bug Fixes
+
+- Harden v1.8.23 dogfood regressions
+  ([`ef0c114`](https://github.com/oimiragieo/tensor-grep/commit/ef0c114356f66faa8be572c58f6ee41c5028c176))
+
+### Documentation
+
+- Update v1.8.23 handoff and skill guidance
+  ([`081a48f`](https://github.com/oimiragieo/tensor-grep/commit/081a48f027d3c09a232c9fc5520212ddd8a90d80))
+
+Update handoff docs, repo skill guidance, and docs governance assertions for the released v1.8.23
+  state.
+
+
 ## v1.8.23 (2026-05-07)
 
 ### Bug Fixes
