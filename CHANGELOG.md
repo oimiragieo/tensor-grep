@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.8.31 (2026-05-08)
+
+### Bug Fixes
+
+- Harden public launcher and agent contracts
+  ([`015fad9`](https://github.com/oimiragieo/tensor-grep/commit/015fad92b7a14212f1ce24e27bc5bcbb904ee87f))
+
+Squash merge PR #70 after green PR CI.
+
+### Documentation
+
+- Update v1.8.30 release handoff
+  ([`4f98ff0`](https://github.com/oimiragieo/tensor-grep/commit/4f98ff057256dc3c21c8d884393294b8286f5935))
+
+Update the v1.8.30 release handoff, docs governance, and tensor-grep skill state after the Windows
+  cmd quoted-pattern fix.
+
+
 ## v1.8.30 (2026-05-08)
 
 ### Bug Fixes
