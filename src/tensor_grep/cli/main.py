@@ -859,7 +859,73 @@ def _doctor_tg_candidate_version(candidate: Path) -> str | None:
     return None
 
 
-def _doctor_path_tg_candidates() -> list[dict[str, str | None]]:
+def _doctor_tg_launcher_kind(path: str | None) -> str | None:
+    if not path:
+        return None
+
+    candidate = Path(path)
+    suffix = candidate.suffix.lower()
+    parts = tuple(part.lower() for part in candidate.parts)
+    if suffix in {".cmd", ".bat"}:
+        return "cmd-shim"
+    if suffix == ".ps1":
+        return "powershell-shim"
+    if suffix == ".exe":
+        if ".tensor-grep" in parts and "bin" in parts:
+            return "managed-native"
+        if "scripts" in parts and (
+            ".venv" in parts or "venv" in parts or any(part.startswith("python") for part in parts)
+        ):
+            return "python-entrypoint"
+        return "native-exe"
+    if candidate.name.lower() == "tg":
+        if ".tensor-grep" in parts and "bin" in parts:
+            return "managed-native"
+        if sys.platform.startswith("win"):
+            return "bash-shim"
+        return "native-exe"
+    return "unknown"
+
+
+def _doctor_windows_registry_path_value(root: Any, subkey: str) -> str | None:
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import winreg  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    try:
+        with winreg.OpenKey(root, subkey) as key:
+            value, _value_type = winreg.QueryValueEx(key, "Path")
+    except OSError:
+        return None
+    if not isinstance(value, str) or not value:
+        return None
+    return os.path.expandvars(value)
+
+
+def _doctor_fresh_shell_path_value() -> str | None:
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import winreg  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    machine_path = _doctor_windows_registry_path_value(
+        winreg.HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+    )
+    user_path = _doctor_windows_registry_path_value(winreg.HKEY_CURRENT_USER, "Environment")
+    parts: list[str] = []
+    for value in (machine_path, user_path):
+        if value:
+            parts.extend(entry for entry in value.split(os.pathsep) if entry)
+    if not parts:
+        return None
+    return os.pathsep.join(parts)
+
+
+def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, str | None]]:
     if sys.platform.startswith("win"):
         raw_exts = os.environ.get("PATHEXT") or ".COM;.EXE;.BAT;.CMD"
         extensions = [ext.lower() for ext in raw_exts.split(os.pathsep) if ext]
@@ -872,7 +938,8 @@ def _doctor_path_tg_candidates() -> list[dict[str, str | None]]:
 
     candidates: list[dict[str, str | None]] = []
     seen: set[str] = set()
-    for entry in os.environ.get("PATH", "").split(os.pathsep):
+    path_to_scan = os.environ.get("PATH", "") if path_value is None else path_value
+    for entry in path_to_scan.split(os.pathsep):
         if not entry:
             continue
         directory = Path(entry)
@@ -893,6 +960,36 @@ def _doctor_path_tg_candidates() -> list[dict[str, str | None]]:
                 "version": _doctor_tg_candidate_version(resolved),
             })
     return candidates
+
+
+def _doctor_fresh_shell_path_tg_candidates() -> list[dict[str, str | None]]:
+    fresh_path_value = _doctor_fresh_shell_path_value()
+    if not fresh_path_value:
+        return []
+    return _doctor_path_tg_candidates(fresh_path_value)
+
+
+def _doctor_path_tg_launcher_warning(
+    *,
+    current_kind: str | None,
+    current_path: str | None,
+    fresh_kind: str | None,
+    fresh_path: str | None,
+) -> str | None:
+    compatibility_kinds = {"bash-shim", "cmd-shim", "powershell-shim", "python-entrypoint"}
+    native_kinds = {"managed-native", "native-exe"}
+    if current_kind in compatibility_kinds and fresh_kind in native_kinds:
+        return (
+            "current process PATH resolves a compatibility shim before the managed native "
+            f"front door ({current_path}); fresh-shell PATH resolves {fresh_path}. "
+            "restart the shell or refresh PATH before benchmarking subprocess-heavy workflows."
+        )
+    if current_kind in compatibility_kinds:
+        return (
+            "current process PATH resolves a compatibility shim "
+            f"({current_path}); benchmark timing may include shim overhead."
+        )
+    return None
 
 
 def _doctor_gpu_status() -> dict[str, Any]:
@@ -1016,6 +1113,22 @@ def _build_doctor_payload(
     path_tg_first_version = (
         str(path_tg_candidates[0].get("version")) if path_tg_candidates else None
     )
+    path_tg_first_path = str(path_tg_candidates[0].get("path")) if path_tg_candidates else None
+    path_tg_first_launcher_kind = _doctor_tg_launcher_kind(path_tg_first_path)
+    fresh_shell_path_tg_candidates = _doctor_fresh_shell_path_tg_candidates()
+    fresh_shell_path_tg_first_version = (
+        str(fresh_shell_path_tg_candidates[0].get("version"))
+        if fresh_shell_path_tg_candidates
+        else None
+    )
+    fresh_shell_path_tg_first_path = (
+        str(fresh_shell_path_tg_candidates[0].get("path"))
+        if fresh_shell_path_tg_candidates
+        else None
+    )
+    fresh_shell_path_tg_first_launcher_kind = _doctor_tg_launcher_kind(
+        fresh_shell_path_tg_first_path
+    )
     payload: dict[str, Any] = {
         "version": installed_version,
         "platform": sys.platform,
@@ -1052,9 +1165,23 @@ def _build_doctor_payload(
         "skipped_native_tg_binaries": skipped_native_tg_binaries,
         "path_tg_candidates": path_tg_candidates,
         "path_tg_first_version": path_tg_first_version,
+        "path_tg_first_launcher_kind": path_tg_first_launcher_kind,
         "path_tg_first_version_matches": _doctor_rust_binary_version_matches(
             installed_version,
             path_tg_first_version,
+        ),
+        "fresh_shell_path_tg_candidates": fresh_shell_path_tg_candidates,
+        "fresh_shell_path_tg_first_version": fresh_shell_path_tg_first_version,
+        "fresh_shell_path_tg_first_launcher_kind": fresh_shell_path_tg_first_launcher_kind,
+        "fresh_shell_path_tg_first_version_matches": _doctor_rust_binary_version_matches(
+            installed_version,
+            fresh_shell_path_tg_first_version,
+        ),
+        "path_tg_launcher_warning": _doctor_path_tg_launcher_warning(
+            current_kind=path_tg_first_launcher_kind,
+            current_path=path_tg_first_path,
+            fresh_kind=fresh_shell_path_tg_first_launcher_kind,
+            fresh_path=fresh_shell_path_tg_first_path,
         ),
         "gpu": _doctor_gpu_status(),
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
@@ -1114,11 +1241,29 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
             lines.append(
                 f"  {candidate.get('path')} version={candidate.get('version') or 'unknown'}"
             )
+        lines.append(
+            "path_tg_first_launcher_kind: "
+            f"{payload.get('path_tg_first_launcher_kind') or 'unknown'}"
+        )
         if payload.get("path_tg_first_version_matches") is False:
             lines.append(
                 f"path_tg_warning: first PATH tg reports {payload.get('path_tg_first_version')} "
                 f"expected {payload.get('version')}"
             )
+    fresh_shell_path_tg_candidates = cast(
+        list[dict[str, str | None]],
+        payload.get("fresh_shell_path_tg_candidates", []),
+    )
+    if fresh_shell_path_tg_candidates:
+        first_fresh = fresh_shell_path_tg_candidates[0]
+        lines.append(
+            "fresh_shell_path_tg_first: "
+            f"{first_fresh.get('path')} "
+            f"kind={payload.get('fresh_shell_path_tg_first_launcher_kind') or 'unknown'} "
+            f"version={first_fresh.get('version') or 'unknown'}"
+        )
+    if launcher_warning := payload.get("path_tg_launcher_warning"):
+        lines.append(f"path_tg_launcher_warning: {launcher_warning}")
 
     gpu_payload = cast(dict[str, Any], payload.get("gpu", {}))
     lines.append(f"gpu: available={gpu_payload.get('available', False)}")

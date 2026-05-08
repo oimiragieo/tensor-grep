@@ -34,6 +34,8 @@ Active post-`v1.8.31` implementation scope:
 
 - Design `tg agent` / Actionable Context Capsule as an opt-in agent workflow without changing raw `--format rg`, `--json`, or `--ndjson` semantics.
 - Keep Windows managed installer/update dogfood checking both the update path and a fresh-shell PATH environment; existing parent shells may keep old PATH until restarted.
+- Expose current-process vs fresh-shell launcher routing in `tg doctor --json` with `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, and `path_tg_launcher_warning` so slower compatibility-shim timing is visible.
+- Record benchmark `tg_launcher_command_kind` in the environment block so native-exe, `.cmd` shim, `uv`, and Python-module routes are not mixed in cold-path claims.
 - Keep `classify` provider/cache UX explicit and fast. The default local path is quick; CyBERT/Triton remains opt-in and must not warn or block agent loops when unavailable.
 - Keep GPU experimental until native streaming correctness and speed are proven on the 1GB/5GB gates.
 - Keep AST parity roadmap work separate from `tg run`'s validated useful slice; do not imply full ast-grep replacement.
@@ -111,6 +113,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - The `v1.8.29` release hardens public-native CLI parity for advertised search/run/classify flags and fixes the GPU no-match correctness benchmark harness.
 - The `v1.8.30` release preserves quoted multi-word no-match patterns through the Windows `.cmd` bridge for `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])`.
 - The `v1.8.31` release hardens public launcher and agent contracts: native-first Windows managed PATH ordering for fresh shells, top-level `validation_commands` in `context-render` and `edit-plan`, local deterministic default `classify`, and GPU scale correctness gates for 1GB/5GB rows.
+- The post-`v1.8.31` launcher-observability branch adds `doctor` launcher-kind diagnostics and benchmark launcher command-kind attribution. It should ship as release correctness/observability, not as a cold-search speed claim.
 
 ## Verified Before Release Closeout
 

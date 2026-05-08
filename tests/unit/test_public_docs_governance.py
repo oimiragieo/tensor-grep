@@ -66,6 +66,10 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "Windows native-front-door retry helper" in contracts
     assert "current `v1.8.31` release line" in contracts
     assert "managed native-upgrade contract" in contracts
+    assert "path_tg_first_launcher_kind" in contracts
+    assert "fresh_shell_path_tg_first_launcher_kind" in contracts
+    assert "path_tg_launcher_warning" in contracts
+    assert "tg_launcher_command_kind" in contracts
 
 
 def test_handoff_docs_should_record_current_v1831_release_state_and_fast_gate() -> None:
@@ -138,9 +142,12 @@ def test_handoff_docs_should_record_current_v1831_release_state_and_fast_gate() 
     assert "gpu no-such-phrase-zxqv-817263" in readme
     assert "tg classify --format json" in readme
     assert "not a full ast-grep replacement" in readme
-    assert "GPU and `classify` remain opt-in/experimental" in readme
+    assert "GPU remains opt-in/experimental" in readme
+    assert "Default `classify` is now deterministic and local" in readme
     assert "top-level `validation_commands`" in readme
     assert "local deterministic classifications" in readme
+    assert "path_tg_first_launcher_kind" in readme
+    assert "tg_launcher_command_kind" in readme
 
 
 def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
@@ -161,6 +168,8 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
         in skill
     )
     assert "public-windows-launcher-quoted-patterns" in skill
+    assert "path_tg_first_launcher_kind" in skill
+    assert "tg_launcher_command_kind" in skill
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:

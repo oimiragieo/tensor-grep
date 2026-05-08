@@ -1,4 +1,6 @@
 import importlib.util
+import json
+import sys
 from pathlib import Path
 
 
@@ -32,3 +34,51 @@ def test_positional_early_rg_launcher_should_cover_word_boundary(monkeypatch, tm
     assert cmd == [str(tg_binary), "-w", "timeout", "bench_data"]
     assert mode == "explicit_binary_positional_early_rg"
     assert env == {"TG_RUST_EARLY_POSITIONAL_RG": "1"}
+
+
+def test_launcher_command_kind_should_identify_timed_entrypoint(tmp_path):
+    module = _load_run_benchmarks_module()
+
+    assert module.classify_tg_launcher_command([str(tmp_path / "tg.exe"), "search"]) == "native_exe"
+    assert module.classify_tg_launcher_command([str(tmp_path / "tg.cmd"), "search"]) == "cmd_shim"
+    assert module.classify_tg_launcher_command(["uv", "run", "tg", "search"]) == "uv"
+    assert module.classify_tg_launcher_command([sys.executable, "-m", "tensor_grep"]) == (
+        "python_module"
+    )
+
+
+def test_run_benchmarks_should_record_launcher_command_kind_in_environment(monkeypatch, tmp_path):
+    module = _load_run_benchmarks_module()
+    tg_binary = tmp_path / "tg.cmd"
+    tg_binary.write_text("@echo off\n", encoding="utf-8")
+    output_path = tmp_path / "bench.json"
+    monkeypatch.setattr(
+        module,
+        "SCENARIOS",
+        [
+            {
+                "name": "1. Simple String Match",
+                "rg_args": ["rg", "ERROR", "bench_data"],
+                "tg_args": ["tg", "search", "ERROR", "bench_data"],
+            }
+        ],
+    )
+    monkeypatch.setattr(module, "generate_test_data", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "resolve_bench_data_dir", lambda: tmp_path / "bench_data")
+    monkeypatch.setattr(module, "resolve_rg_binary", lambda: "rg")
+    monkeypatch.setattr(
+        module,
+        "resolve_tg_binary_with_source",
+        lambda *_args, **_kwargs: (tg_binary, "explicit_arg"),
+    )
+    monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module, "run_cmd_timing", lambda *_args, **_kwargs: 0.1)
+    monkeypatch.setattr(module, "run_cmd_capture", lambda *_args, **_kwargs: (0.0, "ok"))
+    monkeypatch.setattr(sys, "argv", ["run_benchmarks.py", "--output", str(output_path)])
+
+    exit_code = module.main()
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["environment"]["tg_launcher_mode"] == "explicit_binary"
+    assert payload["environment"]["tg_launcher_command_kind"] == "cmd_shim"

@@ -48,7 +48,7 @@ Current positioning:
 - `tg` is the agent-native search, context, AST, and edit-planning orchestration layer.
 - `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
-- GPU and `classify` remain opt-in/experimental surfaces until local benchmarks and provider/cache UX prove otherwise. Default `classify` should stay deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
+- GPU remains opt-in/experimental until local benchmarks prove a real end-to-end crossover. Default `classify` is now deterministic and local unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into the CyBERT/Triton path.
 - The public native front door is now the performance-critical shell entrypoint. Advertised CLI flags must either execute there or route to the Python sidecar intentionally; help text that advertises flags the native parser rejects is a release blocker.
 - The next product wedge is an agent context capsule: a bounded, deterministic work packet with primary files/functions, route rationale, snippets with line maps, validation evidence, rollback/checkpoint metadata, omissions, and confidence. That should be an explicit agent profile or command, not a mutation of raw `--format rg`, `--json`, or `--ndjson`.
 
@@ -74,6 +74,8 @@ Active post-`v1.8.31` follow-up:
 - the capsule target is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when warranted
 - keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
 - keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
+- expose launcher-route diagnostics in `tg doctor --json` so existing shells that still resolve compatibility shims can be distinguished from fresh shells that resolve the managed native front door first
+- record both `tg_launcher_mode` and `tg_launcher_command_kind` in cold benchmark artifacts so native-exe, `.cmd` shim, `uv`, and Python-module timings are not combined into one search-speed claim
 - this release is contract correctness for the native front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
 
 Managed native-upgrade dogfood:
@@ -82,6 +84,7 @@ Managed native-upgrade dogfood:
 - `tg doctor --json` now reports `version = 1.8.31`, `rust_binary_version_status = matches`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = standalone-native-tg`
 - profiled PowerShell, `cmd`, and `pwsh -NoProfile` all resolve `tg 1.8.31` after the scheduled refresh completes
 - rerunning `scripts/install.ps1` for `v1.8.31` updates User PATH so fresh shells resolve `C:\Users\oimir\.tensor-grep\bin\tg.exe` before compatibility shim directories
+- follow-up `doctor` work should surface `path_tg_first_launcher_kind`, `fresh_shell_path_tg_first_launcher_kind`, and `path_tg_launcher_warning` when the current process still sees the slower shim route
 - this is installer correctness and release-readiness work; benchmark docs should not claim a cold-search speed win from it
 
 Release proof:
