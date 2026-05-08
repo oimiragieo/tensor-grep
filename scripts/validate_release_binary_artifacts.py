@@ -4,12 +4,23 @@ import argparse
 import hashlib
 from pathlib import Path
 
-EXPECTED_BINARIES = {
+FULL_EXPECTED_BINARIES = {
     "tg-linux-amd64-cpu",
     "tg-linux-amd64-nvidia",
     "tg-macos-amd64-cpu",
     "tg-windows-amd64-cpu.exe",
     "tg-windows-amd64-nvidia.exe",
+}
+
+NATIVE_FRONTDOOR_EXPECTED_BINARIES = {
+    "tg-linux-amd64-cpu",
+    "tg-macos-amd64-cpu",
+    "tg-windows-amd64-cpu.exe",
+}
+
+EXPECTED_BINARY_PROFILES = {
+    "full": FULL_EXPECTED_BINARIES,
+    "native-frontdoor": NATIVE_FRONTDOOR_EXPECTED_BINARIES,
 }
 
 
@@ -26,14 +37,15 @@ def build_hash_matrix(artifacts_dir: Path) -> dict[str, str]:
     return matrix
 
 
-def validate_artifacts(artifacts_dir: Path) -> list[str]:
+def validate_artifacts(artifacts_dir: Path, *, expected_profile: str = "full") -> list[str]:
     errors: list[str] = []
+    expected_binaries = EXPECTED_BINARY_PROFILES[expected_profile]
     found = {path.name for path in _iter_release_binaries(artifacts_dir)}
     if not found:
         return [f"No release binaries found under {artifacts_dir}"]
 
-    missing = sorted(EXPECTED_BINARIES - found)
-    unexpected = sorted(found - EXPECTED_BINARIES)
+    missing = sorted(expected_binaries - found)
+    unexpected = sorted(found - expected_binaries)
     if missing:
         errors.append(f"Missing expected release binaries: {', '.join(missing)}")
     if unexpected:
@@ -70,9 +82,18 @@ def main() -> int:
         default=Path("artifacts") / "CHECKSUMS.txt",
         help="Output path for SHA256 checksums",
     )
+    parser.add_argument(
+        "--expected-profile",
+        choices=sorted(EXPECTED_BINARY_PROFILES),
+        default="full",
+        help="Expected release binary matrix profile.",
+    )
     args = parser.parse_args()
 
-    errors = validate_artifacts(args.artifacts_dir)
+    errors = validate_artifacts(
+        args.artifacts_dir,
+        expected_profile=args.expected_profile,
+    )
     if errors:
         for err in errors:
             print(f"ERROR: {err}")

@@ -7,15 +7,16 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-07, the current released version is `v1.8.24`.
+As of 2026-05-08, the current released version is `v1.8.25`, but the active follow-up branch is fixing GitHub release asset publication before the release-native installer path should be trusted as complete.
 
 Current release facts:
 
-- Release commit: `1518a24 chore(release): v1.8.24 [skip ci]`
-- Latest fix commit: `ef0c114 fix: harden v1.8.23 dogfood regressions`
-- PR #56 `fix: harden v1.8.23 dogfood regressions` merged, released, and publicly dogfooded
-- Main CI run `25527718815` passed through `publish-success-gate`; CodeQL runs `25527718311` and `25528154549` passed
-- PyPI latest and pinned public installer dogfood both resolve `tensor-grep==1.8.24`
+- Release commit: `29fab52 chore(release): v1.8.25 [skip ci]`
+- Latest merged fix commit: `7b38bbb perf: use native front door for managed installs`
+- PR #59 `perf: use native front door for managed installs` merged and released
+- Main CI run `25533577553` passed through semantic-release, PyPI artifact validation, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25533576978` and `25533967134` passed
+- PyPI latest and pinned public install both resolve `tensor-grep==1.8.25`
+- Important release gap: the `v1.8.25` GitHub release exists but has no uploaded release assets because the tag-only `release.yml` workflow did not run from the semantic-release `GITHUB_TOKEN` tag. The active branch moves release-native CPU asset upload/verification into main CI after semantic-release and before PyPI publish.
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
@@ -45,6 +46,7 @@ Known current weak spots:
 - `validation_plan[]` rows should include `detection` (`detected`, `heuristic`, or `generic`). JavaScript package-manager commands require `package.json` evidence; Python commands require tests, project markers, or Python layout evidence; when no runner evidence exists, emit no command rather than a fake `npm test` or `uv run pytest`.
 - Implicit native resolution should ignore stale in-tree standalone binaries. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep searches on the Rust extension or Python path unless `TG_NATIVE_TG_BINARY` explicitly pins a standalone binary.
 - Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are regression-covered rg parity edges.
+- Stable managed install scripts are incomplete for release-native front-door installs until GitHub release assets are uploaded and verified. A PyPI-only publish is not enough when installers point at GitHub assets.
 
 ## Release Completion Contract
 
@@ -156,7 +158,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.24` positioning. It does not replace the full validation gate.
+This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.25` positioning. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

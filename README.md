@@ -41,7 +41,7 @@ These documents define the operating and governance surface for teams running `t
 
 ## Current Release State
 
-Latest stable release: [`v1.8.24`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.24).
+Latest stable PyPI release: [`v1.8.25`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.25).
 
 Current positioning:
 
@@ -50,26 +50,26 @@ Current positioning:
 - `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
 - GPU and `classify` remain opt-in/experimental surfaces until local benchmarks and provider/cache UX prove otherwise.
 
-What `v1.8.24` closed:
+What `v1.8.25` closed:
 
-- public shell/version resolution across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL
-- stale in-tree standalone native binaries skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
-- deterministic rg parity edges for sorted PCRE2, files-with/without-match, replacement output, binary defaults, and multiline forwarding
-- exact-symbol context ranking, session stale-file trust, validation-command provenance, MCP checkpoint fallback, inline rule metadata, and uppercase `API_KEY` secret detection
-
-Active post-`v1.8.24` launcher work:
-
-- stable install scripts now prefer the matching release-native CPU `tg` front door when the GitHub release asset exists, while keeping the managed Python environment as the sidecar/fallback for Python-backed commands
+- stable managed install scripts now prefer the matching release-native CPU `tg` front door when the GitHub release asset exists, while keeping the managed Python environment as the sidecar/fallback for Python-backed commands
 - the Rust front door treats `--format rg` as a no-op for ripgrep-compatible text output and preserves `--sort path` passthrough for deterministic automation
-- this is a control-plane correctness and startup-path change; benchmark docs should not claim a cold-search speed win until the accepted benchmark artifacts are rerun
+- stale in-tree standalone native binaries remain skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
+- deterministic rg parity edges, context-render trust invariants, session stale-file handling, validation-command provenance, inline rule metadata, uppercase `API_KEY` secret detection, and broad generated-root refusal remain part of the accepted compatibility line
+
+Active post-`v1.8.25` release-asset work:
+
+- the `v1.8.25` GitHub release exists, but it has no uploaded release assets because the tag-only `release.yml` workflow did not run from the semantic-release `GITHUB_TOKEN` tag
+- this branch moves installer-critical native asset upload and verification into main CI after semantic-release, targets `v${{ needs.release.outputs.release_version }}` explicitly, and gates PyPI behind `publish-github-release-assets`
+- this is a release-completion correctness change; benchmark docs should not claim a cold-search speed win from it
 
 Release proof:
 
-- fix PR #56 merged and released from `ef0c114 fix: harden v1.8.23 dogfood regressions`
-- release commit `1518a24 chore(release): v1.8.24 [skip ci]`
-- main CI run `25527718815`, main CodeQL run `25527718311`, and release-commit CodeQL run `25528154549` passed
-- PyPI reports `tensor-grep 1.8.24`; public installer dogfood resolved all supported Windows shell shims and public doctor reported PATH-version parity
-- docs/process PR #57 merged as `d5245f6 docs: update v1.8.24 handoff and skill guidance`; main CI run `25529282908` and CodeQL run `25529282683` passed, with semantic-release correctly skipping a docs-only publish
+- perf PR #59 merged and released from `7b38bbb perf: use native front door for managed installs`
+- release commit `29fab52 chore(release): v1.8.25 [skip ci]`
+- main CI run `25533577553`, main CodeQL run `25533576978`, and release-commit CodeQL run `25533967134` passed
+- PyPI reports `tensor-grep 1.8.25`; `tensor-grep==1.8.25` resolves from PyPI
+- GitHub release asset verification is the active follow-up before the release-native installer path should be called complete
 
 ## Stable Windows Test Confirmation
 
@@ -97,7 +97,7 @@ Before pushing agent-facing changes, run the fast dogfood gate:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This checks the current `v1.8.24` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
+This checks the current `v1.8.25` shell/version resolution, repo doctor sanity, `context_consistency`, deterministic rg parity edges, AST smoke, MCP context-render smoke, docs claim hygiene, and the current positioning: `rg` remains the cold exact-text baseline, `ast-grep` remains the structural-search feature/performance baseline, and `tg` is the agent-native orchestration layer.
 It also covers the broad generated-root scan guard: unbounded `tg search --files` roots that combine hidden/no-ignore-style scanning with generated, cache, or dependency directories must be scoped, bounded, or explicitly opted in with `--allow-broad-generated-scan`.
 
 ## Bounded Heavy-Root AI Handoff
@@ -117,7 +117,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.24` release and docs closeout are summarized in [Current Release State](#current-release-state)
+- `v1.8.25` release state and active GitHub release asset follow-up are summarized in [Current Release State](#current-release-state)
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:

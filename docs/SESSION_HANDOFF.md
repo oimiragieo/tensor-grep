@@ -1,36 +1,41 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-05-07
+Last updated: 2026-05-08
 
 ## Current Release State
 
-- Latest released version: `v1.8.24`
-- Latest release commit: `1518a24 chore(release): v1.8.24 [skip ci]`
-- Latest fix commit: `ef0c114 fix: harden v1.8.23 dogfood regressions`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.24>
-- Main CI run `25527718815`: passed through `publish-pypi`, artifact validation, and `publish-success-gate`
-- Main CodeQL run `25527718311`: passed
-- Release-commit CodeQL run `25528154549`: passed
-- Local managed `tg --version`: `tensor-grep 1.8.24`
-- PyPI latest and pinned install: `tensor-grep==1.8.24` resolves from PyPI
-- Public update dogfood: the managed install was upgraded from `1.8.23` to `1.8.24`; profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolved `tensor-grep 1.8.24`.
-- Public shell dogfood: normal PowerShell, `cmd.exe`, Git Bash, and WSL regex alternation worked; `tg --version` prints one line by default, `tg --version --verbose` prints feature details, and help starts with `Usage: tg`.
-- Public doctor dogfood: from outside the repo, `tg doctor --json` reported `version = 1.8.24`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
+- Latest released version: `v1.8.25`
+- Latest release commit: `29fab52 chore(release): v1.8.25 [skip ci]`
+- Latest fix commit: `7b38bbb perf: use native front door for managed installs`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.25>
+- Main CI run `25533577553`: passed through semantic-release, PyPI artifact validation, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25533576978`: passed
+- Release-commit CodeQL run `25533967134`: passed
+- Local managed `tg --version`: `tensor-grep 1.8.25`
+- PyPI latest and pinned install: `tensor-grep==1.8.25` resolves from PyPI
+- Important release gap: the `v1.8.25` GitHub release has no uploaded release assets, so release-native managed installs still fall back to Python. Root cause: semantic-release created the tag/release with `GITHUB_TOKEN`, which does not trigger the tag-only `release.yml` workflow.
+- Active fix: move installer-critical GitHub release asset build/upload/verification into main CI after semantic-release, and make `publish-pypi` wait for `publish-github-release-assets`.
+- Public shell dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness.json` passed public version probes for PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL resolving `tensor-grep 1.8.25`. Last full public behavior dogfood was `v1.8.24`; normal PowerShell, `cmd.exe`, Git Bash, and WSL regex alternation worked; `tg --version` prints one line by default, `tg --version --verbose` prints feature details, and help starts with `Usage: tg`.
+- Public doctor dogfood: from outside the repo on `v1.8.24`, `tg doctor --json` reported `version = 1.8.24`, `search_acceleration_backend = rust-core-extension`, and `path_tg_first_version_matches = true`.
 - Public generated-root guard dogfood: `tg search --files . --hidden` refused generated/cache/dependency roots with exit code `2`; normal scoped hidden search still succeeded.
 - Repo-dev dogfood: `uv run tg doctor --json --no-lsp` reported `version = 1.8.24`, `native_tg_binary = null`, `rust_binary_version_status = stale-skipped`, `skipped_native_tg_binaries = 2`, and `search_acceleration_backend = rust-core-extension`.
 
-## Active Post-v1.8.24 PR Scope
+## Active Post-v1.8.25 PR Scope
 
-Current branch: `fix/v1-8-24-dogfood-performance-token-context`.
+Current branch: `fix/semantic-release-github-assets`.
 
-This branch targets the `v1.8.24` dogfood follow-up without changing the public speed claim yet:
+This branch targets the `v1.8.25` release asset follow-up:
 
-- managed stable install scripts download the matching release-native CPU front door (`tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, or `tg-macos-amd64-cpu`) when the asset exists
-- generated shims set `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY` so Python-backed commands return to the managed native binary instead of stale PATH discovery
-- the Rust front door treats `--format rg` as a no-op for rg-compatible output, keeps `--sort path` on ripgrep passthrough, and sends non-rg search formats to the Python CLI
-- `rtk-ai/rtk` was reviewed for token-output lessons: its useful idea is an explicit agent-bounded output profile with hard global/per-file caps and compact grouped excerpts, not changing raw rg-compatible stdout by default
+- main CI builds release-native CPU front doors (`tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`) from the semantic-release tag only when the action reports `released == 'true'`
+- the macOS amd64 asset is built on `macos-15-intel`, not `macos-latest`, so the filename matches the runner architecture
+- main CI uploads those assets, `CHECKSUMS.txt`, and package-manager bundle files to the GitHub release created by semantic-release
+- `scripts/verify_github_release_assets.py` verifies the native-front-door asset profile and nested package-manager bundle checksum paths
+- `scripts/verify_github_release_assets.py` retries both validation failures and transient GitHub API/download failures so post-upload eventual consistency does not fail immediately
+- `publish-pypi` depends on `publish-github-release-assets` so a future release cannot publish to PyPI before GitHub release assets are verified
+- `publish-success-gate` re-checks GitHub release native assets before declaring the release complete
+- non-release main pushes keep `release_version` empty so asset jobs cannot mutate an older GitHub release
 
-Current benchmark evidence:
+Prior benchmark evidence from the `v1.8.25` native-front-door PR:
 
 - `python benchmarks/run_benchmarks.py --binary rust_core/target/release/tg.exe --launcher-mode explicit_binary --output artifacts/bench_run_benchmarks_native_frontdoor_pr.json`: parity passed on all 10 rows
 - `python benchmarks/check_regression.py --baseline auto --current artifacts/bench_run_benchmarks_native_frontdoor_pr.json`: refused comparison because the frozen baseline uses Python `3.12.12` and this host shell uses Python `3.14.4`
@@ -45,9 +50,9 @@ A branch push or open PR starts PR CI only. It is not a release, not a released 
 
 Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
 
-A release-bearing PR is complete only after PR CI passes, the PR is squash-merged to `main`, main CI and semantic-release complete successfully, the release commit and tag exist on `origin/main`, `publish-success-gate` passes, `git fetch origin main --tags` is run, agents fast-forward local `main` to the release commit, and PyPI/public installer availability is verified.
+A release-bearing PR is complete only after PR CI passes, the PR is squash-merged to `main`, main CI and semantic-release complete successfully, the release commit and tag exist on `origin/main`, GitHub release assets are uploaded and verified, `publish-success-gate` passes, `git fetch origin main --tags` is run, agents fast-forward local `main` to the release commit, and PyPI/public installer availability is verified.
 
-Do not report final version state before the GitHub release, PyPI/package publish status, public install/update path, and local checkout have all been verified.
+Do not report final version state before the GitHub release assets, PyPI/package publish status, public install/update path, and local checkout have all been verified.
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 

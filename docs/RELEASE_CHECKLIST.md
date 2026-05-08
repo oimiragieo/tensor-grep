@@ -12,7 +12,8 @@ This checklist reflects the current enterprise release pipeline:
 Before calling a release enterprise-ready, confirm the exact release commit has:
 
 - green CI on the same commit that semantic-release tagged
-- release assets, `CHECKSUMS.txt`, SBOMs, provenance, and signing artifacts present on the GitHub release
+- installer-critical GitHub release assets and `CHECKSUMS.txt` present on the GitHub release
+- SBOMs, provenance, and signing metadata present when the release path produces them
 - package-manager bundle validation complete
 - public docs aligned:
   - `docs/SUPPORT_MATRIX.md`
@@ -76,6 +77,7 @@ Before calling a release enterprise-ready, confirm the exact release commit has:
    - release commit
    - Git tag `vX.Y.Z`
    - GitHub release metadata
+   Main CI then uploads installer-critical GitHub release assets to that tag before `publish-pypi` is allowed to run.
 6. Fetch the release commit before local final verification:
    ```bash
    git fetch origin main --tags
@@ -83,14 +85,18 @@ Before calling a release enterprise-ready, confirm the exact release commit has:
    ```
    This matters because local `main` can otherwise remain on the pre-release fix commit while
    `origin/main` has already advanced to `chore(release): vX.Y.Z [skip ci]`.
-7. If `publish_pypi=true`, confirm downstream jobs pass:
+7. If semantic-release reports `released=true`, confirm downstream jobs pass:
+   - `build-release-native-assets`
+   - `publish-github-release-assets`
+   - release-native macOS amd64 asset is built on `macos-15-intel`, not `macos-latest`
+8. If `publish_pypi=true`, confirm PyPI jobs pass:
    - `build-pypi-wheels`
    - `build-pypi-sdist`
    - `validate-pypi-artifacts`
    - `publish-pypi`
    - `publish-success-gate`
    - parity gate step `Verify release version parity across tag/assets/PyPI`
-8. Confirm registry visibility with API evidence, not only local pip cache:
+9. Confirm registry visibility with API evidence, not only local pip cache:
    ```bash
    python - << 'PY'
    import json, urllib.request
@@ -99,16 +105,20 @@ Before calling a release enterprise-ready, confirm the exact release commit has:
    PY
    ```
    `python -m pip index versions tensor-grep` can lag because of client/cache behavior.
-9. If the installer or update path changed, PyPI/public installer availability is verified before release completion is reported.
-10. On tag release workflow, confirm GitHub release asset verification passes:
-   - `verify-release-assets`
-   - step `Verify uploaded release assets and checksum coverage`
+10. If the installer or update path changed, PyPI/public installer availability is verified before release completion is reported.
+11. On main CI, confirm GitHub release asset verification passes before accepting the release:
+   - `publish-github-release-assets`
+   - step `Verify GitHub release native asset coverage`
+   - `publish-success-gate` step `Verify GitHub release native assets for semantic-release version`
+   - includes release-native CPU front doors (`tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, `tg-windows-amd64-cpu.exe`)
+   - `tg-macos-amd64-cpu` was built on an Intel macOS runner label, currently `macos-15-intel`
    - includes required package-manager bundle assets (`tensor-grep.rb`, `oimiragieo.tensor-grep.yaml`, `PUBLISH_INSTRUCTIONS.md`)
-   - includes `BUNDLE_CHECKSUMS.txt` parity validation for package-manager bundle assets
-11. Confirm terminal publish gate is green:
-   - `release-success-gate` (depends on parity + npm publish + docs deploy)
-   - includes final npm + PyPI registry parity re-checks before success confirmation
-12. Verify published version parity:
+   - includes `CHECKSUMS.txt` and `BUNDLE_CHECKSUMS.txt` parity validation
+12. Confirm terminal publish gate is green:
+   - normal semantic-release path: `publish-success-gate`
+   - manual/backfill tag path: `release-success-gate` (parity + npm publish + docs deploy)
+   - includes final registry parity re-checks before success confirmation
+13. Verify published version parity:
    - GitHub tag version equals PyPI latest version
    - GitHub tag version equals `npm/package.json` version
    - npm registry `latest` equals `X.Y.Z` (verified by release workflow parity step)
@@ -125,16 +135,17 @@ Detailed operational steps live in `docs/package_manager_publish.md`.
    - Ensure `PackageVersion` and nested `Installers[0].InstallerUrl` in `scripts/oimiragieo.tensor-grep.yaml` match release version.
    - CI also builds `artifacts/package-manager-bundle` and verifies `BUNDLE_CHECKSUMS.txt` parity in `package-manager-readiness`.
    - CI uploads `package-manager-bundle-<os>` artifacts for operator inspection/download from each green run.
-   - Tag release workflow preflights package-manager bundle generation/verification/smoke checks in `validate-package-managers` before binary builds start.
+   - Main CI preflights package-manager bundle generation/verification/smoke checks in `package-manager-readiness` before semantic-release starts.
 3. Post-release operational publish:
    - Homebrew tap update: open/update PR in tap repo with new formula.
    - Winget submission: create/update manifest PR in winget-pkgs for new version.
 4. Keep release artifacts canonical:
    - Build artifacts must map 1:1 to tag version and expected filenames.
-   - `release.yml` build matrix smoke-runs each renamed binary (`--version`) on Windows/Linux/macOS before upload.
-   - Release job validates expected binary filename matrix and emits `CHECKSUMS.txt` (SHA256) before publishing GitHub release assets.
-   - Release job also generates and publishes `package-manager-bundle/` assets (Homebrew formula + Winget manifest + instructions) for repeatable downstream submission.
-   - Release job runs both bundle integrity and content smoke checks before publish:
+   - Main CI builds release-native CPU front-door binaries from the semantic-release tag only when semantic-release reports `released == true`, smoke-runs `--version`/`--help`, and renames them to the installer URLs.
+   - Non-release main pushes must not reuse the current package version to upload assets to the previous GitHub release.
+   - `publish-github-release-assets` validates the expected native-front-door filename matrix and emits `CHECKSUMS.txt` (SHA256) before uploading GitHub release assets.
+   - `publish-github-release-assets` also generates and publishes package-manager bundle assets (Homebrew formula + Winget manifest + instructions) for repeatable downstream submission.
+   - `publish-github-release-assets` runs both bundle integrity and content smoke checks before publish:
      - `scripts/verify_package_manager_bundle_checksums.py --bundle-dir artifacts/package-manager-bundle`
      - `scripts/smoke_test_package_manager_bundle.py --bundle-dir artifacts/package-manager-bundle`
 

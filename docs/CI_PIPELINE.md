@@ -22,6 +22,8 @@ Primary responsibilities:
 - `package-manager-readiness`: Homebrew/Winget/package-manager bundle validation
 - `benchmark-regression`: blocking same-runner base-vs-head regression gate plus accepted-baseline drift reporting
 - `Semantic Release`: semantic-release on `main`
+- `build-release-native-assets`: builds release-native CPU front doors from the semantic-release tag when `steps.release.outputs.released == 'true'`; the macOS amd64 asset is built on an Intel macOS runner label
+- `publish-github-release-assets`: uploads and verifies GitHub release assets for the semantic-release tag when `steps.release.outputs.released == 'true'`
 - PyPI build, validation, and publish jobs when semantic-release emits a new version
 
 Release behavior:
@@ -33,7 +35,7 @@ Release behavior:
 - `docs:` / `test:` / `ci:` / `chore:` / `build:` => no package release
 - A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state.
 - Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
-- Release completion requires main CI and semantic-release complete successfully, `publish-success-gate` passing when publish is required, `git fetch origin main --tags`, local `main` fast-forwarded to the release commit, and PyPI/public installer availability verified when the install/update path changed.
+- Release completion requires main CI and semantic-release complete successfully, GitHub release native asset upload/verification passing for the semantic-release tag, `publish-success-gate` passing when publish is required, `git fetch origin main --tags`, local `main` fast-forwarded to the release commit, and PyPI/public installer availability verified when the install/update path changed.
 
 Benchmark behavior:
 
@@ -44,7 +46,7 @@ Benchmark behavior:
 
 ### `release.yml`
 
-Builds and verifies tagged release artifacts, publishes binary assets, docs, npm artifacts, SBOMs, provenance, and signing metadata. This workflow is the release artifact pipeline; `ci.yml` is the semantic-release decision and PyPI pipeline.
+Manual/backfill release artifact pipeline for tag refs. Do not rely on it for the normal semantic-release path: tags created with the default `GITHUB_TOKEN` do not trigger a separate tag-push workflow run. The authoritative release-bearing path is now `ci.yml` on `main`: semantic-release creates the tag/release, main CI checks the action's `released` output, builds release-native CPU front-door assets from that tag, uploads them to the GitHub release, verifies checksum/package-manager coverage, then allows PyPI publish and `publish-success-gate` to complete.
 
 ### `benchmark.yml` (Benchmarks)
 
@@ -147,3 +149,11 @@ After a release-bearing push to `main`, semantic-release may create and push a f
 `chore(release): vX.Y.Z [skip ci]` commit that updates `CHANGELOG.md`, version files, package
 manager manifests, and `uv.lock`. Operators and agents must fetch tags/main and fast-forward the
 local checkout before checking version files or declaring the release complete.
+
+The same release is incomplete until `publish-github-release-assets` verifies the installer-critical
+GitHub assets (`tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, `tg-windows-amd64-cpu.exe`,
+`CHECKSUMS.txt`, and package-manager bundle files). The macOS amd64 asset must be built on an Intel
+macOS runner, currently `macos-15-intel`; `macos-latest` is arm64. PyPI visibility alone is not
+enough evidence when installer or package-manager URLs depend on GitHub release assets. Non-release
+main pushes must leave the semantic-release version output empty so these asset jobs do not mutate
+an older GitHub release.
