@@ -1,6 +1,18 @@
 # CHANGELOG
 
 
+## v1.8.27 (2026-05-08)
+
+### Bug Fixes
+
+- Harden stable installer and upgrade resolution
+  ([`8420cab`](https://github.com/oimiragieo/tensor-grep/commit/8420cab832b9a1a3e4b21f89be716093e50f9a15))
+
+Harden stable installers and tg upgrade against stale PyPI metadata, corrupted sidecars, unchecked
+  native installer failures, and failed in-place managed install replacement. Preserve the v1.8.26
+  release evidence while documenting the expected v1.8.27 installer/update patch.
+
+
 ## v1.8.26 (2026-05-08)
 
 ### Bug Fixes
