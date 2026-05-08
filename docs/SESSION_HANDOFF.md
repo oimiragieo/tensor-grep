@@ -4,26 +4,28 @@ Last updated: 2026-05-08
 
 ## Current Release State
 
-- Latest released version: `v1.8.29`
-- Latest release commit: `648a740 chore(release): v1.8.29 [skip ci]`
-- Latest fix commit: `7742258 fix: harden native front-door CLI parity`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.29>
-- Main CI run `25557263658`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25557263900`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.29` resolves from PyPI
-- GitHub release assets: `v1.8.29` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Latest released version: `v1.8.30`
+- Latest release commit: `b81b331 chore(release): v1.8.30 [skip ci]`
+- Latest fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.30>
+- Main CI run `25569020620`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25569020092`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.30` resolves from PyPI
+- GitHub release assets: `v1.8.30` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- Closed Windows `.cmd` quoted-pattern gap: `v1.8.30` preserves quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` instead of splitting them into shorter false-positive searches plus bogus paths.
 - Closed native-front-door CLI parity gap: `v1.8.29` accepts or intentionally sidecar-routes `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`; `classify` falls back before expensive provider/model setup when unavailable; and the GPU benchmark harness treats no-match as a valid comparator outcome.
-- Public shell dogfood: `tg upgrade` from `v1.8.28` installed sidecar `tensor-grep==1.8.29`; the next native-front-door refresh scheduled the Windows retry helper while the running `tg.exe` was locked, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.29`. `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, Git Bash, and WSL all report `tg 1.8.29`.
-- Public doctor dogfood: `tg doctor --json` reports `version = 1.8.29`, `rust_binary_version = tg 1.8.29`, `rust_binary_version_status = matches`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = standalone-native-tg`.
-- Public native CLI dogfood: installed `tg 1.8.29` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
-- Fast agent-readiness dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1829.json` passed all 13 checks, including public version probes, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
+- Public shell dogfood: `tg update` from `v1.8.29` installed sidecar `tensor-grep==1.8.30`; the next native-front-door refresh scheduled the Windows retry helper while the running `tg.exe` was locked, refreshed `~/.tensor-grep/bin/tg.exe`, and verified `tg 1.8.30`. `tg --version`, `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, Git Bash, and WSL all report `tg 1.8.30`.
+- Public doctor dogfood: `tg doctor --json` reports `version = 1.8.30`, `rust_binary_version = tg 1.8.30`, `rust_binary_version_status = matches`, `path_tg_first_version_matches = true`, and `search_acceleration_backend = standalone-native-tg`.
+- Public native CLI dogfood: installed `tg 1.8.30` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- Public Windows launcher dogfood: `cmd /c tg search "gpu no-such-phrase" ...`, direct `C:\Users\oimir\bin\tg.cmd`, native `tg.exe`, and Python `subprocess.run([...tg.cmd...])` all return exit `1` with empty stdout for the quoted no-match phrase.
+- Fast agent-readiness dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness_post_v1830.json` passed all checks after docs were synchronized, including public version probes, `public-windows-launcher-quoted-patterns`, repo doctor, context consistency, deterministic rg parity edges, generated-root guardrails, AST smoke, MCP context-render smoke, and docs claim hygiene.
 - Repo-dev dogfood: stale in-tree standalone binaries remain skipped unless explicitly pinned with `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY`.
 
-## Current Post-v1.8.29 Scope
+## Current Post-v1.8.30 Scope
 
 Current release branch is closed. Use a new branch from `origin/main` for follow-up work. The latest docs/product merge is PR #66 `docs: define agent context capsule roadmap` at `f311469`; main CI run `25561521904` and CodeQL/dynamic main run `25561520180` passed, and semantic-release correctly skipped publishing because the change was docs-only.
 
-Active follow-up: fix the public Windows `.cmd` bridge so quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` stay one argv item instead of producing a shorter false-positive search plus bogus paths. The fast gate now includes `public-windows-launcher-quoted-patterns`.
+The public Windows `.cmd` bridge quoted multi-word no-match follow-up shipped in `v1.8.30`. The fast gate now includes `public-windows-launcher-quoted-patterns`.
 
 The immediate `v1.8.28` native-front-door CLI parity follow-up shipped in `v1.8.29`:
 
@@ -57,7 +59,7 @@ Do not report final version state before the GitHub release assets, PyPI/package
 
 For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and merge only when requested or clearly required. After merge, main CI should pass, but semantic-release should skip release publishing.
 
-## What v1.8.12-v1.8.29 Fixed
+## What v1.8.12-v1.8.30 Fixed
 
 - Windows `--files-with-matches` no longer expands huge candidate file lists into the ripgrep subprocess argv, avoiding `WinError 206`.
 - No-path `--files-with-matches` now preserves raw rg-style paths such as `AGENTS.md` instead of emitting `.\AGENTS.md`.
@@ -96,6 +98,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - The `v1.8.27` release hardened stable installers and sidecar upgrade resolution against stale package metadata, yanked releases, missing post-upgrade imports, unchecked native installer failures, and broken staged replacement.
 - The `v1.8.28` release refreshes the managed release-native front door after sidecar upgrades, including the Windows retry-helper path for locked `tg.exe` replacement.
 - The `v1.8.29` release hardens public-native CLI parity for advertised search/run/classify flags and fixes the GPU no-match correctness benchmark harness.
+- The `v1.8.30` release preserves quoted multi-word no-match patterns through the Windows `.cmd` bridge for `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])`.
 
 ## Verified Before Release Closeout
 
@@ -111,6 +114,7 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - PR #61 `fix: harden stable installer and upgrade resolution`: merged and released as `v1.8.27`
 - PR #62 `fix: refresh managed native front door after upgrade`: merged and released as `v1.8.28`
 - PR #64 `fix: harden native front-door CLI parity`: merged and released as `v1.8.29`
+- PR #68 `fix: preserve quoted patterns in Windows cmd shim`: merged and released as `v1.8.30`
 - `uv run pytest tests/unit/test_install_scripts.py -q`: `18 passed` on the LF-shim fix branch
 - `uv run pytest tests/unit/test_cli_bootstrap.py tests/unit/test_cli_modes.py tests/unit/test_public_docs_governance.py -q`: `287 passed` on the CLI polish branch
 - PowerShell parser checks for `scripts/install.ps1` under both `pwsh` and Windows PowerShell: passed
@@ -151,6 +155,12 @@ For docs/test/chore-only work, use a non-release PR title, wait for PR CI, and m
 - PyPI version-specific page and simple index expose `tensor-grep 1.8.29`; `python -m pip index versions tensor-grep --no-cache-dir` reports `1.8.29`.
 - Public upgrade dogfood verified `tg upgrade` from `v1.8.28` to sidecar `tensor-grep==1.8.29`, the scheduled Windows native-front-door retry helper, and final profiled PowerShell / `cmd` / `pwsh -NoProfile` / Git Bash / WSL resolution to `tg 1.8.29`.
 - Public native CLI dogfood verified `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json` on installed `tg 1.8.29`.
+- Main CI run `25569020620`: passed through `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`.
+- Main CodeQL run `25569020092`: passed.
+- GitHub release assets are uploaded for `v1.8.30`, including `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, `CHECKSUMS.txt`, `BUNDLE_CHECKSUMS.txt`, `oimiragieo.tensor-grep.yaml`, `tensor-grep.rb`, and `PUBLISH_INSTRUCTIONS.md`.
+- PyPI version-specific page and simple index expose `tensor-grep 1.8.30`; `python -m pip index versions tensor-grep --no-cache-dir` reports `1.8.30`.
+- Public update dogfood verified `tg update` from `v1.8.29` to sidecar `tensor-grep==1.8.30`, the scheduled Windows native-front-door retry helper, and final profiled PowerShell / `cmd` / `pwsh -NoProfile` / Git Bash / WSL resolution to `tg 1.8.30`.
+- Public launcher dogfood verified `cmd /c tg`, direct `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...tg.cmd...])` preserve `"gpu no-such-phrase"` as one no-match pattern and return exit `1` with no false-positive stdout.
 
 ## What Works Well Now
 
@@ -201,7 +211,7 @@ git log -3 --oneline
 uv run tg --version
 uv run tg doctor --json
 python -m pip index versions tensor-grep --index-url https://pypi.org/simple --no-cache-dir
-gh release view v1.8.29 --json tagName,publishedAt,url,assets
+gh release view v1.8.30 --json tagName,publishedAt,url,assets
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg --version
 cmd /c tg --version

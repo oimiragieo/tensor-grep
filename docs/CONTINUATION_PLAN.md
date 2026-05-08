@@ -4,18 +4,19 @@
 
 ## 2026-05-08 Current Handoff
 
-The current released state is `v1.8.29`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, and the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
+The current released state is `v1.8.30`. Stable installer and sidecar upgrade hardening shipped, including managed-native front-door refresh after `tg upgrade` updates the Python sidecar, the public native front door now accepts or intentionally routes the advertised `search`, `run`, and `classify` flag shapes exposed by the Python sidecar, and the Windows `.cmd` launcher now preserves quoted multi-word no-match patterns. Use [docs/SESSION_HANDOFF.md](SESSION_HANDOFF.md) as the live handoff for release status, current weak spots, release completion contract, and next-session commands. This continuation plan remains useful as the historical workstream map, but it is no longer the freshest operational state.
 
 Current release facts:
 
-- Release commit: `648a740 chore(release): v1.8.29 [skip ci]`
-- Latest merged fix commit: `7742258 fix: harden native front-door CLI parity`
-- Main CI run `25557263658`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- CodeQL run `25557263900`: passed
-- PyPI latest and pinned public install: `tensor-grep==1.8.29` resolves from PyPI.
-- GitHub release assets for `v1.8.29` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
-- Managed native-upgrade dogfood: `tg upgrade` from `v1.8.28` installed sidecar `tensor-grep==1.8.29`; the next `tg upgrade` scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.29`.
-- Public native CLI dogfood: installed `tg 1.8.29` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- Release commit: `b81b331 chore(release): v1.8.30 [skip ci]`
+- Latest merged fix commit: `e6d09a5 fix: preserve quoted patterns in Windows cmd shim`
+- Main CI run `25569020620`: passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- CodeQL run `25569020092`: passed
+- PyPI latest and pinned public install: `tensor-grep==1.8.30` resolves from PyPI.
+- GitHub release assets for `v1.8.30` include native CPU front doors, checksums, winget manifest, Homebrew formula, and publish instructions.
+- Managed native-upgrade dogfood: `tg update` from `v1.8.29` installed sidecar `tensor-grep==1.8.30`; the next refresh scheduled the Windows retry helper and refreshed the native front door to `tg 1.8.30`.
+- Public native CLI dogfood: installed `tg 1.8.30` accepted `tg search --multiline`, `tg search -U`, `tg search --files`, `tg search --null`, `tg run -r`, and `tg classify --format json`.
+- Public Windows launcher dogfood: `cmd /c tg`, direct `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...tg.cmd...])` preserve quoted multi-word no-match patterns and return exit `1` with no false-positive stdout.
 
 Current product read:
 
