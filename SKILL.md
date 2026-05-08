@@ -7,18 +7,19 @@ description: Use when searching code, logs, or repositories with tensor-grep; va
 
 ## Current State
 
-As of 2026-05-08, the current released version is `v1.8.26`. GitHub release asset publication is now part of main CI, and the active follow-up branch is hardening stable installers and `tg upgrade` against stale package metadata, missing post-upgrade imports, and failed in-place replacement.
+As of 2026-05-08, the current released version is `v1.8.27`. Stable installer and PyPI metadata refresh hardening shipped, and the active follow-up branch fixes managed-native front-door refresh after `tg upgrade` updates the Python sidecar.
 
 Current release facts:
 
-- Release commit: `ce2c1a5 chore(release): v1.8.26 [skip ci]`
-- Latest merged fix commit: `6f82d14 fix: publish GitHub release native assets from main CI`
-- PR #60 `fix: publish GitHub release native assets from main CI` merged and released
-- Main CI run `25535886184` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL run `25535886001` passed
-- PyPI latest and pinned public install both resolve `tensor-grep==1.8.26`
-- GitHub release assets for `v1.8.26` verified with the `native-frontdoor` profile
-- Active follow-up: stable installers and `tg upgrade` clear stale package metadata, request the exact current non-yanked PyPI version when known, verify the target Python can still import `tensor_grep`, check native installer exit codes, and stage the new managed environment plus front-door files before replacing `~/.tensor-grep`
-- Expected patch release from the active installer/update branch: `v1.8.27`
+- Release commit: `34142ea chore(release): v1.8.27 [skip ci]`
+- Latest merged fix commit: `8420cab fix: harden stable installer and upgrade resolution`
+- PR #61 `fix: harden stable installer and upgrade resolution` merged and released
+- Main CI run `25538976953` passed through semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`; CodeQL runs `25538976656` and `25539436754` passed
+- PyPI latest and pinned public install both resolve `tensor-grep==1.8.27`
+- GitHub release assets for `v1.8.27` verified with the `native-frontdoor` profile
+- Public upgrade dogfood: `tg upgrade` from `v1.8.26` installed sidecar `tensor-grep==1.8.27`, but `tg --version` still reported native `tg 1.8.26`; `tg doctor --json` exposed the sidecar/native mismatch.
+- Active follow-up: `tg upgrade` must refresh the managed release-native front door to the verified package version and schedule a Windows retry helper when the running native `tg.exe` is still locked.
+- Expected patch release from the active native-upgrade branch: `v1.8.28`
 - Repo-dev doctor/search dogfood confirms stale in-tree standalone binaries are skipped unless `TG_NATIVE_TG_BINARY` or `TG_MCP_TG_BINARY` explicitly pins one
 - Latest handoff: `docs/SESSION_HANDOFF.md`
 
@@ -27,7 +28,7 @@ Current product read:
 - `rg` remains the benchmark for raw cold exact-text search.
 - `ast-grep` remains the structural-search feature/performance baseline; `tg run` is a validated useful slice, not full ast-grep equivalence.
 - `tg` is strongest as agent-native code intelligence: scoped search, JSON/NDJSON, repo maps, defs, source, refs, callers, context bundles, blast-radius, AST search, rewrite planning, GPU inventory, and MCP.
-- Stable managed installs should prefer the matching release-native CPU front door when the GitHub release asset exists, while keeping the isolated Python environment as sidecar/fallback via `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY`. Installer changes should preserve the staged replacement contract so a failed install cannot break an existing public shim, including checking native installer command exit codes before the staged swap. `tg upgrade` must verify the sidecar import/version before claiming success, including the scheduled Windows self-upgrade path.
+- Stable managed installs should prefer the matching release-native CPU front door when the GitHub release asset exists, while keeping the isolated Python environment as sidecar/fallback via `TG_SIDECAR_PYTHON` and `TG_NATIVE_TG_BINARY`. Installer changes should preserve the staged replacement contract so a failed install cannot break an existing public shim, including checking native installer command exit codes before the staged swap. `tg upgrade` must verify the sidecar import/version before claiming success, including the scheduled Windows self-upgrade path, and managed native front doors must be refreshed when the verified sidecar version moves ahead of `tg.exe`.
 - `--format rg --sort path` is the deterministic rg-shaped stdout contract. Token-saving output work should be a separate opt-in agent profile, not a mutation of raw rg/json/ndjson contracts.
 - `context-render` / MCP context output must keep `edit_plan_seed.primary_file`, `navigation_pack.primary_target.file`, selected files/sources, and follow-up reads consistent. Check `context_consistency` when debugging agent handoff quality.
 - Default JSON/LLM context rendering must include executable body lines for selected functions. Compactness may strip comments, docstrings when optimized, blank lines, type-only imports, and boilerplate, but it is not a summary-only profile.
@@ -48,7 +49,7 @@ Known current weak spots:
 - `validation_plan[]` rows should include `detection` (`detected`, `heuristic`, or `generic`). JavaScript package-manager commands require `package.json` evidence; Python commands require tests, project markers, or Python layout evidence; when no runner evidence exists, emit no command rather than a fake `npm test` or `uv run pytest`.
 - Implicit native resolution should ignore stale in-tree standalone binaries. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep searches on the Rust extension or Python path unless `TG_NATIVE_TG_BINARY` explicitly pins a standalone binary.
 - Raw unsorted output ordering is semantic parity. Use `--sort path` for deterministic path ordering and `--format rg` for exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are regression-covered rg parity edges.
-- Stable managed install scripts and `tg upgrade` must not trust stale package metadata immediately after publish and must not delete a working managed install before the replacement environment and front-door files have installed successfully. PowerShell native installer steps must check `$LASTEXITCODE` before the staged swap. `tg upgrade` must skip yanked PyPI releases and must not report "latest PyPI version" from unchanged local metadata without post-upgrade import/version verification. A PyPI-only publish is not enough when installers point at GitHub assets; release assets must be uploaded and verified first.
+- Stable managed install scripts and `tg upgrade` must not trust stale package metadata immediately after publish and must not delete a working managed install before the replacement environment and front-door files have installed successfully. PowerShell native installer steps must check `$LASTEXITCODE` before the staged swap. `tg upgrade` must skip yanked PyPI releases, must not report "latest PyPI version" from unchanged local metadata without post-upgrade import/version verification, and must refresh or schedule refresh of the managed native front door when the sidecar package version changes. A PyPI-only publish is not enough when installers point at GitHub assets; release assets must be uploaded and verified first.
 
 ## Release Completion Contract
 
@@ -160,7 +161,7 @@ For fast agent-readiness dogfood before push, run:
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 ```
 
-This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the current `v1.8.26` positioning. It does not replace the full validation gate.
+This gate checks public shell version resolution, repo doctor sanity, `context_consistency`, deterministic rg edge parity, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, current `v1.8.27` positioning, and the expected `v1.8.28` native-upgrade patch note. It does not replace the full validation gate.
 
 For hot-path or benchmark-relevant changes, run the matching benchmark before updating claims:
 

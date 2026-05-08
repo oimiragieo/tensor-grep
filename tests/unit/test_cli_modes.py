@@ -4214,6 +4214,206 @@ def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_lates
     assert "tensor-grep is already at the latest PyPI version (0.32.0)." in result.stdout
 
 
+def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkeypatch, tmp_path):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    downloads: list[str] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] == str(native_binary):
+            version = (
+                "0.33.0" if native_binary.read_text(encoding="utf-8") == "new native" else "0.32.0"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
+        if command[0].endswith(".tmp"):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        downloads.append(str(url))
+        Path(filename).write_text("new native", encoding="utf-8")
+        return filename, None
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.32.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert downloads == [
+        "https://github.com/oimiragieo/tensor-grep/releases/download/v0.33.0/"
+        "tg-windows-amd64-cpu.exe"
+    ]
+    assert native_binary.read_text(encoding="utf-8") == "new native"
+    assert "Successfully upgraded tensor-grep via uv!" in result.stdout
+    assert "Native tg front door refreshed to 0.33.0." in result.stdout
+
+
+def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
+    monkeypatch, tmp_path
+):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    downloads: list[str] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] == str(native_binary):
+            version = (
+                "0.33.0" if native_binary.read_text(encoding="utf-8") == "new native" else "0.32.0"
+            )
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"tg {version}\n", stderr="")
+        if command[0].endswith(".tmp"):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        downloads.append(str(url))
+        Path(filename).write_text("new native", encoding="utf-8")
+        return filename, None
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert downloads
+    assert native_binary.read_text(encoding="utf-8") == "new native"
+    assert "tensor-grep is already at the latest PyPI version (0.33.0)." in result.stdout
+    assert "Native tg front door refreshed to 0.33.0." in result.stdout
+
+
+def test_upgrade_schedules_native_frontdoor_refresh_when_windows_exe_is_locked(
+    monkeypatch, tmp_path
+):
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "Scripts" / "python.exe"
+    native_binary = install_dir / "bin" / "tg.exe"
+    python_executable.parent.mkdir(parents=True)
+    native_binary.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+    native_binary.write_text("old native", encoding="utf-8")
+    popen_calls: list[list[str]] = []
+
+    class _LockedExeError(PermissionError):
+        winerror = 32
+
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+        command = [str(part) for part in cmd]
+        if command[0] == "uv":
+            return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
+        if command[:2] == [str(python_executable), "-c"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="0.33.0\n", stderr="")
+        if command[0] == str(native_binary):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.32.0\n", stderr="")
+        if command[0].endswith(".tmp"):
+            return subprocess.CompletedProcess(cmd, 0, stdout="tg 0.33.0\n", stderr="")
+        raise AssertionError(f"unexpected command: {command}")
+
+    def _fake_urlretrieve(url, filename):
+        Path(filename).write_text("new native", encoding="utf-8")
+        return filename, None
+
+    def _fake_replace(src, dst):
+        if Path(dst) == native_binary:
+            raise _LockedExeError("The process cannot access the file")
+        os.replace(src, dst)
+
+    class _FakePopen:
+        def __init__(
+            self,
+            cmd,
+            stdout=None,
+            stderr=None,
+            stdin=None,
+            close_fds=None,
+            creationflags=0,
+        ):
+            popen_calls.append([str(part) for part in cmd])
+
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    monkeypatch.setattr("importlib.metadata.version", lambda _name: "0.33.0")
+    monkeypatch.setattr("subprocess.run", _fake_run)
+    monkeypatch.setattr("subprocess.Popen", _FakePopen)
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+    monkeypatch.setattr("tensor_grep.cli.main.os.replace", _fake_replace)
+    monkeypatch.setattr(
+        "tensor_grep.cli.main._latest_pypi_tensor_grep_version",
+        lambda: "0.33.0",
+        raising=False,
+    )
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["upgrade"])
+
+    assert result.exit_code == 0
+    assert native_binary.read_text(encoding="utf-8") == "old native"
+    assert popen_calls
+    assert "urlretrieve" in popen_calls[0][2]
+    assert "0.33.0" in popen_calls[0]
+    assert "Native tg front door refresh scheduled for 0.33.0." in result.stdout
+
+
+def test_managed_native_frontdoor_path_uses_unix_native_binary_when_env_is_absent(
+    monkeypatch, tmp_path
+):
+    from tensor_grep.cli import main as cli_main
+
+    install_dir = tmp_path / ".tensor-grep"
+    python_executable = install_dir / ".venv" / "bin" / "python"
+    python_executable.parent.mkdir(parents=True)
+    python_executable.write_text("", encoding="utf-8")
+
+    monkeypatch.delenv("TG_NATIVE_TG_BINARY", raising=False)
+    monkeypatch.delenv("TG_SIDECAR_PYTHON", raising=False)
+    monkeypatch.setattr("sys.executable", str(python_executable))
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    assert cli_main._managed_native_frontdoor_path_from_env() == install_dir / "bin" / "tg-native"
+
+
 def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
     calls: list[list[str]] = []
     pip_attempts = {"count": 0}

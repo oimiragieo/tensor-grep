@@ -313,6 +313,243 @@ def _verify_target_python_tensor_grep_version(python_executable: str) -> str:
     return version[-1].strip()
 
 
+def _native_frontdoor_asset_name() -> str | None:
+    import platform
+
+    machine = platform.machine().lower()
+    if machine not in {"amd64", "x86_64"}:
+        return None
+    if sys.platform.startswith("win"):
+        return "tg-windows-amd64-cpu.exe"
+    if sys.platform.startswith("linux"):
+        return "tg-linux-amd64-cpu"
+    if sys.platform.startswith("darwin"):
+        return "tg-macos-amd64-cpu"
+    return None
+
+
+def _native_frontdoor_download_url(version: str) -> str | None:
+    asset_name = _native_frontdoor_asset_name()
+    if asset_name is None:
+        return None
+    return f"https://github.com/oimiragieo/tensor-grep/releases/download/v{version}/{asset_name}"
+
+
+def _managed_native_frontdoor_path_from_env() -> Path | None:
+    native_env = os.environ.get("TG_NATIVE_TG_BINARY")
+    sidecar_env = os.environ.get("TG_SIDECAR_PYTHON") or sys.executable
+    if not sidecar_env:
+        return None
+
+    sidecar_python = Path(sidecar_env).expanduser()
+    if sidecar_python.parent.name.lower() not in {"scripts", "bin"}:
+        return None
+    venv_root = sidecar_python.parent.parent
+    if venv_root.name != ".venv":
+        return None
+    install_root = venv_root.parent
+    binary_name = "tg.exe" if sys.platform.startswith("win") else "tg-native"
+    native_path = (
+        Path(native_env).expanduser() if native_env else install_root / "bin" / binary_name
+    )
+    try:
+        native_parent = native_path.parent.resolve()
+        expected_parent = (install_root / "bin").resolve()
+    except OSError:
+        return None
+    if native_parent != expected_parent:
+        return None
+    return native_path
+
+
+def _download_native_frontdoor_asset(url: str, destination: Path) -> None:
+    import urllib.request
+
+    urllib.request.urlretrieve(url, destination)
+
+
+def _install_release_native_frontdoor(version: str, destination: Path) -> str:
+    url = _native_frontdoor_download_url(version)
+    if url is None:
+        raise RuntimeError("no release-native front-door asset is available for this platform")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
+    try:
+        _download_native_frontdoor_asset(url, temp_path)
+        if not sys.platform.startswith("win"):
+            temp_path.chmod(0o755)
+        temp_version = _native_tg_version(temp_path)
+        if not _native_tg_version_matches(version, temp_version):
+            raise RuntimeError(
+                "downloaded native tg front door reported "
+                f"{temp_version or 'no version'} instead of {version}"
+            )
+        os.replace(temp_path, destination)
+        installed_version = _native_tg_version(destination)
+        if not _native_tg_version_matches(version, installed_version):
+            raise RuntimeError(
+                "installed native tg front door reported "
+                f"{installed_version or 'no version'} instead of {version}"
+            )
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return url
+
+
+def _looks_like_windows_file_lock_error(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "winerror 32" in lowered
+        or "os error 32" in lowered
+        or "being used by another process" in lowered
+        or "access is denied" in lowered
+        or "permission denied" in lowered
+    )
+
+
+def _schedule_windows_native_frontdoor_refresh(native_path: Path, expected_version: str) -> Path:
+    import textwrap
+
+    url = _native_frontdoor_download_url(expected_version)
+    if url is None:
+        raise RuntimeError("no release-native front-door asset is available for this platform")
+
+    helper_code = textwrap.dedent(
+        """
+        import os
+        import subprocess
+        import sys
+        import time
+        import urllib.request
+        from pathlib import Path
+        from uuid import uuid4
+
+        parent_pid = int(sys.argv[1])
+        log_path = Path(sys.argv[2])
+        native_path = Path(sys.argv[3])
+        expected_version = sys.argv[4]
+        url = sys.argv[5]
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        for _ in range(300):
+            try:
+                subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        f"Get-Process -Id {parent_pid} -ErrorAction Stop | Out-Null",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                break
+            time.sleep(0.1)
+
+        def _version(path: Path) -> str:
+            result = subprocess.run([str(path), "--version"], capture_output=True, text=True)
+            if result.returncode != 0:
+                return ""
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if line:
+                    return line
+            return ""
+
+        errors: list[str] = []
+        for attempt in range(120):
+            temp_path = native_path.with_name(native_path.name + ".download-" + uuid4().hex)
+            try:
+                urllib.request.urlretrieve(url, temp_path)
+                temp_version = _version(temp_path)
+                if expected_version not in temp_version:
+                    raise RuntimeError(
+                        "downloaded native tg front door reported "
+                        + (temp_version or "no version")
+                    )
+                os.replace(temp_path, native_path)
+                installed_version = _version(native_path)
+                if expected_version not in installed_version:
+                    raise RuntimeError(
+                        "installed native tg front door reported "
+                        + (installed_version or "no version")
+                    )
+                log_path.write_text(
+                    "Native tg front-door refresh completed.\\n"
+                    + "Verified "
+                    + installed_version
+                    + ".\\n"
+                    + url,
+                    encoding="utf-8",
+                )
+                raise SystemExit(0)
+            except Exception as exc:
+                errors.append(str(exc))
+                try:
+                    temp_path.unlink()
+                except FileNotFoundError:
+                    pass
+                time.sleep(0.5)
+
+        log_path.write_text(
+            "Native tg front-door refresh failed.\\n" + "\\n".join(errors[-10:]),
+            encoding="utf-8",
+        )
+        raise SystemExit(1)
+        """
+    ).strip()
+
+    log_path = Path.home() / ".tensor-grep" / "logs" / f"native-upgrade-{uuid4().hex}.log"
+    creationflags = 0
+    for flag_name in ("DETACHED_PROCESS", "CREATE_NEW_PROCESS_GROUP", "CREATE_NO_WINDOW"):
+        creationflags |= int(getattr(subprocess, flag_name, 0))
+    subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            helper_code,
+            str(os.getpid()),
+            str(log_path),
+            str(native_path),
+            expected_version,
+            url,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=creationflags,
+    )
+    return log_path
+
+
+def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
+    native_path = _managed_native_frontdoor_path_from_env()
+    if native_path is None:
+        return None
+
+    current_version = _native_tg_version(native_path) if native_path.is_file() else None
+    if _native_tg_version_matches(expected_version, current_version):
+        return None
+
+    try:
+        _install_release_native_frontdoor(expected_version, native_path)
+    except OSError as exc:
+        if sys.platform.startswith("win") and (
+            getattr(exc, "winerror", None) == 32 or _looks_like_windows_file_lock_error(str(exc))
+        ):
+            log_path = _schedule_windows_native_frontdoor_refresh(native_path, expected_version)
+            return f"Native tg front door refresh scheduled for {expected_version}.\nUpgrade log: {log_path}"
+        raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
+    except RuntimeError as exc:
+        raise RuntimeError(f"native front-door refresh failed: {exc}") from exc
+
+    return f"Native tg front door refreshed to {expected_version}."
+
+
 def _version_detail_lines() -> tuple[str, ...]:
     return (
         "",
@@ -5594,6 +5831,7 @@ def upgrade() -> None:
                 "post-upgrade verification failed: expected tensor-grep "
                 f"{latest_version} from PyPI but target Python reports {current_version}"
             )
+        native_refresh_message = _refresh_managed_native_frontdoor(current_version)
         output = "\n".join(
             part for part in ((result.stdout or "").strip(), (result.stderr or "").strip()) if part
         )
@@ -5622,6 +5860,8 @@ def upgrade() -> None:
             typer.echo(f"Successfully upgraded tensor-grep via {method}!")
             if output:
                 typer.echo(output)
+        if native_refresh_message:
+            typer.echo(native_refresh_message)
 
     except RuntimeError as e:
         if _looks_like_windows_self_update_lock(str(e)):
