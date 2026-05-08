@@ -16,10 +16,11 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 ## Current Handoff
 
-As of 2026-05-08, the current released state is `v1.8.25`, but the active follow-up branch is fixing the GitHub release asset publication contract before the release-native installer path can be trusted.
+As of 2026-05-08, the current released state is `v1.8.26`. The GitHub release asset publication gap is closed, but the active follow-up branch is hardening stable installers and `tg upgrade` against stale package metadata, missing post-upgrade imports, and failed in-place replacement.
 
-- Release commit: `29fab52 chore(release): v1.8.25 [skip ci]`
+- Release commit: `ce2c1a5 chore(release): v1.8.26 [skip ci]`
 - Recent fix commits:
+  - `6f82d14 fix: publish GitHub release native assets from main CI`
   - `7b38bbb perf: use native front door for managed installs`
   - `ef0c114 fix: harden v1.8.23 dogfood regressions`
   - `19e515d fix: add generated-root scan guardrails`
@@ -34,15 +35,15 @@ As of 2026-05-08, the current released state is `v1.8.25`, but the active follow
   - `f98a6e4 fix: correct Windows installer pinned extras`
   - `1a06cba fix: remove stale Windows tg launchers`
   - `379b22f fix: harden tg resolution and rg path parity`
-- Main CI run `25533577553`: passed through semantic-release, PyPI wheel/sdist validation, `publish-pypi`, and `publish-success-gate`
-- Main CodeQL run `25533576978`: passed
-- Release-commit CodeQL run `25533967134`: passed
-- PyPI latest and pinned install: `tensor-grep==1.8.25` resolves from PyPI
-- Public version dogfood: `python scripts/agent_readiness.py --output artifacts/agent_readiness.json` passed PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL public version probes resolving `tensor-grep 1.8.25`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.25>
-- Important release gap: the `v1.8.25` GitHub release exists but has no uploaded release assets because the tag-only `release.yml` workflow did not run from the semantic-release `GITHUB_TOKEN` tag. This branch moves installer-critical native asset upload/verification into main CI after semantic-release and before PyPI publish.
+- Main CI run `25535886184`: passed through semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
+- Main CodeQL run `25535886001`: passed
+- PyPI latest and pinned install: `tensor-grep==1.8.26` resolves from PyPI
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.26>
+- GitHub release asset verification: `python scripts/verify_github_release_assets.py --repo oimiragieo/tensor-grep --tag v1.8.26 --expected-profile native-frontdoor --wait-seconds 120 --poll-interval-seconds 5` passed
+- Public installer dogfood: local patched Windows installer pinned to `1.8.26` resolved `tg 1.8.26` from PowerShell, `cmd`, and `pwsh -NoProfile`, installed `tg-windows-amd64-cpu.exe`, and cleaned the staging directory
+- Active follow-up: fix stable installers and `tg upgrade` so they refresh stale package metadata, request the exact current PyPI version when known, verify the target Python can still import `tensor_grep`, and stage the new managed environment before replacing `~/.tensor-grep`
 - Session handoff: `docs/SESSION_HANDOFF.md`
-- Active post-`v1.8.25` branch work is tracked in `docs/SESSION_HANDOFF.md`: publish release-native CPU front-door assets from main CI, keep PyPI gated behind GitHub release asset verification, and preserve the managed installer fallback when assets are absent.
+- Active post-`v1.8.26` branch work is tracked in `docs/SESSION_HANDOFF.md`: keep release-native assets verified, preserve the managed installer fallback when assets are absent, and prevent transient package-index or upgrade verification failures from breaking existing public shims.
 
 The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, replacement output, and PCRE2 output, multiline rg parity forwarding, exact-symbol context ranking over camel/snake bridge heuristics, session stale-file filtering and no-runner validation consistency, embedded checkpoint fallback for MCP rewrite apply when standalone native `tg` is unavailable, inline scan rule severity/message preservation, uppercase `API_KEY` secret scanning, and explicit broad generated-root scan refusal unless callers bound the search or opt in.
 
@@ -60,7 +61,7 @@ Known current weak spots:
 - Normal PowerShell should invoke `tg` or `tg.ps1`. Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; quote the argument for `cmd.exe` or use the PowerShell shim.
 - Implicit native-binary resolution must ignore stale in-tree binaries such as `rust_core/target/debug/tg.exe` and `rust_core/target/release/tg.exe`. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
 - Raw unsorted output ordering is semantic parity, not golden stdout parity. Use `--sort path` when deterministic path ordering matters and `--format rg` when automation needs exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are rg parity regression surfaces in the validated compatibility set.
-- Stable managed install scripts are part of the public launcher contract. When release-native assets exist, the public front door should launch the matching native `tg` binary first and set `TG_SIDECAR_PYTHON` / `TG_NATIVE_TG_BINARY`; Python remains the sidecar or fallback, not the normal exact-text first hop. A release that updates installer URLs is incomplete until GitHub release assets are uploaded and verified, not merely PyPI-published.
+- Stable managed install scripts and `tg upgrade` are part of the public launcher contract. When release-native assets exist, the public front door should launch the matching native `tg` binary first and set `TG_SIDECAR_PYTHON` / `TG_NATIVE_TG_BINARY`; Python remains the sidecar or fallback, not the normal exact-text first hop. A release that updates installer URLs is incomplete until GitHub release assets are uploaded and verified, not merely PyPI-published. Stable installers should clear stale package metadata before resolving `tensor-grep`, check native installer command exit codes before committing the staged install, and stage the new managed environment plus front-door files before replacing an existing install. `tg upgrade` should skip yanked PyPI releases, never report "latest PyPI version" from unchanged local metadata without verifying the target Python can import `tensor_grep`, and require the scheduled Windows self-upgrade helper to verify the expected version too.
 - Token-efficiency work must be opt-in and contract-aware. Lessons from `rtk` point toward a bounded agent output profile with hard caps, grouped excerpts, truncation, and omission counts; do not change raw `--format rg`, `--json`, or `--ndjson` semantics to save tokens.
 
 ## Operating Rules

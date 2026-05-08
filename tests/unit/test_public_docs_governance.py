@@ -54,9 +54,17 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "Future token-efficiency profiles must be opt-in" in contracts
     assert "omission counts" in contracts
     assert "refetch commands" in contracts
+    assert '`tg upgrade` must not infer "latest PyPI version"' in contracts
+    assert (
+        "post-upgrade imports" in contracts or "target Python can import `tensor_grep`" in contracts
+    )
+    assert "front-door files in a staging directory" in contracts
+    assert "PowerShell installer native commands must check `$LASTEXITCODE`" in contracts
+    assert "scheduled Windows self-upgrade helper" in contracts
+    assert "skip yanked PyPI releases" in contracts
 
 
-def test_handoff_docs_should_record_current_v1825_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v1826_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -66,7 +74,7 @@ def test_handoff_docs_should_record_current_v1825_release_state_and_fast_gate() 
     }
 
     for content in docs.values():
-        assert "v1.8.25" in content
+        assert "v1.8.26" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -75,16 +83,23 @@ def test_handoff_docs_should_record_current_v1825_release_state_and_fast_gate() 
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "29fab52 chore(release): v1.8.25 [skip ci]" in content
-        assert "7b38bbb perf: use native front door for managed installs" in content
+        assert "ce2c1a5 chore(release): v1.8.26 [skip ci]" in content
+        assert "6f82d14 fix: publish GitHub release native assets from main CI" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25533577553" in handoff
-    assert "25533576978" in handoff
-    assert "25533967134" in handoff
-    assert "tensor-grep==1.8.25" in handoff
-    assert "GitHub release has no uploaded release assets" in handoff
+    assert "25535886184" in handoff
+    assert "25535886001" in handoff
+    assert "tensor-grep==1.8.26" in handoff
+    assert "Closed release gap" in handoff
     assert "publish-github-release-assets" in handoff
+    assert "stale `uv` cache failure" in handoff
+    assert "failed staged installs keep the previous managed directory" in handoff
+    assert "native commands check `$LASTEXITCODE`" in handoff
+    assert (
+        "scheduled Windows self-upgrade helper runs the same expected-version verification"
+        in handoff
+    )
+    assert "skips yanked releases" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
     assert "rust_binary_version_status = stale-skipped" in handoff
@@ -101,11 +116,15 @@ def test_handoff_docs_should_record_current_v1825_release_state_and_fast_gate() 
 
     readme = docs["README.md"]
     assert "## Current Release State" in readme
-    assert "7b38bbb perf: use native front door for managed installs" in readme
-    assert "29fab52 chore(release): v1.8.25 [skip ci]" in readme
-    assert "25533577553" in readme
-    assert "25533576978" in readme
-    assert "GitHub release asset verification is the active follow-up" in readme
+    assert "6f82d14 fix: publish GitHub release native assets from main CI" in readme
+    assert "ce2c1a5 chore(release): v1.8.26 [skip ci]" in readme
+    assert "25535886184" in readme
+    assert "25535886001" in readme
+    assert "GitHub release asset verifier passed" in readme
+    assert "stale `uv` Simple API metadata" in readme
+    assert "checks native installer exit codes" in readme
+    assert "scheduled Windows self-upgrade path" in readme
+    assert "exact current non-yanked PyPI version" in readme
     assert "not a full ast-grep replacement" in readme
     assert "GPU and `classify` remain opt-in/experimental" in readme
     assert "Directly invoking `tg.cmd`" in readme

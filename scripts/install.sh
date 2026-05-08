@@ -7,11 +7,45 @@ INSTALL_CHANNEL="${TENSOR_GREP_CHANNEL:-stable}"
 REQUESTED_VERSION="${TENSOR_GREP_VERSION:-}"
 
 restore_original_dir() {
+    if [ -n "${STAGING_INSTALL_DIR:-}" ] && [ -d "$STAGING_INSTALL_DIR" ]; then
+        rm -rf "$STAGING_INSTALL_DIR"
+    fi
     cd "$ORIGINAL_DIR" || return
     echo "Returned to original directory: $ORIGINAL_DIR"
 }
 
 trap restore_original_dir EXIT
+
+clear_tensor_grep_uv_cache() {
+    if [ "$INSTALL_CHANNEL" != "stable" ]; then
+        return
+    fi
+    echo "      Clearing cached tensor-grep package metadata for stable install..."
+    if ! uv cache clean tensor-grep; then
+        echo "      Unable to clear cached tensor-grep package metadata; continuing with fresh install attempt." >&2
+    fi
+}
+
+restore_previous_install() {
+    if [ ! -d "$BACKUP_INSTALL_DIR" ]; then
+        return
+    fi
+    rm -rf "$INSTALL_DIR"
+    mv "$BACKUP_INSTALL_DIR" "$INSTALL_DIR"
+}
+
+commit_staged_install() {
+    rm -rf "$BACKUP_INSTALL_DIR"
+    if [ -d "$INSTALL_DIR" ]; then
+        mv "$INSTALL_DIR" "$BACKUP_INSTALL_DIR"
+    fi
+    if mv "$STAGING_INSTALL_DIR" "$INSTALL_DIR"; then
+        rm -rf "$BACKUP_INSTALL_DIR"
+    else
+        restore_previous_install
+        return 1
+    fi
+}
 
 echo "=========================================================="
 echo "           TENSOR-GREP LINUX/MACOS INSTALLER              "
@@ -45,11 +79,14 @@ fi
 
 # 3. Create Isolated Environment
 INSTALL_DIR="$HOME/.tensor-grep"
-rm -rf "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR"
+STAGING_INSTALL_DIR="$INSTALL_DIR.installing"
+BACKUP_INSTALL_DIR="$INSTALL_DIR.previous"
+rm -rf "$STAGING_INSTALL_DIR"
+mkdir -p "$STAGING_INSTALL_DIR"
 
 echo "[3/4] Building isolated Python 3.12 environment..."
-cd "$INSTALL_DIR"
+clear_tensor_grep_uv_cache
+cd "$STAGING_INSTALL_DIR"
 uv venv --python 3.12 .venv
 
 # 4. Install PyTorch bindings and the tool
@@ -96,10 +133,13 @@ fi
 # Ensure AST runtime grammars are present explicitly across environments.
 uv pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .venv/bin/python
 
-# 5. Install front-door wrapper and PATH shims for profile-independent command resolution.
-mkdir -p "$INSTALL_DIR/bin"
-INSTALLED_VERSION="$("$INSTALL_DIR/.venv/bin/python" -c 'import importlib.metadata; print(importlib.metadata.version("tensor-grep"))')"
+# 5. Prepare the front-door wrapper inside the staged install before replacing
+# the existing managed directory. A failed native download or interrupted shim
+# write must not leave public shims pointing at a half-built install.
+mkdir -p "$STAGING_INSTALL_DIR/bin"
+INSTALLED_VERSION="$("$STAGING_INSTALL_DIR/.venv/bin/python" -c 'import importlib.metadata; print(importlib.metadata.version("tensor-grep"))')"
 NATIVE_BINARY="$INSTALL_DIR/bin/tg-native"
+STAGING_NATIVE_BINARY="$STAGING_INSTALL_DIR/bin/tg-native"
 if [ "$INSTALL_CHANNEL" != "main" ]; then
     NATIVE_ASSET=""
     case "$(uname -s):$(uname -m)" in
@@ -116,24 +156,24 @@ if [ "$INSTALL_CHANNEL" != "main" ]; then
     if [ -n "$NATIVE_ASSET" ]; then
         NATIVE_URL="https://github.com/oimiragieo/tensor-grep/releases/download/v${INSTALLED_VERSION}/${NATIVE_ASSET}"
         echo "      Downloading native tg front door: $NATIVE_ASSET"
-        if curl -fL "$NATIVE_URL" -o "$NATIVE_BINARY.tmp"; then
-            mv "$NATIVE_BINARY.tmp" "$NATIVE_BINARY"
-            chmod +x "$NATIVE_BINARY"
-            if "$NATIVE_BINARY" --version; then
+        if curl -fL "$NATIVE_URL" -o "$STAGING_NATIVE_BINARY.tmp"; then
+            mv "$STAGING_NATIVE_BINARY.tmp" "$STAGING_NATIVE_BINARY"
+            chmod +x "$STAGING_NATIVE_BINARY"
+            if "$STAGING_NATIVE_BINARY" --version; then
                 echo "      Native tg front door installed: $NATIVE_BINARY"
             else
                 echo "      Native tg front-door smoke test failed; using Python fallback." >&2
-                rm -f "$NATIVE_BINARY"
+                rm -f "$STAGING_NATIVE_BINARY"
             fi
         else
-            rm -f "$NATIVE_BINARY.tmp"
+            rm -f "$STAGING_NATIVE_BINARY.tmp"
             echo "      Native tg front-door download failed; using Python fallback: $NATIVE_URL" >&2
         fi
     fi
 else
     echo "      Main-channel install: using Python front door until release-native assets exist."
 fi
-cat > "$INSTALL_DIR/bin/tg" << EOF
+cat > "$STAGING_INSTALL_DIR/bin/tg" << EOF
 #!/usr/bin/env bash
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
@@ -145,7 +185,11 @@ if [ -x "\$NATIVE_BINARY" ]; then
 fi
 exec "$INSTALL_DIR/.venv/bin/python" -m tensor_grep "\$@"
 EOF
-chmod +x "$INSTALL_DIR/bin/tg"
+chmod +x "$STAGING_INSTALL_DIR/bin/tg"
+
+cd "$HOME"
+commit_staged_install
+cd "$INSTALL_DIR"
 
 echo "      Installing managed external LSP providers..."
 if "$INSTALL_DIR/bin/tg" lsp-setup --json > /dev/null; then

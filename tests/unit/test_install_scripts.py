@@ -30,6 +30,7 @@ def test_install_ps1_should_target_native_frontdoor_instead_of_venv_console_scri
         for marker in (
             'New-Item -ItemType Directory -Path "$installDir\\bin"',
             'New-Item -ItemType Directory -Path (Join-Path $installDir "bin")',
+            "New-Item -ItemType Directory -Path $stagingFrontdoorDir -Force",
             'Set-Alias -Name tg -Value "$installDir\\bin\\tg.exe" -Scope Global',
         )
     )
@@ -48,6 +49,36 @@ def test_install_ps1_should_download_release_native_frontdoor_and_configure_side
     assert "$env:TG_NATIVE_TG_BINARY" in content
     assert "set TG_SIDECAR_PYTHON=" in content
     assert "set TG_NATIVE_TG_BINARY=" in content
+    assert "Remove-Item -LiteralPath $nativeFrontdoorPath -Force" in content
+
+
+def test_install_ps1_should_fail_fast_when_native_install_steps_fail():
+    content = _read_script("scripts/install.ps1")
+
+    assert "function Invoke-CheckedNativeCommand" in content
+    assert "if ($LASTEXITCODE -ne 0)" in content
+    assert 'Invoke-CheckedNativeCommand -Description "Create managed Python environment"' in content
+    assert 'Invoke-CheckedNativeCommand -Description "Install tensor-grep package"' in content
+    assert 'Invoke-CheckedNativeCommand -Description "Install AST runtime grammars"' in content
+    assert content.index(
+        'Invoke-CheckedNativeCommand -Description "Install AST runtime grammars"'
+    ) < content.index("Commit-StagedManagedInstall `")
+
+
+def test_install_ps1_should_write_frontdoor_inside_staging_before_swap():
+    content = _read_script("scripts/install.ps1")
+
+    assert '$stagingFrontdoorDir = Join-Path $stagingInstallDir "bin"' in content
+    assert "$stagingFrontdoorCmdPath" in content
+    assert "$stagingFrontdoorPs1Path" in content
+    assert "$stagingFrontdoorBashPath" in content
+    assert "Write-AsciiFile -Path $stagingFrontdoorCmdPath" in content
+    assert "Write-AsciiFile -Path $stagingFrontdoorPs1Path" in content
+    assert "Write-BashFile -Path $stagingFrontdoorBashPath" in content
+    staged_frontdoor_write_index = content.index("Write-BashFile -Path $stagingFrontdoorBashPath")
+    assert staged_frontdoor_write_index < content.index(
+        "Commit-StagedManagedInstall `", staged_frontdoor_write_index
+    )
 
 
 def test_install_ps1_should_refresh_managed_lsp_providers_via_frontdoor():
@@ -180,7 +211,7 @@ def test_install_ps1_should_write_bash_shims_without_windows_newline_append():
     assert '$lfValue = ($Value -replace "`r`n", "`n") -replace "`r", "`n"' in content
     assert "Set-Content -Path $frontdoorBashPath" not in content
     assert "Set-Content -Path $bashShimPath" not in content
-    assert "Write-BashFile -Path $frontdoorBashPath -Value $frontdoorBashContent" in content
+    assert "Write-BashFile -Path $stagingFrontdoorBashPath -Value $frontdoorBashContent" in content
     assert "Write-BashFile -Path $bashShimPath -Value $bashShimContent" in content
 
 
@@ -193,6 +224,34 @@ def test_install_ps1_should_place_extras_before_pinned_version_specifier():
     assert '"$pkgSpec[ast,nlp]"' not in content
 
 
+def test_install_ps1_should_refresh_tensor_grep_uv_cache_before_stable_install():
+    content = _read_script("scripts/install.ps1")
+
+    assert "Clearing cached tensor-grep package metadata" in content
+    assert "& $uvPath cache clean tensor-grep" in content
+    assert content.index("& $uvPath cache clean tensor-grep") < content.index(
+        "& $uvPath pip install $pkgRequirement"
+    )
+
+
+def test_install_ps1_should_stage_install_before_replacing_existing_managed_dir():
+    content = _read_script("scripts/install.ps1")
+
+    assert '$stagingInstallDir = "$installDir.installing"' in content
+    assert '$backupInstallDir = "$installDir.previous"' in content
+    assert "Set-Location $stagingInstallDir" in content
+    assert "Set-Location -Path $env:USERPROFILE" in content
+    assert "Move-Item -LiteralPath $installDir -Destination $backupInstallDir" in content
+    assert "Move-Item -LiteralPath $stagingInstallDir -Destination $installDir" in content
+    assert "Restore-PreviousManagedInstall" in content
+    assert "Write-AsciiFile -Path $stagingFrontdoorCmdPath" in content
+    staged_frontdoor_write_index = content.index("Write-AsciiFile -Path $stagingFrontdoorCmdPath")
+    assert staged_frontdoor_write_index < content.index(
+        "Commit-StagedManagedInstall `", staged_frontdoor_write_index
+    )
+    assert "Remove-Item -Recurse -Force $installDir" not in content
+
+
 def test_install_sh_should_target_native_frontdoor_instead_of_venv_console_script():
     content = _read_script("scripts/install.sh")
 
@@ -200,7 +259,9 @@ def test_install_sh_should_target_native_frontdoor_instead_of_venv_console_scrip
         marker in content
         for marker in (
             'mkdir -p "$INSTALL_DIR/bin"',
+            'mkdir -p "$STAGING_INSTALL_DIR/bin"',
             'cat > "$INSTALL_DIR/bin/tg" << EOF',
+            'cat > "$STAGING_INSTALL_DIR/bin/tg" << EOF',
             "ALIAS_CMD=\"alias tg='$INSTALL_DIR/bin/tg'\"",
         )
     )
@@ -220,6 +281,47 @@ def test_install_sh_should_download_release_native_frontdoor_and_configure_sidec
     assert 'export TG_SIDECAR_PYTHON="$INSTALL_DIR/.venv/bin/python"' in content
     assert 'export TG_NATIVE_TG_BINARY="\\$NATIVE_BINARY"' in content
     assert 'exec "\\$NATIVE_BINARY" "\\$@"' in content
+
+
+def test_install_sh_should_write_frontdoor_inside_staging_before_swap():
+    content = _read_script("scripts/install.sh")
+
+    assert 'mkdir -p "$STAGING_INSTALL_DIR/bin"' in content
+    assert 'STAGING_NATIVE_BINARY="$STAGING_INSTALL_DIR/bin/tg-native"' in content
+    assert 'curl -fL "$NATIVE_URL" -o "$STAGING_NATIVE_BINARY.tmp"' in content
+    assert 'cat > "$STAGING_INSTALL_DIR/bin/tg" << EOF' in content
+    assert 'chmod +x "$STAGING_INSTALL_DIR/bin/tg"' in content
+    assert content.index('chmod +x "$STAGING_INSTALL_DIR/bin/tg"') < content.rindex(
+        "\ncommit_staged_install"
+    )
+
+
+def test_install_sh_should_refresh_tensor_grep_uv_cache_before_stable_install():
+    content = _read_script("scripts/install.sh")
+
+    assert "Clearing cached tensor-grep package metadata" in content
+    assert "uv cache clean tensor-grep" in content
+    assert content.index("uv cache clean tensor-grep") < content.index(
+        'uv pip install "$PKG_REQUIREMENT"'
+    )
+
+
+def test_install_sh_should_stage_install_before_replacing_existing_managed_dir():
+    content = _read_script("scripts/install.sh")
+
+    assert 'STAGING_INSTALL_DIR="$INSTALL_DIR.installing"' in content
+    assert 'BACKUP_INSTALL_DIR="$INSTALL_DIR.previous"' in content
+    assert 'cd "$STAGING_INSTALL_DIR"' in content
+    assert 'cd "$HOME"' in content
+    assert 'mv "$INSTALL_DIR" "$BACKUP_INSTALL_DIR"' in content
+    assert 'mv "$STAGING_INSTALL_DIR" "$INSTALL_DIR"' in content
+    assert "restore_previous_install" in content
+    assert 'cat > "$STAGING_INSTALL_DIR/bin/tg"' in content
+    staged_frontdoor_write_index = content.index('cat > "$STAGING_INSTALL_DIR/bin/tg"')
+    assert staged_frontdoor_write_index < content.index(
+        "commit_staged_install", staged_frontdoor_write_index
+    )
+    assert 'rm -rf "$INSTALL_DIR"\nmkdir -p "$INSTALL_DIR"' not in content
 
 
 def test_install_sh_should_refresh_managed_lsp_providers_via_frontdoor():

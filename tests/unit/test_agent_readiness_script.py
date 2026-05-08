@@ -105,6 +105,13 @@ def test_agent_readiness_should_accept_current_doctor_backend_name() -> None:
     module.validate_doctor_payload(json.dumps(payload), Path("C:/repo"), "1.8.22")
 
 
+def test_agent_readiness_should_accept_native_and_python_version_prefixes() -> None:
+    module = _load_script_module()
+
+    module.validate_version_output("tensor-grep 1.8.26\n", Path("C:/repo"), "1.8.26")
+    module.validate_version_output("tg 1.8.26\n", Path("C:/repo"), "1.8.26")
+
+
 def test_agent_readiness_should_reject_signature_only_context_payload() -> None:
     module = _load_script_module()
     payload = {

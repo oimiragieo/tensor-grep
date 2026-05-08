@@ -56,11 +56,11 @@ def _norm_path(value: object) -> str:
 
 
 def validate_version_output(stdout: str, _repo_root: Path, expected_version: str) -> None:
-    expected_line = f"tensor-grep {expected_version}"
+    expected_lines = {f"tensor-grep {expected_version}", f"tg {expected_version}"}
     lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-    if expected_line not in lines:
+    if not expected_lines.intersection(lines):
         raise ReadinessError(
-            f"expected `{expected_line}` in version output, got {lines or ['<empty>']}"
+            f"expected one of {sorted(expected_lines)!r} in version output, got {lines or ['<empty>']}"
         )
 
 
