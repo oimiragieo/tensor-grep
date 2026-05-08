@@ -30,6 +30,8 @@ Current product read:
 - Raw unsorted root output is semantic parity. Use `--sort path --format rg` for automation that needs deterministic ripgrep-style stdout.
 - Release-native install/update hardening: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Installer/update hardening now covers stale package metadata, post-upgrade imports, native installer exit codes, staged replacement, sidecar/native version alignment after `tg upgrade`, and public native CLI parity for advertised search/run/classify flags; do not change benchmark docs from installer work.
 - Token-output follow-up from `rtk-ai/rtk`: add a future opt-in agent-bounded output profile with grouped excerpts, hard caps, truncation, and omission counts. Do not mutate raw `--format rg`, `--json`, or `--ndjson` to save tokens.
+- The next standout product surface should be `tg agent` / Actionable Context Capsule, not another raw grep wrapper. The target output is a deterministic work packet with primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when the evidence is weak.
+- Search-intent routing should be explicit about evidence type. Future capsules should label each conclusion as `parser-backed`, `rg-backed`, `graph-derived`, `heuristic`, `LSP-confirmed`, or `stale/uncertain` so agents know what is proven and what is inferred.
 
 Current next work:
 
@@ -37,8 +39,19 @@ Current next work:
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
 4. Track AST parity roadmap, GPU readiness, and classify provider/cache UX as blockers for a future "100% ready" claim.
-5. Build the opt-in agent-bounded output profile only with explicit contracts and regression tests.
+5. Build the opt-in agent-bounded output profile only with explicit contracts and regression tests, starting from the Actionable Context Capsule shape above.
 6. Continue dogfooding and preserve exact failing commands as product evidence.
+
+Agent product-surface backlog:
+
+1. Search Intent Router: choose text, AST, symbols, imports, tests, docs, or blended routes from a natural task, then explain the chosen route and evidence type.
+2. Patch Planning Without Editing: produce files, functions, likely tests, risk, and edit order without touching the worktree.
+3. Safe Rewrite Loop: combine structural rewrite, plan, checkpoint, verification, and audit manifest before apply.
+4. Test Selection Engine: rank the smallest useful validation set for a target file, symbol, or patch, with detected evidence over guesses.
+5. Failure-Aware CI Triage: map logs back to files/functions/tests and produce fix candidates with provenance.
+6. Repo Memory: persist useful repo maps, symbol/test associations, generated roots, recent failures, and stale-state markers across repeated agent loops.
+7. Truthful confidence labels: surface parser-backed, rg-backed, graph-derived, heuristic, LSP-confirmed, and stale/uncertain evidence on every capsule claim.
+8. Agent Token Economy Mode: provide grouped excerpts, hard budgets, omissions, and next-read suggestions through an opt-in agent command such as `tg search-agent`, not through raw search output mutation.
 
 ## Status
 

@@ -66,7 +66,9 @@ What `v1.8.29` closed:
 
 Active post-`v1.8.29` follow-up:
 
-- build the agent context capsule/token-economy profile as an opt-in agent workflow with hard budgets, line maps, omission counts, validation evidence, checkpoint/rollback metadata, and confidence
+- design `tg agent` / Actionable Context Capsule as an opt-in agent workflow, not a replacement for raw search output
+- the capsule target is a deterministic work packet: primary file/function, route rationale, bounded snippets with line maps, related call sites, validation evidence, risk, suggested edit order, checkpoint/rollback metadata, omission counts, confidence, and an "ask user before editing" recommendation when warranted
+- keep token economy explicit with hard budgets, grouped excerpts, truncation metadata, omitted section counts, and follow-up read commands so agents can recover detail without polluting the first response
 - keep AST feature parity, GPU correctness/speed, classify provider/cache UX, and context/session performance tracked as blockers for a future "world-class one-tool" claim
 - this release is contract correctness for the native front door; benchmark docs should not claim a new performance win until the relevant benchmark artifacts are accepted
 

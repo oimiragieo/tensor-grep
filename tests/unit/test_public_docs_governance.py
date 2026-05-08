@@ -550,6 +550,38 @@ def test_agent_docs_should_lock_agent_context_and_validation_contracts() -> None
         assert "no runner evidence exists" in doc
 
 
+def test_agent_docs_should_lock_agent_context_capsule_roadmap() -> None:
+    agents = AGENTS_DOC_PATH.read_text(encoding="utf-8")
+    readme = README_PATH.read_text(encoding="utf-8")
+    skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
+    contracts = CONTRACTS_DOC_PATH.read_text(encoding="utf-8")
+    handoff = SESSION_HANDOFF_PATH.read_text(encoding="utf-8")
+    continuation = CONTINUATION_PLAN_PATH.read_text(encoding="utf-8")
+
+    for doc in (agents, readme, skill, contracts, handoff, continuation):
+        assert "Actionable Context Capsule" in doc
+        assert "route rationale" in doc
+        assert "line maps" in doc
+        assert "checkpoint" in doc
+        assert "omission counts" in doc
+        assert "confidence" in doc
+
+    for doc in (agents, skill, contracts, continuation):
+        assert "parser-backed" in doc
+        assert "rg-backed" in doc
+        assert "graph-derived" in doc
+        assert "heuristic" in doc
+        assert "stale/uncertain" in doc
+
+    assert "Search Intent Router" in continuation
+    assert "Patch Planning Without Editing" in continuation
+    assert "Safe Rewrite Loop" in continuation
+    assert "Test Selection Engine" in continuation
+    assert "Failure-Aware CI Triage" in continuation
+    assert "Repo Memory" in continuation
+    assert "Agent Token Economy Mode" in continuation
+
+
 def test_ast_info_public_docs_should_describe_json_languages_payload() -> None:
     readme = README_PATH.read_text(encoding="utf-8")
     skill = SKILL_DOC_PATH.read_text(encoding="utf-8")
