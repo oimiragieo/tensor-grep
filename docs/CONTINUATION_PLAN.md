@@ -27,14 +27,17 @@ Current product read:
 - Windows/WSL installer shims are materially cleaner. Direct `.cmd` invocation from PowerShell still cannot receive an unescaped `|` because `cmd.exe` parses it before the batch file receives argv; use normal PowerShell `tg` / `tg.ps1` for regex metacharacters.
 - Dev-path native safety should ignore stale in-tree standalone binaries unless `TG_NATIVE_TG_BINARY` pins one explicitly; `uv run tg doctor --json` should report skipped stale candidates instead of letting searches validate through old native code.
 - Raw unsorted root output is semantic parity. Use `--sort path --format rg` for automation that needs deterministic ripgrep-style stdout.
+- Active launcher follow-up: stable script installs should prefer the matching release-native CPU front door and use the isolated Python environment as sidecar/fallback. Do not change benchmark docs until the current branch has accepted benchmark artifacts.
+- Token-output follow-up from `rtk-ai/rtk`: add a future opt-in agent-bounded output profile with grouped excerpts, hard caps, truncation, and omission counts. Do not mutate raw `--format rg`, `--json`, or `--ndjson` to save tokens.
 
 Current next work:
 
 1. Keep the fast agent-readiness gate (`python scripts/agent_readiness.py --output artifacts/agent_readiness.json`) covering context-render trust, `context_consistency`, sorted rg edge parity, broad generated-root scan guardrails, AST smoke, MCP smoke, shell version probes, and docs claim checks.
 2. Add progress or partial output for explicitly opted-in broad generated-root scans.
 3. Calibrate or de-emphasize `impact --symbol` so agents prefer `blast-radius` for direct symbol impact.
-4. Track public shim performance, AST parity roadmap, GPU readiness, and classify provider/cache UX as blockers for a future "100% ready" claim.
-5. Continue dogfooding and preserve exact failing commands as product evidence.
+4. Track AST parity roadmap, GPU readiness, and classify provider/cache UX as blockers for a future "100% ready" claim.
+5. Build the opt-in agent-bounded output profile only with explicit contracts and regression tests.
+6. Continue dogfooding and preserve exact failing commands as product evidence.
 
 ## Status
 

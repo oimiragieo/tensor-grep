@@ -189,6 +189,18 @@ pub struct SearchArgs {
     #[arg(short = 'r', long)]
     pub replace: Option<String>,
 
+    /// Output format. `rg` is handled by the native front door; other formats stay on Python.
+    #[arg(long = "format")]
+    pub format: Option<String>,
+
+    /// Sort results by field (for rg-compatible passthrough output)
+    #[arg(long)]
+    pub sort: Option<String>,
+
+    /// Sort results in reverse by field (for rg-compatible passthrough output)
+    #[arg(long = "sortr")]
+    pub sort_reverse: Option<String>,
+
     /// Show NUM context lines before and after each match
     #[arg(short = 'C', long)]
     pub context: Option<usize>,
@@ -735,6 +747,17 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if let Some(search_args) = search_format_python_passthrough_args(&raw_args) {
+        let exit_code = match execute_python_passthrough_command("search", search_args) {
+            Ok(exit_code) => exit_code,
+            Err(err) => return exit_with_sidecar_error(err),
+        };
+        if exit_code != 0 {
+            std::process::exit(exit_code.max(1));
+        }
+        return Ok(());
+    }
+
     if let Some(exit_code) = try_early_positional_ripgrep_passthrough(&raw_args)? {
         if exit_code != 0 {
             std::process::exit(exit_code.max(1));
@@ -879,6 +902,34 @@ fn try_early_positional_ripgrep_passthrough(raw_args: &[OsString]) -> anyhow::Re
     Ok(Some(exit_code))
 }
 
+fn search_format_python_passthrough_args(raw_args: &[OsString]) -> Option<Vec<String>> {
+    if raw_args.get(1).and_then(|arg| arg.to_str()) != Some("search") {
+        return None;
+    }
+
+    let args = raw_args
+        .iter()
+        .skip(2)
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let mut index = 0usize;
+    while index < args.len() {
+        let token = &args[index];
+        if token == "--format" {
+            index += 1;
+            if args.get(index).map(String::as_str) != Some("rg") {
+                return Some(args);
+            }
+        } else if let Some((_, value)) = token.split_once('=') {
+            if token.starts_with("--format=") && value != "rg" {
+                return Some(args);
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
 fn should_use_early_ripgrep_fast_path(args: &RipgrepSearchArgs) -> bool {
     args.globs.is_empty() && !args.word_regexp && !args.fixed_strings
 }
@@ -909,6 +960,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
         file_types: Vec::new(),
         color: None,
         replace: None,
+        sort: None,
+        sort_reverse: None,
         patterns: Vec::new(),
         paths: Vec::new(),
         no_ignore_vcs: false,
@@ -963,6 +1016,32 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             "--color" => {
                 index += 1;
                 args.color = Some(tokens.get(index)?.clone());
+            }
+            "--format" => {
+                index += 1;
+                if tokens.get(index)? != "rg" {
+                    return None;
+                }
+            }
+            _ if token.starts_with("--format=") => {
+                if token.split_once('=').map(|(_, value)| value) != Some("rg") {
+                    return None;
+                }
+            }
+            "--sort" => {
+                index += 1;
+                args.sort = Some(tokens.get(index)?.clone());
+            }
+            _ if token.starts_with("--sort=") => {
+                args.sort = Some(token.split_once('=').map(|(_, value)| value.to_string())?);
+            }
+            "--sortr" => {
+                index += 1;
+                args.sort_reverse = Some(tokens.get(index)?.clone());
+            }
+            _ if token.starts_with("--sortr=") => {
+                args.sort_reverse =
+                    Some(token.split_once('=').map(|(_, value)| value.to_string())?);
             }
             "-g" | "--glob" => {
                 index += 1;
@@ -1032,6 +1111,11 @@ mod tests {
         parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
     }
 
+    fn parse_default_frontdoor_args(tokens: &[&str]) -> RipgrepSearchArgs {
+        let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
+        parse_default_search_frontdoor_args(&raw_args).expect("expected frontdoor args to parse")
+    }
+
     fn parse_search_args(tokens: &[&str]) -> SearchArgs {
         use clap::Parser;
         let raw_args = tokens.iter().map(OsString::from).collect::<Vec<_>>();
@@ -1067,6 +1151,93 @@ mod tests {
                 PathBuf::from("docs")
             ]
         );
+    }
+
+    #[test]
+    fn default_search_frontdoor_treats_format_rg_as_noop() {
+        let args = parse_default_frontdoor_args(&[
+            "tg",
+            "search",
+            "--format",
+            "rg",
+            "ERROR",
+            "bench_data",
+        ]);
+
+        assert_eq!(args.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
+    fn default_search_frontdoor_rejects_non_rg_format() {
+        let raw_args = ["tg", "search", "--format=json", "ERROR", "bench_data"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert!(parse_default_search_frontdoor_args(&raw_args).is_none());
+    }
+
+    #[test]
+    fn default_search_frontdoor_accepts_sort_path_passthrough() {
+        let args = parse_default_frontdoor_args(&[
+            "tg",
+            "search",
+            "--sort",
+            "path",
+            "ERROR",
+            "bench_data",
+        ]);
+
+        assert_eq!(args.sort.as_deref(), Some("path"));
+        assert_eq!(args.patterns, vec!["ERROR".to_string()]);
+        assert_eq!(args.paths, vec!["bench_data".to_string()]);
+    }
+
+    #[test]
+    fn search_args_accept_format_rg_when_native_frontdoor_handles_richer_rg_modes() {
+        let args = parse_search_args(&[
+            "tg",
+            "search",
+            "--format",
+            "rg",
+            "--files-with-matches",
+            "--sort",
+            "path",
+            "ERROR",
+            "bench_data",
+        ]);
+
+        assert_eq!(args.format.as_deref(), Some("rg"));
+        assert!(args.files_with_matches);
+        assert_eq!(args.sort.as_deref(), Some("path"));
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_detects_non_rg_formats() {
+        let raw_args = ["tg", "search", "--format=json", "ERROR", "bench_data"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            search_format_python_passthrough_args(&raw_args),
+            Some(vec![
+                "--format=json".to_string(),
+                "ERROR".to_string(),
+                "bench_data".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn search_format_python_passthrough_args_keeps_rg_format_native() {
+        let raw_args = ["tg", "search", "--format", "rg", "ERROR", "bench_data"]
+            .iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(search_format_python_passthrough_args(&raw_args), None);
     }
 
     #[test]
@@ -2132,6 +2303,8 @@ fn positional_ripgrep_args(
         file_types: Vec::new(),
         color: cli.color.clone(),
         replace: cli.replace.clone(),
+        sort: None,
+        sort_reverse: None,
         patterns: vec![pattern.to_string()],
         paths: paths.to_vec(),
         pcre2: cli.pcre2,
@@ -2166,6 +2339,8 @@ fn command_ripgrep_args(args: &SearchArgs, request: &ResolvedSearchRequest) -> R
         file_types: args.file_type.clone(),
         color: args.color.clone(),
         replace: args.replace.clone(),
+        sort: args.sort.clone(),
+        sort_reverse: args.sort_reverse.clone(),
         patterns: request.patterns.clone(),
         paths: request.paths.clone(),
         pcre2: args.pcre2,
@@ -2184,6 +2359,8 @@ fn search_requires_ripgrep_passthrough(args: &SearchArgs) -> bool {
             || args.text
             || args.files_with_matches
             || args.files_without_match
+            || args.sort.is_some()
+            || args.sort_reverse.is_some()
             || !args.file_type.is_empty())
 }
 
@@ -4913,6 +5090,8 @@ fn handle_gpu_native_search(params: GpuSearchParams<'_>) -> anyhow::Result<()> {
                                 file_types: Vec::new(),
                                 color: None,
                                 replace: None,
+                                sort: None,
+                                sort_reverse: None,
                                 patterns: params.patterns.to_vec(),
                                 paths: vec![params.path.to_string()],
                                 no_ignore_vcs: false,

@@ -98,9 +98,52 @@ uv pip install tree-sitter tree-sitter-python tree-sitter-javascript --python .v
 
 # 5. Install front-door wrapper and PATH shims for profile-independent command resolution.
 mkdir -p "$INSTALL_DIR/bin"
+INSTALLED_VERSION="$("$INSTALL_DIR/.venv/bin/python" -c 'import importlib.metadata; print(importlib.metadata.version("tensor-grep"))')"
+NATIVE_BINARY="$INSTALL_DIR/bin/tg-native"
+if [ "$INSTALL_CHANNEL" != "main" ]; then
+    NATIVE_ASSET=""
+    case "$(uname -s):$(uname -m)" in
+        Linux:x86_64|Linux:amd64)
+            NATIVE_ASSET="tg-linux-amd64-cpu"
+            ;;
+        Darwin:x86_64|Darwin:amd64)
+            NATIVE_ASSET="tg-macos-amd64-cpu"
+            ;;
+        *)
+            echo "      No release-native tg asset for $(uname -s)/$(uname -m); using Python front door."
+            ;;
+    esac
+    if [ -n "$NATIVE_ASSET" ]; then
+        NATIVE_URL="https://github.com/oimiragieo/tensor-grep/releases/download/v${INSTALLED_VERSION}/${NATIVE_ASSET}"
+        echo "      Downloading native tg front door: $NATIVE_ASSET"
+        if curl -fL "$NATIVE_URL" -o "$NATIVE_BINARY.tmp"; then
+            mv "$NATIVE_BINARY.tmp" "$NATIVE_BINARY"
+            chmod +x "$NATIVE_BINARY"
+            if "$NATIVE_BINARY" --version; then
+                echo "      Native tg front door installed: $NATIVE_BINARY"
+            else
+                echo "      Native tg front-door smoke test failed; using Python fallback." >&2
+                rm -f "$NATIVE_BINARY"
+            fi
+        else
+            rm -f "$NATIVE_BINARY.tmp"
+            echo "      Native tg front-door download failed; using Python fallback: $NATIVE_URL" >&2
+        fi
+    fi
+else
+    echo "      Main-channel install: using Python front door until release-native assets exist."
+fi
 cat > "$INSTALL_DIR/bin/tg" << EOF
 #!/usr/bin/env bash
-"$INSTALL_DIR/.venv/bin/python" -m tensor_grep "\$@"
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
+export TG_SIDECAR_PYTHON="$INSTALL_DIR/.venv/bin/python"
+NATIVE_BINARY="$NATIVE_BINARY"
+if [ -x "\$NATIVE_BINARY" ]; then
+    export TG_NATIVE_TG_BINARY="\$NATIVE_BINARY"
+    exec "\$NATIVE_BINARY" "\$@"
+fi
+exec "$INSTALL_DIR/.venv/bin/python" -m tensor_grep "\$@"
 EOF
 chmod +x "$INSTALL_DIR/bin/tg"
 

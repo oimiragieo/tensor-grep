@@ -45,6 +45,7 @@ Agent automation contracts:
 - `tg search --json` emits a valid aggregate JSON object even when there are zero matches.
 - `tg search --files-with-matches` stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.
 - `tg search` with `--format rg` is a public exact ripgrep-style text formatter for automation that needs rg-shaped stdout. Pair it with `--sort path` when deterministic path ordering matters across backends.
+- The native front door treats `--format rg` as a no-op for rg-compatible text output and preserves `--sort path` when forwarding to ripgrep. Non-rg `--format` search output remains a Python CLI formatting surface.
 - `--sort path` is the deterministic contract for `--files-with-matches`, `--files-without-match`, `--replace`, and path-list automation. The parity suite also checks match, no-match, parse-error, and binary-skip exit-code behavior.
 - Default output ordering for root-scale `--files-with-matches`, `--count`, and `--force-cpu` is a semantic result parity contract, not a golden stdout ordering contract. Use `--sort path` when automation needs deterministic path ordering across backends.
 - Broad generated roots such as `.claude` are routed through Python guardrails instead of rust-first/native passthrough so generated `.claude/context` snapshots can be pruned by default.
@@ -52,6 +53,7 @@ Agent automation contracts:
 - `tg search --type-list` prints a built-in fallback list when no ripgrep or standalone native binary is available. `--pcre2-version` follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
 - `tg ast-info --json` exposes AST language identifiers via `{"languages": [...]}` for agent discovery without help-text scraping.
 - On Windows, PowerShell automation should invoke `tg` or `tg.ps1` for regex metacharacters. Direct `.cmd` invocation from PowerShell is not a safe argv-preserving contract for unescaped metacharacters such as `|` because `cmd.exe` parses the line before the batch wrapper receives arguments; `tg.cmd` is for `cmd.exe`.
+- Stable managed install scripts should prefer the matching release-native CPU `tg` binary as the public front door when the GitHub release asset is available, set `TG_SIDECAR_PYTHON` for Python-backed commands, set `TG_NATIVE_TG_BINARY` for the sidecar, and fall back to `python -m tensor_grep` when no native asset exists.
 - The fast agent-readiness dogfood gate is `python scripts/agent_readiness.py --output artifacts/agent_readiness.json`. For the current `v1.8.24` line it checks public shell version probes, repo doctor sanity, `context_consistency`, deterministic rg parity edges, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, docs claim hygiene, and the public positioning that `rg` remains the cold exact-text baseline while `ast-grep` remains the structural-search feature/performance baseline.
 
 Context and edit-planning contracts:

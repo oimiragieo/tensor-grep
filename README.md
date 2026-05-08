@@ -57,6 +57,12 @@ What `v1.8.24` closed:
 - deterministic rg parity edges for sorted PCRE2, files-with/without-match, replacement output, binary defaults, and multiline forwarding
 - exact-symbol context ranking, session stale-file trust, validation-command provenance, MCP checkpoint fallback, inline rule metadata, and uppercase `API_KEY` secret detection
 
+Active post-`v1.8.24` launcher work:
+
+- stable install scripts now prefer the matching release-native CPU `tg` front door when the GitHub release asset exists, while keeping the managed Python environment as the sidecar/fallback for Python-backed commands
+- the Rust front door treats `--format rg` as a no-op for ripgrep-compatible text output and preserves `--sort path` passthrough for deterministic automation
+- this is a control-plane correctness and startup-path change; benchmark docs should not claim a cold-search speed win until the accepted benchmark artifacts are rerun
+
 Release proof:
 
 - fix PR #56 merged and released from `ef0c114 fix: harden v1.8.23 dogfood regressions`
@@ -283,7 +289,7 @@ The binary name for `tensor-grep` is `tg`.
 ### Zero-Dependency Installation (Recommended)
 To ensure PyTorch bindings and CUDA/ROCm versions exactly match your hardware without conflicting with your system Python, we recommend using our automated install scripts. These scripts use `uv` to intelligently probe your GPU and build a highly isolated Python 3.12 environment in the background.
 
-The install scripts also run `tg lsp-setup --json` after creating the front-door `tg` command. That attempts the safe default managed provider setup under `~/.tensor-grep/providers` for pinned Node-backed providers and warns without failing the core install if optional provider setup is unavailable. If you install through `pip`, `uv`, or a package-manager path and need provider-backed planning, run `tg lsp-setup` manually. Use `tg lsp-setup --include-toolchain-providers` only when you want tensor-grep to copy or install Rust, Go, and C# provider binaries through local toolchains.
+The install scripts also run `tg lsp-setup --json` after creating the front-door `tg` command. That attempts the safe default managed provider setup under `~/.tensor-grep/providers` for pinned Node-backed providers and warns without failing the core install if optional provider setup is unavailable. Stable script installs prefer the matching release-native CPU `tg` binary as the public front door and expose the isolated Python environment through `TG_SIDECAR_PYTHON`; if the native asset is unavailable, the same front door falls back to `python -m tensor_grep`. If you install through `pip`, `uv`, or a package-manager path and need provider-backed planning, run `tg lsp-setup` manually. Use `tg lsp-setup --include-toolchain-providers` only when you want tensor-grep to copy or install Rust, Go, and C# provider binaries through local toolchains.
 
 **Windows (PowerShell):**
 ```powershell

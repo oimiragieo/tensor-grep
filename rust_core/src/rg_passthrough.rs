@@ -40,6 +40,8 @@ pub struct RipgrepSearchArgs {
     pub file_types: Vec<String>,
     pub color: Option<String>,
     pub replace: Option<String>,
+    pub sort: Option<String>,
+    pub sort_reverse: Option<String>,
     pub patterns: Vec<String>,
     pub paths: Vec<String>,
     pub pcre2: bool,
@@ -136,6 +138,12 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
     if let Some(replacement) = &args.replace {
         command.arg("--replace").arg(replacement);
+    }
+    if let Some(sort) = &args.sort {
+        command.arg("--sort").arg(sort);
+    }
+    if let Some(sort_reverse) = &args.sort_reverse {
+        command.arg("--sortr").arg(sort_reverse);
     }
     for glob in &args.globs {
         command.arg("-g").arg(glob);

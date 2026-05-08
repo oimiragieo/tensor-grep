@@ -42,6 +42,8 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
         file_types: Vec::new(),
         color: None,
         replace: None,
+        sort: None,
+        sort_reverse: None,
         patterns: Vec::new(),
         paths: Vec::new(),
         no_ignore_vcs: false,
@@ -118,6 +120,31 @@ fn parse_args(tokens: Vec<OsString>) -> anyhow::Result<RipgrepSearchArgs> {
                 index += 1;
                 args.file_types
                     .push(tokens.get(index).context("missing value for type")?.clone());
+            }
+            "--sort" => {
+                index += 1;
+                args.sort = Some(tokens.get(index).context("missing value for sort")?.clone());
+            }
+            "--sortr" => {
+                index += 1;
+                args.sort_reverse = Some(
+                    tokens
+                        .get(index)
+                        .context("missing value for sortr")?
+                        .clone(),
+                );
+            }
+            _ if token.starts_with("--sort=") => {
+                let (_, value) = token
+                    .split_once('=')
+                    .context("invalid sort argument shape")?;
+                args.sort = Some(value.to_string());
+            }
+            _ if token.starts_with("--sortr=") => {
+                let (_, value) = token
+                    .split_once('=')
+                    .context("invalid sortr argument shape")?;
+                args.sort_reverse = Some(value.to_string());
             }
             _ if token.starts_with("--glob=") => {
                 let (_, value) = token

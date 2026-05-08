@@ -199,6 +199,24 @@ def _requires_full_cli(search_args: list[str]) -> bool:
     return False
 
 
+def _strip_noop_rg_format(search_args: list[str]) -> list[str] | None:
+    stripped: list[str] = []
+    index = 0
+    while index < len(search_args):
+        arg = search_args[index]
+        if arg == "--format":
+            index += 1
+            if index >= len(search_args) or search_args[index] != "rg":
+                return None
+        elif arg.startswith("--format="):
+            if arg.split("=", 1)[1] != "rg":
+                return None
+        else:
+            stripped.append(arg)
+        index += 1
+    return stripped
+
+
 def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     if not search_args:
         return False
@@ -346,11 +364,16 @@ def main_entry() -> None:
 
     search_args = _normalize_search_invocation(argv)
     if search_args is not None:
-        effective_search_args = _effective_native_tg_search_args(search_args)
+        passthrough_search_args = _strip_noop_rg_format(search_args)
+        if passthrough_search_args is None:
+            _run_full_cli()
+            return
+
+        effective_search_args = _effective_native_tg_search_args(passthrough_search_args)
         native_binary_path = resolve_native_tg_binary()
         native_binary = str(native_binary_path) if native_binary_path else None
-        guarded_broad_root = _search_args_include_guarded_broad_root(search_args)
-        invalid_regex = _search_args_include_obviously_invalid_regex(search_args)
+        guarded_broad_root = _search_args_include_guarded_broad_root(passthrough_search_args)
+        invalid_regex = _search_args_include_obviously_invalid_regex(passthrough_search_args)
 
         if (
             native_binary is not None
@@ -358,7 +381,7 @@ def main_entry() -> None:
             and not invalid_regex
             and (
                 _can_delegate_to_native_tg_search(effective_search_args)
-                or (_prefer_rust_first_search() and not _requires_full_cli(search_args))
+                or (_prefer_rust_first_search() and not _requires_full_cli(passthrough_search_args))
             )
         ):
             command_args = (
@@ -368,11 +391,15 @@ def main_entry() -> None:
             )
             raise SystemExit(_run_native_tg_search(native_binary, command_args))
 
-        if not guarded_broad_root and not invalid_regex and not _requires_full_cli(search_args):
+        if (
+            not guarded_broad_root
+            and not invalid_regex
+            and not _requires_full_cli(passthrough_search_args)
+        ):
             rg_binary_path = resolve_ripgrep_binary()
             binary_name = str(rg_binary_path) if rg_binary_path else None
             if binary_name is not None:
-                raise SystemExit(_run_rg_passthrough(binary_name, search_args))
+                raise SystemExit(_run_rg_passthrough(binary_name, passthrough_search_args))
 
     _run_full_cli()
 

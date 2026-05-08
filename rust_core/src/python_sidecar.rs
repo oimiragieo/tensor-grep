@@ -17,6 +17,7 @@ const DEFAULT_SIDECAR_MODULE: &str = "tensor_grep.sidecar";
 const DEFAULT_TENSOR_GREP_MODULE: &str = "tensor_grep";
 const TG_SIDECAR_PYTHON_ENV: &str = "TG_SIDECAR_PYTHON";
 const TG_SIDECAR_TIMEOUT_MS_ENV: &str = "TG_SIDECAR_TIMEOUT_MS";
+const TG_NATIVE_TG_BINARY_ENV: &str = "TG_NATIVE_TG_BINARY";
 const DEFAULT_SIDECAR_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_HELP_PROBE_TIMEOUT_MS: u64 = 750;
 const MAX_SOURCE_ROOT_ANCESTOR_DEPTH: usize = 4;
@@ -87,7 +88,7 @@ pub fn execute_python_passthrough_command(
     let python = resolve_python_command();
 
     let mut child = Command::new(&python);
-    configure_python_module_path(&mut child);
+    configure_python_child_environment(&mut child);
     child
         .arg("-m")
         .arg(DEFAULT_TENSOR_GREP_MODULE)
@@ -112,7 +113,7 @@ pub fn execute_python_passthrough_command_captured(
     let passthrough_timeout = resolve_help_probe_timeout();
 
     let mut child = Command::new(&python);
-    configure_python_module_path(&mut child);
+    configure_python_child_environment(&mut child);
     #[cfg(unix)]
     unsafe {
         child.pre_exec(|| {
@@ -206,7 +207,7 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
     })?;
 
     let mut child = Command::new(&python);
-    configure_python_module_path(&mut child);
+    configure_python_child_environment(&mut child);
     if let Some(device_ids) = gpu_device_ids_env_value(&request) {
         child.env("TENSOR_GREP_DEVICE_IDS", device_ids);
     }
@@ -530,6 +531,26 @@ fn configure_python_module_path(command: &mut Command) {
     );
 }
 
+fn configure_python_child_environment(command: &mut Command) {
+    configure_python_module_path(command);
+    if let Some(native_tg_binary) = native_tg_binary_env_override(
+        env::var_os(TG_NATIVE_TG_BINARY_ENV),
+        env::current_exe().ok(),
+    ) {
+        command.env(TG_NATIVE_TG_BINARY_ENV, native_tg_binary);
+    }
+}
+
+fn native_tg_binary_env_override(
+    existing: Option<OsString>,
+    current_exe: Option<PathBuf>,
+) -> Option<OsString> {
+    if existing.is_some() {
+        return None;
+    }
+    current_exe.map(Into::into)
+}
+
 fn resolve_repo_source_root() -> Option<PathBuf> {
     let current_exe = env::current_exe().ok()?;
     resolve_repo_source_root_relative_to_exe(&current_exe)
@@ -631,8 +652,8 @@ fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
 #[cfg(test)]
 mod tests {
     use super::{
-        gpu_device_ids_env_value, merged_pythonpath, resolve_repo_source_root_relative_to_exe,
-        SidecarRequest,
+        gpu_device_ids_env_value, merged_pythonpath, native_tg_binary_env_override,
+        resolve_repo_source_root_relative_to_exe, SidecarRequest,
     };
     use serde_json::json;
     use std::env;
@@ -703,5 +724,23 @@ mod tests {
             gpu_device_ids_env_value(&request),
             Some(OsString::from("0,2,4"))
         );
+    }
+
+    #[test]
+    fn native_tg_binary_env_override_uses_current_exe_only_when_unset() {
+        let current_exe = Path::new("managed").join("bin").join("tg.exe");
+
+        assert_eq!(
+            native_tg_binary_env_override(None, Some(current_exe.clone())),
+            Some(current_exe.into_os_string())
+        );
+        assert_eq!(
+            native_tg_binary_env_override(
+                Some(OsString::from("explicit-native.exe")),
+                Some(Path::new("managed").join("bin").join("tg.exe"))
+            ),
+            None
+        );
+        assert_eq!(native_tg_binary_env_override(None, None), None);
     }
 }

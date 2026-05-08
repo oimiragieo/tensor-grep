@@ -49,6 +49,41 @@ function Write-BashFile {
     Write-AsciiFile -Path $Path -Value $lfValue
 }
 
+function Install-NativeFrontdoorBinary {
+    param(
+        [Parameter(Mandatory = $true)][string]$frontdoorDir,
+        [Parameter(Mandatory = $true)][string]$installedVersion,
+        [Parameter(Mandatory = $true)][string]$installChannel
+    )
+
+    $nativeFrontdoorPath = Join-Path $frontdoorDir "tg.exe"
+    if ($installChannel -eq "main") {
+        Write-Host "      Main-channel install: using Python front door until release-native assets exist."
+        return $nativeFrontdoorPath
+    }
+
+    $nativeAssetName = "tg-windows-amd64-cpu.exe"
+    $nativeDownloadUrl = "https://github.com/oimiragieo/tensor-grep/releases/download/v$installedVersion/$nativeAssetName"
+    $nativeTempPath = "$nativeFrontdoorPath.download"
+    Write-Host "      Downloading native tg front door: $nativeAssetName"
+    try {
+        Invoke-WebRequest -Uri $nativeDownloadUrl -OutFile $nativeTempPath
+        Move-Item -LiteralPath $nativeTempPath -Destination $nativeFrontdoorPath -Force
+        & $nativeFrontdoorPath --version | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "native tg front door smoke test failed"
+        }
+        Write-Host "      Native tg front door installed: $nativeFrontdoorPath"
+    } catch {
+        Remove-Item -LiteralPath $nativeTempPath -Force -ErrorAction SilentlyContinue
+        Write-Warning (
+            "Native tg front-door download failed; falling back to Python wrapper. " +
+            "Expected asset: $nativeDownloadUrl. Error: $_"
+        )
+    }
+    return $nativeFrontdoorPath
+}
+
 function Remove-StalePythonPackageLauncher {
     param(
         [Parameter(Mandatory = $true)][string]$candidatePath,
@@ -250,6 +285,11 @@ try {
     if (!(Test-Path $frontdoorDir)) {
         New-Item -ItemType Directory -Path (Join-Path $installDir "bin") -Force | Out-Null
     }
+    $installedVersion = (& "$installDir\.venv\Scripts\python.exe" -c "import importlib.metadata; print(importlib.metadata.version('tensor-grep'))").Trim()
+    $nativeFrontdoorPath = Install-NativeFrontdoorBinary `
+        -frontdoorDir $frontdoorDir `
+        -installedVersion $installedVersion `
+        -installChannel $installChannel
     $frontdoorCmdPath = Join-Path $frontdoorDir "tg.cmd"
     $frontdoorPs1Path = Join-Path $frontdoorDir "tg.ps1"
     $frontdoorBashPath = Join-Path $frontdoorDir "tg"
@@ -263,6 +303,8 @@ try {
         "setlocal`r`n" +
         "set PYTHONUTF8=1`r`n" +
         "set PYTHONIOENCODING=utf-8`r`n" +
+        "set TG_SIDECAR_PYTHON=$installDir\.venv\Scripts\python.exe`r`n" +
+        "set TG_NATIVE_TG_BINARY=$nativeFrontdoorPath`r`n" +
         "set /a TG_CMD_SHIM_ARGC=0`r`n" +
         ":tg_arg_loop`r`n" +
         'if "%~1"=="" goto tg_arg_done' + "`r`n" +
@@ -276,7 +318,13 @@ try {
     $frontdoorPs1Content = @"
 `$env:PYTHONUTF8 = "1"
 `$env:PYTHONIOENCODING = "utf-8"
-& "$installDir\.venv\Scripts\python.exe" -X utf8 -m tensor_grep @args
+`$env:TG_SIDECAR_PYTHON = "$installDir\.venv\Scripts\python.exe"
+if (Test-Path -LiteralPath "$nativeFrontdoorPath") {
+    `$env:TG_NATIVE_TG_BINARY = "$nativeFrontdoorPath"
+    & "$nativeFrontdoorPath" @args
+} else {
+    & "$installDir\.venv\Scripts\python.exe" -X utf8 -m tensor_grep @args
+}
 exit `$LASTEXITCODE
 "@
     $cmdArgvBridgeContent = @'
@@ -296,18 +344,28 @@ argv = [
 
 os.environ["PYTHONUTF8"] = "1"
 os.environ["PYTHONIOENCODING"] = "utf-8"
+native_tg = os.environ.get("TG_NATIVE_TG_BINARY")
+if native_tg and os.path.isfile(native_tg):
+    os.execv(native_tg, [native_tg] + argv)
 sys.argv = ["tensor-grep"] + argv
 runpy.run_module("tensor_grep", run_name="__main__")
 '@
     $frontdoorBashContent = @"
 #!/usr/bin/env bash
 if grep -qi microsoft /proc/version 2>/dev/null; then
+    TG_NATIVE="$wslInstallDir/bin/tg.exe"
     TG_PYTHON="$wslInstallDir/.venv/Scripts/python.exe"
 else
+    TG_NATIVE="$msysInstallDir/bin/tg.exe"
     TG_PYTHON="$msysInstallDir/.venv/Scripts/python.exe"
 fi
 export PYTHONUTF8=1
 export PYTHONIOENCODING=utf-8
+export TG_SIDECAR_PYTHON="`$TG_PYTHON"
+export TG_NATIVE_TG_BINARY="`$TG_NATIVE"
+if [ -f "`$TG_NATIVE" ]; then
+    exec "`$TG_NATIVE" "`$@"
+fi
 exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
 "@
     Write-AsciiFile -Path $frontdoorCmdPath -Value $frontdoorCmdContent
@@ -336,6 +394,8 @@ exec "`$TG_PYTHON" -X utf8 -m tensor_grep "`$@"
         "setlocal`r`n" +
         "set PYTHONUTF8=1`r`n" +
         "set PYTHONIOENCODING=utf-8`r`n" +
+        "set TG_SIDECAR_PYTHON=$installDir\.venv\Scripts\python.exe`r`n" +
+        "set TG_NATIVE_TG_BINARY=$nativeFrontdoorPath`r`n" +
         "set /a TG_CMD_SHIM_ARGC=0`r`n" +
         ":tg_arg_loop`r`n" +
         'if "%~1"=="" goto tg_arg_done' + "`r`n" +
@@ -402,7 +462,7 @@ exec "`$TG_FRONTDOOR" "`$@"
 
     # Remove unmanaged tensor-grep launchers from effective PATH entries that User PATH cannot outrank.
     $managedPathSet = @{}
-    foreach ($managedPath in @($frontdoorCmdPath, $frontdoorPs1Path, $frontdoorBashPath) + $installedShimPaths) {
+    foreach ($managedPath in @($nativeFrontdoorPath, $frontdoorCmdPath, $frontdoorPs1Path, $frontdoorBashPath) + $installedShimPaths) {
         if (Test-Path -LiteralPath $managedPath) {
             $managedPathSet[((Resolve-Path -LiteralPath $managedPath).Path.ToLowerInvariant())] = $true
         }
