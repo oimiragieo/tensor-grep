@@ -64,11 +64,11 @@ def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
     assert "skip yanked PyPI releases" in contracts
     assert "refresh the managed release-native front door" in contracts
     assert "Windows native-front-door retry helper" in contracts
-    assert "current `v1.8.29` release line" in contracts
+    assert "current `v1.8.30` release line" in contracts
     assert "managed native-upgrade contract" in contracts
 
 
-def test_handoff_docs_should_record_current_v1829_release_state_and_fast_gate() -> None:
+def test_handoff_docs_should_record_current_v1830_release_state_and_fast_gate() -> None:
     docs = {
         "AGENTS.md": AGENTS_DOC_PATH.read_text(encoding="utf-8"),
         "README.md": README_PATH.read_text(encoding="utf-8"),
@@ -78,7 +78,7 @@ def test_handoff_docs_should_record_current_v1829_release_state_and_fast_gate() 
     }
 
     for content in docs.values():
-        assert "v1.8.29" in content
+        assert "v1.8.30" in content
         assert "python scripts/agent_readiness.py" in content
 
     for content in (
@@ -87,19 +87,22 @@ def test_handoff_docs_should_record_current_v1829_release_state_and_fast_gate() 
         docs["docs/SESSION_HANDOFF.md"],
         docs["docs/CONTINUATION_PLAN.md"],
     ):
-        assert "648a740 chore(release): v1.8.29 [skip ci]" in content
-        assert "7742258 fix: harden native front-door CLI parity" in content
+        assert "b81b331 chore(release): v1.8.30 [skip ci]" in content
+        assert "e6d09a5 fix: preserve quoted patterns in Windows cmd shim" in content
 
     handoff = docs["docs/SESSION_HANDOFF.md"]
-    assert "25557263658" in handoff
-    assert "25557263900" in handoff
-    assert "tensor-grep==1.8.29" in handoff
+    assert "25569020620" in handoff
+    assert "25569020092" in handoff
+    assert "tensor-grep==1.8.30" in handoff
+    assert "Closed Windows `.cmd` quoted-pattern gap" in handoff
     assert "Closed native-front-door CLI parity gap" in handoff
     assert "publish-github-release-assets" in handoff
     assert "native front door" in handoff
     assert "rust_binary_version_status = matches" in handoff
     assert "scheduled the Windows retry helper" in handoff
-    assert "agent_readiness_post_v1829.json" in handoff
+    assert "agent_readiness_post_v1830.json" in handoff
+    assert "public-windows-launcher-quoted-patterns" in handoff
+    assert "gpu no-such-phrase" in handoff
     assert "tg classify --format json" in handoff
     assert "tg --version --verbose" in handoff
     assert "Usage: tg" in handoff
@@ -118,15 +121,16 @@ def test_handoff_docs_should_record_current_v1829_release_state_and_fast_gate() 
 
     readme = docs["README.md"]
     assert "## Current Release State" in readme
-    assert "7742258 fix: harden native front-door CLI parity" in readme
-    assert "648a740 chore(release): v1.8.29 [skip ci]" in readme
-    assert "25557263658" in readme
-    assert "25557263900" in readme
-    assert "GitHub release assets for `v1.8.29`" in readme
-    assert "sidecar `tensor-grep==1.8.29`" in readme
+    assert "e6d09a5 fix: preserve quoted patterns in Windows cmd shim" in readme
+    assert "b81b331 chore(release): v1.8.30 [skip ci]" in readme
+    assert "25569020620" in readme
+    assert "25569020092" in readme
+    assert "GitHub release assets for `v1.8.30`" in readme
+    assert "sidecar `tensor-grep==1.8.30`" in readme
     assert "rust_binary_version_status = matches" in readme
     assert "native front door" in readme
     assert "Windows retry helper" in readme
+    assert "gpu no-such-phrase" in readme
     assert "tg classify --format json" in readme
     assert "not a full ast-grep replacement" in readme
     assert "GPU and `classify` remain opt-in/experimental" in readme
@@ -145,7 +149,9 @@ def test_tensor_grep_skill_should_record_latest_docs_merge_state() -> None:
     assert "Main CI run `25561521904` passed" in skill
     assert "CodeQL/dynamic main run `25561520180` passed" in skill
     assert "semantic-release correctly skipped publishing" in skill
-    assert "Latest release remains `v1.8.29`" in skill
+    assert "current released version is `v1.8.30`" in skill
+    assert "PR #68 `fix: preserve quoted patterns in Windows cmd shim` merged" in skill
+    assert "public-windows-launcher-quoted-patterns" in skill
 
 
 def test_routing_policy_should_describe_current_native_and_fallback_routes() -> None:
