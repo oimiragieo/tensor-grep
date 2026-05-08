@@ -39,6 +39,32 @@ These documents define the operating and governance surface for teams running `t
 - [SECURITY.md](SECURITY.md) for vulnerability reporting expectations
 - [CONTRIBUTING.md](CONTRIBUTING.md) for contribution, validation, and release-intent rules
 
+## Current Release State
+
+Latest stable release: [`v1.8.24`](https://github.com/oimiragieo/tensor-grep/releases/tag/v1.8.24).
+
+Current positioning:
+
+- `tg` is the agent-native search, context, AST, and edit-planning orchestration layer.
+- `rg` remains the cold exact-text baseline. Use `--sort path --format rg` when automation needs deterministic ripgrep-shaped stdout.
+- `ast-grep` remains the structural-search feature/performance baseline. `tg run` is a validated useful slice, not a full ast-grep replacement.
+- GPU and `classify` remain opt-in/experimental surfaces until local benchmarks and provider/cache UX prove otherwise.
+
+What `v1.8.24` closed:
+
+- public shell/version resolution across profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL
+- stale in-tree standalone native binaries skipped by default unless explicitly pinned with `TG_NATIVE_TG_BINARY`
+- deterministic rg parity edges for sorted PCRE2, files-with/without-match, replacement output, binary defaults, and multiline forwarding
+- exact-symbol context ranking, session stale-file trust, validation-command provenance, MCP checkpoint fallback, inline rule metadata, and uppercase `API_KEY` secret detection
+
+Release proof:
+
+- fix PR #56 merged and released from `ef0c114 fix: harden v1.8.23 dogfood regressions`
+- release commit `1518a24 chore(release): v1.8.24 [skip ci]`
+- main CI run `25527718815`, main CodeQL run `25527718311`, and release-commit CodeQL run `25528154549` passed
+- PyPI reports `tensor-grep 1.8.24`; public installer dogfood resolved all supported Windows shell shims and public doctor reported PATH-version parity
+- docs/process PR #57 merged as `d5245f6 docs: update v1.8.24 handoff and skill guidance`; main CI run `25529282908` and CodeQL run `25529282683` passed, with semantic-release correctly skipping a docs-only publish
+
 ## Stable Windows Test Confirmation
 
 On this Windows host, the most reliable repo-wide confirmation path is the file-backed pytest runner:
@@ -85,7 +111,7 @@ tg blast-radius . --symbol prepareCursorWorkerInvocation --max-repo-files 512 --
 Current accepted production proof:
 
 - [`artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json`](artifacts/external_validation/agent_studio_patch_driver_validation_summary_capped.json)
-- `v1.8.24` release closeout: main CI run `25527718815`, main CodeQL run `25527718311`, and release-commit CodeQL run `25528154549` passed; semantic-release published GitHub release `v1.8.24`; the PyPI publish/parity gate passed; the public installer dogfood resolved profiled PowerShell, `cmd`, `pwsh -NoProfile`, Git Bash, and WSL probes to `tensor-grep 1.8.24`; public doctor reported PATH-version parity; and repo-dev doctor/search dogfood confirmed stale in-tree standalone binaries are skipped unless explicitly pinned
+- `v1.8.24` release and docs closeout are summarized in [Current Release State](#current-release-state)
 - blast-radius boundedness artifact: `artifacts/bench_blast_radius_benchmarks_v188_prefilter.json`
 
 What the bounded path preserves:
@@ -227,21 +253,19 @@ Important constraint:
 - **Per-request GPU pinning from CLI.** `tg search ... --gpu-device-ids 0,1` pins the current command to selected GPUs with strict input validation.
 - **It has a validated compatibility set for common ripgrep use.** `tg search` has a benchmarked compatibility contract for the day-to-day flags that matter most in code and log search, with the currently validated rows documented in [docs/CONTRACTS.md](docs/CONTRACTS.md).
 - **Output replacement and actual rewrites are separate tools.** `tg search --replace` rewrites emitted match text in ripgrep style, while `tg run --rewrite ... --apply` performs real file edits through the AST rewrite path.
-- **Native structural search and rewrite.** Run `tg run`, `tg scan`, and batch rewrite flows against the native AST backend instead of text-only matching.
 - **Managed semantic provider setup.** Run `tg lsp-setup` to provision pinned Node-backed LSP providers for optional `lsp` / `hybrid` planning modes without depending on ad hoc workstation PATH state. Rust, Go, and C# toolchain-backed providers require the explicit `--include-toolchain-providers` flag.
-- **Repeated-query acceleration.** Indexed literal and regex-prefilter paths are benchmarked separately from cold scans. See [docs/benchmarks.md](docs/benchmarks.md) for the current measured line instead of relying on stale microbench numbers.
-- **Semantic Understanding:** `tg classify` uses `cyBERT` when the NLP stack is installed and reachable. Treat it as an optional path, not part of the default hot search loop.
-- **Unified Harness API (NEW).** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
-- **NDJSON Streaming Output (NEW).** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
-- **Batch AST Rewrite (NEW).** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.
-- **One-shot rewrite apply (NEW).** The one-shot CLI fast path `tg run --rewrite ... --apply` uses fused single-read direct writes for safe simple apply shapes. The explicit planned-edit apply path still uses the safer atomic temp-file rename contract, and contract-heavy paths such as JSON, diff, checkpoint, audit, validation, verify, selector, and batch rewrite stay on the plan-first path. Current speed claims follow the AST rewrite benchmark gate in [docs/benchmarks.md](docs/benchmarks.md).
-- **Stale-File Detection (NEW).** Before applying rewrite edits, the engine verifies that each file's mtime hasn't changed since planning. Stale files are rejected with a clear error rather than silently applying outdated edits.
-- **Encoding Safety (NEW).** Rewrites preserve UTF-8 BOM and CRLF line endings in non-edited ranges. Binary files are automatically skipped. Large files (>100 MB) are skipped with a warning. Non-ASCII content (CJK, emoji, combining characters) is handled without corruption.
-- **Index Compression (NEW).** The trigram index binary format now uses varint encoding for posting lists, achieving ~73.5% size reduction compared to the legacy format. The compressed format is the default and maintains full backward compatibility.
-- **Incremental Index Updates (NEW).** When files are added, removed, or modified, the trigram index performs targeted updates instead of full rebuilds, reusing unchanged file entries for faster index maintenance on large repos.
-- **Regex Index Acceleration (NEW).** The index now handles alternation patterns (`foo|bar`), character classes, and Unicode patterns for prefiltering, extending the set of queries that benefit from index acceleration.
-- **GPU Sidecar Error Hardening (NEW).** GPU sidecar errors (timeout, invalid device ID, CUDA unavailable, malformed output, sidecar crash) are caught and reported with clear, actionable messages instead of raw tracebacks.
-- **Documented Routing Policy (NEW).** Explicit routing decision tree documented at [`docs/routing_policy.md`](docs/routing_policy.md) with 14 routing regression tests covering every backend selection path.
+- **Optional log classification.** `tg classify` uses `cyBERT` when the NLP stack is installed and reachable. Treat it as an experimental helper, not a default agent primitive or hot search path.
+- **Unified Harness API.** All JSON outputs (`--json` and `--ndjson`) share a common envelope (`version`, `routing_backend`, `routing_reason`, `sidecar_used`) so harnesses and AI agents can reliably parse routing decisions. Schema documentation and example artifacts are at [`docs/harness_api.md`](docs/harness_api.md) and [`docs/examples/`](docs/examples/). A Rust-side schema compatibility test locks the contract against accidental breakage.
+- **NDJSON Streaming Output.** `tg search --ndjson` emits one JSON object per matching line, enabling streaming consumption for large result sets without buffering the entire response.
+- **Batch AST Rewrite.** `tg run --batch-rewrite config.json` accepts multiple pattern/replacement/language rules in a single invocation. Cross-pattern overlaps are detected and reported without corrupting files.
+- **One-shot rewrite apply.** The one-shot CLI fast path `tg run --rewrite ... --apply` uses fused single-read direct writes for safe simple apply shapes. The explicit planned-edit apply path still uses the safer atomic temp-file rename contract, and contract-heavy paths such as JSON, diff, checkpoint, audit, validation, verify, selector, and batch rewrite stay on the plan-first path. Current speed claims follow the AST rewrite benchmark gate in [docs/benchmarks.md](docs/benchmarks.md).
+- **Stale-File Detection.** Before applying rewrite edits, the engine verifies that each file's mtime hasn't changed since planning. Stale files are rejected with a clear error rather than silently applying outdated edits.
+- **Encoding Safety.** Rewrites preserve UTF-8 BOM and CRLF line endings in non-edited ranges. Binary files are automatically skipped. Large files (>100 MB) are skipped with a warning. Non-ASCII content (CJK, emoji, combining characters) is handled without corruption.
+- **Index Compression.** The trigram index binary format now uses varint encoding for posting lists, achieving ~73.5% size reduction compared to the legacy format. The compressed format is the default and maintains full backward compatibility.
+- **Incremental Index Updates.** When files are added, removed, or modified, the trigram index performs targeted updates instead of full rebuilds, reusing unchanged file entries for faster index maintenance on large repos.
+- **Regex Index Acceleration.** The index now handles alternation patterns (`foo|bar`), character classes, and Unicode patterns for prefiltering, extending the set of queries that benefit from index acceleration.
+- **GPU Sidecar Error Hardening.** GPU sidecar errors (timeout, invalid device ID, CUDA unavailable, malformed output, sidecar crash) are caught and reported with clear, actionable messages instead of raw tracebacks.
+- **Documented Routing Policy.** Explicit routing decision tree documented at [`docs/routing_policy.md`](docs/routing_policy.md) with 14 routing regression tests covering every backend selection path.
 
 ## Why shouldn't I use `tensor-grep`?
 
@@ -277,6 +301,7 @@ Installer defaults and channels:
 - Set `TENSOR_GREP_CHANNEL=main` to install directly from the GitHub `main` branch.
 - At completion, the installer prints `tg --version` and returns to the directory where you started the script.
 - Windows installer now installs managed PowerShell, `cmd.exe`, Git Bash, and WSL shims in `~/.local/bin` and `~/bin`, removes stale same-directory `tg.exe`/`tg.bat` launchers that would shadow the shim, moves those shim directories ahead of stale Python `Scripts` launchers on User PATH, updates both PowerShell 7 and Windows PowerShell profiles, replaces stale aliases, forces UTF-8 mode, and writes bash shims with LF newlines for WSL.
+- In PowerShell, invoke `tg` or `tg.ps1` for regex metacharacters. Directly invoking `tg.cmd` with an unescaped `|` is still parsed by `cmd.exe` before tensor-grep receives argv.
 
 If `tg --version` still reports an older version, check command resolution:
 ```powershell
@@ -345,7 +370,7 @@ To recursively search the current directory, while respecting all `.gitignore` f
 $ tg foobar
 ```
 
-(Note: Because `tensor-grep` perfectly intercepts `sys.argv`, you don't even need to type `tg search foobar`. Just typing `tg foobar` routes exactly as `rg foobar` does!)
+(Note: The front door preserves common ripgrep-style argv routing, so you usually do not need to type `tg search foobar`. Just typing `tg foobar` routes through the search command.)
 
 Make the search case insensitive with `-i`, invert the search with `-v` or show the 2 lines before and after every search result with `-C2`:
 
@@ -447,7 +472,7 @@ Example `rewrites.json`:
 ```
 
 ### AI Assistant Integration (MCP)
-`tensor-grep` includes a native Model Context Protocol (MCP) server! This allows modern AI assistants (like Claude Desktop or Cursor) to directly utilize our GPU-accelerated regex engine, structural AST parsers, and cyBERT NLP log classifiers right inside their context windows.
+`tensor-grep` includes a native Model Context Protocol (MCP) server. This lets AI assistants such as Claude Desktop or Cursor call search, AST/rewrite, device inventory, and optional classification tools through a structured local interface.
 
 To use it with Claude Desktop, just add this to your `claude_desktop_config.json`:
 ```json
